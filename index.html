@@ -1025,8 +1025,10 @@ function updateRacer(r,dt){
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer-=1;
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
-    gas = isTouch ? true : (keys.has('arrowup')||keys.has('w'));
-    brake = keys.has('arrowdown')||keys.has('s');
+    if(isTouch && joyActive) steer = padSteer;                  // analog joystick steering
+    const braking = isTouch ? (joyActive && joyY>0.4) : (keys.has('arrowdown')||keys.has('s'));
+    gas = isTouch ? !braking : (keys.has('arrowup')||keys.has('w'));
+    brake = braking;
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
@@ -1075,8 +1077,8 @@ function updateRacer(r,dt){
     if(r.drift===0){ r.driftDir = steer>=0?1:-1; r.hop=0.32; }
     r.drift=1;
     if(r.driftDir===0)r.driftDir=steer>=0?1:-1;
-    turnRate*=1.55;
-    steer = r.driftDir*0.55 + steer*0.5;       // commit to slide direction
+    turnRate*=1.4;
+    steer = r.driftDir*0.42 + steer*0.5;       // commit to slide direction (gentler)
     r.driftCharge+=dt;
   } else {
     if(r.drift===1){                            // released → mini-turbo
@@ -1506,6 +1508,7 @@ buildRacers = function(){
 // slide to steer (left/right) and gas/brake (up/down). Release to center.
 let joyActive = false;
 let joyX = 0, joyY = 0; // normalized -1 to 1
+let padSteer = 0;       // analog steer (-1..1) after deadzone + curve
 function setupJoystick(){
   const joy = $('joystick');
   const knob = $('knob');
@@ -1522,6 +1525,9 @@ function setupJoystick(){
     knob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
     joyX = nx / max;
     joyY = ny / max;
+    // analog steer: deadzone + expo curve + reduced gain (much less twitchy)
+    const dz = 0.12, mag = Math.max(0, (Math.abs(joyX) - dz) / (1 - dz));
+    padSteer = Math.sign(joyX) * mag * mag * 0.8;
   }
   function place(x, y){           // center the 160px ring on the touch point
     joy.style.left = (x - 80) + 'px';
@@ -1539,7 +1545,7 @@ function setupJoystick(){
   }
   function move(e){ if(joyActive) setKnob(e.clientX - originX, e.clientY - originY); }
   function up(){
-    joyActive = false; joyX = 0; joyY = 0;
+    joyActive = false; joyX = 0; joyY = 0; padSteer = 0;
     joy.style.display = 'none';
     knob.style.transform = 'translate(-50%,-50%)';
   }
@@ -1549,29 +1555,8 @@ function setupJoystick(){
   window.addEventListener('pointercancel', up);
 }
 
-// Hook joystick into input (override steer/gas for touch)
-const _origUpdateRacer = updateRacer;
-updateRacer = function(r,dt){
-  if(r.you && isTouch && joyActive){
-    // Joystick overrides: horizontal = steer, vertical = gas/brake
-    const steerInput = Math.max(-1, Math.min(1, joyX * 1.0));
-    const gasInput = joyY < -0.15; // up on joystick = gas (negative y up)
-    const brakeInput = joyY > 0.25;
-    // temporarily override keys/touch for this frame
-    const oldLeft = touch.left, oldRight = touch.right;
-    touch.left = steerInput > 0.2;
-    touch.right = steerInput < -0.2;
-    // call original but we hacked touch
-    _origUpdateRacer(r,dt);
-    touch.left = oldLeft; touch.right = oldRight;
-    // extra direct influence for smoothness (reduced multiplier for less squirrely steering)
-    if(Math.abs(steerInput) > 0.15) r.head += -steerInput * 1.0 * dt;
-    if(gasInput) r.spd = Math.min(r.spd + 28*dt, BOOSTV*0.95);
-    if(brakeInput) r.spd = Math.max(r.spd - 55*dt, -40);
-    return;
-  }
-  _origUpdateRacer(r,dt);
-};
+// (the joystick now feeds an analog `padSteer` straight into updateRacer above,
+//  so there's no double-applied steering and small finger moves stay gentle)
 
 // Boot with new flow
 setupSelect();
