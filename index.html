@@ -1,590 +1,1574 @@
 <!DOCTYPE html>
-<!--
-================================================================================
-  PICK YOUR SPERM — One Piece-styled character select
-================================================================================
-  A self-contained restyle of the Sperm Racer roster in a cel-shaded anime
-  aesthetic, inspired by the reference art: a rounded expressive head, star /
-  sparkle eyes, flowing hair, and a long tapering tail.
-
-  Every character is hand-drawn in inline SVG (no image assets), so the whole
-  thing is one portable file. Cel shading = flat base fill + a single shadow
-  shape + a soft highlight, all wrapped in warm dark outlines.
-================================================================================
--->
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Pick Your Sperm — One Piece Style</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>MICROSPRINT 64</title>
 <style>
-  :root{
-    --ink:#2a1712;          /* warm anime outline */
-    --paper:#fdf6e7;
-    --teal:#0f2a30;
-    --teal2:#14383f;
-    --edge:rgba(120,225,210,.35);
-    --gold:#ffcf5a;
-    --glow:#5ff0d8;
+  :root{ --signal:#6df2d0; --bone:#eafff8; --ink:#8fb7b0; --dim:#2b6e66; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;}
+  html,body{margin:0;height:100%;background:#05202a;overflow:hidden;touch-action:none;
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--bone);overscroll-behavior:none;}
+  #app{position:fixed;inset:0;}
+  canvas{display:block;}
+  #ui{position:absolute;inset:0;pointer-events:none;}
+  #map{position:absolute;top:12px;left:12px;}
+
+  .hud{position:absolute;text-transform:uppercase;letter-spacing:.14em;}
+  #lap{top:12px;right:14px;text-align:right;font-size:12px;color:var(--ink);}
+  #lap b{display:block;font-size:30px;line-height:1;color:var(--bone);font-variant-numeric:tabular-nums;}
+  #pos{top:64px;right:14px;text-align:right;font-size:12px;color:var(--ink);}
+  #pos b{display:block;font-size:38px;line-height:1;color:var(--signal);font-variant-numeric:tabular-nums;}
+  #clock{bottom:14px;left:50%;transform:translateX(-50%);font-size:15px;color:var(--ink);
+    font-variant-numeric:tabular-nums;letter-spacing:.12em;}
+  #speedo{bottom:12px;left:14px;font-size:11px;color:var(--ink);}
+  #speedo b{font-size:22px;color:var(--bone);font-variant-numeric:tabular-nums;}
+
+  /* item slot */
+  #item{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:74px;height:74px;
+    border:2px solid var(--dim);border-radius:14px;background:rgba(6,28,34,.5);
+    display:flex;align-items:center;justify-content:center;font-size:38px;
+    box-shadow:0 0 22px rgba(0,0,0,.4);}
+  #item.spin{animation:itm .09s linear infinite;}
+  @keyframes itm{50%{filter:hue-rotate(60deg)}}
+
+  /* touch controls */
+  .pad{position:absolute;bottom:20px;pointer-events:auto;display:none;}
+  body.touch .pad{display:block;}
+  .btn{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
+    border:2px solid var(--signal);color:var(--signal);background:rgba(13,48,56,.55);
+    backdrop-filter:blur(3px);font-family:inherit;letter-spacing:.1em;text-transform:uppercase;
+    box-shadow:0 0 15px rgba(109,242,208,.2);}
+  #steer{left:18px;}
+  #steer .btn{width:92px;height:92px;font-size:32px;margin-right:18px;} /* bigger for iPad */
+  #act{right:18px;text-align:right;}
+  #act .btn{font-size:15px;}
+  #drift{width:110px;height:110px;}
+  #fire{width:78px;height:78px;position:absolute;right:120px;bottom:22px;}
+  .btn:active{background:rgba(109,242,208,.35); transform:scale(0.95);}
+  /* iPad friendly larger touch targets */
+  @media (pointer:coarse) {
+    #steer .btn {width:110px;height:110px;font-size:38px;}
+    #drift {width:130px;height:130px;font-size:18px;}
+    #fire {width:95px;height:95px;}
   }
-  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
-  html,body{margin:0; min-height:100%}
-  body{
-    font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
-    color:var(--paper);
-    /* warm One Piece outdoor backdrop fading into a cinematic dark frame */
+
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;padding:24px;pointer-events:auto;
+    background:radial-gradient(circle at 50% 42%,rgba(6,30,38,.74),rgba(3,16,21,.95));backdrop-filter:blur(3px);}
+  .screen .tag{color:var(--signal);letter-spacing:.42em;font-size:11px;text-transform:uppercase;margin-bottom:14px;}
+  .screen h1{margin:0;font-size:clamp(40px,12vw,96px);letter-spacing:.04em;font-weight:700;
+    text-shadow:0 0 30px rgba(109,242,208,.35);}
+  .screen h1 small{display:block;font-size:.32em;letter-spacing:.5em;color:var(--ink);margin-top:6px;font-weight:400;}
+  .screen p{color:var(--ink);max-width:440px;line-height:1.7;font-size:13px;letter-spacing:.03em;}
+  .keys{margin:8px 0;color:var(--ink);font-size:11.5px;letter-spacing:.08em;line-height:2;}
+  .keys kbd{border:1px solid var(--dim);border-radius:4px;padding:2px 7px;color:var(--bone);margin:0 1px;font-size:11px;}
+  button.go{margin-top:22px;pointer-events:auto;cursor:pointer;font-family:inherit;background:var(--signal);
+    color:#04201b;border:none;padding:15px 42px;border-radius:30px;font-size:14px;letter-spacing:.2em;
+    text-transform:uppercase;font-weight:700;}
+  button.go:active{transform:translateY(1px);}
+  #count{font-size:clamp(90px,30vw,240px);font-weight:800;color:var(--signal);
+    text-shadow:0 0 50px rgba(109,242,208,.6);}
+  .board{margin:14px 0;width:min(420px,92vw);}
+  .board .row{display:flex;justify-content:space-between;padding:9px 14px;border-radius:8px;
+    font-size:14px;color:var(--ink);letter-spacing:.05em;}
+  .board .row.you{background:rgba(109,242,208,.12);color:var(--bone);border:1px solid var(--dim);}
+  .board .pos{color:var(--signal);width:46px;text-align:left;}
+  .board .nm{flex:1;text-align:left;}
+  .board b{color:var(--bone);font-variant-numeric:tabular-nums;}
+  .hidden{display:none!important;}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#05202a;color:var(--ink);letter-spacing:.3em;font-size:12px;text-transform:uppercase;}
+  #loading b{color:var(--signal);}
+
+  /* ===== full-screen atmosphere overlays (pure CSS, GPU cheap) ===== */
+  #fx{position:absolute;inset:0;pointer-events:none;z-index:2;}
+  #vignette{position:absolute;inset:0;
+    box-shadow:inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5);
+    transition:box-shadow .25s ease;}
+  #scan{position:absolute;inset:0;mix-blend-mode:overlay;opacity:.35;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px);}
+  /* radial speed streaks that bloom in on boost / high speed */
+  #speed{position:absolute;inset:-20%;opacity:0;transition:opacity .12s linear;
     background:
-      radial-gradient(120% 80% at 50% -10%, #c9763e 0%, #8a4a2a 30%, #3a2418 60%, #140d09 100%),
-      #100b07;
-    background-attachment:fixed;
-    padding:18px 12px calc(110px + env(safe-area-inset-bottom));
-    -webkit-font-smoothing:antialiased;
-  }
-  /* faint painterly halftone for the anime print feel */
-  body::before{
-    content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.10;
-    background-image:radial-gradient(rgba(0,0,0,.6) 1px, transparent 1.4px);
-    background-size:5px 5px; mix-blend-mode:multiply;
-  }
+      radial-gradient(circle at 50% 50%, transparent 38%, rgba(109,242,208,.0) 38%, rgba(109,242,208,.10) 70%, transparent 71%),
+      repeating-conic-gradient(from 0deg at 50% 50%, rgba(234,255,248,.14) 0deg 1.2deg, transparent 1.2deg 7deg);
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent 40%, #000 78%);
+            mask-image:radial-gradient(circle at 50% 50%, transparent 40%, #000 78%);
+    animation:spin 8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #boostflash{position:absolute;inset:0;background:radial-gradient(circle at 50% 60%,rgba(255,210,120,.0),transparent 60%);
+    opacity:0;transition:opacity .4s ease;}
 
-  .stage{position:relative; z-index:1; max-width:760px; margin:0 auto}
+  /* ===== glass HUD panels ===== */
+  .glass{background:linear-gradient(160deg,rgba(8,34,42,.55),rgba(5,22,28,.35));
+    border:1px solid rgba(109,242,208,.22);border-radius:12px;
+    box-shadow:0 6px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(234,255,248,.06);
+    backdrop-filter:blur(6px);}
+  #lap,#pos{padding:7px 13px;}
+  #pos b{text-shadow:0 0 16px rgba(109,242,208,.55);}
 
-  /* ----------------------------- title ----------------------------- */
-  header{text-align:center; margin:6px 0 16px}
-  .kicker{
-    display:inline-block; font-size:12px; letter-spacing:5px; text-transform:uppercase;
-    color:#ffe9c2; opacity:.85; margin-bottom:6px;
-  }
-  h1{
-    margin:0; font-size:clamp(34px,9vw,68px); line-height:.92; font-weight:900;
-    font-style:italic; letter-spacing:1px; color:#fff;
-    -webkit-text-stroke:3px var(--ink);
-    paint-order:stroke fill;
-    text-shadow:
-      0 4px 0 var(--ink),
-      0 6px 18px rgba(0,0,0,.5),
-      0 0 30px rgba(255,207,90,.35);
-    transform:rotate(-1.5deg);
-  }
-  h1 .pop{color:var(--gold)}
-  .blurb{
-    margin:12px auto 0; max-width:440px; font-size:14px; line-height:1.5;
-    color:#ffeccb; opacity:.9;
-  }
+  /* minimap framing */
+  #mapwrap{position:absolute;top:12px;left:12px;padding:8px;border-radius:14px;}
+  #mapwrap .ml{position:absolute;top:-7px;left:12px;font-size:8.5px;letter-spacing:.3em;
+    color:var(--ink);text-transform:uppercase;background:#06222a;padding:0 5px;}
+  #map{position:static;display:block;filter:drop-shadow(0 0 6px rgba(109,242,208,.25));}
 
-  /* ----------------------------- grid ------------------------------ */
-  .grid{
-    display:grid; grid-template-columns:repeat(2,1fr); gap:14px; margin-top:18px;
-  }
+  /* speed gauge (arc) bottom-left */
+  #speedo{bottom:14px;left:16px;display:flex;align-items:flex-end;gap:8px;}
+  #gauge{filter:drop-shadow(0 0 8px rgba(109,242,208,.3));}
+  #speedo .lbl{font-size:10px;color:var(--ink);letter-spacing:.16em;padding-bottom:4px;}
+  #speedo .lbl b{font-size:26px;color:var(--bone);display:block;line-height:.9;
+    text-shadow:0 0 14px rgba(109,242,208,.4);}
 
-  .card{
-    position:relative; cursor:pointer; border-radius:18px; overflow:hidden;
-    background:linear-gradient(180deg,var(--teal2),var(--teal));
-    border:2px solid rgba(255,255,255,.10);
-    box-shadow:0 10px 26px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06);
-    transition:transform .12s ease, box-shadow .2s, border-color .2s;
-    isolation:isolate;
-  }
-  .card:hover{transform:translateY(-3px)}
-  .card:active{transform:scale(.985)}
+  /* drift charge meter — center bottom, fills & flares by tier */
+  #drift-meter{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+    width:min(46vw,260px);height:7px;border-radius:6px;overflow:hidden;opacity:0;
+    background:rgba(6,28,34,.6);border:1px solid rgba(109,242,208,.25);transition:opacity .15s;}
+  #drift-fill{height:100%;width:0%;border-radius:6px;
+    background:linear-gradient(90deg,#6df2d0,#9bffe6);transition:width .05s linear, background .2s;}
+  #drift-meter.t1 #drift-fill{background:linear-gradient(90deg,#5ad7ff,#9be9ff);box-shadow:0 0 14px #5ad7ff;}
+  #drift-meter.t2 #drift-fill{background:linear-gradient(90deg,#ff8a3c,#ffd070);box-shadow:0 0 18px #ff9a3c;}
 
-  /* anime speed-lines that flash on hover/selection */
-  .card::after{
-    content:""; position:absolute; inset:0; z-index:3; pointer-events:none; opacity:0;
-    background:repeating-conic-gradient(from 0deg at 50% 42%,
-      rgba(255,255,255,.0) 0deg 6deg, rgba(255,255,255,.16) 6deg 7deg);
-    mask:radial-gradient(circle at 50% 42%, transparent 38%, #000 60%);
-    -webkit-mask:radial-gradient(circle at 50% 42%, transparent 38%, #000 60%);
-    transition:opacity .2s;
-  }
-  .card:hover::after{opacity:.5}
+  /* center banner: FINAL LAP / GO! */
+  #banner{position:absolute;top:30%;left:50%;transform:translate(-50%,-50%) scale(.7);
+    font-size:clamp(28px,7vw,58px);font-weight:800;letter-spacing:.18em;color:var(--signal);
+    text-transform:uppercase;text-shadow:0 0 36px rgba(109,242,208,.7);opacity:0;pointer-events:none;
+    white-space:nowrap;}
+  #banner.show{animation:bannerPop 1.6s ease forwards;}
+  @keyframes bannerPop{
+    0%{opacity:0;transform:translate(-50%,-50%) scale(.6);letter-spacing:.5em;}
+    18%{opacity:1;transform:translate(-50%,-50%) scale(1.05);letter-spacing:.16em;}
+    78%{opacity:1;transform:translate(-50%,-50%) scale(1);}
+    100%{opacity:0;transform:translate(-50%,-50%) scale(1.1);} }
 
-  /* warm portrait spotlight behind each character */
-  .portrait{
-    position:relative; aspect-ratio:1/1; width:100%;
-    background:
-      radial-gradient(75% 65% at 50% 40%, #ffd79a 0%, #d8884a 42%, #7c4326 78%, #43230f 100%);
-  }
-  .portrait svg{position:absolute; inset:0; width:100%; height:100%; display:block;
-    filter:drop-shadow(0 8px 10px rgba(0,0,0,.35))}
-  .tail{animation:sway 3.4s ease-in-out infinite; transform-origin:130px 150px}
-  .card:nth-child(2n) .tail{animation-duration:3.9s}
-  .card:nth-child(3n) .tail{animation-duration:4.3s}
-  @keyframes sway{
-    0%,100%{transform:rotate(-2.5deg)}
-    50%{transform:rotate(2.5deg)}
-  }
-  @media (prefers-reduced-motion:reduce){ .tail{animation:none} }
+  #count{animation:cdPulse .75s ease;}
+  @keyframes cdPulse{0%{transform:scale(.4);opacity:0;}40%{transform:scale(1.1);opacity:1;}100%{transform:scale(1);opacity:1;}}
+  .item-pop{animation:itemPop .35s ease;}
+  @keyframes itemPop{0%{transform:translateX(-50%) scale(.3) rotate(-20deg);}60%{transform:translateX(-50%) scale(1.15);}100%{transform:translateX(-50%) scale(1);}}
 
-  /* ribbon nameplate */
-  .name{
-    position:absolute; left:50%; bottom:8px; transform:translateX(-50%);
-    z-index:4; white-space:nowrap;
-    font-weight:900; font-style:italic; font-size:clamp(13px,3.4vw,17px); letter-spacing:.5px;
-    color:#fff; padding:4px 16px; border-radius:8px;
-    background:linear-gradient(180deg,#ff8a3d,#e0541f);
-    border:2px solid var(--ink);
-    box-shadow:0 3px 0 var(--ink), 0 6px 12px rgba(0,0,0,.4);
-  }
-
-  .info{padding:30px 12px 12px; text-align:center}
-  .perk{font-size:12.5px; line-height:1.45; color:#cfeee8}
-  .perk b{color:var(--gold)}
-
-  /* selection state */
-  .card.sel{border-color:var(--glow);
-    box-shadow:0 0 0 2px var(--glow), 0 0 26px var(--glow), 0 12px 30px rgba(0,0,0,.5)}
-  .card.sel::after{opacity:.65}
-  .check{
-    position:absolute; top:8px; right:8px; z-index:5;
-    width:30px; height:30px; border-radius:50%;
-    background:var(--glow); color:#06231f; font-weight:900; font-size:18px;
-    display:grid; place-items:center; border:2px solid #06231f;
-    transform:scale(0); transition:transform .18s cubic-bezier(.2,1.6,.4,1);
-    box-shadow:0 0 14px var(--glow);
-  }
-  .card.sel .check{transform:scale(1)}
-
-  /* ----------------------------- dock ------------------------------ */
-  .dock{
-    position:fixed; left:0; right:0; bottom:0; z-index:5;
-    display:flex; justify-content:center;
-    padding:12px 14px calc(14px + env(safe-area-inset-bottom));
-    background:linear-gradient(180deg,transparent, rgba(10,7,4,.85) 55%);
-  }
-  .lockin{
-    appearance:none; cursor:pointer; font-family:inherit;
-    font-weight:900; font-style:italic; letter-spacing:2px; font-size:18px; text-transform:uppercase;
-    color:#3a1e0c; padding:15px 34px; border-radius:40px;
-    border:3px solid var(--ink);
-    background:linear-gradient(180deg,#ffd98a,#f0a23c 60%,#d97f24);
-    box-shadow:0 5px 0 var(--ink), 0 12px 22px rgba(0,0,0,.5);
-    transition:transform .1s, filter .2s; max-width:520px; width:100%;
-  }
-  .lockin:active{transform:translateY(4px); box-shadow:0 1px 0 var(--ink)}
-  .lockin:disabled{filter:grayscale(.6) brightness(.8); cursor:not-allowed}
-  .lockin small{display:block; font-size:11px; letter-spacing:1px; opacity:.8; font-style:normal}
-
-  @media (max-width:380px){ .info{padding-top:26px} }
-
-  /* --------------------- race-start overlay ----------------------- */
-  #race{
-    position:fixed; inset:0; z-index:50; display:none;
-    flex-direction:column; align-items:center; justify-content:center; gap:10px;
-    background:radial-gradient(120% 90% at 50% 30%, #134048, #07171b 70%, #020708);
-    overflow:hidden;
-  }
-  #race.on{display:flex}
-  /* speed lines streaking past */
-  #race::before{
-    content:""; position:absolute; inset:-20%; pointer-events:none; opacity:.5;
-    background:repeating-linear-gradient(90deg,
-      transparent 0 22px, rgba(255,255,255,.07) 22px 24px);
-    animation:zip .5s linear infinite;
-  }
-  @keyframes zip{ to{ transform:translateX(-24px) } }
-  #raceArt{width:min(48vw,210px); filter:drop-shadow(0 10px 18px rgba(0,0,0,.5));
-    animation:bob 1.1s ease-in-out infinite}
-  @keyframes bob{ 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-12px) rotate(2deg)} }
-  #raceName{font-weight:900; font-style:italic; font-size:clamp(22px,7vw,40px); color:#fff;
-    -webkit-text-stroke:2.5px var(--ink); paint-order:stroke fill; text-shadow:0 3px 0 var(--ink);
-    z-index:1}
-  #count{
-    font-weight:900; font-size:clamp(70px,26vw,180px); line-height:1; color:var(--gold);
-    -webkit-text-stroke:5px var(--ink); paint-order:stroke fill;
-    text-shadow:0 0 40px rgba(255,207,90,.6); z-index:1;
-  }
-  .pulse{animation:pulse .6s cubic-bezier(.2,1.4,.4,1)}
-  @keyframes pulse{ 0%{transform:scale(.3); opacity:0} 60%{transform:scale(1.15)} 100%{transform:scale(1); opacity:1} }
-  #raceNote{color:#bfe9e2; font-size:13px; z-index:1; max-width:300px; text-align:center; min-height:18px}
-  #raceBack{
-    margin-top:6px; z-index:1; appearance:none; cursor:pointer; font-family:inherit; font-weight:800;
-    color:#cdeee8; background:rgba(255,255,255,.08); border:1.5px solid rgba(255,255,255,.25);
-    padding:10px 22px; border-radius:30px; letter-spacing:1px; display:none;
-  }
-  #raceBack.show{display:inline-block}
+  /* ===== One Piece cel-shaded character portraits (select screen) ===== */
+  .opcard{position:relative;overflow:hidden;}
+  .opcard::before{content:"";position:absolute;inset:0;z-index:0;
+    background:radial-gradient(78% 62% at 50% 38%, #ffd79a 0%, #d8884a 44%, #7c4326 78%, #2c1709 100%);
+    opacity:.9;}
+  .opcard > *{position:relative;z-index:1;}
+  .opsvg{width:84px;height:112px;display:block;margin:0 auto 4px;
+    filter:drop-shadow(0 5px 7px rgba(0,0,0,.5));}
+  .opsvg .optail{animation:opsway 3.6s ease-in-out infinite;transform-origin:130px 150px;}
+  @keyframes opsway{0%,100%{transform:rotate(-2.6deg)}50%{transform:rotate(2.6deg)}}
+  @media (prefers-reduced-motion:reduce){ .opsvg .optail{animation:none} }
+  .opname{font-weight:700;letter-spacing:.5px;text-shadow:0 2px 4px rgba(0,0,0,.6);}
+  .opdesc{text-shadow:0 1px 3px rgba(0,0,0,.7);}
 </style>
 </head>
 <body>
-<div class="stage">
-  <header>
-    <span class="kicker">Sperm Racer • Roster</span>
-    <h1>PICK YOUR <span class="pop">SPERM</span></h1>
-    <p class="blurb">Each one's got their own flavor — Grand Line energy, nakama.
-      Tap a racer to lock in.</p>
-  </header>
+<div id="app"></div>
 
-  <div class="grid" id="grid"></div>
-</div>
-
-<div class="dock">
-  <button class="lockin" id="lockin" disabled>
-    Choose a racer
-    <small id="hint">tap a card above</small>
-  </button>
-</div>
-
-<!-- full-screen race-start sequence shown after LOCK IN -->
-<div id="race" role="dialog" aria-modal="true" aria-label="Race starting">
-  <svg id="raceArt" viewBox="0 0 200 260" aria-hidden="true"></svg>
-  <div id="raceName"></div>
-  <div id="count"></div>
-  <div id="raceNote"></div>
-  <button id="raceBack" type="button">‹ Pick a different racer</button>
-</div>
-
-<!--
-  Each character is built from the same cel-shade kit:
-   • a rounded HEAD (skin fill + a shadow wedge + a glossy highlight)
-   • a flowing TAIL (tapering ribbon with a centre highlight, gently swaying)
-   • hair / hat / accessories unique to the character
-   • expressive eyes — several get the reference's signature STAR sparkle
-  viewBox is 0 0 200 260 for every racer so they line up perfectly.
--->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-<defs>
-  <!-- reusable star pupil -->
-  <g id="star">
-    <path d="M0,-7 L1.9,-2.3 L7,-2.2 L2.9,1 L4.4,6 L0,3 L-4.4,6 L-2.9,1 L-7,-2.2 L-1.9,-2.3 Z"/>
-  </g>
-  <!-- glossy highlight used on every head -->
-  <radialGradient id="gloss" cx="35%" cy="28%" r="40%">
+<!-- One Piece portrait SVG defs (star pupils + head gloss) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <g id="opstar"><path d="M0,-7 L1.9,-2.3 L7,-2.2 L2.9,1 L4.4,6 L0,3 L-4.4,6 L-2.9,1 L-7,-2.2 L-1.9,-2.3 Z"/></g>
+  <radialGradient id="opgloss" cx="35%" cy="28%" r="40%">
     <stop offset="0%" stop-color="#fff" stop-opacity=".75"/>
     <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
   </radialGradient>
-</defs>
-</svg>
+</defs></svg>
 
+<div id="fx">
+  <div id="vignette"></div>
+  <div id="speed"></div>
+  <div id="boostflash"></div>
+  <div id="scan"></div>
+</div>
+<div id="ui">
+  <div id="mapwrap" class="glass"><span class="ml">circuit</span><canvas id="map" width="150" height="150"></canvas></div>
+  <div class="hud glass" id="lap">Lap<b><span id="lapn">1</span>/3</b></div>
+  <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
+  <div id="item"></div>
+  <div class="hud" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
+  <div class="hud" id="clock">00:00.0</div>
+  <div id="drift-meter"><div id="drift-fill"></div></div>
+  <div id="banner"></div>
+
+  <div class="pad" id="steer"><button class="btn" id="bl">◀</button><button class="btn" id="br">▶</button></div>
+  <div class="pad" id="act"><button class="btn" id="drift">Drift</button></div>
+  <button class="btn pad" id="fire">Item</button>
+
+  <!-- Virtual Joystick for iPad / touch - better control -->
+  <div id="joystick" class="pad" style="left:30px;bottom:30px;width:160px;height:160px;border:3px solid var(--signal);border-radius:50%;background:rgba(13,48,56,.35);backdrop-filter:blur(4px);display:none;pointer-events:auto;position:absolute;">
+    <div id="knob" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:68px;height:68px;background:var(--signal);border-radius:50%;box-shadow:0 0 20px rgba(109,242,208,.6);transition:transform .05s;"></div>
+  </div>
+</div>
+
+<div id="loading">warming the slide…</div>
+
+<div class="screen hidden" id="start">
+  <div class="tag">specimen circuit · 400×</div>
+  <h1>MICROSPRINT<small>— 64 —</small></h1>
+  <p>Three laps of a winding plasma circuit. Grab item boxes, hold your drift through
+     the bends for a turbo kick, and don't get spun out.</p>
+  <div class="keys" id="kb">
+    <kbd>▲</kbd> gas &nbsp; <kbd>▼</kbd> brake &nbsp; <kbd>◀</kbd><kbd>▶</kbd> steer<br>
+    <kbd>shift</kbd> hop / drift &nbsp; <kbd>space</kbd> use item
+  </div>
+  <button class="go" id="startbtn">Start engine</button>
+</div>
+
+<!-- CHARACTER SELECT - Pick your stereotype sperm warrior -->
+<div class="screen hidden" id="select">
+  <div class="tag">choose your specimen</div>
+  <h1 style="font-size:clamp(32px,8vw,64px);">PICK YOUR SPERM</h1>
+  <p style="max-width:520px;">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
+  <div id="sperm-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;max-width:640px;width:100%;margin:18px 0;">
+    <!-- Populated by JS -->
+  </div>
+  <button class="go" id="racebtn" disabled style="opacity:0.5;">Lock in & Race</button>
+</div>
+
+<div class="screen hidden" id="cd"><div id="count">3</div></div>
+
+<div class="screen hidden" id="finish">
+  <div class="tag" id="ftag">race complete</div>
+  <h1 id="fhead">2nd</h1>
+  <div class="board" id="board"></div>
+  <button class="go" id="againbtn">Race again</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/* ------------------------------------------------------------------ *
- *  Character data + SVG art. Kept in JS so the markup stays tidy and
- *  the roster is trivial to extend.
- * ------------------------------------------------------------------ */
-const OUT = '#2a1712';        // warm outline used everywhere
-const LINE = `stroke="${OUT}" stroke-linecap="round" stroke-linejoin="round"`;
+(()=>{
+"use strict";
+const T=THREE;
+if(!T){document.getElementById('loading').textContent='three.js failed to load';return;}
+const $=id=>document.getElementById(id);
+const isTouch=matchMedia('(pointer:coarse)').matches;
+if(isTouch)document.body.classList.add('touch');
 
-/* Shared pieces ---------------------------------------------------- */
-
-// Tapering tail ribbon. `c` = colour, `path` describes the centre spine.
-function tail(c, shade){
-  return `
-  <g class="tail">
-    <path d="M118,150
-             C150,168 168,196 150,224
-             C140,240 120,246 108,236
-             C118,240 134,236 140,224
-             C152,200 138,176 110,162 Z"
-          fill="${c}" ${LINE} stroke-width="3"/>
-    <path d="M120,158 C146,176 158,198 146,220"
-          fill="none" stroke="${shade}" stroke-width="3" stroke-linecap="round" opacity=".5"/>
-    <path d="M124,156 C144,172 154,194 146,214"
-          fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".5"/>
+/* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
+ *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
+ *  shared kit: base fill + a single shadow wedge + a gloss highlight, wrapped
+ *  in warm dark outlines. Mirrors each in-race character's personality.
+ * ------------------------------------------------------------------------- */
+const OP_OUT='#2a1712';
+const OP_LINE=`stroke="${OP_OUT}" stroke-linecap="round" stroke-linejoin="round"`;
+function opTail(c,shade){
+  return `<g class="optail">
+    <path d="M118,150 C150,168 168,196 150,224 C140,240 120,246 108,236 C118,240 134,236 140,224 C152,200 138,176 110,162 Z" fill="${c}" ${OP_LINE} stroke-width="3"/>
+    <path d="M120,158 C146,176 158,198 146,220" fill="none" stroke="${shade}" stroke-width="3" stroke-linecap="round" opacity=".5"/>
+    <path d="M124,156 C144,172 154,194 146,214" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".5"/>
   </g>`;
 }
-
-// Rounded head: base skin, a soft cel shadow on the right, and gloss.
-function head(skin, shadow){
-  return `
-  <ellipse cx="100" cy="92" rx="64" ry="58" fill="${skin}" ${LINE} stroke-width="3.5"/>
-  <path d="M100,34 C140,34 164,62 164,92 C164,128 134,150 100,150
-           C150,140 156,96 138,60 C126,42 112,36 100,34 Z"
-        fill="${shadow}" opacity=".55"/>
-  <ellipse cx="78" cy="70" rx="26" ry="20" fill="url(#gloss)"/>`;
+function opHead(skin,shadow){
+  return `<ellipse cx="100" cy="92" rx="64" ry="58" fill="${skin}" ${OP_LINE} stroke-width="3.5"/>
+  <path d="M100,34 C140,34 164,62 164,92 C164,128 134,150 100,150 C150,140 156,96 138,60 C126,42 112,36 100,34 Z" fill="${shadow}" opacity=".55"/>
+  <ellipse cx="78" cy="70" rx="26" ry="20" fill="url(#opgloss)"/>`;
 }
-
-// Eyes. mode: 'star' (sparkle pupils), 'normal', 'shades', 'smolder', 'focus'.
-function eyes(mode){
+function opEyes(mode){
   if(mode==='shades'){
-    return `
-    <path d="M58,80 q42,-16 84,0 v10 q-42,14 -84,0 Z" fill="#10141a" ${LINE} stroke-width="3"/>
+    return `<path d="M58,80 q42,-16 84,0 v10 q-42,14 -84,0 Z" fill="#10141a" ${OP_LINE} stroke-width="3"/>
     <rect x="60" y="80" width="34" height="16" rx="6" fill="#1c2530"/>
     <rect x="106" y="80" width="34" height="16" rx="6" fill="#1c2530"/>
     <path d="M64,83 l10,8 M112,83 l10,8" stroke="#7fd8ff" stroke-width="2.5" opacity=".8"/>`;
   }
-  const sclera = `
-    <ellipse cx="80" cy="84" rx="15" ry="17" fill="#fff" ${LINE} stroke-width="3"/>
-    <ellipse cx="120" cy="84" rx="15" ry="17" fill="#fff" ${LINE} stroke-width="3"/>`;
+  const sclera=`<ellipse cx="80" cy="84" rx="15" ry="17" fill="#fff" ${OP_LINE} stroke-width="3"/>
+    <ellipse cx="120" cy="84" rx="15" ry="17" fill="#fff" ${OP_LINE} stroke-width="3"/>`;
   if(mode==='star'){
-    return sclera + `
-    <g fill="${OUT}"><use href="#star" x="80" y="86"/><use href="#star" x="120" y="86"/></g>
+    return sclera+`<g fill="${OP_OUT}"><use href="#opstar" x="80" y="86"/><use href="#opstar" x="120" y="86"/></g>
     <circle cx="83" cy="82" r="2" fill="#fff"/><circle cx="123" cy="82" r="2" fill="#fff"/>`;
   }
   if(mode==='smolder'){
-    return sclera + `
-    <path d="M65,82 q15,-7 30,0 M105,82 q15,-7 30,0" fill="none" ${LINE} stroke-width="4"/>
-    <circle cx="82" cy="88" r="6.5" fill="${OUT}"/><circle cx="118" cy="88" r="6.5" fill="${OUT}"/>
+    return sclera+`<path d="M65,82 q15,-7 30,0 M105,82 q15,-7 30,0" fill="none" ${OP_LINE} stroke-width="4"/>
+    <circle cx="82" cy="88" r="6.5" fill="${OP_OUT}"/><circle cx="118" cy="88" r="6.5" fill="${OP_OUT}"/>
     <circle cx="84" cy="86" r="2" fill="#fff"/><circle cx="120" cy="86" r="2" fill="#fff"/>`;
   }
   if(mode==='focus'){
-    return sclera + `
-    <ellipse cx="80" cy="85" rx="6" ry="9" fill="${OUT}"/><ellipse cx="120" cy="85" rx="6" ry="9" fill="${OUT}"/>
+    return sclera+`<ellipse cx="80" cy="85" rx="6" ry="9" fill="${OP_OUT}"/><ellipse cx="120" cy="85" rx="6" ry="9" fill="${OP_OUT}"/>
     <circle cx="82" cy="81" r="2" fill="#fff"/><circle cx="122" cy="81" r="2" fill="#fff"/>`;
   }
-  // normal
-  return sclera + `
-    <circle cx="81" cy="86" r="7" fill="${OUT}"/><circle cx="119" cy="86" r="7" fill="${OUT}"/>
+  return sclera+`<circle cx="81" cy="86" r="7" fill="${OP_OUT}"/><circle cx="119" cy="86" r="7" fill="${OP_OUT}"/>
     <circle cx="84" cy="83" r="2.4" fill="#fff"/><circle cx="122" cy="83" r="2.4" fill="#fff"/>`;
 }
+function opBrows(d){ return `<path d="${d}" fill="none" ${OP_LINE} stroke-width="5"/>`; }
+function opMouth(d,w){ return `<path d="${d}" fill="none" ${OP_LINE} stroke-width="${w||3}"/>`; }
 
-function brows(d){ return `<path d="${d}" fill="none" ${LINE} stroke-width="5"/>`; }
-function mouth(d, w=3){ return `<path d="${d}" fill="none" ${LINE} stroke-width="${w}"/>`; }
+const OP_ART={
+  // Guido Tony — slicked pompadour, smoulder, stubble, gold chain
+  guido:`${opTail('#e7a877','#b87646')}${opHead('#e7a877','#b87646')}
+    <path d="M60,108 q40,34 80,0 q-6,30 -40,30 q-34,0 -40,-30 Z" fill="#3a2a20" opacity=".28"/>
+    <path d="M44,70 C46,30 86,16 100,24 C120,12 158,30 156,72 C150,52 132,44 120,48 C126,40 112,36 104,42 C96,34 84,40 86,50 C72,42 56,52 44,70 Z" fill="#15110f" ${OP_LINE} stroke-width="3.5"/>
+    ${opBrows('M62,70 q16,-9 30,-2 M108,68 q16,-7 30,2')}${opEyes('smolder')}
+    ${opMouth('M84,116 q16,10 32,-2',3.5)}
+    <path d="M70,140 q30,22 60,0" fill="none" stroke="#ffcf5a" stroke-width="6" stroke-linecap="round" stroke-dasharray="1 7"/>`,
+  // Seamus O'Lucky — green top hat, orange beard, freckles, star eyes, clover
+  irish:`${opTail('#f3d2ad','#cf9f74')}${opHead('#f3d2ad','#cf9f74')}
+    <g fill="#c9794a" opacity=".7"><circle cx="66" cy="100" r="1.7"/><circle cx="74" cy="106" r="1.7"/><circle cx="126" cy="100" r="1.7"/><circle cx="134" cy="106" r="1.7"/></g>
+    <path d="M52,96 C50,140 80,156 100,156 C120,156 150,140 148,96 C150,124 124,140 100,140 C76,140 50,124 52,96 Z" fill="#d2622a" ${OP_LINE} stroke-width="3.5"/>
+    ${opEyes('star')}${opBrows('M64,68 q14,-7 28,-1 M108,67 q14,-6 28,1')}${opMouth('M86,118 q14,9 28,0',3.5)}
+    <rect x="56" y="20" width="88" height="20" rx="5" fill="#1f7a3a" ${OP_LINE} stroke-width="3.5"/>
+    <path d="M64,24 h72 v-2 c0,-16 -18,-22 -36,-22 S64,6 64,22 Z" fill="#23924a" ${OP_LINE} stroke-width="3.5"/>
+    <rect x="60" y="26" width="80" height="10" fill="#15110f"/>
+    <rect x="92" y="25" width="16" height="13" rx="2" fill="#ffcf5a" stroke="${OP_OUT}" stroke-width="2.5"/>
+    <rect x="97" y="29" width="6" height="5" fill="#15110f"/>
+    <g transform="translate(150,118)" fill="#2fb255" stroke="${OP_OUT}" stroke-width="2"><circle cx="-5" cy="-3" r="5"/><circle cx="5" cy="-3" r="5"/><circle cx="0" cy="4" r="5"/><path d="M0,6 l2,12" stroke="#2fb255" stroke-width="3"/></g>`,
+  // Juan Stallion — swept hair, thick mustache, red/gold collar, rose
+  latin:`${opTail('#d99863','#a86b3c')}${opHead('#d99863','#a86b3c')}
+    <path d="M44,74 C42,34 96,18 128,34 C150,46 156,64 156,80 C146,58 120,48 96,52 C76,56 56,62 44,90 Z" fill="#3c2415" ${OP_LINE} stroke-width="3.5"/>
+    ${opBrows('M62,72 q16,-8 30,-2 M108,70 q16,-6 30,2')}${opEyes('smolder')}
+    <path d="M70,118 q30,-12 60,0 q-12,12 -30,12 q-18,0 -30,-12 Z" fill="#2e1c10" ${OP_LINE} stroke-width="3"/>
+    ${opMouth('M86,128 q14,5 28,0',3)}
+    <path d="M64,142 q36,24 72,0 v8 q-36,22 -72,0 Z" fill="#cf2e2e" ${OP_LINE} stroke-width="3"/>
+    <path d="M64,146 q36,22 72,0" fill="none" stroke="#ffcf5a" stroke-width="4"/>
+    <g transform="translate(150,120)"><circle r="7" fill="#e23b4e" stroke="${OP_OUT}" stroke-width="2"/><circle r="3" fill="#ff7a88"/><path d="M0,7 l4,16" stroke="#2fb255" stroke-width="3"/></g>`,
+  // Wei Long — center-part black hair w/ braid, focused eyes, dragon companion
+  dragon:`${opTail('#ecc39a','#c0935f')}${opHead('#ecc39a','#c0935f')}
+    <path d="M46,72 C44,32 96,16 100,16 C104,16 156,32 154,72 C146,48 120,40 100,40 C80,40 54,48 46,72 Z" fill="#14110f" ${OP_LINE} stroke-width="3.5"/>
+    <path d="M100,18 V40" stroke="#3a332f" stroke-width="2.5" opacity=".6"/>
+    <path d="M150,64 C172,80 176,110 162,134" fill="none" stroke="#14110f" stroke-width="9" stroke-linecap="round"/>
+    ${opBrows('M64,70 q14,-6 28,-1 M108,69 q14,-5 28,1')}${opEyes('focus')}${opMouth('M86,118 q14,5 28,0',3.5)}
+    <path d="M64,142 q36,22 72,0 v8 q-36,22 -72,0 Z" fill="#c62f2f" ${OP_LINE} stroke-width="3"/>
+    <path d="M100,144 v18" stroke="#ffcf5a" stroke-width="3"/>
+    <g transform="translate(150,116)"><path d="M-12,8 C-2,2 8,4 12,-6 C6,2 -2,0 -10,4 Z" fill="#3aa0e0" stroke="${OP_OUT}" stroke-width="2"/><circle cx="10" cy="-6" r="6" fill="#3aa0e0" stroke="${OP_OUT}" stroke-width="2"/><circle cx="12" cy="-7" r="1.6" fill="#fff"/><path d="M6,-10 l-4,-6 M12,-12 l2,-7" stroke="${OP_OUT}" stroke-width="2"/></g>`,
+  // Darius King — gem crown, royal mustache, star eyes, purple/gold collar
+  king:`${opTail('#7a5037','#54341f')}${opHead('#7a5037','#54341f')}
+    ${opBrows('M62,70 q16,-7 30,-1 M108,69 q16,-6 30,1')}${opEyes('star')}
+    <path d="M72,116 q28,-10 56,0 q-12,11 -28,11 q-16,0 -28,-11 Z" fill="#1d130c" ${OP_LINE} stroke-width="3"/>
+    ${opMouth('M86,126 q14,6 28,0',3)}
+    <path d="M52,56 L60,24 L78,46 L100,16 L122,46 L140,24 L148,56 Z" fill="#ffcf5a" ${OP_LINE} stroke-width="3.5"/>
+    <path d="M52,56 h96 v8 h-96 Z" fill="#f0b431" ${OP_LINE} stroke-width="3.5"/>
+    <circle cx="60" cy="26" r="4" fill="#e23b4e" stroke="${OP_OUT}" stroke-width="2"/>
+    <circle cx="100" cy="18" r="4.5" fill="#3aa0e0" stroke="${OP_OUT}" stroke-width="2"/>
+    <circle cx="140" cy="26" r="4" fill="#e23b4e" stroke="${OP_OUT}" stroke-width="2"/>
+    <path d="M62,142 q38,24 76,0 v10 q-38,22 -76,0 Z" fill="#5a2a8a" ${OP_LINE} stroke-width="3"/>
+    <path d="M62,146 q38,22 76,0" fill="none" stroke="#ffcf5a" stroke-width="5"/>`,
+  // Chad Brody — blonde surfer mop, shades, surfboard, striped tank
+  chad:`${opTail('#e9b483','#bd8550')}
+    <g transform="rotate(18 150 120)"><rect x="142" y="40" width="20" height="150" rx="10" fill="#ffd35a" stroke="${OP_OUT}" stroke-width="3"/><line x1="152" y1="46" x2="152" y2="184" stroke="#e0541f" stroke-width="3"/></g>
+    ${opHead('#e9b483','#bd8550')}
+    <path d="M40,80 C36,34 92,14 100,18 C112,12 164,34 158,84 C150,54 150,70 138,58 C140,74 128,64 124,52 C120,70 108,58 106,46 C100,66 90,56 90,46 C84,66 72,58 72,50 C62,64 54,60 56,76 C50,62 46,66 40,80 Z" fill="#f4cf63" ${OP_LINE} stroke-width="3.5"/>
+    ${opEyes('shades')}${opMouth('M82,118 q18,12 36,-2',3.5)}
+    <path d="M64,142 q36,24 72,0 v10 q-36,22 -72,0 Z" fill="#f3f3f3" ${OP_LINE} stroke-width="3"/>
+    <path d="M66,148 q34,18 68,0 M66,154 q34,16 68,0" fill="none" stroke="#2f6fd0" stroke-width="4"/>`
+};
+function opSvg(id){ return `<svg class="opsvg" viewBox="0 0 200 260" aria-hidden="true">${OP_ART[id]||''}</svg>`; }
+const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
 
-/* ------------------------------ roster ---------------------------- */
-const CHARS = [
-  {
-    id:'guido', name:'Guido Tony',
-    perk:'Jersey’s finest. Mad drift skills + <b>gold chain swagger</b>.',
-    skin:'#e7a877', shadow:'#b87646',
-    art:`
-      ${tail('#e7a877','#b87646')}
-      ${head('#e7a877','#b87646')}
-      <!-- stubble -->
-      <path d="M60,108 q40,34 80,0 q-6,30 -40,30 q-34,0 -40,-30 Z" fill="#3a2a20" opacity=".28"/>
-      <!-- slicked black pompadour -->
-      <path d="M44,70 C46,30 86,16 100,24 C120,12 158,30 156,72
-               C150,52 132,44 120,48 C126,40 112,36 104,42
-               C96,34 84,40 86,50 C72,42 56,52 44,70 Z"
-            fill="#15110f" ${LINE} stroke-width="3.5"/>
-      <path d="M96,26 C108,30 116,40 118,50" fill="none" stroke="#3a332f" stroke-width="3" opacity=".7"/>
-      ${brows('M62,70 q16,-9 30,-2 M108,68 q16,-7 30,2')}
-      ${eyes('smolder')}
-      ${mouth('M84,116 q16,10 32,-2',3.5)}
-      <!-- gold chain -->
-      <path d="M70,140 q30,22 60,0" fill="none" stroke="${'#ffcf5a'}" stroke-width="6"
-            stroke-linecap="round" stroke-dasharray="1 7"/>
-      <path d="M70,140 q30,22 60,0" fill="none" stroke="#caa12f" stroke-width="2"
-            stroke-linecap="round" stroke-dasharray="1 7"/>
-    `
-  },
-  {
-    id:'seamus', name:'Seamus O’Lucky',
-    perk:'Lucky Irish charm. Items spawn more often, <b>green beast</b>.',
-    skin:'#f3d2ad', shadow:'#cf9f74',
-    art:`
-      ${tail('#f3d2ad','#cf9f74')}
-      ${head('#f3d2ad','#cf9f74')}
-      <!-- freckles -->
-      <g fill="#c9794a" opacity=".7"><circle cx="66" cy="100" r="1.7"/><circle cx="74" cy="106" r="1.7"/>
-        <circle cx="126" cy="100" r="1.7"/><circle cx="134" cy="106" r="1.7"/></g>
-      <!-- big orange beard -->
-      <path d="M52,96 C50,140 80,156 100,156 C120,156 150,140 148,96
-               C150,124 124,140 100,140 C76,140 50,124 52,96 Z"
-            fill="#d2622a" ${LINE} stroke-width="3.5"/>
-      <path d="M70,128 q30,18 60,0" fill="none" stroke="#a8481c" stroke-width="3" opacity=".6"/>
-      ${eyes('star')}
-      ${brows('M64,68 q14,-7 28,-1 M108,67 q14,-6 28,1')}
-      ${mouth('M86,118 q14,9 28,0',3.5)}
-      <!-- green top hat with buckle -->
-      <rect x="56" y="20" width="88" height="20" rx="5" fill="#1f7a3a" ${LINE} stroke-width="3.5"/>
-      <path d="M64,24 h72 v-2 c0,-16 -18,-22 -36,-22 S64,6 64,22 Z"
-            fill="#23924a" ${LINE} stroke-width="3.5"/>
-      <rect x="60" y="26" width="80" height="10" fill="#15110f"/>
-      <rect x="92" y="25" width="16" height="13" rx="2" fill="#ffcf5a" stroke="${OUT}" stroke-width="2.5"/>
-      <rect x="97" y="29" width="6" height="5" fill="#15110f"/>
-      <!-- clover -->
-      <g transform="translate(150,118)" fill="#2fb255" stroke="${OUT}" stroke-width="2">
-        <circle cx="-5" cy="-3" r="5"/><circle cx="5" cy="-3" r="5"/>
-        <circle cx="0" cy="4" r="5"/><path d="M0,6 l2,12" stroke="#2fb255" stroke-width="3"/>
-      </g>
-    `
-  },
-  {
-    id:'juan', name:'Juan Stallion',
-    perk:'Latin lover energy. Blazing <b>straight-line speed</b>.',
-    skin:'#d99863', shadow:'#a86b3c',
-    art:`
-      ${tail('#d99863','#a86b3c')}
-      ${head('#d99863','#a86b3c')}
-      <!-- swept brown hair -->
-      <path d="M44,74 C42,34 96,18 128,34 C150,46 156,64 156,80
-               C146,58 120,48 96,52 C76,56 56,62 44,90 Z"
-            fill="#3c2415" ${LINE} stroke-width="3.5"/>
-      <path d="M96,52 C112,50 132,56 150,76" fill="none" stroke="#5a3a22" stroke-width="3" opacity=".7"/>
-      ${brows('M62,72 q16,-8 30,-2 M108,70 q16,-6 30,2')}
-      ${eyes('smolder')}
-      <!-- thick mustache -->
-      <path d="M70,118 q30,-12 60,0 q-12,12 -30,12 q-18,0 -30,-12 Z"
-            fill="#2e1c10" ${LINE} stroke-width="3"/>
-      ${mouth('M86,128 q14,5 28,0',3)}
-      <!-- red & gold striped collar -->
-      <path d="M64,142 q36,24 72,0 v8 q-36,22 -72,0 Z" fill="#cf2e2e" ${LINE} stroke-width="3"/>
-      <path d="M64,146 q36,22 72,0" fill="none" stroke="#ffcf5a" stroke-width="4"/>
-      <!-- rose -->
-      <g transform="translate(150,120)"><circle r="7" fill="#e23b4e" stroke="${OUT}" stroke-width="2"/>
-        <circle r="3" fill="#ff7a88"/><path d="M0,7 l4,16" stroke="#2fb255" stroke-width="3"/></g>
-    `
-  },
-  {
-    id:'wei', name:'Wei Long',
-    perk:'Dragon spirit. Laser-precise turns, <b>hard to spin out</b>.',
-    skin:'#ecc39a', shadow:'#c0935f',
-    art:`
-      ${tail('#ecc39a','#c0935f')}
-      ${head('#ecc39a','#c0935f')}
-      <!-- black hair, centre-parted -->
-      <path d="M46,72 C44,32 96,16 100,16 C104,16 156,32 154,72
-               C146,48 120,40 100,40 C80,40 54,48 46,72 Z"
-            fill="#14110f" ${LINE} stroke-width="3.5"/>
-      <path d="M100,18 V40" stroke="#3a332f" stroke-width="2.5" opacity=".6"/>
-      <!-- braid trailing off to the side -->
-      <path d="M150,64 C172,80 176,110 162,134" fill="none" stroke="#14110f" stroke-width="9"
-            stroke-linecap="round"/>
-      <g stroke="#3a332f" stroke-width="2" opacity=".6">
-        <path d="M156,78 l10,4 M158,94 l10,4 M158,110 l8,6"/></g>
-      ${brows('M64,70 q14,-6 28,-1 M108,69 q14,-5 28,1')}
-      ${eyes('focus')}
-      ${mouth('M86,118 q14,5 28,0',3.5)}
-      <!-- red martial-arts collar -->
-      <path d="M64,142 q36,22 72,0 v8 q-36,22 -72,0 Z" fill="#c62f2f" ${LINE} stroke-width="3"/>
-      <path d="M100,144 v18" stroke="#ffcf5a" stroke-width="3"/>
-      <!-- tiny blue dragon companion -->
-      <g transform="translate(150,116)">
-        <path d="M-12,8 C-2,2 8,4 12,-6 C6,2 -2,0 -10,4 Z" fill="#3aa0e0" stroke="${OUT}" stroke-width="2"/>
-        <circle cx="10" cy="-6" r="6" fill="#3aa0e0" stroke="${OUT}" stroke-width="2"/>
-        <circle cx="12" cy="-7" r="1.6" fill="#fff"/>
-        <path d="M6,-10 l-4,-6 M12,-12 l2,-7" stroke="${OUT}" stroke-width="2"/>
-      </g>
-    `
-  },
-  {
-    id:'darius', name:'Darius King',
-    perk:'Big baller. When you boost, you <b>BOOST</b>. King stuff.',
-    skin:'#7a5037', shadow:'#54341f',
-    art:`
-      ${tail('#7a5037','#54341f')}
-      ${head('#7a5037','#54341f')}
-      ${brows('M62,70 q16,-7 30,-1 M108,69 q16,-6 30,1')}
-      ${eyes('star')}
-      <!-- royal mustache -->
-      <path d="M72,116 q28,-10 56,0 q-12,11 -28,11 q-16,0 -28,-11 Z"
-            fill="#1d130c" ${LINE} stroke-width="3"/>
-      ${mouth('M86,126 q14,6 28,0',3)}
-      <!-- gold crown -->
-      <path d="M52,56 L60,24 L78,46 L100,16 L122,46 L140,24 L148,56 Z"
-            fill="#ffcf5a" ${LINE} stroke-width="3.5"/>
-      <path d="M52,56 h96 v8 h-96 Z" fill="#f0b431" ${LINE} stroke-width="3.5"/>
-      <circle cx="60" cy="26" r="4" fill="#e23b4e" stroke="${OUT}" stroke-width="2"/>
-      <circle cx="100" cy="18" r="4.5" fill="#3aa0e0" stroke="${OUT}" stroke-width="2"/>
-      <circle cx="140" cy="26" r="4" fill="#e23b4e" stroke="${OUT}" stroke-width="2"/>
-      <circle cx="80" cy="60" r="3" fill="#e23b4e"/><circle cx="100" cy="60" r="3" fill="#3aa0e0"/>
-      <circle cx="120" cy="60" r="3" fill="#e23b4e"/>
-      <!-- purple & gold royal collar -->
-      <path d="M62,142 q38,24 76,0 v10 q-38,22 -76,0 Z" fill="#5a2a8a" ${LINE} stroke-width="3"/>
-      <path d="M62,146 q38,22 76,0" fill="none" stroke="#ffcf5a" stroke-width="5"/>
-    `
-  },
-  {
-    id:'chad', name:'Chad Brody',
-    perk:'Surfer-bro vibes. Top-end speed for days, <b>chill but quick</b>.',
-    skin:'#e9b483', shadow:'#bd8550',
-    art:`
-      ${tail('#e9b483','#bd8550')}
-      <!-- surfboard behind -->
-      <g transform="rotate(18 150 120)">
-        <rect x="142" y="40" width="20" height="150" rx="10" fill="#ffd35a" stroke="${OUT}" stroke-width="3"/>
-        <line x1="152" y1="46" x2="152" y2="184" stroke="#e0541f" stroke-width="3"/>
-      </g>
-      ${head('#e9b483','#bd8550')}
-      <!-- blonde surfer mop (homage to the reference) -->
-      <path d="M40,80 C36,34 92,14 100,18 C112,12 164,34 158,84
-               C150,54 150,70 138,58 C140,74 128,64 124,52
-               C120,70 108,58 106,46 C100,66 90,56 90,46
-               C84,66 72,58 72,50 C62,64 54,60 56,76
-               C50,62 46,66 40,80 Z"
-            fill="#f4cf63" ${LINE} stroke-width="3.5"/>
-      <g stroke="#d39a2a" stroke-width="2.5" opacity=".6" fill="none">
-        <path d="M70,40 q6,16 2,30 M100,30 q4,18 0,32 M130,40 q-6,16 -2,30"/></g>
-      ${eyes('shades')}
-      ${mouth('M82,118 q18,12 36,-2',3.5)}
-      <!-- blue & white striped tank collar -->
-      <path d="M64,142 q36,24 72,0 v10 q-36,22 -72,0 Z" fill="#f3f3f3" ${LINE} stroke-width="3"/>
-      <path d="M66,148 q34,18 68,0 M66,154 q34,16 68,0" fill="none" stroke="#2f6fd0" stroke-width="4"/>
-    `
-  }
-];
+/* ============== SCENE ============== */
+const app=$('app');
+const renderer=new T.WebGLRenderer({antialias:true});
+renderer.setClearColor(0x0a3340);
+renderer.outputEncoding=T.sRGBEncoding;            // richer, less muddy color
+const RES=isTouch?0.88:0.95;                       // sharper for iPad + modern displays
+renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES);
+app.appendChild(renderer.domElement);
 
-/* ----------------------------- render ----------------------------- */
-const grid = document.getElementById('grid');
-const lockin = document.getElementById('lockin');
-const hint = document.getElementById('hint');
-let selected = null;
+const scene=new T.Scene();
+const SKY=0x123a44;
+scene.background=new T.Color(SKY);
+scene.fog=new T.Fog(SKY, 120, 560);
 
-CHARS.forEach(c=>{
-  const card = document.createElement('button');
-  card.className = 'card';
-  card.type = 'button';
-  card.dataset.id = c.id;
-  card.setAttribute('aria-pressed','false');
-  card.innerHTML = `
-    <div class="check">✓</div>
-    <div class="portrait">
-      <svg viewBox="0 0 200 260" role="img" aria-label="${c.name}">${c.art}</svg>
-      <div class="name">${c.name}</div>
-    </div>
-    <div class="info"><p class="perk">${c.perk}</p></div>`;
-  card.addEventListener('click',()=>select(c, card));
-  grid.appendChild(card);
-});
+const camera=new T.PerspectiveCamera(64, 1, 0.5, 1400);
+camera.position.set(0,20,30);
 
-function select(c, card){
-  document.querySelectorAll('.card').forEach(el=>{
-    el.classList.remove('sel'); el.setAttribute('aria-pressed','false');
-  });
-  card.classList.add('sel'); card.setAttribute('aria-pressed','true');
-  selected = c.id;
-  lockin.disabled = false;
-  lockin.childNodes[0].nodeValue = 'Lock in & Race ';
-  hint.textContent = c.name + ' is ready';
+scene.add(new T.HemisphereLight(0x9fe8df,0x10303a,1.0));
+const sun=new T.DirectionalLight(0xfff2dc,0.75); sun.position.set(80,140,40); scene.add(sun);
+// Extra lights for better graphics pop
+const rim = new T.DirectionalLight(0x6df2d0,0.55); rim.position.set(-60,80,-80); scene.add(rim);
+const fill = new T.PointLight(0xffe0b0,0.30,400); fill.position.set(20,60,-120); scene.add(fill);
+const flesh = new T.PointLight(0xff6f8a,0.35,500); flesh.position.set(-30,-10,40); scene.add(flesh); // fleshy underglow
+
+function resize(){
+  const w=innerWidth,h=innerHeight;
+  renderer.setSize(w,h);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize',resize); resize();
+
+/* ============== FX ENGINE (additive glow + pooled particles) ============== */
+function radialTex(stops){
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const g=c.getContext('2d'); const grd=g.createRadialGradient(32,32,0,32,32,32);
+  stops.forEach(s=>grd.addColorStop(s[0],s[1]));
+  g.fillStyle=grd; g.fillRect(0,0,64,64);
+  const t=new T.Texture(c); t.needsUpdate=true; return t;
+}
+const TEX_GLOW=radialTex([[0,'rgba(255,255,255,1)'],[0.25,'rgba(255,255,255,0.7)'],[0.6,'rgba(255,255,255,0.18)'],[1,'rgba(255,255,255,0)']]);
+const TEX_SPARK=radialTex([[0,'rgba(255,255,255,1)'],[0.4,'rgba(255,255,255,0.55)'],[1,'rgba(255,255,255,0)']]);
+
+function glowSprite(hex,scale){
+  const m=new T.SpriteMaterial({map:TEX_GLOW,color:new T.Color(hex),transparent:true,
+    blending:T.AdditiveBlending,depthWrite:false,depthTest:true});
+  const s=new T.Sprite(m); s.scale.setScalar(scale||10); return s;
 }
 
-/* ------------------------- race-start flow ------------------------ *
- *  There's no race track wired up yet, so LOCK IN plays a full-screen
- *  3-2-1-GO start sequence with the chosen racer, stashes the pick in
- *  localStorage (so a real game can read `spermRacer.pick`), then waits
- *  on a "GO!" screen the player can back out of.
- * ------------------------------------------------------------------ */
-const race    = document.getElementById('race');
-const raceArt = document.getElementById('raceArt');
-const raceName= document.getElementById('raceName');
-const count   = document.getElementById('count');
-const raceNote= document.getElementById('raceNote');
-const raceBack= document.getElementById('raceBack');
-let countTimer = null;
+/* pooled particle system */
+const PMAX=260;
+const pPool=[], pLive=[];
+(function initParticles(){
+  for(let i=0;i<PMAX;i++){
+    const mat=new T.SpriteMaterial({map:TEX_SPARK,transparent:true,blending:T.AdditiveBlending,depthWrite:false});
+    const sp=new T.Sprite(mat); sp.visible=false; scene.add(sp);
+    pPool.push({sp,age:0,life:1,vx:0,vy:0,vz:0,s0:1,s1:0,grav:0});
+  }
+})();
+function emit(x,y,z,opt){
+  const p=pPool.pop(); if(!p)return;
+  p.sp.visible=true; p.sp.position.set(x,y,z);
+  p.sp.material.color.set(opt.color||0xffffff);
+  p.age=0; p.life=opt.life||0.5;
+  p.vx=opt.vx||0; p.vy=opt.vy||0; p.vz=opt.vz||0;
+  p.s0=opt.s0||4; p.s1=(opt.s1!=null)?opt.s1:0; p.grav=opt.grav||0;
+  p.sp.scale.setScalar(p.s0);
+  p.sp.material.opacity=opt.op!=null?opt.op:1;
+  p.op0=p.sp.material.opacity;
+  pLive.push(p);
+}
+function updateParticles(dt){
+  for(let i=pLive.length-1;i>=0;i--){
+    const p=pLive[i]; p.age+=dt; const t=p.age/p.life;
+    if(t>=1){ p.sp.visible=false; pLive.splice(i,1); pPool.push(p); continue; }
+    p.vy-=p.grav*dt;
+    p.sp.position.x+=p.vx*dt; p.sp.position.y+=p.vy*dt; p.sp.position.z+=p.vz*dt;
+    const sc=p.s0+(p.s1-p.s0)*t; p.sp.scale.setScalar(sc);
+    p.sp.material.opacity=p.op0*(1-t);
+  }
+}
+function burst(x,y,z,color,n,spread,life,size){
+  for(let k=0;k<n;k++){
+    const a=Math.random()*Math.PI*2, e=Math.random()*Math.PI-Math.PI/2;
+    const sp=spread*(0.4+Math.random()*0.6);
+    emit(x,y,z,{color,life:life*(0.6+Math.random()*0.6),
+      vx:Math.cos(a)*Math.cos(e)*sp, vy:Math.abs(Math.sin(e))*sp*0.8+8, vz:Math.sin(a)*Math.cos(e)*sp,
+      s0:size*(0.7+Math.random()*0.6), s1:0, grav:30});
+  }
+}
 
-lockin.addEventListener('click',()=>{
-  if(!selected) return;
-  const c = CHARS.find(x=>x.id===selected);
-  try{ localStorage.setItem('spermRacer.pick', selected); }catch(e){}
+/* camera shake */
+let camShake=0;
+function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 
-  raceArt.innerHTML = c.art;
-  raceName.textContent = c.name;
-  raceNote.textContent = '';
-  raceBack.classList.remove('show');
-  race.classList.add('on');
+/* HUD fx element refs */
+const elSpeed=$('speed'), elFlash=$('boostflash'), elVig=$('vignette'),
+      elDM=$('drift-meter'), elDF=$('drift-fill'), elBanner=$('banner');
+const gaugeCtx=$('gauge').getContext('2d');
+let bannerTimer=0;
+function showBanner(txt){ elBanner.textContent=txt; elBanner.classList.remove('show');
+  void elBanner.offsetWidth; elBanner.classList.add('show'); }
 
-  const seq = ['3','2','1','GO!'];
-  let i = 0;
-  const tick = ()=>{
-    count.textContent = seq[i];
-    count.classList.remove('pulse'); void count.offsetWidth; count.classList.add('pulse');
-    if(seq[i] === 'GO!'){
-      raceNote.textContent = '🏁 And they’re off! (Hook up the race track to start the real game — your pick is saved.)';
-      raceBack.classList.add('show');
-      return;
+/* arc speed gauge */
+function drawGauge(frac,boosting){
+  const g=gaugeCtx, S=86, cx=S/2, cy=S/2+6, r=30;
+  g.clearRect(0,0,S,S);
+  const a0=Math.PI*0.8, a1=Math.PI*2.2;
+  g.lineCap='round';
+  g.lineWidth=6; g.strokeStyle='rgba(43,110,102,.5)';
+  g.beginPath(); g.arc(cx,cy,r,a0,a1); g.stroke();
+  const a=a0+(a1-a0)*Math.max(0,Math.min(1,frac));
+  const grd=g.createLinearGradient(0,0,S,S);
+  if(boosting){grd.addColorStop(0,'#ffb24a');grd.addColorStop(1,'#ffe28a');}
+  else{grd.addColorStop(0,'#3fd8c0');grd.addColorStop(1,'#9bffe6');}
+  g.lineWidth=6; g.strokeStyle=grd; g.shadowColor=boosting?'#ffb24a':'#6df2d0'; g.shadowBlur=10;
+  g.beginPath(); g.arc(cx,cy,r,a0,a); g.stroke(); g.shadowBlur=0;
+}
+
+/* ============== TRACK ============== */
+const HW=22;                                       // road half-width
+const CTRL=[
+  [   0,0,   0],[ 140,0, -40],[ 260,6,-180],[ 180,10,-330],
+  [  -20,8,-380],[-200,2,-320],[-300,0,-160],[-230,0,  10],
+  [ -90,4,  90],[  40,6,  60]
+].map(p=>new T.Vector3(p[0],p[1],p[2]));
+const curve=new T.CatmullRomCurve3(CTRL,true,'catmullrom',0.5);
+curve.arcLengthDivisions=600;
+const LEN=curve.getLength();
+
+const STEPS=460;
+const SAMP=[];                                     // {p:Vector3, t:Vector3, n:Vector3, u}
+for(let i=0;i<STEPS;i++){
+  const u=i/STEPS;
+  const p=curve.getPointAt(u), t=curve.getTangentAt(u).normalize();
+  const n=new T.Vector3(t.z,0,-t.x).normalize();   // horizontal perpendicular
+  SAMP.push({p,t,n,u});
+}
+// Fallopian tube track
+let TRACK_PULSE=[];
+(()=>{
+  // Main tubular track using the curve
+  const tubeRadius = 9;
+  const tubeGeo = new T.TubeGeometry(curve, STEPS, tubeRadius, 14, true);
+  const tubeMat = new T.MeshPhongMaterial({
+    color: 0xffb6c1,      // flesh/pink tone
+    emissive: 0x5a2630,
+    shininess: 40,
+    specular: 0x664444
+  });
+  const tube = new T.Mesh(tubeGeo, tubeMat);
+  tube.position.y -= 9;                       // sink the vessel beneath the road membrane
+  scene.add(tube);
+  TRACK_PULSE.push({mat:tubeMat, base:0x5a2630, amp:0.5});
+
+  // Inner lining for depth
+  const innerGeo = new T.TubeGeometry(curve, STEPS, tubeRadius * 0.7, 12, true);
+  const innerMat = new T.MeshPhongMaterial({
+    color: 0xe88a9e,
+    emissive: 0x3a1418
+  });
+  const innerTube = new T.Mesh(innerGeo, innerMat);
+  innerTube.position.y -= 9;
+  scene.add(innerTube);
+  TRACK_PULSE.push({mat:innerMat, base:0x3a1418, amp:0.7});
+
+  // Fimbriae (finger-like projections) at the start
+  const startS = SAMP[0];
+  const fimbriaeCount = 12;
+  const fimbriaeMat = new T.MeshPhongMaterial({color: 0xff9999, emissive: 0x552222});
+  for(let i=0; i<fimbriaeCount; i++){
+    const angle = (i / fimbriaeCount) * Math.PI * 2;
+    const f = new T.Mesh(new T.ConeGeometry(1.5, 8, 6), fimbriaeMat);
+    const offset = startS.n.clone().multiplyScalar(6);
+    f.position.copy(startS.p).add(offset).add(new T.Vector3(0, 4, 0));
+    f.rotation.x = 1.2 + Math.random() * 0.4;
+    f.rotation.y = angle;
+    f.scale.set(1, 1 + Math.random() * 0.5, 1);
+    scene.add(f);
+  }
+})();
+
+/* glowing road membrane (readability) + edge light-ropes + ambient motes */
+(()=>{
+  const pos=[], idx=[], uvs=[];
+  for(let i=0;i<=STEPS;i++){
+    const s=SAMP[i%STEPS];
+    const l=s.p.clone().addScaledVector(s.n, HW);
+    const r=s.p.clone().addScaledVector(s.n,-HW);
+    pos.push(l.x,l.y+0.05,l.z, r.x,r.y+0.05,r.z);
+    uvs.push(0, i/STEPS*40, 1, i/STEPS*40);
+  }
+  for(let i=0;i<STEPS;i++){
+    const a=i*2,b=a+1,c=a+2,d=a+3;
+    idx.push(a,b,c, b,d,c);
+  }
+  const geo=new T.BufferGeometry();
+  geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  geo.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  // procedural road texture: dark glass with glowing centerline + lane edges
+  const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
+  const rg=rc.getContext('2d');
+  rg.fillStyle='#06262e'; rg.fillRect(0,0,64,256);
+  rg.strokeStyle='rgba(109,242,208,0.22)'; rg.lineWidth=4;
+  rg.strokeRect(2,0,60,256);
+  rg.fillStyle='rgba(109,242,208,0.5)'; rg.fillRect(30,0,4,256);       // centerline
+  for(let y=0;y<256;y+=32){ rg.fillStyle='rgba(234,255,248,0.35)'; rg.fillRect(29,y,6,12); }
+  const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
+  const mat=new T.MeshPhongMaterial({map:rt,color:0xbfeee6,emissive:0x0c3a40,
+    transparent:true,opacity:0.92,shininess:80,specular:0x227a70,side:T.DoubleSide});
+  const road=new T.Mesh(geo,mat); scene.add(road);
+
+  // additive edge light-ropes
+  for(const side of [HW,-HW]){
+    const ep=[];
+    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side);
+      ep.push(e.x,e.y+0.6,e.z); }
+    const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
+    const el=new T.Line(eg,new T.LineBasicMaterial({color:0x6df2d0,transparent:true,opacity:0.6,
+      blending:T.AdditiveBlending,depthWrite:false}));
+    scene.add(el);
+  }
+
+  // ambient bio-motes floating in the corridor (one cheap draw call)
+  const N=420, mp=new Float32Array(N*3);
+  for(let k=0;k<N;k++){
+    const s=SAMP[(Math.random()*STEPS|0)];
+    const off=(Math.random()*2-1)*HW*1.3;
+    mp[k*3]=s.p.x+s.n.x*off+(Math.random()*2-1)*8;
+    mp[k*3+1]=s.p.y+2+Math.random()*26;
+    mp[k*3+2]=s.p.z+s.n.z*off+(Math.random()*2-1)*8;
+  }
+  const mg=new T.BufferGeometry(); mg.setAttribute('position',new T.BufferAttribute(mp,3));
+  const mmat=new T.PointsMaterial({map:TEX_SPARK,color:0x8ff0dd,size:3.2,sizeAttenuation:true,
+    transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false});
+  const motes=new T.Points(mg,mmat); scene.add(motes);
+  TRACK_PULSE.motes=motes;
+})();
+// ground
+(()=>{
+  const g=new T.PlaneGeometry(2400,2400,1,1); g.rotateX(-Math.PI/2);
+  const m=new T.MeshLambertMaterial({color:0x0a2a30});
+  const ground=new T.Mesh(g,m); ground.position.y=-2; scene.add(ground);
+})();
+// start/finish gantry
+(()=>{
+  const s=SAMP[0];
+  const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),
+    new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
+  bar.position.copy(s.p).add(new T.Vector3(0,14,0));
+  scene.add(bar);
+  for(const side of [-1,1]){
+    const post=new T.Mesh(new T.CylinderGeometry(1.4,1.4,16,8),
+      new T.MeshPhongMaterial({color:0x2b6e66,flatShading:true}));
+    post.position.copy(s.p).addScaledVector(s.n,side*(HW+3)).add(new T.Vector3(0,6,0));
+    scene.add(post);
+  }
+})();
+// edge pylons + low-poly "spores" for speed/scale
+(()=>{
+  const pylonGeo=new T.ConeGeometry(2.4,9,5);
+  for(let i=0;i<STEPS;i+=11){
+    const s=SAMP[i];
+    for(const side of [-1,1]){
+      const hue=(i*9)%360;
+      const m=new T.MeshPhongMaterial({color:new T.Color(`hsl(${hue} 45% 40%)`),flatShading:true});
+      const c=new T.Mesh(pylonGeo,m);
+      c.position.copy(s.p).addScaledVector(s.n,side*(HW+9+Math.random()*30)).add(new T.Vector3(0,2.5,0));
+      c.scale.setScalar(0.7+Math.random()*1.4);
+      scene.add(c);
     }
-    i++; countTimer = setTimeout(tick, 800);
-  };
-  tick();
-});
+  }
+})();
 
-raceBack.addEventListener('click',()=>{
-  clearTimeout(countTimer);
-  race.classList.remove('on');
-});
-// Esc also backs out of the start sequence.
-document.addEventListener('keydown', e=>{
-  if(e.key === 'Escape' && race.classList.contains('on')){ raceBack.click(); }
-});
+/* nearest-sample lookup + progress */
+function nearest(x,z){
+  let bi=0,bd=1e18;
+  for(let i=0;i<STEPS;i++){
+    const dx=SAMP[i].p.x-x, dz=SAMP[i].p.z-z, d=dx*dx+dz*dz;
+    if(d<bd){bd=d;bi=i;}
+  }
+  return bi;
+}
+
+/* ============== CEL-SHADE KIT (anime toon look for the racers) ============== *
+ *  A 3-band gradient map turns smooth lighting into flat anime cel steps, and a
+ *  back-face "inverted hull" gives every racer the bold One Piece outline.
+ * ------------------------------------------------------------------------- */
+const GRAD=(()=>{
+  const c=new Uint8Array([84,168,255]);                 // 3 light bands
+  const t=new T.DataTexture(c, c.length, 1, T.RedFormat);
+  t.minFilter=t.magFilter=T.NearestFilter; t.generateMipmaps=false; t.needsUpdate=true;
+  return t;
+})();
+function addOutline(mesh,k){
+  if(!mesh) return;
+  const o=new T.Mesh(mesh.geometry, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide}));
+  o.scale.multiplyScalar(k||1.08);
+  o.userData.isOutline=true;
+  mesh.add(o);
+}
+function celShade(g){
+  g.traverse(o=>{
+    if(o.isMesh && o.material && o.material.isMeshPhongMaterial){
+      const old=o.material;
+      o.material=new T.MeshToonMaterial({
+        color:old.color.clone(),
+        emissive:(old.emissive?old.emissive.clone():new T.Color(0x000000)),
+        gradientMap:GRAD, flatShading:!!old.flatShading
+      });
+    }
+  });
+  // bold outline on the core silhouette (head + tail)
+  addOutline(g.userData.head,1.08);
+  addOutline(g.userData.mainTail,1.14);
+  (g.userData.tail||[]).forEach(s=>addOutline(s,1.14));
+}
+
+/* ============== CELL RACER MODEL ============== */
+function makeCell(hue, typeId){
+  const g=new T.Group();
+  const col=new T.Color(`hsl(${hue} 80% 60%)`);
+  const head=new T.Mesh(new T.SphereGeometry(3.4,16,12),
+    new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.35),
+      transparent:true,opacity:0.9,shininess:80,flatShading:true}));
+  head.scale.set(1,0.82,1.5); head.position.y=3.2; g.add(head);
+  const nuc=new T.Mesh(new T.SphereGeometry(1.5,12,10),
+    new T.MeshBasicMaterial({color:col})); nuc.position.set(0,3.2,1); g.add(nuc);
+
+  // soft bioluminescent halo around the head
+  const glow=glowSprite(col.getHex(),13); glow.position.set(0,3.4,0.5); g.add(glow);
+  g.userData.glow=glow;
+  // boost flame (lit only during turbo) — additive sprites trailing the tail
+  const fl1=glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
+  const fl2=glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
+  g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
+
+  // Long and smooth tail for all characters
+  const tail=[];
+  const tmat=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),flatShading:true});
+  // Main long smooth tail cylinder
+  const mainTail = new T.Mesh(new T.CylinderGeometry(1.2, 0.6, 12, 12), tmat);
+  mainTail.position.set(0, 3.2, -8);
+  mainTail.rotation.x = Math.PI / 2;
+  g.add(mainTail);
+  // Segmented tip for wiggle animation (smooth transition)
+  for(let i=0; i<4; i++){
+    const size = 0.9 - i * 0.15;
+    const seg = new T.Mesh(new T.SphereGeometry(size, 10, 8), tmat);
+    seg.position.set(0, 3.2, -13 - i * 2.5);
+    g.add(seg);
+    tail.push(seg);
+  }
+  g.userData.tail = tail;
+  g.userData.head = head;
+  g.userData.mainTail = mainTail; // for potential animation extension
+
+  // === STEREOTYPE FACIAL FEATURES + ACCESSORIES ===
+  // BIG CARTOON EYES + star pupils (One Piece sparkle like the refs)
+  const eyeMat = new T.MeshPhongMaterial({color:0xffffff, shininess:40});
+  const eyeL = new T.Mesh(new T.SphereGeometry(1.1,10,8), eyeMat);
+  const eyeR = new T.Mesh(new T.SphereGeometry(1.1,10,8), eyeMat);
+  eyeL.position.set(-1.3, 4.1, 3.1);
+  eyeR.position.set( 1.3, 4.1, 3.1);
+  g.add(eyeL); g.add(eyeR);
+  const starMat = new T.MeshPhongMaterial({color:0x111111});
+  const pupilL = new T.Mesh(new T.ConeGeometry(0.55, 0.9, 4), starMat);
+  const pupilR = new T.Mesh(new T.ConeGeometry(0.55, 0.9, 4), starMat);
+  pupilL.position.set(-1.3, 4.15, 4.0);
+  pupilR.position.set( 1.3, 4.15, 4.0);
+  pupilL.rotation.x = Math.PI/2;
+  pupilR.rotation.x = Math.PI/2;
+  g.add(pupilL); g.add(pupilR);
+
+  // Big expressive mouth
+  const mouth = new T.Mesh(new T.TorusGeometry(1.3,0.28,8,16, Math.PI*0.85), new T.MeshPhongMaterial({color:0x442222, emissive:0x220000}));
+  mouth.position.set(0, 2.65, 3.5);
+  mouth.rotation.x = -0.4;
+  g.add(mouth);
+
+  // Type-specific facial features & accessories
+  if(typeId === 'guido'){
+    // PROPER GUIDO - tanned skin, slicked dark hair, gold chain, gold tooth (real Jersey Shore guido)
+    head.material.color.setHex(0xffaa55);
+    head.material.emissive.setHex(0x442200);
+    const hairMat = new T.MeshPhongMaterial({color:0x222222, emissive:0x111111});
+    for(let i=0; i<5; i++){
+      const h = new T.Mesh(new T.ConeGeometry(0.7, 2.2, 4), hairMat);
+      const angle = (i-2)*0.35;
+      h.position.set(angle*0.8, 5.6, -0.3 + Math.abs(angle)*0.3);
+      h.rotation.x = 1.2;
+      h.rotation.y = angle * 0.5;
+      g.add(h);
+    }
+    const browMat = new T.MeshPhongMaterial({color:0x111111});
+    const browL = new T.Mesh(new T.BoxGeometry(2.1,0.38,0.85), browMat);
+    const browR = new T.Mesh(new T.BoxGeometry(2.1,0.38,0.85), browMat);
+    browL.position.set(-1.3,5.0,2.6); browL.rotation.z = -0.08;
+    browR.position.set(1.3,5.0,2.6); browR.rotation.z = 0.08;
+    g.add(browL); g.add(browR);
+    const chain = new T.Mesh(new T.TorusGeometry(3.1,0.42,6,12), new T.MeshPhongMaterial({color:0xffd700, shininess:95}));
+    chain.position.set(0,2.55,0); chain.rotation.x = Math.PI/2;
+    g.add(chain);
+    const tooth = new T.Mesh(new T.BoxGeometry(0.4,0.28,0.18), new T.MeshPhongMaterial({color:0xffd700, emissive:0x664400}));
+    tooth.position.set(0,2.6,3.7);
+    g.add(tooth);
+    // Guido t-shirt (flashy style with gold accents)
+    const shirt = new T.Mesh(new T.BoxGeometry(4.8, 2.8, 3.8), new T.MeshPhongMaterial({color:0x1a1a1a, shininess:40}));
+    shirt.position.set(0, 1.8, 0.8);
+    g.add(shirt);
+    const goldTrim = new T.Mesh(new T.BoxGeometry(4.9, 0.35, 3.9), new T.MeshPhongMaterial({color:0xffd700, shininess:80}));
+    goldTrim.position.set(0, 3.2, 0.8);
+    g.add(goldTrim);
+  } else if(typeId === 'irish'){
+    // Seamus: pale freckled skin + green top hat + orange brows
+    head.material.color.setHex(0xffe4c4); // pale skin
+    head.material.emissive.setHex(0x553322);
+    const freckleMat = new T.MeshPhongMaterial({color:0xcc7755});
+    for(let i=0;i<5;i++){
+      const f = new T.Mesh(new T.SphereGeometry(0.18,5,4), freckleMat);
+      f.position.set( (i%3-1)*0.9 + (i>2?0.3:0), 3.6 + (i>2?-0.4:0), 3.0 + Math.random()*0.2);
+      g.add(f);
+    }
+    const browL = new T.Mesh(new T.BoxGeometry(1.3,0.28,0.5), new T.MeshPhongMaterial({color:0x8B0000}));
+    const browR = new T.Mesh(new T.BoxGeometry(1.3,0.28,0.5), new T.MeshPhongMaterial({color:0x8B0000}));
+    browL.position.set(-1.1,4.7,2.55); browL.rotation.z = -0.1;
+    browR.position.set(1.1,4.7,2.55); browR.rotation.z = 0.1;
+    g.add(browL); g.add(browR);
+    // green leprechaun top hat
+    const hatBrim = new T.Mesh(new T.CylinderGeometry(3.0,3.0,0.4,14), new T.MeshPhongMaterial({color:0x1f7a3a}));
+    hatBrim.position.set(0,5.2,0); g.add(hatBrim);
+    const hatTop = new T.Mesh(new T.CylinderGeometry(2.2,2.2,2.8,14), new T.MeshPhongMaterial({color:0x23924a}));
+    hatTop.position.set(0,6.7,0); g.add(hatTop);
+    const band = new T.Mesh(new T.CylinderGeometry(2.25,2.25,0.7,14), new T.MeshPhongMaterial({color:0x15110f}));
+    band.position.set(0,5.7,0); g.add(band);
+    const buckle = new T.Mesh(new T.BoxGeometry(0.9,0.7,0.2), new T.MeshPhongMaterial({color:0xffd700, emissive:0x664400}));
+    buckle.position.set(0,5.7,2.2); g.add(buckle);
+  } else if(typeId === 'latin'){
+    // Juan Stallion: mustache and Sombrero, appropriate skin tone
+    head.material.color.setHex(0xffcc99); // light tan / pinkish skin
+    head.material.emissive.setHex(0x553322);
+    // Sombrero
+    const brim = new T.Mesh(new T.CylinderGeometry(3.6,3.0,0.45,12), new T.MeshPhongMaterial({color:0xffcc00}));
+    brim.position.set(0,5.7,0.4);
+    g.add(brim);
+    const top = new T.Mesh(new T.ConeGeometry(2.0,1.6,8), new T.MeshPhongMaterial({color:0x22aa22}));
+    top.position.set(0,6.6,0.4);
+    g.add(top);
+    const band = new T.Mesh(new T.CylinderGeometry(2.4,2.4,0.22,12), new T.MeshPhongMaterial({color:0xff0000}));
+    band.position.set(0,6.15,0.4);
+    g.add(band);
+    // Big cartoon mustache (extra obvious)
+    const stache = new T.Mesh(new T.TorusGeometry(1.7,0.42,8,16, Math.PI), new T.MeshPhongMaterial({color:0x111111, emissive:0x222222}));
+    stache.position.set(0,3.1,3.8);
+    stache.rotation.x = 1.6;
+    g.add(stache);
+  } else if(typeId === 'dragon'){
+    // Wei Long: golden skin, conical hat, thin Fu Manchu mustache
+    head.material.color.setHex(0xffdd88); // golden/yellow skin tone
+    head.material.emissive.setHex(0x664411);
+    // Slanted eyes + fierce brows + gold horn
+    eyeL.scale.set(1.3,0.6,1); eyeR.scale.set(1.3,0.6,1);
+    pupilL.position.set(-1.15,3.92,3.4); pupilR.position.set(1.15,3.92,3.4);
+    const browL = new T.Mesh(new T.BoxGeometry(1.2,0.2,0.5), new T.MeshPhongMaterial({color:0x222222}));
+    const browR = new T.Mesh(new T.BoxGeometry(1.2,0.2,0.5), new T.MeshPhongMaterial({color:0x222222}));
+    browL.position.set(-1.2,4.65,2.4); browL.rotation.z = 0.25;
+    browR.position.set(1.2,4.65,2.4); browR.rotation.z = -0.25;
+    g.add(browL); g.add(browR);
+    // Dragon horn (bigger & shiny)
+    const horn = new T.Mesh(new T.ConeGeometry(1.15,2.6,4), new T.MeshPhongMaterial({color:0xffd700, emissive:0x664400, flatShading:true}));
+    horn.position.set(0,5.9,0);
+    g.add(horn);
+    // Thin Fu Manchu mustache
+    const fuL = new T.Mesh(new T.CylinderGeometry(0.12, 0.08, 1.8, 6), new T.MeshPhongMaterial({color:0x111111}));
+    fuL.position.set(-0.9, 2.8, 3.9);
+    fuL.rotation.x = 0.3;
+    fuL.rotation.z = 0.4;
+    g.add(fuL);
+    const fuR = new T.Mesh(new T.CylinderGeometry(0.12, 0.08, 1.8, 6), new T.MeshPhongMaterial({color:0x111111}));
+    fuR.position.set(0.9, 2.8, 3.9);
+    fuR.rotation.x = 0.3;
+    fuR.rotation.z = -0.4;
+    g.add(fuR);
+    // conical hat
+    const hatBrim = new T.Mesh(new T.CylinderGeometry(3.2, 2.8, 0.5, 12), new T.MeshPhongMaterial({color:0x8B4513}));
+    hatBrim.position.set(0, 5.5, 0.3);
+    g.add(hatBrim);
+    const hatTop = new T.Mesh(new T.ConeGeometry(2.5, 2.2, 12), new T.MeshPhongMaterial({color:0xA0522D}));
+    hatTop.position.set(0, 6.8, 0.3);
+    g.add(hatTop);
+  } else if(typeId === 'king'){
+    // Darius King = deep skin + gold gem crown + gold grill + purple collar
+    head.material.color.setHex(0x7a5037);
+    head.material.emissive.setHex(0x2a160c);
+    const crownBand = new T.Mesh(new T.CylinderGeometry(2.7,2.7,1.1,12), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
+    crownBand.position.set(0,5.4,0); g.add(crownBand);
+    for(let i=0;i<6;i++){
+      const a=(i/6)*Math.PI*2;
+      const spike=new T.Mesh(new T.ConeGeometry(0.62,1.7,4), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
+      spike.position.set(Math.sin(a)*2.5, 6.45, Math.cos(a)*2.5);
+      g.add(spike);
+    }
+    // Gold grill teeth
+    const grill = new T.Mesh(new T.BoxGeometry(2.4,0.65,1.0), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
+    grill.position.set(0, 2.5, 3.85);
+    g.add(grill);
+    // Royal purple collar
+    const collar = new T.Mesh(new T.TorusGeometry(3.3,0.38,8,16), new T.MeshPhongMaterial({color:0x5a2a8a}));
+    collar.position.set(0,2.85,0); collar.rotation.x = Math.PI/2;
+    g.add(collar);
+  } else if(typeId === 'chad'){
+    // Chad: tan surfer skin, blonde mop, shades
+    head.material.color.setHex(0xe9b483);
+    head.material.emissive.setHex(0x442233);
+    const hairMat = new T.MeshPhongMaterial({color:0xffe070, emissive:0x332200});
+    for(let i=0; i<9; i++){
+      const h = new T.Mesh(new T.ConeGeometry(0.5, 2.6, 5), hairMat);
+      const angle = (i/9) * Math.PI*2;
+      h.position.set(Math.sin(angle)*1.7, 5.9 + Math.random()*0.5, Math.cos(angle)*0.6);
+      h.rotation.x = 0.7 + Math.random()*0.3;
+      h.rotation.y = angle;
+      g.add(h);
+    }
+    // Sunglasses bar
+    const shades = new T.Mesh(new T.BoxGeometry(3.2,0.9,0.4), new T.MeshPhongMaterial({color:0x10141a, shininess:90}));
+    shades.position.set(0,4.1,3.4); g.add(shades);
+    // Chill big smile
+    mouth.scale.set(1.4,0.65,1);
+  }
+
+  celShade(g);
+  return g;
+}
+
+/* ============== RACERS ============== */
+const ROSTER=[
+  {name:'You',      hue:165, you:true, skill:1   },
+  {name:'Lash',     hue:330, skill:0.97},
+  {name:'Squiggle', hue:48,  skill:0.99},
+  {name:'Wriggler', hue:268, skill:0.95},
+];
+
+// STEREOTYPE SPERM OPTIONS - fun Shore vibes, each with personality & slight stat tweaks
+const SPERM_TYPES = [
+  {id:'guido', name:'Guido Tony', hue:28, desc:'Jersey\'s finest. Mad drift skills + gold chain swagger.', stats:{skill:0.96, driftMult:1.35, boostLen:1.15}},
+  {id:'irish', name:'Seamus O\'Lucky', hue:142, desc:'Lucky Irish charm. Items spawn more often, green beast.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
+  {id:'latin', name:'Juan Stallion', hue:355, desc:'Latin lover energy. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
+  {id:'dragon', name:'Wei Long', hue:52, desc:'Dragon spirit. Laser precise turns, hard to spin out.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
+  {id:'king', name:'Darius King', hue:268, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
+  {id:'chad', name:'Chad Brody', hue:195, desc:'Surfer bro vibes. Top end speed for days, chill but quick.', stats:{skill:0.99, maxV:1.22, brake:0.75}},
+];
+let chosenType = SPERM_TYPES[0]; // default Guido energy
+
+const LAPS=3;
+const MAXV=118, ACCEL=64, BOOSTV=176, TURN=2.0;
+let racers=[], items=[], hazards=[], projectiles=[];
+let state='load', tStart=0, raceTime=0;
+
+function makeItemBox(u){
+  const i=Math.round(u*STEPS)%STEPS, s=SAMP[i];
+  const m=new T.Mesh(new T.BoxGeometry(5,5,5),
+    new T.MeshPhongMaterial({color:0x6df2d0,emissive:0x1c8d78,transparent:true,opacity:0.9,
+      shininess:90,specular:0xaffff0,flatShading:true}));
+  m.position.copy(s.p).add(new T.Vector3(0,5,0));
+  const halo=glowSprite(0x6df2d0,16); m.add(halo);
+  const core=new T.Mesh(new T.OctahedronGeometry(1.7,0),
+    new T.MeshBasicMaterial({color:0xeafff8})); m.add(core);
+  scene.add(m);
+  return {mesh:m, halo, core, base:m.position.clone(), live:true, respawn:0};
+}
+function buildRacers(){
+  for(const r of racers) if(r.obj)scene.remove(r.obj);
+  for(const it of items) scene.remove(it.mesh);
+  for(const h of hazards) scene.remove(h.mesh);
+  for(const p of projectiles) scene.remove(p.mesh);
+  hazards=[]; projectiles=[];
+  items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
+
+  racers=ROSTER.map((R,k)=>{
+    const s=SAMP[2];
+    const lane=(k-1.5)*9;
+    const obj=makeCell(R.hue);
+    const pos=s.p.clone().addScaledVector(s.n,lane).addScaledVector(s.t,-k*7);
+    obj.position.copy(pos);
+    scene.add(obj);
+    return {...R, obj,
+      x:pos.x, z:pos.z, y:pos.y,
+      head:Math.atan2(s.t.x,s.t.z),
+      spd:0, idx:2, prog:s.u, lap:0, total:0,
+      drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
+      boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
+      finished:false, finishT:0, place:k+1, phase:Math.random()*9,
+    };
+  });
+}
+
+/* ============== INPUT ============== */
+const keys=new Set();
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
+  keys.add(k);
+},{passive:false});
+addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+const touch={left:false,right:false,drift:false,fire:false};
+function bind(id,prop){
+  const el=$(id);
+  const on=e=>{e.preventDefault();touch[prop]=true;};
+  const off=e=>{e.preventDefault();touch[prop]=false;};
+  el.addEventListener('pointerdown',on); el.addEventListener('pointerup',off);
+  el.addEventListener('pointercancel',off); el.addEventListener('pointerleave',off);
+}
+bind('bl','left'); bind('br','right'); bind('drift','drift'); bind('fire','fire');
+let firePrev=false;
+
+/* ============== ITEMS ============== */
+const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣'};
+function giveItem(r){
+  const roll=Math.random();
+  r.item = roll<0.45?'boost' : roll<0.78?'spore' : 'cyst';
+}
+function useItem(r){
+  if(!r.item)return;
+  if(r.item==='boost'){ r.boostT=Math.max(r.boostT,1.4); }
+  else if(r.item==='spore'){
+    const m=new T.Mesh(new T.SphereGeometry(2.4,10,8),
+      new T.MeshPhongMaterial({color:0xff5d8f,emissive:0x661022,flatShading:true}));
+    m.position.set(r.x,r.y+3,r.z); scene.add(m);
+    projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230});
+  } else if(r.item==='cyst'){
+    const m=new T.Mesh(new T.IcosahedronGeometry(3,0),
+      new T.MeshPhongMaterial({color:0xb06dff,emissive:0x3a1a66,flatShading:true}));
+    const bx=r.x-Math.sin(r.head)*8, bz=r.z-Math.cos(r.head)*8;
+    m.position.set(bx,r.y+2.5,bz); scene.add(m);
+    hazards.push({mesh:m,x:bx,z:bz,life:14,owner:r,arm:0.6});
+  }
+  r.item=null;
+}
+
+/* ============== SIM ============== */
+function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
+
+function updateRacer(r,dt){
+  if(r.finished){
+    r.spd*=Math.pow(0.1,dt);
+    r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
+    return;
+  }
+  let steer=0, gas=false, brake=false, drift=false, fire=false;
+  if(r.you){
+    if(keys.has('arrowleft')||keys.has('a')||touch.left)steer-=1;
+    if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
+    gas = isTouch ? true : (keys.has('arrowup')||keys.has('w'));
+    brake = keys.has('arrowdown')||keys.has('s');
+    drift = keys.has('shift')||keys.has('k')||touch.drift;
+    fire = keys.has(' ')||keys.has('l')||touch.fire;
+    if(fire&&!firePrev)useItem(r); firePrev=fire;
+  } else {
+    // AI steer toward lookahead centerline point
+    const look=SAMP[(r.idx+16)%STEPS];
+    const wob=Math.sin((r.wob+=dt*1.8))*30;
+    const tx=look.p.x+look.n.x*wob, tz=look.p.z+look.n.z*wob;
+    const want=Math.atan2(tx-r.x, tz-r.z);
+    const d=angDiff(want,r.head);
+    steer=Math.max(-1,Math.min(1,d*1.8));
+    gas=true;
+    drift=Math.abs(d)>0.5 && r.spd>70;
+    // rubber-band
+    r.aiDelay-=dt;
+    if(r.item && r.aiDelay<=0){ useItem(r); r.aiDelay=2; }
+  }
+
+  if(r.spinT>0){ r.spinT-=dt; r.head+=dt*16; r.spd*=Math.pow(0.2,dt);
+    r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
+    placeOnTrack(r,dt); return; }
+
+  // off-road check
+  const ci=nearest(r.x,r.z); r.idx=ci;
+  const cs=SAMP[ci];
+  const off=Math.hypot(r.x-cs.p.x, r.z-cs.p.z);
+  const onRoad=off<HW;
+  let target = onRoad?MAXV:MAXV*0.45;
+  if(r.you && !r.boostT){ /* AI uses skill */ }
+  if(!r.you) target*=r.skill;
+
+  // boost
+  r.boostT=Math.max(0,r.boostT-dt);
+  if(r.boostT>0) target=BOOSTV;
+
+  // accelerate
+  if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
+  else if(brake) r.spd += (-60-r.spd)*Math.min(1,3*dt);
+  else r.spd += (0-r.spd)*Math.min(1,1.4*dt);
+  r.spd=Math.max(-50,Math.min(BOOSTV,r.spd));
+
+  // turning (speed-scaled); drift sharpens & charges
+  const vfrac=Math.min(1,Math.abs(r.spd)/MAXV);
+  let turnRate=TURN*(0.5+0.5*vfrac);
+  if(drift && Math.abs(r.spd)>50){
+    if(r.drift===0){ r.driftDir = steer>=0?1:-1; r.hop=0.32; }
+    r.drift=1;
+    if(r.driftDir===0)r.driftDir=steer>=0?1:-1;
+    turnRate*=1.55;
+    steer = r.driftDir*0.55 + steer*0.5;       // commit to slide direction
+    r.driftCharge+=dt;
+  } else {
+    if(r.drift===1){                            // released → mini-turbo
+      if(r.driftCharge>1.2) r.boostT=Math.max(r.boostT,0.9);
+      else if(r.driftCharge>0.55) r.boostT=Math.max(r.boostT,0.5);
+      r.drift=0; r.driftCharge=0; r.driftDir=0;
+    }
+  }
+  r.head += steer*turnRate*dt*Math.sign(r.spd||1);
+
+  // visual slip + hop
+  const wantSlip = r.drift? r.driftDir*0.45 : 0;
+  r.slip += (wantSlip-r.slip)*Math.min(1,8*dt);
+  r.hop=Math.max(0,r.hop-dt);
+
+  // integrate
+  r.x+=Math.sin(r.head)*r.spd*dt;
+  r.z+=Math.cos(r.head)*r.spd*dt;
+  placeOnTrack(r,dt);
+
+  // wall: hard limit just past shoulder
+  const off2=Math.hypot(r.x-SAMP[r.idx].p.x, r.z-SAMP[r.idx].p.z);
+  const wall=HW*1.9;
+  if(off2>wall){
+    const s=SAMP[r.idx];
+    const dirx=(r.x-s.p.x)/off2, dirz=(r.z-s.p.z)/off2;
+    r.x=s.p.x+dirx*wall; r.z=s.p.z+dirz*wall; r.spd*=0.5;
+  }
+}
+
+function placeOnTrack(r,dt){
+  // smooth height to nearest sample y
+  const s=SAMP[r.idx];
+  r.y += (s.p.y - r.y)*Math.min(1,6*dt);
+  // progress + lap
+  const u=s.u;
+  if(r.prog>0.75 && u<0.25)r.lap++;
+  else if(r.prog<0.25 && u>0.75)r.lap=Math.max(0,r.lap-1);
+  r.prog=u; r.total=r.lap+u;
+  if(!r.finished && r.lap>=LAPS){ r.finished=true; r.finishT=raceTime; }
+}
+
+function collide(){
+  // kart-kart soft separation
+  for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
+    const a=racers[i],b=racers[j];
+    const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);
+    if(d<7&&d>0.01){ const push=(7-d)/2, ux=dx/d,uz=dz/d;
+      a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push; }
+  }
+  // item pickup
+  for(const it of items){
+    if(!it.live){ it.respawn-=1/60; if(it.respawn<=0){it.live=true;it.mesh.visible=true;} continue; }
+    for(const r of racers){
+      if(r.finished)continue;
+      if(Math.hypot(r.x-it.base.x,r.z-it.base.z)<6 && !r.item){
+        giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
+        burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
+        if(r.you)kickShake(0.25);
+        break;
+      }
+    }
+  }
+  // hazards
+  for(const h of hazards){
+    h.arm-=1/60;
+    for(const r of racers){
+      if(r.finished||r.spinT>0)continue;
+      if(h.arm>0 && r===h.owner)continue;
+      if(Math.hypot(r.x-h.x,r.z-h.z)<5){ r.spinT=1.1; h.life=0; }
+    }
+  }
+  hazards=hazards.filter(h=>{ h.life-=1/60; if(h.life<=0){scene.remove(h.mesh);return false;} return true; });
+  // projectiles
+  for(const p of projectiles){
+    // gentle homing to nearest racer ahead
+    let best=null,bd=120;
+    for(const r of racers){ if(r===p.owner||r.finished)continue;
+      const dd=Math.hypot(r.x-p.x,r.z-p.z); const ahead=Math.cos(p.head)*(r.z-p.z)+Math.sin(p.head)*(r.x-p.x);
+      if(ahead>0&&dd<bd){bd=dd;best=r;} }
+    if(best){ const want=Math.atan2(best.x-p.x,best.z-p.z); p.head+=angDiff(want,p.head)*0.06; }
+  }
+  projectiles=projectiles.filter(p=>{
+    p.life-=1/60; p.x+=Math.sin(p.head)*p.spd/60; p.z+=Math.cos(p.head)*p.spd/60;
+    const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z);
+    for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0)continue;
+      if(Math.hypot(r.x-p.x,r.z-p.z)<5){ r.spinT=1.2; p.life=0; } }
+    if(p.life<=0){scene.remove(p.mesh);return false;} return true;
+  });
+}
+
+/* ranking */
+function rank(){
+  const order=[...racers].sort((a,b)=>{
+    if(a.finished&&b.finished)return a.finishT-b.finishT;
+    if(a.finished)return -1; if(b.finished)return 1;
+    return b.total-a.total;
+  });
+  order.forEach((r,i)=>r.place=i+1);
+}
+
+/* ============== VISUALS PER FRAME ============== */
+function syncObjects(dt,now){
+  for(const r of racers){
+    const o=r.obj;
+    o.position.set(r.x, r.y + (r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0), r.z);
+    o.rotation.y = r.head + r.slip;
+    o.rotation.z = -r.slip*0.5;                                  // lean into the slide
+    // tail wiggle scaled by speed
+    r.phase += dt*(4+Math.abs(r.spd)*0.06);
+    const amp=2 + Math.min(4,Math.abs(r.spd)*0.03);
+    r.obj.userData.tail.forEach((seg,i)=>{
+      seg.position.x = Math.sin(r.phase - i*0.7)*amp*(i/7);
+    });
+    // boost flush on head + halo
+    const boosting=r.boostT>0;
+    const h=r.obj.userData.head.material;
+    h.emissive.setHSL((r.hue/360),0.8, boosting?0.6:0.35);
+    const gl=r.obj.userData.glow;
+    if(gl){ const fl=1+Math.sin(now*9+r.phase)*0.06;
+      gl.scale.setScalar((boosting?18:12)*fl);
+      gl.material.opacity=boosting?0.95:0.6; }
+    // boost flame
+    const b=Math.max(0,Math.min(1,r.boostT/1.4));
+    r.obj.userData.flame.forEach((f,i)=>{
+      const flick=0.8+Math.random()*0.4;
+      f.scale.setScalar(b*(10-i*2)*flick);
+      f.material.opacity=b;
+    });
+
+    // ---- particle emitters ----
+    const sp=Math.abs(r.spd);
+    const hx=Math.sin(r.head), hz=Math.cos(r.head);     // forward
+    const px=hz, pz=-hx;                                 // right perpendicular
+    // drift sparks at rear wheels, colored by charge tier
+    if(r.drift===1 && sp>50){
+      r._spk=(r._spk||0)-dt;
+      if(r._spk<=0){ r._spk=0.028;
+        let col=0xbfeee6, push=0;
+        if(r.driftCharge>1.2){col=0xff9a3c;push=1;}
+        else if(r.driftCharge>0.55){col=0x5ad7ff;push=1;}
+        for(const sgn of [-1,1]){
+          const ex=r.x-hx*8+px*sgn*4, ez=r.z-hz*8+pz*sgn*4;
+          emit(ex, r.y+1.5, ez, {color:col, life:0.32,
+            vx:-hx*20+px*sgn*22+(Math.random()*8-4), vy:14+Math.random()*10, vz:-hz*20+pz*sgn*22+(Math.random()*8-4),
+            s0:3.2+push*1.5, s1:0, grav:36});
+        }
+      }
+    }
+    // glowing wake behind everyone when moving; richer for the player
+    if(sp>70){
+      r._wk=(r._wk||0)-dt;
+      const gap=r.you?0.05:0.11;
+      if(r._wk<=0){ r._wk=gap;
+        const wc=boosting?0xffc24a:new T.Color().setHSL(r.hue/360,0.7,0.6).getHex();
+        emit(r.x-hx*9, r.y+2.2, r.z-hz*9, {color:wc, life:0.55,
+          vx:-hx*6+(Math.random()*6-3), vy:4+Math.random()*4, vz:-hz*6+(Math.random()*6-3),
+          s0:boosting?6:4, s1:boosting?16:11, grav:0, op:boosting?0.8:0.5});
+      }
+    }
+
+    // ---- event detection (player only): boost start / spinout ----
+    if(r.you){
+      if(boosting && !r._pBoost){ kickShake(0.5); flashFx(0.5,'#ffd27a'); }
+      if(r.spinT>0 && !r._pSpin){ kickShake(1.4); flashFx(0.7,'#ff5d8f');
+        burst(r.x,r.y+4,r.z,0xff5d8f,18,60,0.7,5); }
+      r._pBoost=boosting; r._pSpin=r.spinT>0;
+    }
+  }
+  for(const it of items){
+    if(it.live){
+      it.mesh.rotation.y+=dt*2.2; it.mesh.rotation.x+=dt*0.8;
+      it.mesh.position.y=it.base.y+Math.sin(now*2)*0.7;
+      if(it.core) it.core.rotation.y-=dt*4;
+      const hue=(now*40)%360; const c=new T.Color(`hsl(${hue} 90% 62%)`);
+      it.mesh.material.color.copy(c); it.mesh.material.emissive.copy(c).multiplyScalar(0.35);
+      if(it.halo){ it.halo.material.color.copy(c); it.halo.scale.setScalar(15+Math.sin(now*4)*3); }
+    }
+  }
+}
+function flashFx(amt,color){
+  elFlash.style.background=`radial-gradient(circle at 50% 60%,${color},transparent 60%)`;
+  elFlash.style.opacity=amt; setTimeout(()=>elFlash.style.opacity=0,60);
+}
+
+/* camera chases player */
+function updateCamera(dt){
+  const me=racers.find(r=>r.you); if(!me)return;
+  const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
+  const boost=me.boostT>0;
+  const back=fwd.clone().multiplyScalar(boost?-27:-30);
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,boost?11.5:13,0));
+  camera.position.lerp(want, Math.min(1,4*dt));
+  if(camShake>0){
+    camera.position.x += (Math.random()*2-1)*camShake;
+    camera.position.y += (Math.random()*2-1)*camShake;
+    camera.position.z += (Math.random()*2-1)*camShake;
+    camShake=Math.max(0,camShake-dt*5);
+  }
+  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(18)).add(new T.Vector3(0,4,0));
+  camera.lookAt(look);
+  const fovWant = boost?74:64;
+  camera.fov += (fovWant-camera.fov)*Math.min(1,5*dt);
+  camera.updateProjectionMatrix();
+}
+
+/* ============== HUD / MINIMAP ============== */
+const mapCv=$('map'), mx=mapCv.getContext('2d');
+let mapBounds=null;
+function computeBounds(){
+  let minx=1e9,maxx=-1e9,minz=1e9,maxz=-1e9;
+  for(const s of SAMP){ minx=Math.min(minx,s.p.x);maxx=Math.max(maxx,s.p.x);
+    minz=Math.min(minz,s.p.z);maxz=Math.max(maxz,s.p.z); }
+  mapBounds={minx,maxx,minz,maxz};
+}
+function drawMap(){
+  if(!mapBounds)computeBounds();
+  const W=150,pad=14,b=mapBounds;
+  const sx=(W-pad*2)/(b.maxx-b.minx), sz=(W-pad*2)/(b.maxz-b.minz), sc=Math.min(sx,sz);
+  const ox=pad+(W-pad*2-(b.maxx-b.minx)*sc)/2, oz=pad+(W-pad*2-(b.maxz-b.minz)*sc)/2;
+  const X=x=>ox+(x-b.minx)*sc, Z=z=>oz+(z-b.minz)*sc;
+  mx.clearRect(0,0,W,W);
+  const path=()=>{ mx.beginPath();
+    for(let i=0;i<=STEPS;i+=3){const s=SAMP[i%STEPS]; const p=[X(s.p.x),Z(s.p.z)]; i?mx.lineTo(p[0],p[1]):mx.moveTo(p[0],p[1]);} };
+  mx.lineJoin='round';
+  mx.lineWidth=8; mx.strokeStyle='rgba(109,242,208,0.10)'; path(); mx.stroke();   // glow
+  mx.lineWidth=3.5; mx.strokeStyle='rgba(109,242,208,0.55)'; path(); mx.stroke(); // core
+  // start/finish tick
+  const s0=SAMP[0]; mx.fillStyle='#eafff8';
+  mx.fillRect(X(s0.p.x)-2,Z(s0.p.z)-2,4,4);
+  for(const r of racers){
+    if(r.you){ mx.shadowColor='#fff'; mx.shadowBlur=8; mx.beginPath();
+      mx.arc(X(r.x),Z(r.z),4.5,0,7); mx.fillStyle='#fff'; mx.fill(); mx.shadowBlur=0; }
+    else { mx.beginPath(); mx.arc(X(r.x),Z(r.z),3,0,7);
+      mx.fillStyle=`hsl(${r.hue} 80% 62%)`; mx.fill(); }
+  }
+}
+const ord=n=>['','1st','2nd','3rd','4th'][n]||n+'th';
+function fmt(s){const m=Math.floor(s/60);return `${String(m).padStart(2,'0')}:${(s%60).toFixed(1).padStart(4,'0')}`;}
+function syncHUD(){
+  const me=racers.find(r=>r.you);
+  const lapNum=Math.min(LAPS,me.lap+1);
+  $('lapn').textContent=lapNum;
+  $('posn').textContent=ord(me.place);
+  $('clock').textContent=fmt(raceTime);
+  const sp=Math.abs(me.spd);
+  $('spd').textContent=Math.round(sp);
+  drawGauge(sp/BOOSTV, me.boostT>0);
+
+  const slot=$('item');
+  const ic=me.item?ITEM_ICONS[me.item]:'';
+  if(ic && !me._pItem){ slot.classList.remove('item-pop'); void slot.offsetWidth; slot.classList.add('item-pop'); }
+  me._pItem=me.item;
+  slot.textContent=ic;
+  slot.classList.toggle('spin', !!me.item);
+
+  // drift charge meter
+  if(me.drift===1 && Math.abs(me.spd)>50){
+    elDM.style.opacity=1;
+    const f=Math.min(1, me.driftCharge/1.2);
+    elDF.style.width=(f*100)+'%';
+    elDM.classList.toggle('t1', me.driftCharge>0.55 && me.driftCharge<=1.2);
+    elDM.classList.toggle('t2', me.driftCharge>1.2);
+  } else { elDM.style.opacity=0; }
+
+  // final-lap banner (once)
+  if(me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); }
+
+  // speed-line + vignette intensity
+  const boost=me.boostT>0;
+  const inten=Math.max(0,(sp-90)/90) + (boost?0.6:0);
+  elSpeed.style.opacity=Math.min(0.85,inten).toFixed(2);
+  elVig.style.boxShadow=boost
+    ? 'inset 0 0 240px 50px rgba(2,12,16,.9), inset 0 0 70px rgba(255,180,90,.12)'
+    : 'inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5)';
+}
+
+/* ============== LOOP ============== */
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(0.033,(now-last)/1000); last=now;
+  const tsec=now/1000;
+  if(state==='race'){
+    raceTime=(now-tStart)/1000;
+    for(const r of racers)updateRacer(r,dt);
+    collide(); rank();
+    if(racers.every(r=>r.finished))endRace();
+    syncHUD();
+  }
+  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); drawMap(); }
+  // living-track pulse + ambient motes + particles
+  const beat=0.5+0.5*Math.sin(tsec*1.6);
+  for(const p of TRACK_PULSE){ if(p.mat){
+    const b=new T.Color(p.base); b.multiplyScalar(0.7+beat*p.amp);
+    p.mat.emissive.copy(b); } }
+  if(TRACK_PULSE.motes){ TRACK_PULSE.motes.material.opacity=0.32+beat*0.3;
+    TRACK_PULSE.motes.rotation.y=tsec*0.01; }
+  updateParticles(dt);
+  renderer.render(scene,camera);
+  requestAnimationFrame(frame);
+}
+
+/* ============== FLOW ============== */
+function countdown(){
+  buildRacers();
+  $('start').classList.add('hidden'); $('finish').classList.add('hidden');
+  $('cd').classList.remove('hidden'); $('count').textContent='3';
+  state='count'; let n=3;
+  const tick=()=>{ n--;
+    if(n>0){$('count').textContent=n;setTimeout(tick,750);}
+    else if(n===0){$('count').textContent='GO!';setTimeout(tick,600);}
+    else{$('cd').classList.add('hidden');state='race';tStart=performance.now();last=performance.now();}
+  };
+  setTimeout(tick,750);
+}
+function endRace(){
+  state='done';
+  const me=racers.find(r=>r.you);
+  const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
+  $('fhead').textContent=ord(me.place)+' place';
+  $('ftag').textContent=me.place===1?'specimen dominant':'race complete';
+  const bd=$('board'); bd.innerHTML='';
+  ranked.forEach((r,i)=>{
+    const row=document.createElement('div'); row.className='row'+(r.you?' you':'');
+    row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${r.name}</span><b>${fmt(r.finishT)}</b>`;
+    bd.appendChild(row);
+  });
+  $('finish').classList.remove('hidden');
+}
+// ============== CHARACTER SELECT LOGIC ==============
+function setupSelect(){
+  const grid = $('sperm-grid');
+  grid.innerHTML = '';
+  let selectedEl = null;
+
+  // One Piece cel-shaded portraits (hand-built SVG kit above)
+  const cardVisual = OP_SVG;
+
+  SPERM_TYPES.forEach((t, idx) => {
+    const card = document.createElement('div');
+    card.className = 'opcard';
+    card.style.cssText = 'background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;';
+    card.innerHTML = `
+      ${cardVisual[t.id] || `<div style="width:54px;height:54px;border-radius:50%;background:hsl(${t.hue} 85% 62%);box-shadow:0 0 18px hsl(${t.hue} 85% 55%);margin-bottom:6px;border:3px solid #eafff8;"></div>`}
+      <div class="opname" style="color:var(--bone);font-size:15px;">${t.name}</div>
+      <div class="opdesc" style="font-size:10.5px;color:var(--bone);margin-top:3px;line-height:1.25;opacity:.85;">${t.desc}</div>
+    `;
+    card.onclick = () => {
+      if(selectedEl) selectedEl.style.borderColor = 'var(--dim)';
+      card.style.borderColor = 'var(--signal)';
+      chosenType = t;
+      selectedEl = card;
+      $('racebtn').disabled = false;
+      $('racebtn').style.opacity = '1';
+    };
+    // default select first (Guido)
+    if(idx === 0){
+      card.style.borderColor = 'var(--signal)';
+      selectedEl = card;
+      chosenType = t;
+    }
+    grid.appendChild(card);
+  });
+
+  $('racebtn').onclick = () => {
+    $('select').classList.add('hidden');
+    countdown();
+  };
+}
+
+// Update countdown to apply chosen sperm to player
+const _origCountdown = countdown;
+countdown = function(){
+  buildRacers(); // will use chosenType now
+  $('start').classList.add('hidden'); $('select').classList.add('hidden'); $('finish').classList.add('hidden');
+  $('cd').classList.remove('hidden');
+  const cd=$('count'); cd.textContent='3';
+  const pulse=()=>{ cd.style.animation='none'; void cd.offsetWidth; cd.style.animation=''; };
+  pulse();
+  state='count'; let n=3;
+  const tick=()=>{ n--;
+    if(n>0){cd.textContent=n;pulse();setTimeout(tick,750);}
+    else if(n===0){cd.textContent='GO!';pulse();setTimeout(tick,600);}
+    else{$('cd').classList.add('hidden');state='race';tStart=performance.now();last=performance.now();
+         showBanner('Go!'); kickShake(0.4);}
+  };
+  setTimeout(tick,750);
+};
+
+// Modify buildRacers to use chosenType for "You"
+const _origBuildRacers = buildRacers;
+buildRacers = function(){
+  for(const r of racers) if(r.obj)scene.remove(r.obj);
+  for(const it of items) scene.remove(it.mesh);
+  for(const h of hazards) scene.remove(h.mesh);
+  for(const p of projectiles) scene.remove(p.mesh);
+  hazards=[]; projectiles=[];
+  items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
+
+  racers=ROSTER.map((R,k)=>{
+    const s=SAMP[2];
+    const lane=(k-1.5)*9;
+    let hue = R.hue;
+    let name = R.name;
+    let stats = {skill: R.skill || 1};
+    if(R.you){
+      hue = chosenType.hue;
+      name = chosenType.name;
+      stats = {...stats, ...chosenType.stats};
+    }
+    const obj=makeCell(hue, R.you ? chosenType.id : null); // pass type for accessory
+    const pos=s.p.clone().addScaledVector(s.n,lane).addScaledVector(s.t,-k*7);
+    obj.position.copy(pos);
+    scene.add(obj);
+    return {...R, obj, name,
+      x:pos.x, z:pos.z, y:pos.y,
+      head:Math.atan2(s.t.x,s.t.z),
+      spd:0, idx:2, prog:s.u, lap:0, total:0,
+      drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
+      boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
+      finished:false, finishT:0, place:k+1, phase:Math.random()*9,
+      ...stats // apply chosen stats
+    };
+  });
+};
+
+// Simple virtual joystick for iPad - smooth steer + gas
+let joyActive = false;
+let joyX = 0, joyY = 0; // normalized -1 to 1
+function setupJoystick(){
+  const joy = $('joystick');
+  const knob = $('knob');
+  if(!joy || !knob) return;
+  if(isTouch) joy.style.display = 'block'; // show on touch devices
+  // hide old steer buttons on touch to avoid overlap (optional)
+  if(isTouch) $('steer').style.display = 'none';
+
+  function updateKnob(x, y){
+    const max = 42; // radius limit
+    const dist = Math.hypot(x, y);
+    const nx = dist > max ? (x/dist)*max : x;
+    const ny = dist > max ? (y/dist)*max : y;
+    knob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+    joyX = nx / max;
+    joyY = ny / max;
+  }
+
+  function resetKnob(){
+    knob.style.transform = 'translate(-50%,-50%)';
+    joyX = 0; joyY = 0;
+    joyActive = false;
+  }
+
+  joy.addEventListener('pointerdown', e => {
+    joyActive = true;
+    const rect = joy.getBoundingClientRect();
+    const cx = rect.left + rect.width/2;
+    const cy = rect.top + rect.height/2;
+    updateKnob(e.clientX - cx, e.clientY - cy);
+  });
+  window.addEventListener('pointermove', e => {
+    if(!joyActive) return;
+    const rect = joy.getBoundingClientRect();
+    const cx = rect.left + rect.width/2;
+    const cy = rect.top + rect.height/2;
+    updateKnob(e.clientX - cx, e.clientY - cy);
+  });
+  window.addEventListener('pointerup', resetKnob);
+  window.addEventListener('pointercancel', resetKnob);
+  joy.addEventListener('pointerleave', resetKnob);
+}
+
+// Hook joystick into input (override steer/gas for touch)
+const _origUpdateRacer = updateRacer;
+updateRacer = function(r,dt){
+  if(r.you && isTouch && joyActive){
+    // Joystick overrides: horizontal = steer, vertical = gas/brake
+    const steerInput = Math.max(-1, Math.min(1, joyX * 1.0));
+    const gasInput = joyY < -0.15; // up on joystick = gas (negative y up)
+    const brakeInput = joyY > 0.25;
+    // temporarily override keys/touch for this frame
+    const oldLeft = touch.left, oldRight = touch.right;
+    touch.left = steerInput > 0.2;
+    touch.right = steerInput < -0.2;
+    // call original but we hacked touch
+    _origUpdateRacer(r,dt);
+    touch.left = oldLeft; touch.right = oldRight;
+    // extra direct influence for smoothness (reduced multiplier for less squirrely steering)
+    if(Math.abs(steerInput) > 0.15) r.head += -steerInput * 1.0 * dt;
+    if(gasInput) r.spd = Math.min(r.spd + 28*dt, BOOSTV*0.95);
+    if(brakeInput) r.spd = Math.max(r.spd - 55*dt, -40);
+    return;
+  }
+  _origUpdateRacer(r,dt);
+};
+
+// Boot with new flow
+setupSelect();
+setupJoystick();
+
+$('startbtn').onclick = () => {
+  $('start').classList.add('hidden');
+  $('select').classList.remove('hidden');
+};
+$('againbtn').onclick=countdown;
+
+// boot
+$('loading').classList.add('hidden');
+$('start').classList.remove('hidden');
+state='menu';
+buildRacers();               // show grid behind menu
+requestAnimationFrame(frame);
+})();
 </script>
 </body>
 </html>
