@@ -6,7 +6,11 @@
 <title>Sperm Racer</title>
 <style>
   :root{ --signal:#6df2d0; --bone:#eafff8; --ink:#8fb7b0; --dim:#2b6e66; }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;
+    -webkit-user-select:none;-webkit-touch-callout:none;}
+  *:focus{outline:none;}
+  ::selection{background:transparent;}
+  .btn,canvas,#ui,#app,#joystick{touch-action:none;}
   html,body{margin:0;height:100%;background:#05202a;overflow:hidden;touch-action:none;
     font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--bone);overscroll-behavior:none;}
   #app{position:fixed;inset:0;}
@@ -253,6 +257,17 @@ const $=id=>document.getElementById(id);
 const isTouch=matchMedia('(pointer:coarse)').matches;
 if(isTouch)document.body.classList.add('touch');
 
+// Restrict iPad gestures that interfere with gameplay: pinch-zoom, double-tap
+// zoom, long-press selection/callout, and rubber-band scroll.
+['gesturestart','gesturechange','gestureend'].forEach(ev=>
+  document.addEventListener(ev, e=>e.preventDefault(), {passive:false}));
+document.addEventListener('contextmenu', e=>e.preventDefault());
+document.addEventListener('touchmove', e=>e.preventDefault(), {passive:false});
+let _lastTap=0;
+document.addEventListener('touchend', e=>{
+  const t=Date.now(); if(t-_lastTap<=350) e.preventDefault(); _lastTap=t;
+}, {passive:false});
+
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
  *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
  *  shared kit: base fill + a single shadow wedge + a gloss highlight, wrapped
@@ -349,7 +364,7 @@ const OP_ART={
     <path d="M100,148 v22" stroke="#ffcf5a" stroke-width="3"/>
     <g fill="#ffcf5a"><circle cx="100" cy="154" r="2.4"/><circle cx="100" cy="162" r="2.4"/></g>`,
   // Darius King — dark skin, big afro, gold grill grin, star eyes, pink collar
-  king:`${opTail('#1c1614','#0c0a09')}${opHead('#1c1614','#0c0a09')}
+  king:`${opTail('#8a5a34','#5e3a1f')}${opHead('#8a5a34','#5e3a1f')}
     <ellipse cx="100" cy="34" rx="66" ry="32" fill="#161616" ${OP_LINE} stroke-width="3.5"/>
     ${opBrows('M62,74 q16,-6 30,-1 M108,73 q16,-5 30,1')}${opEyes('star')}
     <path d="M68,110 q32,32 64,0 q-10,30 -32,30 q-22,0 -32,-30 Z" fill="#15110f" ${OP_LINE} stroke-width="3"/>
@@ -401,6 +416,7 @@ function resize(){
 }
 addEventListener('resize',resize);
 addEventListener('orientationchange',()=>setTimeout(resize,200));
+addEventListener('load',()=>{ resize(); setTimeout(resize,250); setTimeout(resize,800); });
 if(window.visualViewport) visualViewport.addEventListener('resize',resize);
 resize();
 
@@ -897,9 +913,11 @@ function makeCell(hue, typeId){
     const collar = new T.Mesh(new T.TorusGeometry(3.2,0.4,8,16), new T.MeshPhongMaterial({color:0xcf2e2e}));
     collar.position.set(0,2.85,0); collar.rotation.x = Math.PI/2; g.add(collar);
   } else if(typeId === 'king'){
-    // Darius King = dark skin + big afro + gold grill + pink collar
-    head.material.color.setHex(0x161210);
-    head.material.emissive.setHex(0x070504);
+    // Darius King = milk-chocolate skin + big afro + gold grill + pink collar
+    head.material.color.setHex(0x8a5a34);
+    head.material.emissive.setHex(0x2e1a0e);
+    tailMesh.material.color.setHex(0x8a5a34);     // tail matches the body
+    tailMesh.material.emissive.setHex(0x2a160c);
     // big round afro
     const afro = new T.Mesh(new T.SphereGeometry(2.9,14,12), new T.MeshPhongMaterial({color:0x141414, flatShading:true}));
     afro.position.set(0,5.7,0.3); afro.scale.set(1.2,1.0,1.1); g.add(afro);
@@ -947,7 +965,7 @@ const SPERM_TYPES = [
   {id:'irish', name:'Seamus O\'Lucky', hue:142, desc:'Lucky Irish charm. Items spawn more often, green beast.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
   {id:'latin', name:'Juan Stallion', hue:355, desc:'Latin lover energy. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
   {id:'dragon', name:'Wei Long', hue:52, desc:'Dragon spirit. Laser precise turns, hard to spin out.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
-  {id:'king', name:'Darius King', hue:268, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
+  {id:'king', name:'Darius King', hue:28, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
   {id:'chad', name:'Chad Brody', hue:195, desc:'Surfer bro vibes. Top end speed for days, chill but quick.', stats:{skill:0.99, maxV:1.22, brake:0.75}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
