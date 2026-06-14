@@ -634,19 +634,20 @@ let TRACK_PULSE=[];
 // soft pink "villi" edge border — clusters of fleshy blobs lining the track
 // (one instanced draw call, replaces the old white cone pylons)
 (()=>{
-  const blobGeo=new T.SphereGeometry(1,8,6);
-  const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0, shininess:14, flatShading:true});
+  const blobGeo=new T.SphereGeometry(1,10,8);
+  const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0, shininess:18}); // smooth (no flatShading)
   const spots=[];
   for(let i=0;i<STEPS;i+=2){
     const s=SAMP[i];
     for(const side of [-1,1]){
-      for(let b=0;b<3;b++){
-        const out=HW+1.5+b*2.0+Math.random()*1.4;
+      const n=3+(Math.random()*2|0);                 // 3-4 blobs per point
+      for(let b=0;b<n;b++){
+        const out=HW+1.0+b*1.7+Math.random()*1.6;
         spots.push({
-          x:s.p.x+s.n.x*side*out+(Math.random()*2-1)*1.3,
-          y:s.p.y+0.4+Math.random()*1.6,
-          z:s.p.z+s.n.z*side*out+(Math.random()*2-1)*1.3,
-          r:1.0+Math.random()*1.0
+          x:s.p.x+s.n.x*side*out+(Math.random()*2-1)*1.5,
+          y:s.p.y-0.4+Math.random()*3.8,             // taller ridge, more vertical variation
+          z:s.p.z+s.n.z*side*out+(Math.random()*2-1)*1.5,
+          r:0.7+Math.random()*1.9                     // wider size variation
         });
       }
     }
@@ -656,8 +657,8 @@ let TRACK_PULSE=[];
   const dummy=new T.Object3D(), col=new T.Color();
   spots.forEach((p,idx)=>{
     dummy.position.set(p.x,p.y,p.z);
-    dummy.scale.set(p.r, p.r*(0.8+Math.random()*0.4), p.r);
-    dummy.rotation.set(Math.random(),Math.random(),Math.random());
+    dummy.scale.set(p.r, p.r*(0.9+Math.random()*0.8), p.r);  // varied, rounded heights
+    dummy.rotation.set((Math.random()-0.5)*0.7, Math.random()*6.28, (Math.random()-0.5)*0.7);
     dummy.updateMatrix();
     mesh.setMatrixAt(idx, dummy.matrix);
     col.setHSL(0.92+Math.random()*0.05, 0.5+Math.random()*0.18, 0.62+Math.random()*0.12);
@@ -1100,11 +1101,15 @@ function updateRacer(r,dt){
   const vfrac=Math.min(1,Math.abs(r.spd)/MAXV);
   let turnRate=TURN*(0.5+0.5*vfrac);
   if(drift && Math.abs(r.spd)>50){
-    if(r.drift===0){ r.driftDir = steer>=0?1:-1; r.hop=0.32; }
+    // lock the slide to the direction you're actually steering — no random snap,
+    // and don't let live steering fight the slide (that caused the squirreliness)
+    if(r.drift===0){ r.driftDir = Math.abs(steer)>0.15 ? (steer>0?1:-1) : 0; r.hop=0.22; }
     r.drift=1;
-    if(r.driftDir===0)r.driftDir=steer>=0?1:-1;
-    turnRate*=1.4;
-    steer = r.driftDir*0.42 + steer*0.5;       // commit to slide direction (gentler)
+    if(r.driftDir===0 && Math.abs(steer)>0.15) r.driftDir = steer>0?1:-1;
+    if(r.driftDir!==0){
+      turnRate*=1.25;
+      steer = r.driftDir*0.5 + steer*0.22;     // committed slide + gentle trim
+    }
     r.driftCharge+=dt;
   } else {
     if(r.drift===1){                            // released → mini-turbo
