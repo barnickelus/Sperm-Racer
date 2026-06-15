@@ -1072,10 +1072,10 @@ function updateRacer(r,dt){
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer-=1;
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
-    if(isTouch && joyActive) steer = padSteer;                  // analog joystick steering
-    const braking = isTouch ? (joyActive && joyY>0.4) : (keys.has('arrowdown')||keys.has('s'));
-    gas = isTouch ? !braking : (keys.has('arrowup')||keys.has('w'));
-    brake = braking;
+    if(isTouch && joyActive) steer = padSteer;                  // analog joystick steering (L/R only)
+    // touch auto-drives FORWARD only — the stick never brakes/reverses (that read as "going backwards")
+    gas = isTouch ? true : (keys.has('arrowup')||keys.has('w'));
+    brake = isTouch ? false : (keys.has('arrowdown')||keys.has('s'));
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
@@ -1103,6 +1103,21 @@ function updateRacer(r,dt){
   const cs=SAMP[ci];
   const off=Math.hypot(r.x-cs.p.x, r.z-cs.p.z);
   const onRoad=off<HW;
+
+  // off-track rescue: if stuck off the road too long (e.g. spun around), snap
+  // back to the centerline facing forward along the track
+  if(onRoad){ r.offT=0; }
+  else {
+    r.offT=(r.offT||0)+dt;
+    if(r.offT>2.2){
+      r.x=cs.p.x; r.z=cs.p.z; r.y=cs.p.y;
+      r.head=Math.atan2(cs.t.x, cs.t.z);          // face forward along the track
+      r.spd=Math.min(Math.max(r.spd,30),60);
+      r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r.offT=0;
+      if(r.you){ showBanner('Repositioned'); kickShake(0.4); }
+    }
+  }
+
   let target = onRoad?MAXV:MAXV*0.45;
   if(r.you && !r.boostT){ /* AI uses skill */ }
   if(!r.you) target*=r.skill;
@@ -1587,25 +1602,29 @@ function setupJoystick(){
     joy.style.top  = (y - 80) + 'px';
     joy.style.bottom = 'auto';
   }
+  let joyId = null;          // the ONE finger that owns the stick (no re-anchoring)
   function down(e){
     if(state !== 'race') return;                              // only while racing
-    if(e.target.closest && e.target.closest('.btn')) return; // keep Drift/Item tappable
+    if(joyId !== null) return;                                // already steering — ignore extra touches
+    if(e.target.closest && e.target.closest('.btn')) return;  // keep Drift/Item tappable
+    joyId = e.pointerId;
     joyActive = true;
     originX = e.clientX; originY = e.clientY;
     place(originX, originY);
     joy.style.display = 'block';
     setKnob(0, 0);
   }
-  function move(e){ if(joyActive) setKnob(e.clientX - originX, e.clientY - originY); }
-  function up(){
-    joyActive = false; joyX = 0; joyY = 0; padSteer = 0;
+  function move(e){ if(joyActive && e.pointerId === joyId) setKnob(e.clientX - originX, e.clientY - originY); }
+  function end(e){
+    if(e.pointerId !== joyId) return;                         // only the owning finger resets it
+    joyId = null; joyActive = false; joyX = 0; joyY = 0; padSteer = 0;
     joy.style.display = 'none';
     knob.style.transform = 'translate(-50%,-50%)';
   }
   window.addEventListener('pointerdown', down);
   window.addEventListener('pointermove', move, {passive:true});
-  window.addEventListener('pointerup', up);
-  window.addEventListener('pointercancel', up);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
 }
 
 // (the joystick now feeds an analog `padSteer` straight into updateRacer above,
