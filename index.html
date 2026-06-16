@@ -521,7 +521,7 @@ function resize(){
   camera.aspect=w/h; camera.updateProjectionMatrix();
 }
 addEventListener('resize',resize);
-addEventListener('orientationchange',()=>setTimeout(resize,200));
+addEventListener('orientationchange',()=>{ tiltBase=null; setTimeout(resize,200); setTimeout(resize,500); });
 addEventListener('load',()=>{ resize(); setTimeout(resize,250); setTimeout(resize,800); });
 if(window.visualViewport) visualViewport.addEventListener('resize',resize);
 resize();
@@ -1839,15 +1839,21 @@ function setupTrackPick(){
 function setupTilt(){
   const btn=$('tiltbtn'); if(!btn) return;
   function onOrient(e){
-    if(e.gamma==null) return;
-    if(tiltBase===null){ tiltBase=e.gamma; tiltBaseBeta=(e.beta==null?0:e.beta); }  // capture neutral hold
-    const raw=e.gamma - tiltBase, dz=3;
-    const mag=Math.min(1, Math.max(0,(Math.abs(raw)-dz))/32);
-    tiltSteer=-Math.sign(raw)*mag*0.85;             // tilt right -> steer right
-    // fore/aft THROTTLE relative to your neutral hold so it never gets stuck:
-    //   neutral hold = near-full gas; tilt forward for full; tip the top back toward you to brake/reverse
-    const rb=(e.beta==null?tiltBaseBeta:e.beta) - tiltBaseBeta;   // + = top tilted toward you
-    tiltThrottle = Math.max(-0.4, Math.min(1, 0.85 - rb/22));
+    if(e.beta==null||e.gamma==null) return;
+    // Project the gravity vector into the CURRENT screen orientation, so steering
+    // is a true "roll" (Wii-wheel) regardless of portrait/landscape rotation.
+    const B=e.beta*Math.PI/180, G=e.gamma*Math.PI/180;
+    const gx=-Math.cos(B)*Math.sin(G), gy=-Math.sin(B);          // device-frame gravity
+    const ang=(((screen.orientation&&screen.orientation.angle)|| window.orientation || 0))*Math.PI/180;
+    const sx= gx*Math.cos(ang)+gy*Math.sin(ang);                 // screen left/right tilt
+    const sy=-gx*Math.sin(ang)+gy*Math.cos(ang);                 // screen fore/aft tilt
+    if(tiltBase===null){ tiltBase=sx; tiltBaseBeta=sy; }         // calibrate neutral in this orientation
+    const raw=sx-tiltBase, dz=0.05;
+    const mag=Math.min(1, Math.max(0,(Math.abs(raw)-dz))/0.45);
+    tiltSteer=Math.sign(raw)*mag*0.85;                           // roll right -> steer right
+    // fore/aft throttle relative to neutral: neutral = near-full gas; tip top toward you = brake/reverse
+    const rb=sy-tiltBaseBeta;
+    tiltThrottle=Math.max(-0.4, Math.min(1, 0.85 + rb*2.2));
     // selector-page preview: subtly tilt the roster so first-timers feel the response
     if(state==='menu'){
       const g=$('sperm-grid');
