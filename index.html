@@ -291,9 +291,12 @@ function unlockOrient(){ try{ screen.orientation && screen.orientation.unlock &&
 /* ============== AUDIO (procedural Web Audio SFX — no files) ============== */
 let actx=null, masterGain=null, engineOsc=null, engineGain=null;
 function initAudio(){
-  if(actx){ if(actx.state==='suspended') actx.resume(); return; }
+  if(actx){ if(actx.state!=='running' && actx.resume) actx.resume(); return; }
   try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
   masterGain=actx.createGain(); masterGain.gain.value=0.45; masterGain.connect(actx.destination);
+  // iOS unlock: play a 1-sample silent buffer inside this gesture + resume
+  try{ const b=actx.createBuffer(1,1,22050); const s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(0); }catch(e){}
+  if(actx.state!=='running' && actx.resume) actx.resume();
 }
 function beep(freq,dur,type,vol){
   if(!actx)return; const t=actx.currentTime;
@@ -1156,9 +1159,9 @@ function updateRacer(r,dt){
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
     if(isTouch && tiltMode){
       steer = tiltSteer;                                        // gyro left/right steering
-      // fore/aft tilt: neutral/forward = drive, mild back = coast, deep back = brake/reverse
-      gas   = tiltThrottle > -0.2;
-      brake = tiltThrottle < -0.55;
+      // analog fore/aft throttle: gas scales with uprightness; tip back toward you to reverse
+      gas   = tiltThrottle > 0.05;
+      brake = tiltThrottle < -0.05;
     } else if(isTouch){
       if(joyActive) steer = padSteer;                          // analog joystick steering (L/R only)
       gas = true; brake = false;                               // auto-drive forward
@@ -1209,8 +1212,10 @@ function updateRacer(r,dt){
   }
 
   let target = onRoad?MAXV:MAXV*0.45;
-  if(r.you && !r.boostT){ /* AI uses skill */ }
   if(!r.you) target*=r.skill;
+  // tilt = analog cruise: less upright -> lower top speed (full at ~85°)
+  if(r.you && isTouch && tiltMode && tiltThrottle>0.05 && !r.boostT)
+    target *= (0.5 + 0.5*Math.min(1,tiltThrottle));
 
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
@@ -1232,8 +1237,8 @@ function updateRacer(r,dt){
     r.drift=1;
     if(r.driftDir===0 && Math.abs(steer)>0.15) r.driftDir = steer>0?1:-1;
     if(r.driftDir!==0){
-      turnRate*=1.25;
-      steer = r.driftDir*0.5 + steer*0.22;     // committed slide + gentle trim
+      turnRate*=1.1;
+      steer = r.driftDir*0.32 + steer*0.28;     // committed slide + gentle trim (softer)
     }
     r.driftCharge+=dt;
   } else {
@@ -1635,6 +1640,7 @@ function setupSelect(){
   });
 
   $('racebtn').onclick = () => {
+    initAudio();
     $('select').classList.add('hidden');
     countdown();
   };
@@ -1803,9 +1809,11 @@ function setupTilt(){
     const raw=e.gamma - tiltBase, dz=3;
     const mag=Math.min(1, Math.max(0,(Math.abs(raw)-dz))/32);
     tiltSteer=-Math.sign(raw)*mag*0.85;             // tilt right -> steer right
-    // fore/aft: tilt forward (top away) = throttle up; tilt back = ease/brake; deep back = reverse
-    const rb=(e.beta==null?0:e.beta) - tiltBaseBeta;
-    tiltThrottle=Math.max(-1, Math.min(1, -rb/30));
+    // fore/aft THROTTLE from how upright the phone is (absolute beta):
+    //   ~85° upright = full throttle; flatter = ease off; tip the top back toward you = slight reverse
+    const b=(e.beta==null?60:e.beta);
+    let th = b<=85 ? (b-45)/40 : 1-(b-85)/30;       // peak at ~85°, falls off both sides
+    tiltThrottle = Math.max(-0.35, Math.min(1, th));
     // selector-page preview: subtly tilt the roster so first-timers feel the response
     if(state==='menu'){
       const g=$('sperm-grid');
@@ -1837,6 +1845,8 @@ $('startbtn').onclick = () => {
   $('select').classList.remove('hidden');
 };
 $('againbtn').onclick=countdown;
+// unlock audio on the very first touch/click anywhere (iOS needs a gesture)
+window.addEventListener('pointerdown', initAudio, {once:false});
 
 // boot
 $('loading').classList.add('hidden');
