@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sperm Racer">
+<meta name="theme-color" content="#05202a">
 <title>Sperm Racer</title>
 <style>
   :root{ --signal:#6df2d0; --bone:#eafff8; --ink:#8fb7b0; --dim:#2b6e66; }
@@ -284,6 +289,14 @@
 const T=THREE;
 if(!T){document.getElementById('loading').textContent='three.js failed to load';return;}
 const $=id=>document.getElementById(id);
+// surface any runtime error on-screen (so issues can be screenshotted, not invisible)
+addEventListener('error', ev=>{
+  let t=document.getElementById('errtoast');
+  if(!t){ t=document.createElement('div'); t.id='errtoast';
+    t.style.cssText='position:fixed;left:8px;right:8px;bottom:8px;z-index:999;background:rgba(140,12,24,.92);color:#fff;font:11px/1.4 ui-monospace,monospace;padding:8px 10px;border-radius:8px;white-space:pre-wrap;pointer-events:none';
+    (document.body||document.documentElement).appendChild(t); }
+  t.textContent='⚠ '+(ev.message||'error')+(ev.lineno?(' :'+ev.lineno):'');
+});
 const isTouch=matchMedia('(pointer:coarse)').matches;
 if(isTouch)document.body.classList.add('touch');
 
@@ -1647,11 +1660,13 @@ function setupSelect(){
       $('racebtn').disabled = false;
       $('racebtn').style.opacity = '1';
     };
-    // default select first (Guido)
+    // default select first (Guido) — and enable Lock-in immediately
     if(idx === 0){
       card.style.borderColor = 'var(--signal)';
       selectedEl = card;
       chosenType = t;
+      $('racebtn').disabled = false;
+      $('racebtn').style.opacity = '1';
     }
     grid.appendChild(card);
   });
@@ -1879,13 +1894,21 @@ function setupSliderToggle(){
 // ---- fullscreen (Android/desktop; iOS Safari ignores element fullscreen — use Add to Home Screen) ----
 function setupFullscreen(){
   const b=$('fsbtn'); if(!b) return;
+  const el=document.documentElement, d=document;
+  const req=el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen;
+  const standalone = navigator.standalone || matchMedia('(display-mode:standalone)').matches;
+  if(standalone){ b.style.display='none'; return; }      // already full-page from Home Screen
+  if(!req){                                              // iPhone Safari: no element fullscreen
+    b.textContent='Full screen: add to Home Screen';
+    b.onclick=()=>{ alert('iPhone Safari can’t hide its bars in-page.\n\nFor true full screen: tap the Share button, then “Add to Home Screen”, and launch Sperm Racer from the new icon.'); };
+    return;
+  }
   b.onclick=()=>{
-    const el=document.documentElement, d=document;
-    if(!(d.fullscreenElement||d.webkitFullscreenElement)){
-      (el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen||function(){}).call(el);
-    } else {
-      (d.exitFullscreen||d.webkitExitFullscreen||function(){}).call(d);
-    }
+    try{
+      if(!(d.fullscreenElement||d.webkitFullscreenElement)){
+        const p=req.call(el); if(p&&p.catch) p.catch(()=>{});
+      } else { (d.exitFullscreen||d.webkitExitFullscreen||function(){}).call(d); }
+    }catch(_){}
     setTimeout(resize,350);
   };
 }
@@ -1902,8 +1925,10 @@ setupFullscreen();
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
   try{ const el=document.documentElement;   // best-effort full page (iOS Safari ignores)
-    if(!(document.fullscreenElement||document.webkitFullscreenElement))
-      (el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen||function(){}).call(el);
+    if(!(document.fullscreenElement||document.webkitFullscreenElement)){
+      const rq=el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen;
+      if(rq){ const p=rq.call(el); if(p&&p.catch) p.catch(()=>{}); }
+    }
   }catch(_){}
   $('start').classList.add('hidden');
   $('select').classList.remove('hidden');
