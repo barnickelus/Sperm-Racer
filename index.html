@@ -82,6 +82,11 @@
     color:#04201b;border:none;padding:15px 42px;border-radius:30px;font-size:14px;letter-spacing:.2em;
     text-transform:uppercase;font-weight:700;}
   button.go:active{transform:translateY(1px);}
+  button.go.alt{background:rgba(13,48,56,.55);color:var(--signal);border:2px solid var(--signal);}
+  button.go.alt.on{background:rgba(109,242,208,.18);}
+  button.trk{margin-top:0;padding:10px 18px;font-size:12px;letter-spacing:.12em;
+    background:rgba(13,48,56,.55);color:var(--signal);border:2px solid var(--dim);border-radius:22px;}
+  button.trk.on{border-color:var(--signal);background:rgba(109,242,208,.18);}
   #count{font-size:clamp(90px,30vw,240px);font-weight:800;color:var(--signal);
     text-shadow:0 0 50px rgba(109,242,208,.6);}
   .board{margin:14px 0;width:min(420px,92vw);}
@@ -229,6 +234,9 @@
     <kbd>▲</kbd> gas &nbsp; <kbd>▼</kbd> brake &nbsp; <kbd>◀</kbd><kbd>▶</kbd> steer<br>
     <kbd>shift</kbd> hop / drift &nbsp; <kbd>space</kbd> use item
   </div>
+  <div class="tag" style="margin:14px 0 6px">circuit</div>
+  <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
+  <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
   <button class="go" id="startbtn">Start engine</button>
 </div>
 
@@ -517,181 +525,167 @@ function drawGauge(frac,boosting){
 
 /* ============== TRACK ============== */
 const HW=22;                                       // road half-width
-const CTRL=[
-  [   0,0,   0],[ 140,0, -40],[ 260,6,-180],[ 180,10,-330],
-  [  -20,8,-380],[-200,2,-320],[-300,0,-160],[-230,0,  10],
-  [ -90,4,  90],[  40,6,  60]
-].map(p=>new T.Vector3(p[0],p[1],p[2]));
-const curve=new T.CatmullRomCurve3(CTRL,true,'catmullrom',0.5);
-curve.arcLengthDivisions=600;
-const LEN=curve.getLength();
-
-const STEPS=460;
-const SAMP=[];                                     // {p:Vector3, t:Vector3, n:Vector3, u}
-for(let i=0;i<STEPS;i++){
-  const u=i/STEPS;
-  const p=curve.getPointAt(u), t=curve.getTangentAt(u).normalize();
-  const n=new T.Vector3(t.z,0,-t.x).normalize();   // horizontal perpendicular
-  SAMP.push({p,t,n,u});
-}
-// Fallopian tube track
+const TRACKS=[
+  {name:'Ophelia',  tunnels:[[0.18,0.27],[0.62,0.70]],
+   ctrl:[[0,0,0],[210,10,-60],[390,34,-270],[270,50,-495],[-30,34,-585],[-300,12,-480],[-450,2,-240],[-345,20,15],[-135,34,135],[60,18,90]]},
+  {name:'Seraphina',tunnels:[[0.40,0.50]],
+   ctrl:[[0,0,0],[290,12,-95],[480,40,-360],[340,58,-660],[0,42,-760],[-350,18,-630],[-540,4,-330],[-410,24,-30],[-185,40,205],[100,18,125]]},
+  {name:'Delilah',  tunnels:[[0.10,0.18],[0.50,0.58],[0.80,0.87]],
+   ctrl:[[0,0,0],[160,12,-60],[285,36,-235],[190,56,-420],[-25,40,-480],[-260,16,-395],[-380,4,-195],[-285,22,30],[-115,36,150],[60,16,95]]},
+];
+const STEPS=520;
+const SAMP=[];                 // {p,t,n,u} — rebuilt per track
 let TRACK_PULSE=[];
-(()=>{
-  // Main tubular track using the curve
-  const tubeRadius = 9;
-  const tubeGeo = new T.TubeGeometry(curve, STEPS, tubeRadius, 14, true);
-  const tubeMat = new T.MeshPhongMaterial({
-    color: 0xffb6c1,      // flesh/pink tone
-    emissive: 0x5a2630,
-    shininess: 40,
-    specular: 0x664444
-  });
-  const tube = new T.Mesh(tubeGeo, tubeMat);
-  tube.position.y -= 9;                       // sink the vessel beneath the road membrane
-  scene.add(tube);
-  TRACK_PULSE.push({mat:tubeMat, base:0x5a2630, amp:0.5});
+let trackGroup=null;
+let selTrack=0;
 
-  // Inner lining for depth
-  const innerGeo = new T.TubeGeometry(curve, STEPS, tubeRadius * 0.7, 12, true);
-  const innerMat = new T.MeshPhongMaterial({
-    color: 0xe88a9e,
-    emissive: 0x3a1418
-  });
-  const innerTube = new T.Mesh(innerGeo, innerMat);
-  innerTube.position.y -= 9;
-  scene.add(innerTube);
-  TRACK_PULSE.push({mat:innerMat, base:0x3a1418, amp:0.7});
-
-  // Fimbriae (finger-like projections) at the start
-  const startS = SAMP[0];
-  const fimbriaeCount = 12;
-  const fimbriaeMat = new T.MeshPhongMaterial({color: 0xff9999, emissive: 0x552222});
-  for(let i=0; i<fimbriaeCount; i++){
-    const angle = (i / fimbriaeCount) * Math.PI * 2;
-    const f = new T.Mesh(new T.ConeGeometry(1.5, 8, 6), fimbriaeMat);
-    const offset = startS.n.clone().multiplyScalar(6);
-    f.position.copy(startS.p).add(offset).add(new T.Vector3(0, 4, 0));
-    f.rotation.x = 1.2 + Math.random() * 0.4;
-    f.rotation.y = angle;
-    f.scale.set(1, 1 + Math.random() * 0.5, 1);
-    scene.add(f);
-  }
-})();
-
-/* glowing road membrane (readability) + edge light-ropes + ambient motes */
-(()=>{
-  const pos=[], idx=[], uvs=[];
-  for(let i=0;i<=STEPS;i++){
-    const s=SAMP[i%STEPS];
-    const l=s.p.clone().addScaledVector(s.n, HW);
-    const r=s.p.clone().addScaledVector(s.n,-HW);
-    pos.push(l.x,l.y+0.05,l.z, r.x,r.y+0.05,r.z);
-    uvs.push(0, i/STEPS*40, 1, i/STEPS*40);
-  }
-  for(let i=0;i<STEPS;i++){
-    const a=i*2,b=a+1,c=a+2,d=a+3;
-    idx.push(a,b,c, b,d,c);
-  }
-  const geo=new T.BufferGeometry();
-  geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));
-  geo.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
-  geo.setIndex(idx); geo.computeVertexNormals();
-  // procedural road texture: dark glass with glowing centerline + lane edges
-  const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
-  const rg=rc.getContext('2d');
-  rg.fillStyle='#3a1f2a'; rg.fillRect(0,0,64,256);
-  rg.strokeStyle='rgba(255,170,200,0.28)'; rg.lineWidth=4;
-  rg.strokeRect(2,0,60,256);
-  rg.fillStyle='rgba(255,150,190,0.55)'; rg.fillRect(30,0,4,256);      // centerline
-  for(let y=0;y<256;y+=32){ rg.fillStyle='rgba(255,235,242,0.4)'; rg.fillRect(29,y,6,12); }
-  const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
-  const mat=new T.MeshPhongMaterial({map:rt,color:0xffd6e2,emissive:0x401826,
-    transparent:true,opacity:0.92,shininess:80,specular:0x7a2247,side:T.DoubleSide});
-  const road=new T.Mesh(geo,mat); scene.add(road);
-
-  // additive edge light-ropes
-  for(const side of [HW,-HW]){
-    const ep=[];
-    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side);
-      ep.push(e.x,e.y+0.6,e.z); }
-    const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
-    const el=new T.Line(eg,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.6,
-      blending:T.AdditiveBlending,depthWrite:false}));
-    scene.add(el);
-  }
-
-  // ambient bio-motes floating in the corridor (one cheap draw call)
-  const N=420, mp=new Float32Array(N*3);
-  for(let k=0;k<N;k++){
-    const s=SAMP[(Math.random()*STEPS|0)];
-    const off=(Math.random()*2-1)*HW*1.3;
-    mp[k*3]=s.p.x+s.n.x*off+(Math.random()*2-1)*8;
-    mp[k*3+1]=s.p.y+2+Math.random()*26;
-    mp[k*3+2]=s.p.z+s.n.z*off+(Math.random()*2-1)*8;
-  }
-  const mg=new T.BufferGeometry(); mg.setAttribute('position',new T.BufferAttribute(mp,3));
-  const mmat=new T.PointsMaterial({map:TEX_SPARK,color:0xffc6dd,size:3.2,sizeAttenuation:true,
-    transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false});
-  const motes=new T.Points(mg,mmat); scene.add(motes);
-  TRACK_PULSE.motes=motes;
-})();
-// ground
+// static ground (built once)
 (()=>{
   const g=new T.PlaneGeometry(2400,2400,1,1); g.rotateX(-Math.PI/2);
   const m=new T.MeshLambertMaterial({color:0x2a1a22});
   const ground=new T.Mesh(g,m); ground.position.y=-2; scene.add(ground);
 })();
-// start/finish gantry
-(()=>{
-  const s=SAMP[0];
-  const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),
-    new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
-  bar.position.copy(s.p).add(new T.Vector3(0,14,0));
-  scene.add(bar);
-  for(const side of [-1,1]){
-    const post=new T.Mesh(new T.CylinderGeometry(1.4,1.4,16,8),
-      new T.MeshPhongMaterial({color:0x2b6e66,flatShading:true}));
-    post.position.copy(s.p).addScaledVector(s.n,side*(HW+3)).add(new T.Vector3(0,6,0));
-    scene.add(post);
+
+// Build (or rebuild) the whole track world for TRACKS[idx]
+function buildTrack(idx){
+  selTrack=idx;
+  if(trackGroup){
+    scene.remove(trackGroup);
+    trackGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose();
+      if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());} });
   }
-})();
-// soft pink "villi" edge border — clusters of fleshy blobs lining the track
-// (one instanced draw call, replaces the old white cone pylons)
-(()=>{
-  const blobGeo=new T.SphereGeometry(1,10,8);
-  const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0, shininess:18}); // smooth (no flatShading)
+  trackGroup=new T.Group(); scene.add(trackGroup);
+  TRACK_PULSE=[];
+
+  const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
+  const curve=new T.CatmullRomCurve3(CTRL,true,'catmullrom',0.5);
+  curve.arcLengthDivisions=600;
+
+  SAMP.length=0;
+  for(let i=0;i<STEPS;i++){
+    const u=i/STEPS;
+    const p=curve.getPointAt(u), t=curve.getTangentAt(u).normalize();
+    const n=new T.Vector3(t.z,0,-t.x).normalize();
+    SAMP.push({p,t,n,u});
+  }
+
+  // ---- fleshy tube + inner lining + fimbriae ----
+  const tubeRadius=9;
+  const tubeMat=new T.MeshPhongMaterial({color:0xffb6c1,emissive:0x5a2630,shininess:40,specular:0x664444});
+  const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius,14,true),tubeMat);
+  tube.position.y-=9; trackGroup.add(tube);
+  TRACK_PULSE.push({mat:tubeMat,base:0x5a2630,amp:0.5});
+  const innerMat=new T.MeshPhongMaterial({color:0xe88a9e,emissive:0x3a1418});
+  const innerTube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius*0.7,12,true),innerMat);
+  innerTube.position.y-=9; trackGroup.add(innerTube);
+  TRACK_PULSE.push({mat:innerMat,base:0x3a1418,amp:0.7});
+  const startS=SAMP[0];
+  const fimbriaeMat=new T.MeshPhongMaterial({color:0xff9999,emissive:0x552222});
+  for(let i=0;i<12;i++){
+    const angle=(i/12)*Math.PI*2;
+    const f=new T.Mesh(new T.ConeGeometry(1.5,8,6),fimbriaeMat);
+    f.position.copy(startS.p).add(startS.n.clone().multiplyScalar(6)).add(new T.Vector3(0,4,0));
+    f.rotation.x=1.2+Math.random()*0.4; f.rotation.y=angle; f.scale.set(1,1+Math.random()*0.5,1);
+    trackGroup.add(f);
+  }
+
+  // ---- glowing road membrane + edge ropes + bio-motes ----
+  const pos=[],ridx=[],uvs=[];
+  for(let i=0;i<=STEPS;i++){
+    const s=SAMP[i%STEPS];
+    const l=s.p.clone().addScaledVector(s.n,HW), r=s.p.clone().addScaledVector(s.n,-HW);
+    pos.push(l.x,l.y+0.05,l.z, r.x,r.y+0.05,r.z);
+    uvs.push(0,i/STEPS*40, 1,i/STEPS*40);
+  }
+  for(let i=0;i<STEPS;i++){ const a=i*2,b=a+1,c=a+2,d=a+3; ridx.push(a,b,c, b,d,c); }
+  const geo=new T.BufferGeometry();
+  geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  geo.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
+  geo.setIndex(ridx); geo.computeVertexNormals();
+  const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
+  const rg=rc.getContext('2d');
+  rg.fillStyle='#3a1f2a'; rg.fillRect(0,0,64,256);
+  rg.strokeStyle='rgba(255,170,200,0.28)'; rg.lineWidth=4; rg.strokeRect(2,0,60,256);
+  rg.fillStyle='rgba(255,150,190,0.55)'; rg.fillRect(30,0,4,256);
+  for(let y=0;y<256;y+=32){ rg.fillStyle='rgba(255,235,242,0.4)'; rg.fillRect(29,y,6,12); }
+  const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
+  const road=new T.Mesh(geo,new T.MeshPhongMaterial({map:rt,color:0xffd6e2,emissive:0x401826,
+    transparent:true,opacity:0.92,shininess:80,specular:0x7a2247,side:T.DoubleSide}));
+  trackGroup.add(road);
+  for(const side of [HW,-HW]){
+    const ep=[];
+    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side); ep.push(e.x,e.y+0.6,e.z); }
+    const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
+    trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.6,blending:T.AdditiveBlending,depthWrite:false})));
+  }
+  const N=420, mp=new Float32Array(N*3);
+  for(let k=0;k<N;k++){
+    const s=SAMP[(Math.random()*STEPS|0)], off=(Math.random()*2-1)*HW*1.3;
+    mp[k*3]=s.p.x+s.n.x*off+(Math.random()*2-1)*8;
+    mp[k*3+1]=s.p.y+2+Math.random()*26;
+    mp[k*3+2]=s.p.z+s.n.z*off+(Math.random()*2-1)*8;
+  }
+  const mg=new T.BufferGeometry(); mg.setAttribute('position',new T.BufferAttribute(mp,3));
+  const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,color:0xffc6dd,size:3.2,sizeAttenuation:true,
+    transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false}));
+  trackGroup.add(motes); TRACK_PULSE.motes=motes;
+
+  // ---- start/finish gantry ----
+  const s0=SAMP[0];
+  const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
+  bar.position.copy(s0.p).add(new T.Vector3(0,14,0)); trackGroup.add(bar);
+  for(const side of [-1,1]){
+    const post=new T.Mesh(new T.CylinderGeometry(1.4,1.4,16,8),new T.MeshPhongMaterial({color:0x2b6e66,flatShading:true}));
+    post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
+  }
+
+  // ---- pink villi edge border (one instanced draw) ----
+  const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0,shininess:18});
   const spots=[];
   for(let i=0;i<STEPS;i+=2){
     const s=SAMP[i];
     for(const side of [-1,1]){
-      const n=3+(Math.random()*2|0);                 // 3-4 blobs per point
-      for(let b=0;b<n;b++){
+      const nb=3+(Math.random()*2|0);
+      for(let b=0;b<nb;b++){
         const out=HW+1.0+b*1.7+Math.random()*1.6;
-        spots.push({
-          x:s.p.x+s.n.x*side*out+(Math.random()*2-1)*1.5,
-          y:s.p.y-0.4+Math.random()*3.8,             // taller ridge, more vertical variation
+        spots.push({x:s.p.x+s.n.x*side*out+(Math.random()*2-1)*1.5,
+          y:s.p.y-0.4+Math.random()*3.8,
           z:s.p.z+s.n.z*side*out+(Math.random()*2-1)*1.5,
-          r:0.7+Math.random()*1.9                     // wider size variation
-        });
+          r:0.7+Math.random()*1.9});
       }
     }
   }
-  const mesh=new T.InstancedMesh(blobGeo, blobMat, spots.length);
-  mesh.frustumCulled=false;
+  const villi=new T.InstancedMesh(new T.SphereGeometry(1,10,8),blobMat,spots.length); villi.frustumCulled=false;
   const dummy=new T.Object3D(), col=new T.Color();
-  spots.forEach((p,idx)=>{
+  spots.forEach((p,i)=>{
     dummy.position.set(p.x,p.y,p.z);
-    dummy.scale.set(p.r, p.r*(0.9+Math.random()*0.8), p.r);  // varied, rounded heights
-    dummy.rotation.set((Math.random()-0.5)*0.7, Math.random()*6.28, (Math.random()-0.5)*0.7);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(idx, dummy.matrix);
-    col.setHSL(0.92+Math.random()*0.05, 0.5+Math.random()*0.18, 0.62+Math.random()*0.12);
-    mesh.setColorAt(idx, col);
+    dummy.scale.set(p.r,p.r*(0.9+Math.random()*0.8),p.r);
+    dummy.rotation.set((Math.random()-0.5)*0.7,Math.random()*6.28,(Math.random()-0.5)*0.7);
+    dummy.updateMatrix(); villi.setMatrixAt(i,dummy.matrix);
+    col.setHSL(0.92+Math.random()*0.05,0.5+Math.random()*0.18,0.62+Math.random()*0.12);
+    villi.setColorAt(i,col);
   });
-  mesh.instanceMatrix.needsUpdate=true;
-  if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
-  scene.add(mesh);
-})();
+  villi.instanceMatrix.needsUpdate=true; if(villi.instanceColor) villi.instanceColor.needsUpdate=true;
+  trackGroup.add(villi);
+
+  // ---- tunnels: arching ribbed rings that enclose the corridor over some stretches ----
+  const tun=TRACKS[idx].tunnels||[];
+  const ringGeo=new T.TorusGeometry(HW+4,3,8,18);
+  const ringMat=new T.MeshPhongMaterial({color:0xc9627e,emissive:0x3a141c,side:T.DoubleSide,
+    transparent:true,opacity:0.92,shininess:30});
+  for(const seg of tun){
+    const i0=Math.floor(seg[0]*STEPS), i1=Math.floor(seg[1]*STEPS);
+    for(let i=i0;i<=i1;i+=3){
+      const s=SAMP[i%STEPS];
+      const ring=new T.Mesh(ringGeo,ringMat);
+      ring.position.copy(s.p).add(new T.Vector3(0,1,0));
+      ring.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s.t);
+      trackGroup.add(ring);
+    }
+  }
+
+  mapBounds=null;   // minimap recomputes for the new layout
+}
 
 /* nearest-sample lookup + progress */
 function nearest(x,z){
@@ -1080,7 +1074,8 @@ function updateRacer(r,dt){
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer-=1;
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
-    if(isTouch && joyActive) steer = padSteer;                  // analog joystick steering (L/R only)
+    if(isTouch && tiltMode) steer = tiltSteer;                  // gyroscope tilt steering
+    else if(isTouch && joyActive) steer = padSteer;             // analog joystick steering (L/R only)
     // touch auto-drives FORWARD only — the stick never brakes/reverses (that read as "going backwards")
     gas = isTouch ? true : (keys.has('arrowup')||keys.has('w'));
     brake = isTouch ? false : (keys.has('arrowdown')||keys.has('s'));
@@ -1171,6 +1166,13 @@ function updateRacer(r,dt){
   // integrate
   r.x+=Math.sin(r.head)*r.spd*dt;
   r.z+=Math.cos(r.head)*r.spd*dt;
+
+  // subtle track magnetism — gently bleeds off lateral drift toward the centerline
+  { const s=SAMP[r.idx];
+    const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;
+    const pull=(onRoad?0.9:0.3)*lat*dt;
+    r.x-=s.n.x*pull; r.z-=s.n.z*pull; }
+
   placeOnTrack(r,dt);
 
   // wall: hard limit just past shoulder
@@ -1549,6 +1551,7 @@ function setupSelect(){
 // Update countdown to apply chosen sperm to player
 const _origCountdown = countdown;
 countdown = function(){
+  buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
   $('start').classList.add('hidden'); $('select').classList.add('hidden'); $('finish').classList.add('hidden');
   $('cd').classList.remove('hidden');
@@ -1619,6 +1622,9 @@ buildRacers = function(){
 let joyActive = false;
 let joyX = 0, joyY = 0; // normalized -1 to 1
 let padSteer = 0;       // analog steer (-1..1) after deadzone + curve
+let tiltMode = false;   // gyroscope steering on/off
+let tiltSteer = 0;      // analog steer from device tilt
+let tiltBase = null;    // neutral tilt captured when enabled
 function setupJoystick(){
   const joy = $('joystick');
   const knob = $('knob');
@@ -1648,6 +1654,7 @@ function setupJoystick(){
   let joyId = null;          // the ONE finger that owns the stick (no re-anchoring)
   function down(e){
     if(state !== 'race') return;                              // only while racing
+    if(tiltMode) return;                                      // tilt steering — no on-screen stick
     if(joyId !== null) return;                                // already steering — ignore extra touches
     if(e.target.closest && e.target.closest('.btn')) return;  // keep Drift/Item tappable
     joyId = e.pointerId;
@@ -1673,9 +1680,50 @@ function setupJoystick(){
 // (the joystick now feeds an analog `padSteer` straight into updateRacer above,
 //  so there's no double-applied steering and small finger moves stay gentle)
 
+// ---- track picker (start screen) ----
+function setupTrackPick(){
+  const wrap=$('trackpick'); if(!wrap) return;
+  wrap.innerHTML='';
+  TRACKS.forEach((t,i)=>{
+    const b=document.createElement('button');
+    b.className='go trk'+(i===selTrack?' on':'');
+    b.textContent=t.name;
+    b.onclick=()=>{
+      selTrack=i;
+      wrap.querySelectorAll('.trk').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+      buildTrack(i); buildRacers();   // live-preview the chosen circuit behind the menu
+    };
+    wrap.appendChild(b);
+  });
+}
+
+// ---- gyroscope tilt steering ----
+function setupTilt(){
+  const btn=$('tiltbtn'); if(!btn) return;
+  function onOrient(e){
+    if(e.gamma==null) return;
+    if(tiltBase===null) tiltBase=e.gamma;          // capture neutral the first reading
+    const raw=e.gamma - tiltBase, dz=3;
+    const mag=Math.min(1, Math.max(0,(Math.abs(raw)-dz))/32);
+    tiltSteer=Math.sign(raw)*mag*0.85;             // tilt right -> steer right
+  }
+  function enable(){
+    const go=()=>{ window.addEventListener('deviceorientation',onOrient);
+      tiltMode=true; tiltBase=null; btn.textContent='Tilt steering: ON'; btn.classList.add('on'); };
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      DeviceOrientationEvent.requestPermission().then(s=>{ s==='granted'?go():alert('Tilt permission denied'); }).catch(()=>{});
+    } else go();
+  }
+  function disable(){ tiltMode=false; tiltSteer=0; btn.textContent='Tilt steering: OFF'; btn.classList.remove('on'); }
+  btn.onclick=()=> tiltMode?disable():enable();
+}
+
 // Boot with new flow
 setupSelect();
 setupJoystick();
+setupTrackPick();
+setupTilt();
 
 $('startbtn').onclick = () => {
   $('start').classList.add('hidden');
@@ -1687,6 +1735,7 @@ $('againbtn').onclick=countdown;
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
 state='menu';
+buildTrack(selTrack);        // build the default circuit
 buildRacers();               // show grid behind menu
 requestAnimationFrame(frame);
 })();
