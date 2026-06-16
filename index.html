@@ -62,6 +62,14 @@
     #actL .btn {width:130px;height:130px;font-size:18px;}
     #fireL {width:95px;height:95px;left:140px;}
   }
+  /* wide / landscape: push action buttons into the bottom corners, lift off the edge */
+  @media (orientation:landscape){
+    #act,#drift{right:30px;bottom:24px;}
+    #fire{right:150px;bottom:30px;}
+    #actL{left:30px;bottom:24px;}
+    #fireL{left:150px;bottom:30px;}
+    #throttle{right:24px;height:62vh;max-height:300px;}
+  }
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
     justify-content:center;text-align:center;padding:24px;pointer-events:auto;
@@ -221,6 +229,13 @@
   <div id="joystick" class="pad" style="left:30px;bottom:30px;width:160px;height:160px;border:3px solid var(--signal);border-radius:50%;background:rgba(13,48,56,.35);backdrop-filter:blur(4px);display:none;pointer-events:auto;position:absolute;">
     <div id="knob" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:68px;height:68px;background:var(--signal);border-radius:50%;box-shadow:0 0 20px rgba(109,242,208,.6);transition:transform .05s;"></div>
   </div>
+
+  <!-- Right-side throttle slider (optional control) -->
+  <div id="throttle" class="pad nojoy" style="display:none;pointer-events:auto;position:absolute;right:18px;top:50%;transform:translateY(-50%);width:62px;height:46vh;max-height:360px;border:3px solid var(--signal);border-radius:34px;background:rgba(13,48,56,.35);backdrop-filter:blur(4px);">
+    <div id="thknob" style="position:absolute;left:50%;top:14%;transform:translate(-50%,-50%);width:50px;height:50px;background:var(--signal);border-radius:50%;box-shadow:0 0 18px rgba(109,242,208,.6);"></div>
+    <div style="position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:9px;letter-spacing:.1em;color:var(--signal)">GAS</div>
+    <div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);font-size:9px;letter-spacing:.1em;color:var(--ink)">REV</div>
+  </div>
 </div>
 
 <div id="loading">warming the slide…</div>
@@ -237,6 +252,8 @@
   <div class="tag" style="margin:14px 0 6px">circuit</div>
   <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
+  <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
+  <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Start engine</button>
 </div>
 
@@ -1157,14 +1174,11 @@ function updateRacer(r,dt){
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer-=1;
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer+=1;
-    if(isTouch && tiltMode){
-      steer = tiltSteer;                                        // gyro left/right steering
-      // analog fore/aft throttle: gas scales with uprightness; tip back toward you to reverse
-      gas   = tiltThrottle > 0.05;
-      brake = tiltThrottle < -0.05;
-    } else if(isTouch){
-      if(joyActive) steer = padSteer;                          // analog joystick steering (L/R only)
-      gas = true; brake = false;                               // auto-drive forward
+    if(isTouch){
+      steer = tiltMode ? tiltSteer : (joyActive ? padSteer : steer);  // tilt or hold-anywhere stick
+      if(sliderMode){ gas = sliderThrottle>0.05; brake = sliderThrottle<-0.05; }      // right-side slider
+      else if(tiltMode){ gas = tiltThrottle>0.05; brake = tiltThrottle<-0.05; }       // fore/aft tilt
+      else { gas = true; brake = false; }                                            // auto-drive forward
     } else {
       gas = keys.has('arrowup')||keys.has('w');
       brake = keys.has('arrowdown')||keys.has('s');
@@ -1213,9 +1227,11 @@ function updateRacer(r,dt){
 
   let target = onRoad?MAXV:MAXV*0.45;
   if(!r.you) target*=r.skill;
-  // tilt = analog cruise: less upright -> lower top speed (full at ~85°)
-  if(r.you && isTouch && tiltMode && tiltThrottle>0.05 && !r.boostT)
-    target *= (0.5 + 0.5*Math.min(1,tiltThrottle));
+  // analog cruise from slider or tilt: partial throttle -> lower top speed
+  if(r.you && isTouch && !r.boostT){
+    const thr = sliderMode ? sliderThrottle : (tiltMode ? tiltThrottle : 1);
+    if(thr>0.05) target *= (0.5 + 0.5*Math.min(1,thr));
+  }
 
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
@@ -1592,6 +1608,7 @@ function countdown(){
 }
 function endRace(){
   state='done'; stopEngine(); unlockOrient();
+  $('throttle').style.display='none';
   const me=racers.find(r=>r.you);
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
   $('fhead').textContent=ord(me.place)+' place';
@@ -1664,6 +1681,7 @@ countdown = function(){
     else{
       $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now();
       startEngine(); lockOrient();
+      if(sliderMode){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; }
       // rocket start: reward holding the throttle/stick the instant the lights go
       const me=racers.find(r=>r.you);
       const launching = isTouch ? joyActive : (keys.has('arrowup')||keys.has('w'));
@@ -1727,6 +1745,8 @@ let tiltSteer = 0;      // analog steer from device tilt (left/right)
 let tiltThrottle = 0;   // fore/aft tilt -> throttle(+)/brake/reverse(-)
 let tiltBase = null;    // neutral left/right tilt captured when enabled
 let tiltBaseBeta = 0;   // neutral fore/aft tilt
+let sliderMode = false; // right-side throttle slider on/off
+let sliderThrottle = 1; // throttle from the slider (-0.4..1)
 function setupJoystick(){
   const joy = $('joystick');
   const knob = $('knob');
@@ -1758,7 +1778,7 @@ function setupJoystick(){
     if(state !== 'race') return;                              // only while racing
     if(tiltMode) return;                                      // tilt steering — no on-screen stick
     if(joyId !== null) return;                                // already steering — ignore extra touches
-    if(e.target.closest && e.target.closest('.btn')) return;  // keep Drift/Item tappable
+    if(e.target.closest && e.target.closest('.btn,.nojoy')) return;  // keep buttons + throttle slider usable
     joyId = e.pointerId;
     joyActive = true;
     originX = e.clientX; originY = e.clientY;
@@ -1833,14 +1853,59 @@ function setupTilt(){
   btn.onclick=()=> tiltMode?disable():enable();
 }
 
+// ---- right-side throttle slider ----
+function setupSlider(){
+  const sl=$('throttle'), kn=$('thknob'); if(!sl||!kn) return;
+  let id=null;
+  function set(clientY){
+    const r=sl.getBoundingClientRect();
+    let f=(clientY-r.top)/r.height; f=Math.max(0,Math.min(1,f));
+    kn.style.top=(f*100)+'%';
+    sliderThrottle=Math.max(-0.4, Math.min(1, 1 - f*1.4));   // top=gas, ~71%=coast, bottom=slight reverse
+  }
+  sl.addEventListener('pointerdown',e=>{ id=e.pointerId; set(e.clientY); try{sl.setPointerCapture(id);}catch(_){} });
+  sl.addEventListener('pointermove',e=>{ if(e.pointerId===id) set(e.clientY); });
+  const up=e=>{ if(e.pointerId===id) id=null; };               // holds last throttle (cruise)
+  sl.addEventListener('pointerup',up); sl.addEventListener('pointercancel',up);
+}
+function setupSliderToggle(){
+  const b=$('sliderbtn'); if(!b) return;
+  b.onclick=()=>{
+    sliderMode=!sliderMode;
+    b.textContent='Side throttle: '+(sliderMode?'ON':'OFF');
+    b.classList.toggle('on',sliderMode);
+    $('throttle').style.display=(sliderMode && state==='race')?'block':'none';
+  };
+}
+// ---- fullscreen (Android/desktop; iOS Safari ignores element fullscreen — use Add to Home Screen) ----
+function setupFullscreen(){
+  const b=$('fsbtn'); if(!b) return;
+  b.onclick=()=>{
+    const el=document.documentElement, d=document;
+    if(!(d.fullscreenElement||d.webkitFullscreenElement)){
+      (el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen||function(){}).call(el);
+    } else {
+      (d.exitFullscreen||d.webkitExitFullscreen||function(){}).call(d);
+    }
+    setTimeout(resize,350);
+  };
+}
+
 // Boot with new flow
 setupSelect();
 setupJoystick();
 setupTrackPick();
 setupTilt();
+setupSlider();
+setupSliderToggle();
+setupFullscreen();
 
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
+  try{ const el=document.documentElement;   // best-effort full page (iOS Safari ignores)
+    if(!(document.fullscreenElement||document.webkitFullscreenElement))
+      (el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen||function(){}).call(el);
+  }catch(_){}
   $('start').classList.add('hidden');
   $('select').classList.remove('hidden');
 };
