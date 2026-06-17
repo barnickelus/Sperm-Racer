@@ -218,7 +218,7 @@
 </div>
 <div id="ui">
   <div id="mapwrap" class="glass"><span class="ml">circuit</span><canvas id="map" width="150" height="150"></canvas></div>
-  <div class="hud glass" id="lap">Lap<b><span id="lapn">1</span>/3</b></div>
+  <div class="hud glass" id="lap"><span id="laplbl">Lap</span><b><span id="lapn">1</span><span id="lapsuf">/3</span></b></div>
   <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
   <div id="item"></div>
   <div class="hud" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
@@ -670,6 +670,12 @@ const TRACKS=[
    ctrl:[[0,0,0],[290,12,-95],[480,40,-360],[340,58,-660],[0,42,-760],[-350,18,-630],[-540,4,-330],[-410,24,-30],[-185,40,205],[100,18,125]]},
   {name:'Delilah',  tunnels:[[0.10,0.18],[0.50,0.58],[0.80,0.87]],
    ctrl:[[0,0,0],[160,12,-60],[285,36,-235],[190,56,-420],[-25,40,-480],[-260,16,-395],[-380,4,-195],[-285,22,30],[-115,36,150],[60,16,95]]},
+  // Bianca — peanut / two-lobe loop
+  {name:'Bianca',   tunnels:[[0.30,0.40]],
+   ctrl:[[0,0,0],[170,14,-90],[120,40,-300],[-60,48,-340],[-150,30,-200],[-70,18,-90],[-180,12,40],[-120,30,220],[80,40,210],[140,16,80]]},
+  // Eve — long point-to-point dash, no laps, finishes at the glowing egg (ovum)
+  {name:'Eve', loop:false, egg:true, tunnels:[[0.22,0.30],[0.55,0.63]],
+   ctrl:[[0,0,0],[120,10,-150],[20,30,-320],[180,48,-470],[110,66,-660],[-60,50,-770],[70,34,-920],[210,22,-1060],[150,40,-1230],[60,18,-1380]]},
 ];
 const STEPS=520;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
@@ -677,6 +683,7 @@ let TRACK_PULSE=[];
 let trackGroup=null;
 let selTrack=0;
 let innerSign=1;     // which lateral side (+/- normal) is the loop's infield (hard barrier)
+let trackLoop=true;  // false for point-to-point (egg) courses
 
 // static ground (built once)
 (()=>{
@@ -696,17 +703,20 @@ function buildTrack(idx){
   trackGroup=new T.Group(); scene.add(trackGroup);
   TRACK_PULSE=[];
 
+  const loop = TRACKS[idx].loop!==false;
+  trackLoop = loop;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
-  const curve=new T.CatmullRomCurve3(CTRL,true,'catmullrom',0.5);
+  const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
   curve.arcLengthDivisions=600;
 
   SAMP.length=0;
   for(let i=0;i<STEPS;i++){
-    const u=i/STEPS;
+    const u=loop ? i/STEPS : i/(STEPS-1);          // open course: last sample sits at the very end
     const p=curve.getPointAt(u), t=curve.getTangentAt(u).normalize();
     const n=new T.Vector3(t.z,0,-t.x).normalize();
     SAMP.push({p,t,n,u});
   }
+  const LAST = loop ? STEPS : STEPS-1;             // strip segments (no closing seam on open courses)
   // figure out which lateral side is the loop's infield (toward the centroid)
   let ccx=0,ccz=0; for(const s of SAMP){ ccx+=s.p.x; ccz+=s.p.z; } ccx/=SAMP.length; ccz/=SAMP.length;
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
@@ -715,11 +725,11 @@ function buildTrack(idx){
   // ---- fleshy tube + inner lining + fimbriae ----
   const tubeRadius=9;
   const tubeMat=new T.MeshPhongMaterial({color:0xffb6c1,emissive:0x5a2630,shininess:40,specular:0x664444});
-  const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius,14,true),tubeMat);
+  const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius,14,loop),tubeMat);
   tube.position.y-=9; trackGroup.add(tube);
   TRACK_PULSE.push({mat:tubeMat,base:0x5a2630,amp:0.5});
   const innerMat=new T.MeshPhongMaterial({color:0xe88a9e,emissive:0x3a1418});
-  const innerTube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius*0.7,12,true),innerMat);
+  const innerTube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius*0.7,12,loop),innerMat);
   innerTube.position.y-=9; trackGroup.add(innerTube);
   TRACK_PULSE.push({mat:innerMat,base:0x3a1418,amp:0.7});
   const startS=SAMP[0];
@@ -734,13 +744,13 @@ function buildTrack(idx){
 
   // ---- glowing road membrane + edge ropes + bio-motes ----
   const pos=[],ridx=[],uvs=[];
-  for(let i=0;i<=STEPS;i++){
+  for(let i=0;i<=LAST;i++){
     const s=SAMP[i%STEPS];
     const l=s.p.clone().addScaledVector(s.n,HW), r=s.p.clone().addScaledVector(s.n,-HW);
     pos.push(l.x,l.y+0.05,l.z, r.x,r.y+0.05,r.z);
     uvs.push(0,i/STEPS*40, 1,i/STEPS*40);
   }
-  for(let i=0;i<STEPS;i++){ const a=i*2,b=a+1,c=a+2,d=a+3; ridx.push(a,b,c, b,d,c); }
+  for(let i=0;i<LAST;i++){ const a=i*2,b=a+1,c=a+2,d=a+3; ridx.push(a,b,c, b,d,c); }
   const geo=new T.BufferGeometry();
   geo.setAttribute('position',new T.Float32BufferAttribute(pos,3));
   geo.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));
@@ -757,7 +767,7 @@ function buildTrack(idx){
   trackGroup.add(road);
   for(const side of [HW,-HW]){
     const ep=[];
-    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side); ep.push(e.x,e.y+0.6,e.z); }
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
     trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.6,blending:T.AdditiveBlending,depthWrite:false})));
   }
@@ -827,8 +837,8 @@ function buildTrack(idx){
     }
   }
 
-  // ---- inner barrier: a faint glowing membrane along the infield edge (only hard wall) ----
-  {
+  // ---- inner barrier: a faint glowing membrane along the infield edge (loops only) ----
+  if(loop){
     const H=8, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -842,6 +852,16 @@ function buildTrack(idx){
     trackGroup.add(new T.Mesh(wg,new T.MeshBasicMaterial({color:0xff6f96,transparent:true,opacity:0.13,side:T.DoubleSide,depthWrite:false})));
     const rgo=new T.BufferGeometry(); rgo.setAttribute('position',new T.Float32BufferAttribute(rp,3));
     trackGroup.add(new T.Line(rgo,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false})));
+  }
+
+  // ---- finish egg (ovum) at the end of a point-to-point course ----
+  if(!loop){
+    const end=SAMP[STEPS-1];
+    const egg=new T.Mesh(new T.SphereGeometry(13,20,16),
+      new T.MeshPhongMaterial({color:0xffe6cc,emissive:0xff9a6a,shininess:60,transparent:true,opacity:0.95}));
+    egg.scale.set(1,1.25,1); egg.position.copy(end.p).add(new T.Vector3(0,9,0)); trackGroup.add(egg);
+    const halo=glowSprite(0xffd2a0,64); halo.position.copy(egg.position); trackGroup.add(halo);
+    TRACK_PULSE.egg=egg;
   }
 
   mapBounds=null;   // minimap recomputes for the new layout
@@ -1301,8 +1321,8 @@ function updateRacer(r,dt){
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
   } else {
-    // AI steer toward lookahead centerline point
-    const look=SAMP[(r.idx+16)%STEPS];
+    // AI steer toward lookahead centerline point (clamp at the end on open courses)
+    const look=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
     const wob=Math.sin((r.wob+=dt*1.8))*30;
     const tx=look.p.x+look.n.x*wob, tz=look.p.z+look.n.z*wob;
     const want=Math.atan2(tx-r.x, tz-r.z);
@@ -1397,16 +1417,17 @@ function updateRacer(r,dt){
 
   placeOnTrack(r,dt);
 
-  // inner barrier: the infield edge is the ONLY hard wall — you can't cut across the loop.
-  // The outer side is open terrain (slower off-road); a far safety stop prevents flying off forever.
   { const s=SAMP[r.idx];
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;   // +lat toward +normal
-    const inner=lat*innerSign;                          // >0 means heading into the infield
-    const innerLim=HW-1;
-    if(inner>innerLim){
-      const ex=inner-innerLim; r.x-=s.n.x*innerSign*ex; r.z-=s.n.z*innerSign*ex; r.spd*=0.7;
-    } else if(inner<-(HW*4)){
-      const ex=-(HW*4)-inner; r.x+=s.n.x*innerSign*ex; r.z+=s.n.z*innerSign*ex; r.spd*=0.6;
+    if(trackLoop){
+      // loop: the infield edge is the ONLY hard wall (can't cut across); outer side open
+      const inner=lat*innerSign, innerLim=HW-1;
+      if(inner>innerLim){ const ex=inner-innerLim; r.x-=s.n.x*innerSign*ex; r.z-=s.n.z*innerSign*ex; r.spd*=0.7; }
+      else if(inner<-(HW*4)){ const ex=-(HW*4)-inner; r.x+=s.n.x*innerSign*ex; r.z+=s.n.z*innerSign*ex; r.spd*=0.6; }
+    } else {
+      // point-to-point: soft corridor walls on both sides of the tube
+      const lim=HW*1.7;
+      if(Math.abs(lat)>lim){ const ex=Math.abs(lat)-lim, sgn=Math.sign(lat); r.x-=s.n.x*sgn*ex; r.z-=s.n.z*sgn*ex; r.spd*=0.75; }
     }
   }
 }
@@ -1415,15 +1436,22 @@ function placeOnTrack(r,dt){
   // smooth height to nearest sample y
   const s=SAMP[r.idx];
   r.y += (s.p.y - r.y)*Math.min(1,6*dt);
-  // progress + lap
+  // progress
   const u=s.u;
-  if(r.prog>0.75 && u<0.25)r.lap++;
-  else if(r.prog<0.25 && u>0.75)r.lap=Math.max(0,r.lap-1);
-  r.prog=u; r.total=r.lap+u;
-  if(!r.finished && r.lap>=LAPS){
+  let done=false;
+  if(trackLoop){
+    if(r.prog>0.75 && u<0.25)r.lap++;
+    else if(r.prog<0.25 && u>0.75)r.lap=Math.max(0,r.lap-1);
+    r.prog=u; r.total=r.lap+u;
+    done = r.lap>=LAPS;
+  } else {
+    r.prog=u; r.total=u;                          // point-to-point: progress = distance to the egg
+    done = u>=0.985;
+  }
+  if(!r.finished && done){
     r.finished=true; r.finishT=raceTime;
-    if(r.you){                                   // finish-line flourish for the player
-      showBanner(ord(r.place)+'!'); kickShake(0.8); SFX.finish(); stopEngine();
+    if(r.you){                                   // finish flourish for the player
+      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(0.8); SFX.finish(); stopEngine();
       for(const c of [0xffd27a,0x6df2d0,0xff7ac0,0xffffff])
         burst(r.x, r.y+5, r.z, c, 18, 70, 1.0, 5);
     }
@@ -1626,8 +1654,9 @@ function drawMap(){
   const ox=pad+(W-pad*2-(b.maxx-b.minx)*sc)/2, oz=pad+(W-pad*2-(b.maxz-b.minz)*sc)/2;
   const X=x=>ox+(x-b.minx)*sc, Z=z=>oz+(z-b.minz)*sc;
   mx.clearRect(0,0,W,W);
+  const mapEnd=trackLoop?STEPS:STEPS-1;
   const path=()=>{ mx.beginPath();
-    for(let i=0;i<=STEPS;i+=3){const s=SAMP[i%STEPS]; const p=[X(s.p.x),Z(s.p.z)]; i?mx.lineTo(p[0],p[1]):mx.moveTo(p[0],p[1]);} };
+    for(let i=0;i<=mapEnd;i+=3){const s=SAMP[Math.min(i,STEPS-1)]; const p=[X(s.p.x),Z(s.p.z)]; i?mx.lineTo(p[0],p[1]):mx.moveTo(p[0],p[1]);} };
   mx.lineJoin='round';
   mx.lineWidth=8; mx.strokeStyle='rgba(109,242,208,0.10)'; path(); mx.stroke();   // glow
   mx.lineWidth=3.5; mx.strokeStyle='rgba(109,242,208,0.55)'; path(); mx.stroke(); // core
@@ -1645,8 +1674,11 @@ const ord=n=>['','1st','2nd','3rd','4th'][n]||n+'th';
 function fmt(s){const m=Math.floor(s/60);return `${String(m).padStart(2,'0')}:${(s%60).toFixed(1).padStart(4,'0')}`;}
 function syncHUD(){
   const me=racers.find(r=>r.you);
-  const lapNum=Math.min(LAPS,me.lap+1);
-  $('lapn').textContent=lapNum;
+  if(trackLoop){
+    $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
+  } else {
+    $('laplbl').textContent='To Egg'; $('lapn').textContent=Math.round(me.prog*100)+'%'; $('lapsuf').textContent='';
+  }
   $('posn').textContent=ord(me.place);
   $('clock').textContent=fmt(raceTime);
   const sp=Math.abs(me.spd);
@@ -1670,7 +1702,8 @@ function syncHUD(){
   } else { elDM.style.opacity=0; }
 
   // final-lap banner (once)
-  if(me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); }
+  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); }
+  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); }
 
   // speed-line + vignette intensity
   const boost=me.boostT>0;
