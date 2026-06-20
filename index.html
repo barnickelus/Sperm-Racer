@@ -257,6 +257,8 @@
     <kbd>▲</kbd> gas &nbsp; <kbd>▼</kbd> brake &nbsp; <kbd>◀</kbd><kbd>▶</kbd> steer<br>
     <kbd>shift</kbd> hop / drift &nbsp; <kbd>space</kbd> use item
   </div>
+  <div class="tag" style="margin:14px 0 6px">difficulty</div>
+  <div id="diffpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
   <div class="tag" style="margin:14px 0 6px">circuit</div>
   <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
@@ -705,6 +707,7 @@ let selTrack=0;
 let innerSign=1;     // which lateral side (+/- normal) is the loop's infield (hard barrier)
 let trackLoop=true;  // false for point-to-point (egg) courses
 let trackCross=false;// true for self-crossing (figure-8) courses
+let eggAnim=0;       // >0 while the win/fertilize egg animation plays
 
 // static ground (built once)
 (()=>{
@@ -887,6 +890,7 @@ function buildTrack(idx){
     TRACK_PULSE.egg=egg;
   }
 
+  eggAnim=0;
   mapBounds=null;   // minimap recomputes for the new layout
 }
 
@@ -1252,7 +1256,9 @@ let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null;
 const GP_PTS=[6,4,2,1]; // points by finishing place (1st..4th)
 
 const LAPS=3;
-const MAXV=118, ACCEL=64, BOOSTV=176, TURN=2.0;
+const MAXV=118, ACCEL=64, BOOSTV=176, TURN=1.8;
+let difficulty='medium';
+const DIFF={easy:0.86, medium:0.95, hard:1.04};   // AI skill centre per difficulty
 let racers=[], items=[], hazards=[], projectiles=[];
 let state='load', tStart=0, raceTime=0;
 
@@ -1441,9 +1447,13 @@ function updateRacer(r,dt){
       if(r.driftCharge>1.2) r.boostT=Math.max(r.boostT,0.9);
       else if(r.driftCharge>0.55) r.boostT=Math.max(r.boostT,0.5);
       r.drift=0; r.driftCharge=0; r.driftDir=0;
+      r.slip=0; r._grip=0.32;                    // clean, straight launch out of the drift
     }
   }
-  r.head += steer*turnRate*dt*Math.sign(r.spd||1);
+  if(r._grip>0){ turnRate*=0.45; r._grip-=dt; }  // brief grip so the boost fires forward
+  // smooth the applied steering a touch (less twitchy)
+  r._st = (r._st||0) + (steer-(r._st||0))*Math.min(1, 9*dt);
+  r.head += r._st*turnRate*dt*Math.sign(r.spd||1);
 
   // visual slip + hop
   const wantSlip = r.drift? r.driftDir*0.45 : 0;
@@ -1486,8 +1496,9 @@ function placeOnTrack(r,dt){
   const u=s.u;
   let done=false;
   if(trackLoop){
-    if(r.prog>0.75 && u<0.25){ r.lap++; if(r.you && r.lap<LAPS) SFX.lap(); }
-    else if(r.prog<0.25 && u>0.75)r.lap=Math.max(0,r.lap-1);
+    // checkpoint-guarded lap: must pass the mid-lap point before the line counts a lap
+    if(u>0.4 && u<0.6) r._cp=true;
+    if(r._cp && r.prog>0.85 && u<0.15){ r.lap++; r._cp=false; if(r.you && r.lap<LAPS) SFX.lap(); }
     r.prog=u; r.total=r.lap+u;
     done = r.lap>=LAPS;
   } else {
@@ -1497,9 +1508,10 @@ function placeOnTrack(r,dt){
   if(!r.finished && done){
     r.finished=true; r.finishT=raceTime;
     if(r.you){                                   // finish flourish for the player
-      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(0.8); SFX.finish(); stopEngine();
+      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(0.9); SFX.finish(); stopEngine();
       for(const c of [0xffd27a,0x6df2d0,0xff7ac0,0xffffff])
         burst(r.x, r.y+5, r.z, c, 18, 70, 1.0, 5);
+      if(!trackLoop) eggAnim=2.4;                 // trigger the fertilize animation on the egg
     }
   }
 }
@@ -1793,9 +1805,16 @@ function frame(now){
     p.mat.emissive.copy(b); } }
   if(TRACK_PULSE.motes){ TRACK_PULSE.motes.material.opacity=0.32+beat*0.3;
     TRACK_PULSE.motes.rotation.y=tsec*0.01; }
-  if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg; const s=1+Math.sin(tsec*2.2)*0.06;
-    e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
-    e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); }
+  if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg;
+    if(eggAnim>0){                                  // fertilize! swell, blaze, spew sparkles
+      eggAnim-=dt; const k=1+(2.4-eggAnim)*0.7;
+      e.scale.set(k,k*1.25,k); e.rotation.y+=dt*3;
+      e.material.emissive.setHSL(0.08,1,0.62);
+      if(Math.random()<0.6){ const c=[0xffd27a,0xff7ac0,0x6df2d0,0xffffff][Math.random()*4|0];
+        burst(e.position.x+(Math.random()*26-13), e.position.y+(Math.random()*26-6), e.position.z+(Math.random()*26-13), c, 6, 60, 0.7, 6); }
+    } else { const s=1+Math.sin(tsec*2.2)*0.06;
+      e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
+      e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
   updateParticles(dt);
   renderer.render(scene,camera);
   requestAnimationFrame(frame);
@@ -1975,7 +1994,7 @@ buildRacers = function(){
       drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
       finished:false, finishT:0, place:k+1, phase:Math.random()*9, _li:k,
-      skill: you ? ((t.stats&&t.stats.skill)||1) : (0.94+Math.random()*0.05),
+      skill: you ? ((t.stats&&t.stats.skill)||1) : (DIFF[difficulty]-0.03+Math.random()*0.06),
       ...(you ? (t.stats||{}) : {})           // chosen sperm's stats for the player
     };
   });
@@ -2013,7 +2032,7 @@ function setupJoystick(){
     // analog steer: deadzone + expo curve + reduced gain (much less twitchy)
     // negated so sliding right steers right (L/R was inverted)
     const dz = 0.12, mag = Math.max(0, (Math.abs(joyX) - dz) / (1 - dz));
-    padSteer = -Math.sign(joyX) * mag * mag * 0.8;
+    padSteer = -Math.sign(joyX) * mag * mag * 0.7;
   }
   function place(x, y){           // center the 160px ring on the touch point
     joy.style.left = (x - 80) + 'px';
@@ -2067,6 +2086,19 @@ function setupTrackPick(){
   });
 }
 
+// ---- difficulty picker ----
+function setupDifficulty(){
+  const wrap=$('diffpick'); if(!wrap) return;
+  wrap.innerHTML='';
+  ['easy','medium','hard'].forEach(d=>{
+    const b=document.createElement('button');
+    b.className='go trk'+(d===difficulty?' on':'');
+    b.textContent=d;
+    b.onclick=()=>{ difficulty=d; wrap.querySelectorAll('.trk').forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    wrap.appendChild(b);
+  });
+}
+
 // ---- gyroscope tilt steering ----
 function setupTilt(){
   const btn=$('tiltbtn'); if(!btn) return;
@@ -2082,7 +2114,7 @@ function setupTilt(){
     if(tiltBase===null){ tiltBase=sx; tiltBaseBeta=sy; }         // calibrate neutral in this orientation
     const raw=sx-tiltBase, dz=0.05;
     const mag=Math.min(1, Math.max(0,(Math.abs(raw)-dz))/0.45);
-    tiltSteer=Math.sign(raw)*mag*0.85;                           // roll right -> steer right
+    tiltSteer=Math.sign(raw)*mag*0.72;                           // roll right -> steer right
     // fore/aft throttle relative to neutral: neutral = near-full gas; tip top toward you = brake/reverse
     const rb=sy-tiltBaseBeta;
     tiltThrottle=Math.max(-0.4, Math.min(1, 0.85 + rb*2.2));
@@ -2155,6 +2187,7 @@ function setupFullscreen(){
 setupSelect();
 setupJoystick();
 setupTrackPick();
+setupDifficulty();
 setupTilt();
 setupSlider();
 setupSliderToggle();
