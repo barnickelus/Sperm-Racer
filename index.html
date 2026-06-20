@@ -282,7 +282,12 @@
   <div class="tag" id="ftag">race complete</div>
   <h1 id="fhead">2nd</h1>
   <div class="board" id="board"></div>
-  <button class="go" id="againbtn">Race again</button>
+  <div id="fbtns" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:560px">
+    <button class="go" id="againbtn">Race again</button>
+    <button class="go alt" id="changebtn">Change racer</button>
+    <button class="go alt" id="gpbtn">Grand Prix</button>
+    <button class="go" id="nextgpbtn" style="display:none">Next circuit</button>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -373,6 +378,11 @@ const SFX={
   turbo(){ beep(620,0.09,'square',0.2); setTimeout(()=>beep(960,0.1,'square',0.18),50); },
   count(go){ beep(go?900:440, go?0.3:0.16, 'square', 0.35); },
   finish(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'triangle',0.3), i*130)); },
+  whip(){ if(!actx)return; const t=actx.currentTime; const o=actx.createOscillator(),g=actx.createGain();
+    o.type='sawtooth'; o.frequency.setValueAtTime(1200,t); o.frequency.exponentialRampToValueAtTime(180,t+0.16);
+    g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.18);
+    o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400); },
+  lap(){ beep(700,0.08,'sine',0.18); },
 };
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
@@ -984,19 +994,23 @@ function makeCell(hue, typeId){
   // === STEREOTYPE FACIAL FEATURES + ACCESSORIES ===
   // BIG CARTOON EYES + star pupils (One Piece sparkle like the refs)
   const eyeMat = new T.MeshPhongMaterial({color:0xffffff, shininess:40});
-  const eyeL = new T.Mesh(new T.SphereGeometry(1.1,10,8), eyeMat);
-  const eyeR = new T.Mesh(new T.SphereGeometry(1.1,10,8), eyeMat);
-  eyeL.position.set(-1.3, 4.1, 3.1);
-  eyeR.position.set( 1.3, 4.1, 3.1);
+  const eyeL = new T.Mesh(new T.SphereGeometry(1.35,12,10), eyeMat);
+  const eyeR = new T.Mesh(new T.SphereGeometry(1.35,12,10), eyeMat);
+  eyeL.position.set(-1.45, 4.15, 3.0);
+  eyeR.position.set( 1.45, 4.15, 3.0);
   g.add(eyeL); g.add(eyeR);
   const starMat = new T.MeshPhongMaterial({color:0x111111});
-  const pupilL = new T.Mesh(new T.ConeGeometry(0.55, 0.9, 4), starMat);
-  const pupilR = new T.Mesh(new T.ConeGeometry(0.55, 0.9, 4), starMat);
-  pupilL.position.set(-1.3, 4.15, 4.0);
-  pupilR.position.set( 1.3, 4.15, 4.0);
+  const pupilL = new T.Mesh(new T.ConeGeometry(0.62, 1.0, 4), starMat);
+  const pupilR = new T.Mesh(new T.ConeGeometry(0.62, 1.0, 4), starMat);
+  pupilL.position.set(-1.45, 4.2, 4.05);
+  pupilR.position.set( 1.45, 4.2, 4.05);
   pupilL.rotation.x = Math.PI/2;
   pupilR.rotation.x = Math.PI/2;
   g.add(pupilL); g.add(pupilR);
+  // little white catch-light on each eye for that cartoon sparkle
+  const shineMat = new T.MeshBasicMaterial({color:0xffffff});
+  for(const ex of [-1.45,1.45]){ const sh=new T.Mesh(new T.SphereGeometry(0.26,8,6), shineMat);
+    sh.position.set(ex+0.3, 4.6, 4.2); g.add(sh); }
 
   // Big expressive mouth
   const mouth = new T.Mesh(new T.TorusGeometry(1.3,0.28,8,16, Math.PI*0.85), new T.MeshPhongMaterial({color:0x442222, emissive:0x220000}));
@@ -1233,6 +1247,9 @@ const SPERM_TYPES = [
   {id:'french', name:'Pierre', hue:225, desc:'Effortless flair. Smooth handling, oui oui.', stats:{skill:1.0, turn:1.1}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
+// Grand Prix (cup across all tracks) state
+let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null;
+const GP_PTS=[6,4,2,1]; // points by finishing place (1st..4th)
 
 const LAPS=3;
 const MAXV=118, ACCEL=64, BOOSTV=176, TURN=2.0;
@@ -1469,7 +1486,7 @@ function placeOnTrack(r,dt){
   const u=s.u;
   let done=false;
   if(trackLoop){
-    if(r.prog>0.75 && u<0.25)r.lap++;
+    if(r.prog>0.75 && u<0.25){ r.lap++; if(r.you && r.lap<LAPS) SFX.lap(); }
     else if(r.prog<0.25 && u>0.75)r.lap=Math.max(0,r.lap-1);
     r.prog=u; r.total=r.lap+u;
     done = r.lap>=LAPS;
@@ -1503,7 +1520,7 @@ function collide(){
         vic.x+=wx*5; vic.z+=wz*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
         atk.spd=Math.min(BOOSTV, atk.spd+8);                 // little forward kick for the attacker
         burst((a.x+b.x)/2,(a.y+b.y)/2+3,(a.z+b.z)/2,0xffe08a,12,46,0.45,4);
-        if(atk.you||vic.you){ kickShake(0.5); SFX.hit(); }
+        if(atk.you||vic.you){ kickShake(0.5); SFX.whip(); }
       }
     }
   }
@@ -1776,6 +1793,9 @@ function frame(now){
     p.mat.emissive.copy(b); } }
   if(TRACK_PULSE.motes){ TRACK_PULSE.motes.material.opacity=0.32+beat*0.3;
     TRACK_PULSE.motes.rotation.y=tsec*0.01; }
+  if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg; const s=1+Math.sin(tsec*2.2)*0.06;
+    e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
+    e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); }
   updateParticles(dt);
   renderer.render(scene,camera);
   requestAnimationFrame(frame);
@@ -1799,15 +1819,48 @@ function endRace(){
   $('throttle').style.display='none';
   const me=racers.find(r=>r.you);
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
-  $('fhead').textContent=ord(me.place)+' place';
-  $('ftag').textContent=me.place===1?'specimen dominant':'race complete';
   const bd=$('board'); bd.innerHTML='';
-  ranked.forEach((r,i)=>{
-    const row=document.createElement('div'); row.className='row'+(r.you?' you':'');
-    row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${r.name}</span><b>${fmt(r.finishT)}</b>`;
-    bd.appendChild(row);
-  });
+  const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
+
+  if(gpActive){
+    ranked.forEach((r,i)=>{ gpScores[r._li]+=(GP_PTS[i]||0); });   // award points
+    const lastRace = gpIndex>=TRACKS.length-1;
+    const order=gpScores.map((p,li)=>({li,p,name:gpLineup[li].name,you:li===0})).sort((a,b)=>b.p-a.p);
+    $('ftag').textContent='circuit '+(gpIndex+1)+'/'+TRACKS.length+' • '+TRACKS[gpIndex].name+' • you '+ord(me.place);
+    order.forEach((o,i)=>{
+      const row=document.createElement('div'); row.className='row'+(o.you?' you':'');
+      row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${o.name}</span><b>${o.p} pts</b>`;
+      bd.appendChild(row);
+    });
+    if(lastRace){
+      const champ=order[0];
+      $('fhead').textContent = champ.you ? 'GP Champion!' : champ.name+' wins';
+      $('ftag').textContent='grand prix complete';
+      gpActive=false; normalBtns(''); $('nextgpbtn').style.display='none';
+    } else {
+      $('fhead').textContent = ord(order.findIndex(o=>o.you)+1)+' overall';
+      normalBtns('none'); $('nextgpbtn').style.display='';
+      $('nextgpbtn').textContent='Next: '+TRACKS[gpIndex+1].name;
+    }
+  } else {
+    $('fhead').textContent=ord(me.place)+' place';
+    $('ftag').textContent=me.place===1?'specimen dominant':'race complete';
+    ranked.forEach((r,i)=>{
+      const row=document.createElement('div'); row.className='row'+(r.you?' you':'');
+      row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${r.name}</span><b>${fmt(r.finishT)}</b>`;
+      bd.appendChild(row);
+    });
+    normalBtns(''); $('nextgpbtn').style.display='none';
+  }
   $('finish').classList.remove('hidden');
+}
+// start a Grand Prix: lock the lineup, race every circuit in order, tally points
+function startGP(){
+  const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id);
+  for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
+  gpLineup=[chosenType, others[0], others[1], others[2]];
+  gpScores=[0,0,0,0]; gpActive=true; gpIndex=0; selTrack=0;
+  $('finish').classList.add('hidden'); countdown();
 }
 // ============== CHARACTER SELECT LOGIC ==============
 function setupSelect(){
@@ -1893,11 +1946,15 @@ buildRacers = function(){
   hazards=[]; projectiles=[];
   items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
 
-  // line-up: your chosen sperm + 3 of the OTHER characters as opponents,
-  // each rendered with its full features + corresponding colors
-  const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id);
-  for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
-  const lineup=[chosenType, others[0], others[1], others[2]];
+  // line-up: your chosen sperm + 3 of the OTHER characters as opponents.
+  // During a Grand Prix the same 4 racers carry across every circuit.
+  let lineup;
+  if(gpActive && gpLineup){ lineup=gpLineup; }
+  else {
+    const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id);
+    for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
+    lineup=[chosenType, others[0], others[1], others[2]];
+  }
 
   racers=lineup.map((t,k)=>{
     const you=(k===0);
@@ -1917,7 +1974,7 @@ buildRacers = function(){
       spd:0, idx:2, prog:s.u, lap:0, total:0,
       drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
-      finished:false, finishT:0, place:k+1, phase:Math.random()*9,
+      finished:false, finishT:0, place:k+1, phase:Math.random()*9, _li:k,
       skill: you ? ((t.stats&&t.stats.skill)||1) : (0.94+Math.random()*0.05),
       ...(you ? (t.stats||{}) : {})           // chosen sperm's stats for the player
     };
@@ -2114,7 +2171,10 @@ $('startbtn').onclick = () => {
   $('start').classList.add('hidden');
   $('select').classList.remove('hidden');
 };
-$('againbtn').onclick=countdown;
+$('againbtn').onclick=()=>{ gpActive=false; countdown(); };
+$('changebtn').onclick=()=>{ gpActive=false; $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; };
+$('gpbtn').onclick=()=>{ initAudio(); startGP(); };
+$('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
 // unlock audio on the very first touch/click anywhere (iOS needs a gesture)
 window.addEventListener('pointerdown', initAudio, {once:false});
 
