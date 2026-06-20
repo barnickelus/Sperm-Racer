@@ -389,10 +389,10 @@ const SFX={
   lap(){ beep(700,0.08,'sine',0.18); },
 };
 
-/* ---- looping background music (procedural, no files) ---- */
-let musicGain=null, musicTimer=null, musicStep=0, musicOn=true;
+/* ---- looping background music (procedural, no files; per-track theme) ---- */
+let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0;
 const MEL=[0,3,7,10,12,10,7,3], BASS=[0,0,7,5];
-function noteFreq(s){ return 110*Math.pow(2,s/12); }
+function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 function playNote(freq,dur,vol,type){
   if(!actx||!musicGain)return; const t=actx.currentTime;
   const o=actx.createOscillator(), g=actx.createGain();
@@ -409,7 +409,8 @@ function musicTick(){
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
-  musicStep=0; musicTimer=setInterval(musicTick,210); }
+  const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key + tempo
+  musicStep=0; musicTimer=setInterval(musicTick, tk.tempo||210); }
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; } }
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
@@ -747,19 +748,19 @@ function drawGauge(frac,boosting){
 const HW=22;                                       // road half-width
 const TRACKS=[
   // Ophelia — smooth wide oval
-  {name:'Ophelia',  tunnels:[[0.30,0.40]],
+  {name:'Ophelia',  key:0, tempo:220, tunnels:[[0.30,0.40]],
    ctrl:[[380,6,0],[270,22,-300],[0,42,-400],[-270,30,-300],[-380,12,0],[-270,22,300],[0,36,400],[270,26,300]]},
   // Seraphina — big flowing kidney
-  {name:'Seraphina',tunnels:[[0.46,0.56]],
+  {name:'Seraphina',key:3, tempo:200, tunnels:[[0.46,0.56]],
    ctrl:[[420,8,-40],[300,26,-360],[0,46,-460],[-300,34,-340],[-420,14,40],[-220,22,300],[-40,32,170],[180,28,360],[360,18,240]]},
   // Delilah — figure-8 with an elevated crossover (go over/under through the tunnel)
-  {name:'Delilah',  cross:true, tunnels:[[0.43,0.57]],
+  {name:'Delilah',  cross:true, key:-2, tempo:188, tunnels:[[0.43,0.57]],
    ctrl:[[0,6,-30],[210,14,-230],[60,28,-450],[-210,20,-250],[-60,42,-60],[0,48,40],[210,42,250],[40,28,460],[-210,22,250],[-40,12,40]]},
   // Bianca — tall narrow egg loop
-  {name:'Bianca',   tunnels:[[0.32,0.42]],
+  {name:'Bianca',   key:5, tempo:208, tunnels:[[0.32,0.42]],
    ctrl:[[230,8,-320],[120,30,-440],[-120,30,-440],[-230,10,-300],[-270,16,0],[-180,30,300],[0,42,430],[180,30,300],[270,16,0]]},
   // Eve — long point-to-point dash (≈4×), finishes at the glowing egg (ovum)
-  {name:'Eve', loop:false, egg:true, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
+  {name:'Eve', loop:false, egg:true, key:7, tempo:176, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
    ctrl:[[0,0,0],[150,12,-300],[-40,34,-600],[210,52,-900],[60,72,-1240],[-170,54,-1540],[120,40,-1840],[320,26,-2200],[150,56,-2560],[-80,40,-2880],[170,30,-3240],[380,48,-3600],[190,66,-3980],[-50,46,-4320],[140,30,-4680],[330,40,-5040],[150,30,-5440],[80,20,-5800]]},
 ];
 const STEPS=700;
@@ -1453,10 +1454,12 @@ const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣'};
 function giveItem(r){
   const roll=Math.random();
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
-  if(r.place>=3 && roll<0.6){ r.item='boost'; return; }
-  r.item = roll<0.45?'boost' : roll<0.78?'spore' : 'cyst';
+  if(r.place>=3 && roll<0.6){ r.item='boost'; }
+  else r.item = roll<0.45?'boost' : roll<0.78?'spore' : 'cyst';
+  if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
 function useItem(r){
+  if(r.you && r._roll>0) return;   // can't fire mid-roulette
   if(!r.item)return;
   if(r.item==='boost'){ r.boostT=Math.max(r.boostT,1.4); }
   else if(r.item==='spore'){
@@ -1499,6 +1502,7 @@ function updateRacer(r,dt){
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
+    if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
   } else {
     // AI steer toward lookahead centerline point (clamp at the end on open courses)
     const look=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
@@ -1913,11 +1917,16 @@ function syncHUD(){
   drawGauge(sp/BOOSTV, me.boostT>0);
 
   const slot=$('item');
-  const ic=me.item?ITEM_ICONS[me.item]:'';
-  if(ic && !me._pItem){ slot.classList.remove('item-pop'); void slot.offsetWidth; slot.classList.add('item-pop'); }
-  me._pItem=me.item;
-  slot.textContent=ic;
-  slot.classList.toggle('spin', !!me.item);
+  if(me._roll>0){                                   // roulette: cycle icons fast, then settle
+    slot.textContent=['🔥','🦠','🟣'][Math.floor(performance.now()/70)%3];
+    slot.classList.add('spin'); me._pItem=null;
+  } else {
+    const ic=me.item?ITEM_ICONS[me.item]:'';
+    if(ic && me._pItem!==me.item){ slot.classList.remove('item-pop'); void slot.offsetWidth; slot.classList.add('item-pop'); }
+    me._pItem=me.item;
+    slot.textContent=ic;
+    slot.classList.toggle('spin', !!me.item);
+  }
 
   // drift charge meter
   if(me.drift===1 && Math.abs(me.spd)>50){
