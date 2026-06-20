@@ -263,6 +263,7 @@
   <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
+  <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Start engine</button>
 </div>
@@ -387,6 +388,29 @@ const SFX={
     o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400); },
   lap(){ beep(700,0.08,'sine',0.18); },
 };
+
+/* ---- looping background music (procedural, no files) ---- */
+let musicGain=null, musicTimer=null, musicStep=0, musicOn=true;
+const MEL=[0,3,7,10,12,10,7,3], BASS=[0,0,7,5];
+function noteFreq(s){ return 110*Math.pow(2,s/12); }
+function playNote(freq,dur,vol,type){
+  if(!actx||!musicGain)return; const t=actx.currentTime;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.type=type||'triangle'; o.frequency.value=freq;
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(vol,t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g); g.connect(musicGain); o.start(t); o.stop(t+dur+0.03);
+}
+function musicTick(){
+  const step=musicStep++ %16;
+  if(step%4===0) playNote(noteFreq(BASS[(step/4)|0]-12),0.5,0.2,'sawtooth');
+  playNote(noteFreq(MEL[step%MEL.length]+12),0.16,0.085,'triangle');
+  if(step%2===1) noiseBurst(0.025,0.03,6500);
+}
+function startMusic(){ if(!actx||musicTimer||!musicOn)return;
+  if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
+  musicStep=0; musicTimer=setInterval(musicTick,210); }
+function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; } }
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
  *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
@@ -604,6 +628,13 @@ function radialTex(stops){
 const TEX_GLOW=radialTex([[0,'rgba(255,255,255,1)'],[0.25,'rgba(255,255,255,0.7)'],[0.6,'rgba(255,255,255,0.18)'],[1,'rgba(255,255,255,0)']]);
 const TEX_SPARK=radialTex([[0,'rgba(255,255,255,1)'],[0.4,'rgba(255,255,255,0.55)'],[1,'rgba(255,255,255,0)']]);
 const TEX_SHADOW=radialTex([[0,'rgba(0,0,0,0.55)'],[0.55,'rgba(0,0,0,0.28)'],[1,'rgba(0,0,0,0)']]);
+// boost-pad chevrons (orange arrows pointing forward)
+const TEX_PAD=(()=>{
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  g.strokeStyle='rgba(255,180,70,0.95)'; g.lineWidth=8; g.lineCap='round';
+  for(let k=0;k<3;k++){ const y=46-k*16; g.beginPath(); g.moveTo(12,y); g.lineTo(32,y-16); g.lineTo(52,y); g.stroke(); }
+  const t=new T.Texture(c); t.needsUpdate=true; return t;
+})();
 
 function glowSprite(hex,scale){
   const m=new T.SpriteMaterial({map:TEX_GLOW,color:new T.Color(hex),transparent:true,
@@ -709,6 +740,7 @@ let innerSign=1;     // which lateral side (+/- normal) is the loop's infield (h
 let trackLoop=true;  // false for point-to-point (egg) courses
 let trackCross=false;// true for self-crossing (figure-8) courses
 let eggAnim=0;       // >0 while the win/fertilize egg animation plays
+let boostPads=[];    // {x,z,r} speed strips on the current track
 
 // static ground (built once)
 (()=>{
@@ -889,6 +921,36 @@ function buildTrack(idx){
     egg.scale.set(1,1.25,1); egg.position.copy(end.p).add(new T.Vector3(0,9,0)); trackGroup.add(egg);
     const halo=glowSprite(0xffd2a0,64); halo.position.copy(egg.position); trackGroup.add(halo);
     TRACK_PULSE.egg=egg;
+  }
+
+  // ---- boost pads: glowing chevron strips on the road ----
+  boostPads=[];
+  for(const f of [0.13,0.37,0.61,0.85]){
+    const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
+    const pad=new T.Mesh(new T.PlaneGeometry(HW*1.3,18),
+      new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
+    pad.geometry.rotateX(-Math.PI/2);
+    pad.position.copy(s.p).add(new T.Vector3(0,0.3,0));
+    pad.rotation.y=Math.atan2(s.t.x,s.t.z);
+    trackGroup.add(pad);
+    const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); trackGroup.add(halo);
+    boostPads.push({x:s.p.x,z:s.p.z,r:13});
+  }
+
+  // ---- trackside scenery: a band of big translucent cells for depth ----
+  {
+    const cellMat=new T.MeshPhongMaterial({color:0xe88aa6,transparent:true,opacity:0.4,shininess:30,emissive:0x3a1622});
+    const SC=140, cells=new T.InstancedMesh(new T.SphereGeometry(1,10,8),cellMat,SC); cells.frustumCulled=false;
+    const dm=new T.Object3D();
+    for(let k=0;k<SC;k++){
+      const s=SAMP[(Math.random()*STEPS|0)];
+      const side=(Math.random()<0.5?-1:1), out=HW*(3.5+Math.random()*5);
+      dm.position.set(s.p.x+s.n.x*side*out+(Math.random()*2-1)*30, s.p.y-10+Math.random()*60, s.p.z+s.n.z*side*out+(Math.random()*2-1)*30);
+      const r=8+Math.random()*22; dm.scale.set(r,r*(0.8+Math.random()*0.5),r);
+      dm.rotation.set(Math.random()*6,Math.random()*6,Math.random()*6);
+      dm.updateMatrix(); cells.setMatrixAt(k,dm.matrix);
+    }
+    cells.instanceMatrix.needsUpdate=true; trackGroup.add(cells);
   }
 
   eggAnim=0;
@@ -1487,6 +1549,19 @@ function updateRacer(r,dt){
       if(Math.abs(lat)>lim){ const ex=Math.abs(lat)-lim, sgn=Math.sign(lat); r.x-=s.n.x*sgn*ex; r.z-=s.n.z*sgn*ex; r.spd*=0.78; }
     }
   }
+
+  // boost pads — drive over a chevron strip for a speed kick
+  for(const p of boostPads){
+    if(Math.hypot(r.x-p.x, r.z-p.z) < p.r){
+      r.boostT=Math.max(r.boostT,0.85);
+      const now=performance.now();
+      if(now-(r._padHit||0)>700){ r._padHit=now;
+        burst(r.x, r.y+2, r.z, 0xffb44a, 10, 50, 0.4, 4);
+        if(r.you) SFX.boost();
+      }
+      break;
+    }
+  }
 }
 
 function placeOnTrack(r,dt){
@@ -1600,7 +1675,17 @@ function syncObjects(dt,now){
     const o=r.obj;
     const lift = r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0;
     o.position.set(r.x, r.y + lift, r.z);
-    o.rotation.y = r.head + r.slip;
+    // glance at the nearest close rival so you can read their face when side-by-side
+    let near=null,nd=1e9;
+    for(const o2 of racers){ if(o2===r)continue; const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd<nd){nd=dd;near=o2;} }
+    let glance=0;
+    if(near && nd<16){
+      let diff=Math.atan2(near.x-r.x,near.z-r.z)-r.head;
+      while(diff>Math.PI)diff-=6.2832; while(diff<-Math.PI)diff+=6.2832;
+      glance=Math.max(-0.7,Math.min(0.7,diff))*(1-nd/16);
+    }
+    r._glance=(r._glance||0)+(glance-(r._glance||0))*Math.min(1,6*dt);
+    o.rotation.y = r.head + r.slip + r._glance;
     o.rotation.z = -r.slip*0.5;                                  // lean into the slide
     if(r.shadow){                                                // ground shadow shrinks as you hop
       r.shadow.position.set(r.x, r.y+0.12, r.z);
@@ -1841,7 +1926,7 @@ function countdown(){
   setTimeout(tick,750);
 }
 function endRace(){
-  state='done'; stopEngine(); unlockOrient();
+  state='done'; stopEngine(); unlockOrient(); stopMusic();
   $('throttle').style.display='none';
   const me=racers.find(r=>r.you);
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
@@ -1949,7 +2034,7 @@ countdown = function(){
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
     else{
       $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now();
-      startEngine(); lockOrient();
+      startEngine(); lockOrient(); startMusic();
       if(sliderMode){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; }
       // rocket start: reward holding the throttle/stick the instant the lights go
       const me=racers.find(r=>r.you);
@@ -2199,6 +2284,9 @@ setupTilt();
 setupSlider();
 setupSliderToggle();
 setupFullscreen();
+(function setupMusic(){ const b=$('musicbtn'); if(!b)return;
+  b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
+    if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
 
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
@@ -2212,10 +2300,10 @@ $('startbtn').onclick = () => {
   $('select').classList.remove('hidden');
 };
 $('againbtn').onclick=()=>{ gpActive=false; countdown(); };
-$('changebtn').onclick=()=>{ gpActive=false; $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; };
+$('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
-$('mainbtn').onclick=()=>{ gpActive=false; $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
+$('mainbtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
 // unlock audio on the very first touch/click anywhere (iOS needs a gesture)
 window.addEventListener('pointerdown', initAudio, {once:false});
 
