@@ -57,6 +57,9 @@
   #act .btn{font-size:15px;}
   #drift{width:110px;height:110px;}
   #fire{width:78px;height:78px;position:absolute;right:120px;bottom:22px;}
+  #whipbtn{position:absolute;right:40px;bottom:150px;width:92px;height:92px;font-size:15px;
+    border-color:#ffb44a;color:#ffb44a;box-shadow:0 0 22px rgba(255,180,74,.5);animation:whippulse .6s ease-in-out infinite;}
+  @keyframes whippulse{50%{transform:scale(1.08)}}
   /* mirrored action buttons, lower-left */
   #actL{left:18px;}
   #actL .btn{width:110px;height:110px;font-size:15px;}
@@ -236,6 +239,7 @@
   <div class="pad" id="steer"><button class="btn" id="bl">◀</button><button class="btn" id="br">▶</button></div>
   <div class="pad" id="act"><button class="btn" id="drift">Drift</button></div>
   <button class="btn pad" id="fire">Item</button>
+  <button class="btn pad nojoy" id="whipbtn" style="display:none">Whip!</button>
   <!-- mirrored action buttons in the lower-LEFT corner -->
   <div class="pad" id="actL"><button class="btn" id="driftL">Drift</button></div>
   <button class="btn pad" id="fireL">Item</button>
@@ -272,7 +276,8 @@
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
-  <button class="go" id="startbtn">Start engine</button>
+  <button class="go" id="startbtn">Single race</button>
+  <button class="go alt" id="circuitbtn" style="margin-top:10px;border-color:#ff9ec4;color:#ff9ec4">🥚 Circuit Cup — fertilize every egg</button>
 </div>
 
 <!-- CHARACTER SELECT - Pick your stereotype sperm warrior -->
@@ -780,6 +785,8 @@ let trackLoop=true;  // false for point-to-point (egg) courses
 let trackCross=false;// true for self-crossing (figure-8) courses
 let eggAnim=0;       // >0 while the win/fertilize egg animation plays
 let boostPads=[];    // {x,z,r} speed strips on the current track
+let jumpPads=[];     // {x,z,r} launch ramps
+let whipReady=false, whipTarget=null;   // player tail-whip availability
 
 // static ground (built once)
 (()=>{
@@ -974,6 +981,20 @@ function buildTrack(idx){
     trackGroup.add(pad);
     const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); trackGroup.add(halo);
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
+  }
+
+  // ---- jump ramps: cyan launch pads that fling you into the air ----
+  jumpPads=[];
+  for(const f of [0.27,0.72]){
+    const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
+    const ramp=new T.Mesh(new T.PlaneGeometry(HW*1.6,20),
+      new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,opacity:0.9,color:0x6df2d0,blending:T.AdditiveBlending,depthWrite:false}));
+    ramp.geometry.rotateX(-Math.PI/2);
+    ramp.position.copy(s.p).add(new T.Vector3(0,0.35,0));
+    ramp.rotation.y=Math.atan2(s.t.x,s.t.z);
+    trackGroup.add(ramp);
+    const halo=glowSprite(0x6df2d0,22); halo.position.copy(s.p).add(new T.Vector3(0,4,0)); trackGroup.add(halo);
+    jumpPads.push({x:s.p.x,z:s.p.z,r:13});
   }
 
   // ---- trackside scenery: a band of big translucent cells for depth ----
@@ -1391,7 +1412,7 @@ const SPERM_TYPES = [
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Grand Prix (cup across all tracks) state
-let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null;
+let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null, gpEggs=null, pendingGP=false;
 const GP_PTS=[6,4,2,1]; // points by finishing place (1st..4th)
 
 const LAPS=3;
@@ -1447,7 +1468,7 @@ addEventListener('keydown',e=>{
   keys.add(k);
 },{passive:false});
 addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
-const touch={left:false,right:false,drift:false,fire:false};
+const touch={left:false,right:false,drift:false,fire:false,whip:false};
 function bind(id,prop){
   const el=$(id);
   const on=e=>{e.preventDefault();touch[prop]=true;};
@@ -1457,7 +1478,8 @@ function bind(id,prop){
 }
 bind('bl','left'); bind('br','right'); bind('drift','drift'); bind('fire','fire');
 bind('driftL','drift'); bind('fireL','fire');   // lower-left mirror
-let firePrev=false;
+bind('whipbtn','whip');
+let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
 const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣'};
@@ -1491,11 +1513,12 @@ function useItem(r){
 function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
 
 function updateRacer(r,dt){
-  if(r.finished){
+  if(r.finished && !r.you){            // AI coast to a stop after finishing
     r.spd*=Math.pow(0.1,dt);
     r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
     return;
   }
+  // (the finished player keeps full control so you can cruise around, not freeze)
   let steer=0, gas=false, brake=false, drift=false, fire=false;
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer+=1;   // (sign matches touch; desktop was inverted)
@@ -1513,6 +1536,10 @@ function updateRacer(r,dt){
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
     if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
+    // tail-whip on demand when a rival is in range
+    const whip = keys.has('j')||touch.whip;
+    if(whip && !whipPrev && whipReady && whipTarget && (performance.now()-(r._whip||0))>700) doWhip(r,whipTarget);
+    whipPrev=whip;
   } else {
     // AI steer toward lookahead centerline point (clamp at the end on open courses)
     const look=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
@@ -1641,12 +1668,30 @@ function updateRacer(r,dt){
       break;
     }
   }
+
+  // jump ramps — launch into the air
+  if(!r.air){
+    for(const p of jumpPads){
+      if(Math.hypot(r.x-p.x, r.z-p.z) < p.r){
+        r.air=true; r.vy=58 + Math.abs(r.spd)*0.15;
+        if(r.you){ kickShake(0.4); SFX.whip(); }
+        burst(r.x, r.y+1, r.z, 0x6df2d0, 12, 50, 0.4, 4);
+        break;
+      }
+    }
+  }
+  // airborne physics: rise, fall under gravity, land back on the track
+  if(r.air){
+    r.vy -= 130*dt; r.y += r.vy*dt;
+    const groundY=SAMP[r.idx].p.y;
+    if(r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0; burst(r.x,r.y+1,r.z,0xffc6dd,10,40,0.4,4); }
+  }
 }
 
 function placeOnTrack(r,dt){
-  // smooth height to nearest sample y
+  // hug the track height (unless airborne after a jump ramp)
   const s=SAMP[r.idx];
-  r.y += (s.p.y - r.y)*Math.min(1,6*dt);
+  if(!r.air) r.y += (s.p.y - r.y)*Math.min(1,6*dt);
   // continuous progress: project the racer onto the idx -> idx+1 segment for a
   // smooth, precise position value (stable places, no nearest-sample jitter)
   const i0=r.idx, i1=trackLoop?((i0+1)%STEPS):Math.min(i0+1,STEPS-1);
@@ -1677,23 +1722,26 @@ function placeOnTrack(r,dt){
   }
 }
 
+function doWhip(atk,vic){
+  const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
+  vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
+  atk.spd=Math.min(BOOSTV, atk.spd+8); atk._whip=performance.now();
+  burst((atk.x+vic.x)/2,(atk.y+vic.y)/2+3,(atk.z+vic.z)/2,0xffe08a,12,46,0.45,4);
+  if(atk.you||vic.you){ kickShake(0.5); SFX.whip(); }
+}
 function collide(){
-  // kart-kart soft separation
+  whipReady=false; whipTarget=null;
+  // kart-kart soft separation + tail-whip
   for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
     const a=racers[i],b=racers[j];
     const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);
     if(d<7&&d>0.01){ const push=(7-d)/2, ux=dx/d,uz=dz/d;
       a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push;
-      // TAIL WHIP: get too close and the faster racer whips the other aside (brief spin), with a cooldown
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
-      if(d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900){
-        atk._whip=now;
-        const wx=(vic.x-atk.x)/d||0, wz=(vic.z-atk.z)/d||0;
-        vic.x+=wx*5; vic.z+=wz*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
-        atk.spd=Math.min(BOOSTV, atk.spd+8);                 // little forward kick for the attacker
-        burst((a.x+b.x)/2,(a.y+b.y)/2+3,(a.z+b.z)/2,0xffe08a,12,46,0.45,4);
-        if(atk.you||vic.you){ kickShake(0.5); SFX.whip(); }
+      if(d<8 && vic.spinT<=0){
+        if(atk.you && !atk.finished){ whipReady=true; whipTarget=vic; }   // player: button appears
+        else if(!atk.you && d<6 && (now-(atk._whip||0))>900) doWhip(atk,vic); // AI: auto whip
       }
     }
   }
@@ -1937,6 +1985,7 @@ function syncLeader(){
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
+  if(isTouch) $('whipbtn').style.display = (whipReady && !me.finished) ? 'inline-flex' : 'none';
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
@@ -2004,12 +2053,15 @@ function frame(now){
   if(TRACK_PULSE.motes){ TRACK_PULSE.motes.material.opacity=0.32+beat*0.3;
     TRACK_PULSE.motes.rotation.y=tsec*0.01; }
   if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg;
-    if(eggAnim>0){                                  // fertilize! swell, blaze, spew sparkles
+    if(eggAnim>0){                                  // fertilize! bioluminescent bloom
       eggAnim-=dt; const k=1+(2.4-eggAnim)*0.7;
       e.scale.set(k,k*1.25,k); e.rotation.y+=dt*3;
-      e.material.emissive.setHSL(0.08,1,0.62);
-      if(Math.random()<0.6){ const c=[0xffd27a,0xff7ac0,0x6df2d0,0xffffff][Math.random()*4|0];
-        burst(e.position.x+(Math.random()*26-13), e.position.y+(Math.random()*26-6), e.position.z+(Math.random()*26-13), c, 6, 60, 0.7, 6); }
+      // bioluminescent hue waves (cyan->green->blue) rippling fast
+      const hue=(0.45 + Math.sin(tsec*6)*0.12 + (2.4-eggAnim)*0.05)%1;
+      e.material.emissive.setHSL(hue,1,0.45+Math.abs(Math.sin(tsec*9))*0.3);
+      e.material.color.setHSL(hue,0.6,0.8);
+      if(Math.random()<0.7){ const c=new T.Color().setHSL((0.45+Math.random()*0.25)%1,1,0.6).getHex();
+        burst(e.position.x+(Math.random()*30-15), e.position.y+(Math.random()*30-8), e.position.z+(Math.random()*30-15), c, 6, 65, 0.8, 6); }
     } else { const s=1+Math.sin(tsec*2.2)*0.06;
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
@@ -2040,22 +2092,25 @@ function endRace(){
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
 
   if(gpActive){
-    ranked.forEach((r,i)=>{ gpScores[r._li]+=(GP_PTS[i]||0); });   // award points
+    ranked.forEach((r,i)=>{ gpScores[r._li]+=(GP_PTS[i]||0); });   // points
+    gpEggs[ranked[0]._li]++;                                       // winner fertilizes this egg (baby mama)
     const lastRace = gpIndex>=TRACKS.length-1;
-    const order=gpScores.map((p,li)=>({li,p,name:gpLineup[li].name,you:li===0})).sort((a,b)=>b.p-a.p);
-    $('ftag').textContent='circuit '+(gpIndex+1)+'/'+TRACKS.length+' • '+TRACKS[gpIndex].name+' • you '+ord(me.place);
+    // rank by eggs fertilized, points as tiebreak
+    const order=gpScores.map((p,li)=>({li,p,eggs:gpEggs[li],name:gpLineup[li].name,you:li===0}))
+                        .sort((a,b)=> b.eggs-a.eggs || b.p-a.p);
+    $('ftag').textContent='baby mama '+(gpIndex+1)+'/'+TRACKS.length+' • '+TRACKS[gpIndex].name+(me.place===1?' • FERTILIZED!':' • you '+ord(me.place));
     order.forEach((o,i)=>{
       const row=document.createElement('div'); row.className='row'+(o.you?' you':'');
-      row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${o.name}</span><b>${o.p} pts</b>`;
+      row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${o.name}</span><b>${'🥚'.repeat(o.eggs)||'·'} ${o.p}pt</b>`;
       bd.appendChild(row);
     });
     if(lastRace){
       const champ=order[0];
-      $('fhead').textContent = champ.you ? 'GP Champion!' : champ.name+' wins';
-      $('ftag').textContent='grand prix complete';
+      $('fhead').textContent = champ.you ? `Top Stud! ${champ.eggs}🥚` : `${champ.name} — ${champ.eggs}🥚`;
+      $('ftag').textContent='circuit complete';
       gpActive=false; normalBtns(''); $('nextgpbtn').style.display='none';
     } else {
-      $('fhead').textContent = ord(order.findIndex(o=>o.you)+1)+' overall';
+      $('fhead').textContent = (order.find(o=>o.you).eggs)+'🥚 fertilized';
       normalBtns('none'); $('nextgpbtn').style.display='';
       $('nextgpbtn').textContent='Next: '+TRACKS[gpIndex+1].name;
     }
@@ -2076,7 +2131,7 @@ function startGP(){
   const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id);
   for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
   gpLineup=[chosenType, others[0], others[1], others[2]];
-  gpScores=[0,0,0,0]; gpActive=true; gpIndex=0; selTrack=0;
+  gpScores=[0,0,0,0]; gpEggs=[0,0,0,0]; gpActive=true; gpIndex=0; selTrack=0;
   $('finish').classList.add('hidden'); countdown();
 }
 // ============== CHARACTER SELECT LOGIC ==============
@@ -2119,7 +2174,7 @@ function setupSelect(){
   $('racebtn').onclick = () => {
     initAudio();
     $('select').classList.add('hidden');
-    countdown();
+    if(pendingGP){ pendingGP=false; startGP(); } else countdown();
   };
 }
 
@@ -2403,8 +2458,10 @@ $('startbtn').onclick = () => {
     }
   }catch(_){}
   $('start').classList.add('hidden');
+  pendingGP=false;
   $('select').classList.remove('hidden');
 };
+$('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; $('start').classList.add('hidden'); $('select').classList.remove('hidden'); };
 $('againbtn').onclick=()=>{ gpActive=false; countdown(); };
 $('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
