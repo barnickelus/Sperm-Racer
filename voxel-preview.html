@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Sperm Racer — Voxel Preview</title>
+<style>
+  html,body{margin:0;height:100%;background:#05202a;overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#cfeee6;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  #c{display:block;width:100vw;height:100vh;touch-action:none;}
+  #tag{position:fixed;left:0;right:0;top:env(safe-area-inset-top,12px);text-align:center;
+    font-size:14px;letter-spacing:.5px;opacity:.85;pointer-events:none;}
+  #tag b{color:#7df2d0}
+  #hint{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom,16px);text-align:center;
+    font-size:12px;opacity:.55;pointer-events:none;}
+</style>
+</head>
+<body>
+<div id="tag"><b>Salty</b> — voxel preview · drag to spin</div>
+<canvas id="c"></canvas>
+<div id="hint">WebGL preview (runs on iPad Safari today). The real game stays in index.html.</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="voxel-model.js"></script>
+<script>
+const T=THREE;
+const renderer=new T.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
+renderer.setPixelRatio(Math.min(2,devicePixelRatio||1));
+const scene=new T.Scene(); scene.background=new T.Color(0x05202a);
+scene.fog=new T.Fog(0x05202a, 90, 220);
+
+const cam=new T.PerspectiveCamera(45, 1, 0.1, 1000);
+function resize(){ const w=document.documentElement.clientWidth, h=document.documentElement.clientHeight;
+  renderer.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix(); }
+addEventListener('resize',resize);
+
+// lights — soft key + cool fill so the voxel facets read
+scene.add(new T.AmbientLight(0xbfd8e0, 0.55));
+const key=new T.DirectionalLight(0xffffff, 0.95); key.position.set(40,70,40); scene.add(key);
+const fill=new T.DirectionalLight(0xff9ec4, 0.35); fill.position.set(-40,20,-30); scene.add(fill);
+
+// build instanced voxels from the shared model
+const vox=VoxelModel.buildVoxels();
+let cx=0,cy=0,cz=0; for(const v of vox){cx+=v.x;cy+=v.y;cz+=v.z;} cx/=vox.length; cy/=vox.length; cz/=vox.length;
+const geo=new T.BoxGeometry(1,1,1);
+const mat=new T.MeshStandardMaterial({roughness:0.85, metalness:0.0});
+const mesh=new T.InstancedMesh(geo, mat, vox.length);
+const dummy=new T.Object3D(), col=new T.Color();
+vox.forEach((v,i)=>{ dummy.position.set(v.x-cx, v.y-cy, v.z-cz); dummy.updateMatrix();
+  mesh.setMatrixAt(i,dummy.matrix); mesh.setColorAt(i, col.setRGB(v.r/255,v.g/255,v.b/255)); });
+mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
+const rig=new T.Group(); rig.add(mesh); scene.add(rig);
+
+// frame the model
+const box=new T.Box3().setFromObject(mesh); const sz=box.getSize(new T.Vector3());
+const radius=Math.max(sz.x,sz.y,sz.z); const dist=radius*1.9;
+
+// drag-to-spin + gentle auto-rotate
+let yaw=0.7, pitch=0.5, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
+const cv=renderer.domElement;
+cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;autoT=0;cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{ if(!dragging)return;
+  vyaw=(e.clientX-lx)*0.01; yaw+=vyaw; pitch=Math.max(0.05,Math.min(1.2,pitch-(e.clientY-ly)*0.01));
+  lx=e.clientX; ly=e.clientY; });
+addEventListener('pointerup',()=>{dragging=false;});
+
+resize();
+let last=performance.now();
+(function loop(now){ const dt=(now-last)/1000; last=now; autoT+=dt;
+  if(!dragging){ vyaw*=0.94; yaw+=vyaw; if(autoT>1.2) yaw+=dt*0.35; }   // idle: spin slowly
+  const r=dist, hy=Math.cos(pitch)*r;
+  cam.position.set(Math.sin(yaw)*hy, Math.sin(pitch)*r, Math.cos(yaw)*hy);
+  cam.lookAt(0,0,0);
+  renderer.render(scene,cam);
+  requestAnimationFrame(loop);
+})(last);
+</script>
+</body>
+</html>
