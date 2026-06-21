@@ -41,8 +41,15 @@ const key=new T.DirectionalLight(0xffffff, 0.95); key.position.set(40,70,40); sc
 const fill=new T.DirectionalLight(0xff9ec4, 0.35); fill.position.set(-40,20,-30); scene.add(fill);
 
 // build instanced voxels from the shared model
-const vox=VoxelModel.buildVoxels();
-let cx=0,cy=0,cz=0; for(const v of vox){cx+=v.x;cy+=v.y;cz+=v.z;} cx/=vox.length; cy/=vox.length; cz/=vox.length;
+const vox=VoxelModel.buildVoxels(2.4);
+// pivot on the CHARACTER (ignore env voxels) so it spins in place, not around the floor
+let minc=[1e9,1e9,1e9], maxc=[-1e9,-1e9,-1e9], nC=0;
+for(const v of vox){ if(v.env)continue; nC++;
+  minc[0]=Math.min(minc[0],v.x); minc[1]=Math.min(minc[1],v.y); minc[2]=Math.min(minc[2],v.z);
+  maxc[0]=Math.max(maxc[0],v.x); maxc[1]=Math.max(maxc[1],v.y); maxc[2]=Math.max(maxc[2],v.z); }
+const cx=(minc[0]+maxc[0])/2, cy=(minc[1]+maxc[1])/2, cz=(minc[2]+maxc[2])/2;
+const charSpan=Math.max(maxc[0]-minc[0], maxc[1]-minc[1], maxc[2]-minc[2]);
+
 const geo=new T.BoxGeometry(1,1,1);
 const mat=new T.MeshStandardMaterial({roughness:0.85, metalness:0.0});
 const mesh=new T.InstancedMesh(geo, mat, vox.length);
@@ -52,12 +59,10 @@ vox.forEach((v,i)=>{ dummy.position.set(v.x-cx, v.y-cy, v.z-cz); dummy.updateMat
 mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
 const rig=new T.Group(); rig.add(mesh); scene.add(rig);
 
-// frame the model
-const box=new T.Box3().setFromObject(mesh); const sz=box.getSize(new T.Vector3());
-const radius=Math.max(sz.x,sz.y,sz.z); const dist=radius*1.9;
+const dist=charSpan*1.8;     // frame on the character
 
-// drag-to-spin + gentle auto-rotate
-let yaw=0.7, pitch=0.5, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
+// drag-to-spin + gentle auto-rotate — start on a 3/4 front view of the face
+let yaw=0.6, pitch=0.42, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
 const cv=renderer.domElement;
 cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;autoT=0;cv.setPointerCapture(e.pointerId);});
 cv.addEventListener('pointermove',e=>{ if(!dragging)return;
