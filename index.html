@@ -399,6 +399,7 @@ const SFX={
     g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.18);
     o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400); },
   lap(){ beep(700,0.08,'sine',0.18); },
+  bump(){ noiseBurst(0.18,0.12,900); beep(180,0.1,'triangle',0.16); },
 };
 
 /* ---- looping background music (procedural, no files; per-track theme) ---- */
@@ -793,6 +794,7 @@ let trackCross=false;// true for self-crossing (figure-8) courses
 let eggAnim=0;       // >0 while the win/fertilize egg animation plays
 let boostPads=[];    // {x,z,r} speed strips on the current track
 let jumpPads=[];     // {x,z,r} launch ramps
+let breakables=[];   // {x,z,y,r,mesh,alive,hue} smashable trackside cell clusters
 let whipReady=false, whipTarget=null;   // player tail-whip availability
 
 // static ground (built once)
@@ -990,23 +992,32 @@ function buildTrack(idx){
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
   }
 
-  // ---- jump ramps: a raised wedge you launch off (distinct from boost pads) ----
+  // ---- jump ramps: placed just BEFORE the sharpest corners so a jump cuts the corner ----
   jumpPads=[];
-  for(const f of [0.27,0.72]){
-    const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
-    const ang=Math.atan2(s.t.x,s.t.z);
-    const grp=new T.Group(); grp.position.copy(s.p); grp.rotation.y=ang;
-    // physical ramp wedge (rises toward the forward edge)
-    const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
-      new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
-    wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
-    // glowing up-arrow marking on the ramp face
-    const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
-      new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
-    mark.position.set(0,2.9,3.2); mark.rotation.x=-0.42-Math.PI/2+Math.PI; grp.add(mark);
-    trackGroup.add(grp);
-    const halo=glowSprite(0x7dffaa,22); halo.position.copy(s.p).add(new T.Vector3(0,5,3)); trackGroup.add(halo);
-    jumpPads.push({x:s.p.x+s.t.x*3, z:s.p.z+s.t.z*3, r:12});
+  {
+    // score curvature at each sample, pick the 2 sharpest corners (well-separated)
+    const score=[];
+    for(let i=0;i<STEPS;i++){ const a=SAMP[i].t, b=SAMP[(i+18)%STEPS].t;
+      score.push({i, turn:Math.acos(Math.max(-1,Math.min(1,a.x*b.x+a.z*b.z)))}); }
+    score.sort((p,q)=>q.turn-p.turn);
+    const corners=[];
+    for(const s of score){ if(s.turn<0.5)break;
+      if(corners.every(c=>Math.min(Math.abs(c-s.i),STEPS-Math.abs(c-s.i))>90)){ corners.push(s.i); if(corners.length>=2)break; } }
+    if(corners.length===0) corners.push(Math.floor(STEPS*0.3));
+    for(const ci of corners){
+      const i=((ci-16)%STEPS+STEPS)%STEPS; const s=SAMP[i];   // ramp a bit before the apex
+      const ang=Math.atan2(s.t.x,s.t.z);
+      const grp=new T.Group(); grp.position.copy(s.p); grp.rotation.y=ang;
+      const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
+        new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
+      wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
+      const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
+        new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
+      mark.position.set(0,2.9,3.2); mark.rotation.x=-0.42-Math.PI/2+Math.PI; grp.add(mark);
+      trackGroup.add(grp);
+      const halo=glowSprite(0x7dffaa,22); halo.position.copy(s.p).add(new T.Vector3(0,5,3)); trackGroup.add(halo);
+      jumpPads.push({x:s.p.x+s.t.x*3, z:s.p.z+s.t.z*3, r:12});
+    }
   }
 
   // ---- trackside scenery: a band of big translucent cells for depth ----
@@ -1023,6 +1034,26 @@ function buildTrack(idx){
       dm.updateMatrix(); cells.setMatrixAt(k,dm.matrix);
     }
     cells.instanceMatrix.needsUpdate=true; trackGroup.add(cells);
+  }
+
+  // ---- smashable trackside cell clusters: little blobs at the road shoulder you can burst through ----
+  breakables=[];
+  {
+    const NB=26;
+    for(let k=0;k<NB;k++){
+      const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
+      const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
+      const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out, by=s.p.y+2.2;
+      const hue=20+Math.random()*40;
+      const grp=new T.Group(); grp.position.set(bx,by,bz);
+      const m=new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue} 70% 62%)`),
+        transparent:true,opacity:0.78,shininess:40,emissive:new T.Color(`hsl(${300+hue} 60% 18%)`)});
+      for(let c=0;c<3;c++){ const r=2.0+Math.random()*1.6;
+        const blob=new T.Mesh(new T.SphereGeometry(r,10,8), m);
+        blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6); grp.add(blob); }
+      trackGroup.add(grp);
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:300+hue});
+    }
   }
 
   eggAnim=0;
@@ -1303,14 +1334,27 @@ function makeCell(hue, typeId){
   } else if(typeId === 'chad'){
     // Chad "Ben Gravy": pink skin, camo trucker cap, Wayfarers, puka shells, Hawaiian shirt, leather tail cuffs
     head.material.color.setHex(0xf3c9cf); head.material.emissive.setHex(0x4a2630);
-    const crown=new T.Mesh(new T.SphereGeometry(3.3,16,12,0,Math.PI*2,0,Math.PI*0.5), new T.MeshPhongMaterial({color:0x7a7842}));
-    crown.position.set(0,4.6,0); crown.scale.set(1.05,0.8,1.05); g.add(crown);
-    const brim=new T.Mesh(new T.BoxGeometry(5.0,0.4,3.0), new T.MeshPhongMaterial({color:0x6b6a3a}));
-    brim.position.set(0,4.55,3.0); g.add(brim);
-    const label=new T.Mesh(new T.BoxGeometry(2.2,1.0,0.2), new T.MeshPhongMaterial({color:0xe0c020, emissive:0x554400}));
-    label.position.set(0,4.95,2.4); g.add(label);
-    const shades=new T.Mesh(new T.BoxGeometry(3.4,1.1,0.4), new T.MeshPhongMaterial({color:0x10141a, shininess:95}));
-    shades.position.set(0,4.05,3.4); g.add(shades);
+    // sandy surfer hair: shaggy tufts peeking out under the cap (sides, back & a front flip)
+    const hairMat=new T.MeshPhongMaterial({color:0xe8c46a, emissive:0x4a3a12, flatShading:true});
+    const tuft=(x,y,z,sx,sy,sz,rz)=>{ const m=new T.Mesh(new T.SphereGeometry(1.0,9,7), hairMat);
+      m.position.set(x,y,z); m.scale.set(sx,sy,sz); if(rz)m.rotation.z=rz; g.add(m); };
+    for(const sx of [-1,1]){ tuft(sx*2.7,3.7,0.4,0.9,1.2,1.3,sx*0.3); tuft(sx*2.5,3.1,2.0,0.7,0.9,0.9,sx*0.4); }
+    tuft(-1.3,4.95,2.7,1.2,0.6,0.7,-0.4); tuft(0.9,4.95,2.8,1.1,0.6,0.7,0.4); // front flip under bill
+    for(let i=0;i<3;i++) tuft(-1.6+i*1.6,3.6,-2.4,1.0,0.9,1.1,0); // back of the neck
+    // foam-front / mesh-back two-tone trucker cap with a curved bill
+    const crown=new T.Mesh(new T.SphereGeometry(3.25,18,12,0,Math.PI*2,0,Math.PI*0.5), new T.MeshPhongMaterial({color:0x7d7b46}));
+    crown.position.set(0,4.65,-0.1); crown.scale.set(1.05,0.82,1.05); g.add(crown);
+    const foam=new T.Mesh(new T.SphereGeometry(3.2,18,12,0,Math.PI*2,0,Math.PI*0.5), new T.MeshPhongMaterial({color:0xe7e2d4}));
+    foam.position.set(0,4.62,0.7); foam.scale.set(0.86,0.82,0.7); g.add(foam);
+    const brim=new T.Mesh(new T.CylinderGeometry(2.7,2.7,0.35,18,1,false,Math.PI*0.78,Math.PI*1.44), new T.MeshPhongMaterial({color:0x6b6a3a}));
+    brim.position.set(0,4.5,3.2); brim.rotation.x=-0.16; g.add(brim);
+    const label=new T.Mesh(new T.BoxGeometry(1.9,0.95,0.15), new T.MeshPhongMaterial({color:0xe0c020, emissive:0x554400}));
+    label.position.set(0,4.95,2.5); label.rotation.x=-0.2; g.add(label);
+    // rounded Wayfarer shades: two lenses + bridge
+    const lensMat=new T.MeshPhongMaterial({color:0x10141a, shininess:100, specular:0x88aaff});
+    for(const sx of [-1.15,1.15]){ const lens=new T.Mesh(new T.SphereGeometry(0.95,12,10), lensMat);
+      lens.position.set(sx,4.05,3.05); lens.scale.set(1.05,0.78,0.45); g.add(lens); }
+    const bridge=new T.Mesh(new T.BoxGeometry(0.9,0.22,0.25), lensMat); bridge.position.set(0,4.18,3.3); g.add(bridge);
     const puka=new T.Mesh(new T.TorusGeometry(3.0,0.22,8,20), new T.MeshPhongMaterial({color:0xf0e8d8}));
     puka.position.set(0,2.7,0.4); puka.rotation.x=Math.PI/2; g.add(puka);
     const shirt=new T.Mesh(new T.BoxGeometry(4.8,2.8,3.8), new T.MeshPhongMaterial({color:0x1fa8b0}));
@@ -1322,10 +1366,20 @@ function makeCell(hue, typeId){
     mouth.scale.set(1.05,0.7,1);
   } else if(typeId === 'sailor'){
     head.material.color.setHex(0xf3c9cf); head.material.emissive.setHex(0x4a2630);
-    const cap=new T.Mesh(new T.CylinderGeometry(2.8,3.2,1.2,16), new T.MeshPhongMaterial({color:0xffffff, emissive:0x777777}));
-    cap.position.set(0,5.2,0); g.add(cap);
-    const capTop=new T.Mesh(new T.CylinderGeometry(2.6,2.8,0.4,16), new T.MeshPhongMaterial({color:0xffffff, emissive:0x777777}));
-    capTop.position.set(0,5.9,0); g.add(capTop);
+    const cap=new T.Mesh(new T.CylinderGeometry(2.8,3.2,1.2,18), new T.MeshPhongMaterial({color:0xffffff, emissive:0x666666}));
+    cap.position.set(0,5.2,0); g.add(cap); addOutline(cap,1.05);   // crisp outline = linework vs head
+    const capTop=new T.Mesh(new T.CylinderGeometry(2.6,2.8,0.45,18), new T.MeshPhongMaterial({color:0xffffff, emissive:0x666666}));
+    capTop.position.set(0,5.92,0); g.add(capTop); addOutline(capTop,1.05);
+    // navy band around the base + a dark seam line where cap meets the head
+    const band=new T.Mesh(new T.CylinderGeometry(3.24,3.24,0.42,18), new T.MeshPhongMaterial({color:0x1b3766, emissive:0x0a1730}));
+    band.position.set(0,4.68,0); g.add(band);
+    const seam=new T.Mesh(new T.TorusGeometry(3.18,0.1,6,20), new T.MeshPhongMaterial({color:0x12233f}));
+    seam.position.set(0,4.6,0); seam.rotation.x=Math.PI/2; g.add(seam);
+    // little gold anchor badge on the front of the band
+    const badge=new T.Mesh(new T.TorusGeometry(0.35,0.1,6,12), new T.MeshPhongMaterial({color:0xffd24a, emissive:0x664400, shininess:90}));
+    badge.position.set(0,4.66,3.1); g.add(badge);
+    const badgeBar=new T.Mesh(new T.BoxGeometry(0.7,0.12,0.12), new T.MeshPhongMaterial({color:0xffd24a, emissive:0x664400, shininess:90}));
+    badgeBar.position.set(0,4.95,3.1); g.add(badgeBar);
     const stem=new T.Mesh(new T.CylinderGeometry(0.12,0.12,2.2,6), new T.MeshPhongMaterial({color:0x6e4a2c}));
     stem.position.set(-2.4,2.7,3.4); stem.rotation.z=1.2; g.add(stem);
     const bowl=new T.Mesh(new T.CylinderGeometry(0.5,0.4,0.9,8), new T.MeshPhongMaterial({color:0xe8c27a}));
@@ -1386,17 +1440,29 @@ function makeCell(hue, typeId){
     tie.position.set(0,1.7,2.6); g.add(tie);
   } else if(typeId === 'rick'){
     head.material.color.setHex(0x6e4a35); head.material.emissive.setHex(0x241810);
-    const bm=new T.MeshPhongMaterial({color:0x141014});
-    // HUGE voluminous crimped hair: a tall wide mass + a long wavy curtain down the back
-    const mass=new T.Mesh(new T.SphereGeometry(4.0,18,14), bm);
-    mass.position.set(0,5.6,-0.6); mass.scale.set(1.5,1.7,1.4); g.add(mass);
-    for(let i=0;i<14;i++){
-      const t=(i/13-0.5); const len=12+Math.random()*4;
-      const str=new T.Mesh(new T.CylinderGeometry(0.6,0.34,len,8), bm);
-      str.position.set(t*7.0, -1.5, -2.6 - Math.abs(t)*1.6);
-      str.rotation.x=-0.3; str.rotation.z=t*0.5; g.add(str);
-      const bead=new T.Mesh(new T.SphereGeometry(0.5,8,6), new T.MeshPhongMaterial({color:0xffd700,shininess:90,emissive:0x554400}));
-      bead.position.set(t*7.6, -1.5-len*0.42, -3.0-Math.abs(t)*1.6); g.add(bead);
+    const bm=new T.MeshPhongMaterial({color:0x171015});
+    // Rounded hair crown that hugs the top + back of the head (not a giant angular mass)
+    const crown=new T.Mesh(new T.SphereGeometry(3.55,18,14), bm);
+    crown.position.set(0,4.3,-0.7); crown.scale.set(1.06,1.0,1.12); g.add(crown);
+    // soft fringe over the brow
+    const fringe=new T.Mesh(new T.SphereGeometry(2.0,14,10,0,Math.PI*2,0,Math.PI*0.55), bm);
+    fringe.position.set(0,4.9,1.6); fringe.scale.set(1.5,0.7,0.9); fringe.rotation.x=0.5; g.add(fringe);
+    // Braids: rounded beaded strands draping down the BACK of the head, fanned in two rows
+    const beadMat=new T.MeshPhongMaterial({color:0x9a6a2c, shininess:80, emissive:0x3a2606});
+    const goldMat=new T.MeshPhongMaterial({color:0xffd700, shininess:95, emissive:0x554400});
+    const rows=[{n:5,x:2.4,y:4.0,z:-2.4,drop:0.55},{n:4,x:1.7,y:3.0,z:-2.9,drop:0.62}];
+    for(const row of rows){
+      for(let i=0;i<row.n;i++){
+        const t=row.n>1?(i/(row.n-1)-0.5):0;       // -0.5..0.5 across the back
+        const bx=t*row.x*2, bz=row.z - Math.abs(t)*0.6;
+        const segs=7, sp=1.15;
+        for(let s=0;s<segs;s++){
+          const r=0.62-s*0.045;
+          const bead=new T.Mesh(new T.SphereGeometry(r,9,7), s===segs-1?goldMat:(s%2?beadMat:bm));
+          bead.position.set(bx + t*s*0.18, row.y - s*sp*row.drop, bz - s*0.32);
+          g.add(bead);
+        }
+      }
     }
     // red sequin jacket with gold trim
     const jacket=new T.Mesh(new T.BoxGeometry(5.4,3.2,4.0), new T.MeshPhongMaterial({color:0xc81e3a, emissive:0x4a0a16, shininess:100, specular:0xffffff}));
@@ -1714,6 +1780,17 @@ function updateRacer(r,dt){
     }
   }
 
+  // smashable trackside cells — burst through a shoulder blob for a little spray + crowd-pleaser
+  for(const b of breakables){
+    if(!b.alive) continue;
+    if(Math.hypot(r.x-b.x, r.z-b.z) < b.r){
+      b.alive=false; b.mesh.visible=false;
+      burst(b.x, b.y, b.z, b.hue!=null?new T.Color(`hsl(${b.hue} 70% 62%)`).getHex():0xff7ab0, 22, 70, 0.6, 5);
+      r.spd*=0.94;                                   // barely slows you — meant to feel good to plow through
+      if(r.you){ kickShake(0.25); SFX.bump&&SFX.bump(); }
+    }
+  }
+
   // jump ramps — launch into the air
   if(!r.air){
     for(const p of jumpPads){
@@ -1731,7 +1808,8 @@ function updateRacer(r,dt){
     r.vy -= 95*dt; r.y += r.vy*dt;
     const groundY=SAMP[r.idx].p.y;
     if(r.vy<0 && r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0;
-      burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you) kickShake(0.5); }
+      r.boostT=Math.max(r.boostT,0.7);            // landing boost rewards the jump
+      burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); } }
   }
 }
 
@@ -1853,16 +1931,26 @@ function syncObjects(dt,now){
     const o=r.obj;
     const lift = r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0;
     o.position.set(r.x, r.y + lift, r.z);
-    // glance at the nearest close rival so you can read their face when side-by-side
+    // glance over at rivals who are pulling alongside / about to pass — turn the head to look
     let near=null,nd=1e9;
-    for(const o2 of racers){ if(o2===r)continue; const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd<nd){nd=dd;near=o2;} }
+    const GR=24;
+    for(const o2 of racers){ if(o2===r)continue;
+      const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd>GR)continue;
+      // weight toward rivals that are roughly beside you (the ones you'd actually look at)
+      let df=Math.atan2(o2.x-r.x,o2.z-r.z)-r.head; while(df>Math.PI)df-=6.2832; while(df<-Math.PI)df+=6.2832;
+      const sideness=Math.abs(Math.sin(df));            // 1 = directly to the side
+      const score=dd*(1.4-0.8*sideness);                // closer + more to the side wins
+      if(score<nd){nd=score;near=o2;}
+    }
     let glance=0;
-    if(near && nd<16){
+    if(near){
+      const dd=Math.hypot(near.x-r.x,near.z-r.z);
       let diff=Math.atan2(near.x-r.x,near.z-r.z)-r.head;
       while(diff>Math.PI)diff-=6.2832; while(diff<-Math.PI)diff+=6.2832;
-      glance=Math.max(-0.7,Math.min(0.7,diff))*(1-nd/16);
+      const prox=Math.max(0,1-dd/GR);
+      glance=Math.max(-1.0,Math.min(1.0,diff*1.3))*prox;   // wider, snappier head turn
     }
-    r._glance=(r._glance||0)+(glance-(r._glance||0))*Math.min(1,6*dt);
+    r._glance=(r._glance||0)+(glance-(r._glance||0))*Math.min(1,8*dt);
     o.rotation.y = r.head + r.slip + r._glance;
     o.rotation.z = -r.slip*0.5;                                  // lean into the slide
     if(r.shadow){                                                // ground shadow shrinks as you hop
