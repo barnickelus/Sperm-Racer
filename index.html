@@ -146,6 +146,12 @@
 
   /* minimap framing */
   #mapwrap{position:absolute;top:12px;left:12px;padding:8px;border-radius:14px;}
+  #leader{position:absolute;top:182px;left:12px;padding:6px 9px;border-radius:10px;min-width:118px;
+    font-size:10px;letter-spacing:.04em;text-transform:uppercase;}
+  #leader .lrow{display:flex;align-items:center;gap:6px;color:var(--ink);padding:1.5px 0;}
+  #leader .lrow.you{color:var(--bone);font-weight:700;}
+  #leader .lp{width:12px;text-align:right;color:var(--signal);font-variant-numeric:tabular-nums;}
+  #leader .ld{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
   #mapwrap .ml{position:absolute;top:-7px;left:12px;font-size:8.5px;letter-spacing:.3em;
     color:var(--ink);text-transform:uppercase;background:#06222a;padding:0 5px;}
   #map{position:static;display:block;filter:drop-shadow(0 0 6px rgba(109,242,208,.25));}
@@ -218,6 +224,7 @@
 </div>
 <div id="ui">
   <div id="mapwrap" class="glass"><span class="ml">circuit</span><canvas id="map" width="150" height="150"></canvas></div>
+  <div id="leader" class="glass"></div>
   <div class="hud glass" id="lap"><span id="laplbl">Lap</span><b><span id="lapn">1</span><span id="lapsuf">/3</span></b></div>
   <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
   <div id="item"></div>
@@ -1106,6 +1113,7 @@ function makeCell(hue, typeId){
   pupilL.rotation.x = Math.PI/2;
   pupilR.rotation.x = Math.PI/2;
   g.add(pupilL); g.add(pupilR);
+  g.userData.pupils=[pupilL,pupilR];
   // little white catch-light on each eye for that cartoon sparkle
   const shineMat = new T.MeshBasicMaterial({color:0xffffff});
   for(const ex of [-1.45,1.45]){ const sh=new T.Mesh(new T.SphereGeometry(0.26,8,6), shineMat);
@@ -1116,6 +1124,7 @@ function makeCell(hue, typeId){
   mouth.position.set(0, 2.65, 3.5);
   mouth.rotation.x = -0.4;
   g.add(mouth);
+  g.userData.mouth=mouth;
 
   // Type-specific facial features & accessories
   if(typeId === 'guido'){
@@ -1350,6 +1359,7 @@ function makeCell(hue, typeId){
   // tail always matches the head/skin colour
   g.userData.tailMesh.material.color.copy(head.material.color);
   g.userData.tailMesh.material.emissive.copy(head.material.emissive);
+  g.userData.mouthBase = g.userData.mouth.scale.clone();   // neutral mouth for expressions
 
   celShade(g);
   return g;
@@ -1770,6 +1780,19 @@ function syncObjects(dt,now){
     const boosting=r.boostT>0;
     const h=r.obj.userData.head.material;
     h.emissive.setHSL((r.hue/360),0.8, boosting?0.6:0.35);
+    // reactive expression: mouth + eyes respond to what's happening
+    const mo=r.obj.userData.mouth, mb=r.obj.userData.mouthBase;
+    if(mo&&mb){
+      let fx=1, fy=1;
+      if(r.spinT>0){ fx=0.55; fy=1.6; }            // shocked "O"
+      else if(boosting){ fx=1.5; fy=1.4; }          // wide excited grin
+      else if(r.drift===1){ fx=1.25; fy=0.55; }     // gritted teeth
+      mo.scale.x += (mb.x*fx-mo.scale.x)*Math.min(1,12*dt);
+      mo.scale.y += (mb.y*fy-mo.scale.y)*Math.min(1,12*dt);
+    }
+    const pu=r.obj.userData.pupils;
+    if(pu){ if(r.spinT>0){ pu[0].rotation.z+=dt*18; pu[1].rotation.z+=dt*18; }
+            else { pu[0].rotation.z=0; pu[1].rotation.z=0; } }
     const gl=r.obj.userData.glow;
     if(gl){ const fl=1+Math.sin(now*9+r.phase)*0.06;
       gl.scale.setScalar((boosting?18:12)*fl);
@@ -1903,8 +1926,17 @@ function drawMap(){
 }
 const ord=n=>['','1st','2nd','3rd','4th'][n]||n+'th';
 function fmt(s){const m=Math.floor(s/60);return `${String(m).padStart(2,'0')}:${(s%60).toFixed(1).padStart(4,'0')}`;}
+function syncLeader(){
+  const lb=$('leader'); if(!lb) return;
+  const order=[...racers].sort((a,b)=>a.place-b.place);
+  const sig=order.map(r=>r._li+(r.finished?'f':'')).join('|');
+  if(sig===lb._sig) return; lb._sig=sig;     // only rebuild when standings change
+  lb.innerHTML=order.map((r,i)=>
+    `<div class="lrow${r.you?' you':''}"><span class="lp">${i+1}</span><span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}</div>`).join('');
+}
 function syncHUD(){
   const me=racers.find(r=>r.you);
+  syncLeader();
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
