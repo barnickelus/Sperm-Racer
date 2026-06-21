@@ -1071,6 +1071,7 @@ function celShade(g){
       o.material=new T.MeshToonMaterial({
         color:old.color.clone(),
         emissive:(old.emissive?old.emissive.clone():new T.Color(0x000000)),
+        map:old.map||null,                       // preserve tattoo/stripe tail textures
         gradientMap:GRAD, flatShading:!!old.flatShading, side:old.side
       });
     }
@@ -1080,12 +1081,26 @@ function celShade(g){
 }
 
 /* ============== CELL RACER MODEL ============== */
+// build a canvas tail texture: horizontal stripes (along the tail) + scattered tattoo glyphs
+function tailTex(stripeA, stripeB, glyphCol){
+  const c=document.createElement('canvas'); c.width=128; c.height=32; const g=c.getContext('2d');
+  for(let x=0;x<128;x+=16){ g.fillStyle=((x/16)&1)?stripeA:stripeB; g.fillRect(x,0,16,32); }
+  if(glyphCol){ g.strokeStyle=glyphCol; g.fillStyle=glyphCol; g.lineWidth=2;
+    // a few simple "tattoo" marks (anchor-ish + stars) along the length
+    for(let i=0;i<4;i++){ const x=20+i*30, y=16;
+      g.beginPath(); g.arc(x,y-6,2,0,7); g.stroke();
+      g.beginPath(); g.moveTo(x,y-4); g.lineTo(x,y+7); g.moveTo(x-4,y+3); g.quadraticCurveTo(x,y+9,x+4,y+3); g.stroke();
+    }
+  }
+  const t=new T.Texture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.needsUpdate=true; return t;
+}
 function makeCell(hue, typeId){
   const g=new T.Group();
+  let tailTextured=false;
   const col=new T.Color(`hsl(${hue} 80% 60%)`);
-  const head=new T.Mesh(new T.SphereGeometry(3.4,16,12),
+  const head=new T.Mesh(new T.SphereGeometry(3.4,28,20),
     new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.35),
-      transparent:true,opacity:0.9,shininess:80,flatShading:true}));
+      transparent:true,opacity:0.9,shininess:80}));   // smooth (no flat-shaded facets)
   head.scale.set(1,0.82,1.5); head.position.y=3.2; g.add(head);
   const nuc=new T.Mesh(new T.SphereGeometry(1.5,12,10),
     new T.MeshBasicMaterial({color:col})); nuc.position.set(0,3.2,1); g.add(nuc);
@@ -1099,7 +1114,7 @@ function makeCell(hue, typeId){
   g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
 
   // Long SMOOTH tail — one continuous tapering tube, wiggled per-vertex (no segments)
-  const TSEG=26, TSIDE=10, TLEN=21, TY=3.2;
+  const TSEG=30, TSIDE=14, TLEN=21, TY=3.2;
   const tgeo=new T.BufferGeometry();
   const tpos=new Float32Array((TSEG+1)*(TSIDE+1)*3);
   const ringZ=new Float32Array(TSEG+1), ringR=new Float32Array(TSEG+1);
@@ -1109,7 +1124,10 @@ function makeCell(hue, typeId){
     const a=i*(TSIDE+1)+j, b=a+1, c=a+(TSIDE+1), d=c+1;
     tidx.push(a,c,b, b,c,d);
   }
+  const tuv=new Float32Array((TSEG+1)*(TSIDE+1)*2);   // u along length, v around (for tattooed tails)
+  for(let i=0,p=0;i<=TSEG;i++)for(let j=0;j<=TSIDE;j++){ tuv[p++]=i/TSEG; tuv[p++]=j/TSIDE; }
   tgeo.setAttribute('position', new T.BufferAttribute(tpos,3));
+  tgeo.setAttribute('uv', new T.BufferAttribute(tuv,2));
   tgeo.setIndex(tidx);
   const tmat=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),side:T.DoubleSide});
   const tailMesh=new T.Mesh(tgeo, tmat); g.add(tailMesh);
@@ -1218,11 +1236,15 @@ function makeCell(hue, typeId){
     const band = new T.Mesh(new T.CylinderGeometry(2.4,2.4,0.22,12), new T.MeshPhongMaterial({color:0xff0000}));
     band.position.set(0,6.15,0.4);
     g.add(band);
-    // Big cartoon mustache (extra obvious)
-    const stache = new T.Mesh(new T.TorusGeometry(1.7,0.42,8,16, Math.PI), new T.MeshPhongMaterial({color:0x111111, emissive:0x222222}));
-    stache.position.set(0,3.1,3.8);
-    stache.rotation.x = 1.6;
-    g.add(stache);
+    // Big cartoon handlebar mustache
+    const muMat = new T.MeshPhongMaterial({color:0x111111, emissive:0x222222});
+    const stache = new T.Mesh(new T.TorusGeometry(1.7,0.42,8,16, Math.PI), muMat);
+    stache.position.set(0,3.1,3.8); stache.rotation.x = 1.6; g.add(stache);
+    // curled tips that sweep out PAST the head sides so the 'stache reads from behind too
+    for(const sx of [-1,1]){
+      const tip=new T.Mesh(new T.TorusGeometry(1.0,0.34,8,14, Math.PI*1.3), muMat);
+      tip.position.set(sx*3.6,3.4,2.2); tip.rotation.set(1.5,0,sx*0.6); g.add(tip);
+    }
   } else if(typeId === 'dragon'){
     // Wei Long: aged pale skin, black skullcap + red knob, white facial hair, braid
     head.material.color.setHex(0xe6c6a0);
@@ -1300,6 +1322,9 @@ function makeCell(hue, typeId){
     bowl.position.set(-3.4,3.0,3.4); g.add(bowl);
     const collar=new T.Mesh(new T.TorusGeometry(3.2,0.4,8,16), new T.MeshPhongMaterial({color:0x2f5fae}));
     collar.position.set(0,2.85,0); collar.rotation.x=Math.PI/2; g.add(collar);
+    // blue/white striped + tattooed sailor tail
+    const tx=tailTex('#2f5fae','#f3f3f3','#24406e'); tx.repeat.set(1,1);
+    tailMesh.material.map=tx; tailMesh.material.color.setHex(0xffffff); tailTextured=true;
   } else if(typeId === 'cholo'){
     head.material.color.setHex(0xf3c9cf); head.material.emissive.setHex(0x4a2630);
     const band=new T.Mesh(new T.SphereGeometry(3.5,14,10,0,Math.PI*2,0,Math.PI*0.5), new T.MeshPhongMaterial({color:0xc62f2f}));
@@ -1316,6 +1341,9 @@ function makeCell(hue, typeId){
     tank.position.set(0,1.6,0.7); g.add(tank);
     const chain=new T.Mesh(new T.TorusGeometry(2.6,0.18,6,14), new T.MeshPhongMaterial({color:0xffd700, shininess:95}));
     chain.position.set(0,2.4,1.2); chain.rotation.x=1.2; g.add(chain);
+    // pink skin tail with scattered tattoos
+    const tx=tailTex('#f3c9cf','#f3c9cf','#3a2740');
+    tailMesh.material.map=tx; tailMesh.material.color.setHex(0xffffff); tailTextured=true;
   } else if(typeId === 'hillbilly'){
     head.material.color.setHex(0xe0a878); head.material.emissive.setHex(0x3a2414);
     const beard=new T.Mesh(new T.SphereGeometry(2.6,12,10), new T.MeshPhongMaterial({color:0x7a5230, flatShading:true}));
@@ -1349,20 +1377,22 @@ function makeCell(hue, typeId){
   } else if(typeId === 'rick'){
     head.material.color.setHex(0x6e4a35); head.material.emissive.setHex(0x241810);
     const bm=new T.MeshPhongMaterial({color:0x15110f});
-    // full fan of beaded braids down the back + sides
-    for(let i=0;i<9;i++){
-      const t=(i/8-0.5);                                   // -0.5..0.5 across the back
-      const br=new T.Mesh(new T.CylinderGeometry(0.36,0.2,8,7), bm);
-      br.position.set(t*5.4, 1.0, -2.6 - Math.abs(t)*1.0);
-      br.rotation.x=-0.3; br.rotation.z=t*0.5; g.add(br);
-      const bead=new T.Mesh(new T.SphereGeometry(0.5,8,6),
+    // long, full mane of beaded braids spilling down the back and sides
+    for(let i=0;i<13;i++){
+      const t=(i/12-0.5);                                  // -0.5..0.5 across the back
+      const len=11+Math.random()*3;
+      const br=new T.Mesh(new T.CylinderGeometry(0.42,0.22,len,8), bm);
+      br.position.set(t*6.4, -1.2, -2.4 - Math.abs(t)*1.4);
+      br.rotation.x=-0.32; br.rotation.z=t*0.55; g.add(br);
+      const bead=new T.Mesh(new T.SphereGeometry(0.55,8,6),
         new T.MeshPhongMaterial({color:(i%2)?0xe23b4e:0xffcf5a}));
-      bead.position.set(t*6.0,-2.7,-3.0-Math.abs(t)*1.0); g.add(bead);
+      bead.position.set(t*7.0, -1.2-len*0.42, -2.8-Math.abs(t)*1.4); g.add(bead);
     }
-    for(const sx of [-1,1]){ const br=new T.Mesh(new T.CylinderGeometry(0.4,0.25,7,8), bm);
-      br.position.set(sx*3.0,1.0,0.6); br.rotation.z=sx*0.2; g.add(br); }
-    const hair=new T.Mesh(new T.SphereGeometry(3.3,14,10,0,Math.PI*2,0,Math.PI*0.55), bm);
-    hair.position.set(0,4.2,0); hair.scale.set(1.05,0.8,1.05); g.add(hair);
+    // side braids framing the face
+    for(const sx of [-1,1]){ const br=new T.Mesh(new T.CylinderGeometry(0.42,0.24,9,8), bm);
+      br.position.set(sx*3.2,0.4,0.8); br.rotation.z=sx*0.22; g.add(br); }
+    const hair=new T.Mesh(new T.SphereGeometry(3.4,18,12,0,Math.PI*2,0,Math.PI*0.6), bm);
+    hair.position.set(0,4.3,0); hair.scale.set(1.08,0.9,1.08); g.add(hair);
     const mu=new T.Mesh(new T.TorusGeometry(1.4,0.3,8,16,Math.PI), new T.MeshPhongMaterial({color:0x15110f}));
     mu.position.set(0,3.0,3.6); mu.rotation.x=1.6; g.add(mu);
   } else if(typeId === 'french'){
@@ -1377,9 +1407,11 @@ function makeCell(hue, typeId){
     collar.position.set(0,2.85,0); collar.rotation.x=Math.PI/2; g.add(collar);
   }
 
-  // tail always matches the head/skin colour
-  g.userData.tailMesh.material.color.copy(head.material.color);
-  g.userData.tailMesh.material.emissive.copy(head.material.emissive);
+  // tail matches the head/skin colour (unless it has its own tattoo/stripe texture)
+  if(!tailTextured){
+    g.userData.tailMesh.material.color.copy(head.material.color);
+    g.userData.tailMesh.material.emissive.copy(head.material.emissive);
+  }
   g.userData.mouthBase = g.userData.mouth.scale.clone();   // neutral mouth for expressions
 
   celShade(g);
@@ -1731,7 +1763,14 @@ function doWhip(atk,vic){
 }
 function collide(){
   whipReady=false; whipTarget=null;
-  // kart-kart soft separation + tail-whip
+  // player whip availability: any rival within range (generous), regardless of speed
+  const me=racers.find(r=>r.you);
+  if(me && !me.finished){
+    let nd=1e9,nr=null;
+    for(const o of racers){ if(o===me||o.finished)continue; const dd=Math.hypot(o.x-me.x,o.z-me.z); if(dd<nd){nd=dd;nr=o;} }
+    if(nr && nd<13 && nr.spinT<=0){ whipReady=true; whipTarget=nr; }
+  }
+  // kart-kart soft separation + AI auto-whip
   for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
     const a=racers[i],b=racers[j];
     const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);
@@ -1739,10 +1778,7 @@ function collide(){
       a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push;
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
-      if(d<8 && vic.spinT<=0){
-        if(atk.you && !atk.finished){ whipReady=true; whipTarget=vic; }   // player: button appears
-        else if(!atk.you && d<6 && (now-(atk._whip||0))>900) doWhip(atk,vic); // AI: auto whip
-      }
+      if(!atk.you && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) doWhip(atk,vic); // AI auto whip
     }
   }
   // item pickup
@@ -1985,7 +2021,7 @@ function syncLeader(){
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
-  if(isTouch) $('whipbtn').style.display = (whipReady && !me.finished) ? 'inline-flex' : 'none';
+  $('whipbtn').style.display = (whipReady && !me.finished) ? 'inline-flex' : 'none';
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
