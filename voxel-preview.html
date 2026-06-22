@@ -58,8 +58,9 @@ function tile(rgb, h){
   const r1=(h&255)/255, r2=((h>>>8)&255)/255, r3=((h>>>16)&255)/255, r4=((h>>>24)&255)/255;
   const [H,S,L]=rgb2hsl(rgb[0],rgb[1],rgb[2]);
   const base=hsl2rgb((H+(r1-0.5)*0.05+1)%1, cf(S+(r3-0.5)*0.18,0,1), cf(L+(r2-0.5)*0.24,0.06,0.95));
-  const acc=hsl2rgb((H+0.33+r4*0.34)%1, cf(S*0.5+0.4,0.25,1), cf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
-  return [base, acc];
+  const acc =hsl2rgb((H+0.33+r4*0.34)%1, cf(S*0.5+0.4,0.25,1), cf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
+  const acc2=hsl2rgb((H+0.15+r2*0.1)%1, cf(S*0.4,0,0.7), cf(0.86+(r3-0.5)*0.12,0.6,0.97));
+  return [base, acc, acc2];
 }
 
 // Each voxel face = a tile: grout border + a shape (circle/square/diamond/triangle)
@@ -68,10 +69,10 @@ function tile(rgb, h){
 const faceMat=new T.ShaderMaterial({
   uniforms:{ lightDir:{ value:new T.Vector3(0.5,0.9,0.6).normalize() } },
   vertexShader:`
-    attribute vec3 aBase; attribute vec3 aAccent; attribute float aShape;
-    varying vec3 vBase; varying vec3 vAccent; varying float vShape; varying vec2 vUv; varying vec3 vN;
+    attribute vec3 aBase; attribute vec3 aAccent; attribute vec3 aAccent2; attribute float aShape;
+    varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape; varying vec2 vUv; varying vec3 vN;
     void main(){
-      vBase=aBase; vAccent=aAccent; vShape=aShape; vUv=uv;
+      vBase=aBase; vAccent=aAccent; vAccent2=aAccent2; vShape=aShape; vUv=uv;
       // build mat3 from columns (mat3(mat4) is invalid in GLSL ES 1.00 / WebGL1)
       mat3 im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
       mat3 mm = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
@@ -80,17 +81,21 @@ const faceMat=new T.ShaderMaterial({
     }`,
   fragmentShader:`
     uniform vec3 lightDir;
-    varying vec3 vBase; varying vec3 vAccent; varying float vShape; varying vec2 vUv; varying vec3 vN;
+    varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape; varying vec2 vUv; varying vec3 vN;
     void main(){
-      vec2 uv=vUv; float du=uv.x-0.5, dv=uv.y-0.5; vec3 c;
-      if(uv.x<0.1||uv.x>0.9||uv.y<0.1||uv.y>0.9){ c=vBase*0.45; }     // grout
+      vec2 uv=vUv; float cu=uv.x-0.5, cv=uv.y-0.5; float qx=abs(cu), qy=abs(cv); vec3 c;
+      // rounded-tile grout
+      bool grout = (qx>0.40||qy>0.40) || (qx>0.32&&qy>0.32&&length(vec2(qx-0.32,qy-0.32))>0.09);
+      if(grout){ c=vBase*0.45; }
       else {
-        bool hit;
-        if(vShape<0.5) hit=length(vec2(du,dv))<0.30;                   // circle
-        else if(vShape<1.5) hit=max(abs(du),abs(dv))<0.27;             // square
-        else if(vShape<2.5) hit=abs(du)+abs(dv)<0.33;                  // diamond
-        else hit=(uv.y>0.30 && uv.y<0.76 && abs(du)<(0.76-uv.y)*0.75); // triangle
-        c = hit ? vAccent : vBase;
+        bool central;
+        if(vShape<0.5) central=length(vec2(cu,cv))<0.18;                  // circle
+        else if(vShape<1.5) central=max(qx,qy)<0.16;                      // square
+        else if(vShape<2.5) central=qx+qy<0.21;                           // diamond
+        else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);           // triangle
+        bool dm = length(uv-vec2(0.30,0.30))<0.10 || length(uv-vec2(0.70,0.30))<0.10
+               || length(uv-vec2(0.30,0.70))<0.10 || length(uv-vec2(0.70,0.70))<0.10;
+        c = central ? vAccent : (dm ? vAccent2 : vBase);                  // shape + 4 corner dots
       }
       float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
       gl_FragColor=vec4(c*(0.5+0.55*ndl), 1.0);
@@ -118,19 +123,21 @@ function build(model){
 
   // one InstancedMesh; per-voxel base/accent/shape passed as instanced attributes
   const n=vox.length;
-  const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aShape=new Float32Array(n);
+  const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aAccent2=new Float32Array(n*3), aShape=new Float32Array(n);
   const g=geo.clone();
   const mesh=new T.InstancedMesh(g, faceMat, n);
   const dummy=new T.Object3D();
   vox.forEach((v,i)=>{
     dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
-    const h=hash(v.x,v.y,v.z), [b,a]=tile([v.r/255,v.g/255,v.b/255], h);
+    const h=hash(v.x,v.y,v.z), [b,a,a2]=tile([v.r/255,v.g/255,v.b/255], h);
     aBase[i*3]=b[0];aBase[i*3+1]=b[1];aBase[i*3+2]=b[2];
     aAccent[i*3]=a[0];aAccent[i*3+1]=a[1];aAccent[i*3+2]=a[2];
+    aAccent2[i*3]=a2[0];aAccent2[i*3+1]=a2[1];aAccent2[i*3+2]=a2[2];
     aShape[i]=h%4;
   });
   g.setAttribute('aBase', new T.InstancedBufferAttribute(aBase,3));
   g.setAttribute('aAccent', new T.InstancedBufferAttribute(aAccent,3));
+  g.setAttribute('aAccent2', new T.InstancedBufferAttribute(aAccent2,3));
   g.setAttribute('aShape', new T.InstancedBufferAttribute(aShape,1));
   mesh.instanceMatrix.needsUpdate=true;
   rig.add(mesh);
