@@ -43,27 +43,54 @@ scene.add(new T.AmbientLight(0xbfd8e0, 0.7));
 const key=new T.DirectionalLight(0xffffff, 0.85); key.position.set(40,70,60); scene.add(key);
 const fill=new T.DirectionalLight(0xff9ec4, 0.3); fill.position.set(-40,20,-30); scene.add(fill);
 
-// ---- a grayscale "tile" texture per shape: white square + dark grout + a mid-tone shape ----
-function shapeTex(type){
-  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
-  g.fillStyle='#ffffff'; g.fillRect(0,0,64,64);                 // square area -> full base colour
-  g.fillStyle='rgba(0,0,0,0.45)';                               // grout border
-  g.fillRect(0,0,64,5); g.fillRect(0,59,64,5); g.fillRect(0,0,5,64); g.fillRect(59,0,5,64);
-  g.fillStyle='#7d7d7d';                                        // the shape (darker tone)
-  if(type===0){ g.beginPath(); g.arc(32,32,15,0,7); g.fill(); }
-  else if(type===1){ g.fillRect(18,18,28,28); }
-  else if(type===2){ g.beginPath(); g.moveTo(32,15); g.lineTo(49,32); g.lineTo(32,49); g.lineTo(15,32); g.closePath(); g.fill(); }
-  else { g.beginPath(); g.moveTo(32,16); g.lineTo(48,46); g.lineTo(16,46); g.closePath(); g.fill(); }
-  const t=new T.CanvasTexture(c); t.anisotropy=4; return t;
-}
-const SHAPE_TEX=[0,1,2,3].map(shapeTex);
 const hash=(x,y,z)=>{ let h=(x*73856093)^(y*19349663)^(z*83492791); return (h>>>0); };
+// per-voxel contrasting accent (matches the PNG renderer): darker / lighter / channel-rotate
+function accent(b,h){ const m=h%3;
+  if(m===0) return [b[0]*0.42, b[1]*0.42, b[2]*0.42];
+  if(m===1) return [Math.min(1,b[0]*0.4+0.65), Math.min(1,b[1]*0.4+0.65), Math.min(1,b[2]*0.4+0.65)];
+  return [b[2], b[0], b[1]];
+}
+
+// Each voxel face = a tile: grout border + a shape (circle/square/diamond/triangle)
+// drawn in the per-voxel ACCENT colour over the per-voxel BASE colour, computed
+// procedurally from the cube-face UV in the fragment shader (true two-tone).
+const faceMat=new T.ShaderMaterial({
+  uniforms:{ lightDir:{ value:new T.Vector3(0.5,0.9,0.6).normalize() } },
+  vertexShader:`
+    attribute vec3 aBase; attribute vec3 aAccent; attribute float aShape;
+    varying vec3 vBase; varying vec3 vAccent; varying float vShape; varying vec2 vUv; varying vec3 vN;
+    void main(){
+      vBase=aBase; vAccent=aAccent; vShape=aShape; vUv=uv;
+      // build mat3 from columns (mat3(mat4) is invalid in GLSL ES 1.00 / WebGL1)
+      mat3 im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
+      mat3 mm = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
+      vN = normalize(mm * im * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position,1.0);
+    }`,
+  fragmentShader:`
+    uniform vec3 lightDir;
+    varying vec3 vBase; varying vec3 vAccent; varying float vShape; varying vec2 vUv; varying vec3 vN;
+    void main(){
+      vec2 uv=vUv; float du=uv.x-0.5, dv=uv.y-0.5; vec3 c;
+      if(uv.x<0.1||uv.x>0.9||uv.y<0.1||uv.y>0.9){ c=vBase*0.45; }     // grout
+      else {
+        bool hit;
+        if(vShape<0.5) hit=length(vec2(du,dv))<0.30;                   // circle
+        else if(vShape<1.5) hit=max(abs(du),abs(dv))<0.27;             // square
+        else if(vShape<2.5) hit=abs(du)+abs(dv)<0.33;                  // diamond
+        else hit=(uv.y>0.30 && uv.y<0.76 && abs(du)<(0.76-uv.y)*0.75); // triangle
+        c = hit ? vAccent : vBase;
+      }
+      float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
+      gl_FragColor=vec4(c*(0.5+0.55*ndl), 1.0);
+    }`
+});
 
 const geo=new T.BoxGeometry(1,1,1);
 let rig=new T.Group(); scene.add(rig);
 let dist=60, isFace=false;
 
-function clearRig(){ rig.traverse(o=>{ if(o.isMesh){ o.geometry.dispose?0:0; if(o.material.map) o.material.map.dispose?0:0; } });
+function clearRig(){ rig.traverse(o=>{ if(o.isMesh && o.geometry) o.geometry.dispose(); });
   scene.remove(rig); rig=new T.Group(); scene.add(rig); }
 
 function build(model){
@@ -78,20 +105,24 @@ function build(model){
   const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
   dist=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])*1.7;
 
-  // Every model uses the Chuck-Close treatment: split voxels into 4 groups by
-  // shape so each shape gets its own shape-textured InstancedMesh.
-  const dummy=new T.Object3D(), col=new T.Color();
-  const groups=[[],[],[],[]];
-  for(const v of vox) groups[hash(v.x,v.y,v.z)%4].push(v);
-  groups.forEach((list,s)=>{
-    if(!list.length) return;
-    const mat=new T.MeshStandardMaterial({map:SHAPE_TEX[s], roughness:0.9, metalness:0});
-    const mesh=new T.InstancedMesh(geo, mat, list.length);
-    list.forEach((v,i)=>{ dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix();
-      mesh.setMatrixAt(i,dummy.matrix); mesh.setColorAt(i, col.setRGB(v.r/255,v.g/255,v.b/255)); });
-    mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
-    rig.add(mesh);
+  // one InstancedMesh; per-voxel base/accent/shape passed as instanced attributes
+  const n=vox.length;
+  const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aShape=new Float32Array(n);
+  const g=geo.clone();
+  const mesh=new T.InstancedMesh(g, faceMat, n);
+  const dummy=new T.Object3D();
+  vox.forEach((v,i)=>{
+    dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
+    const b=[v.r/255,v.g/255,v.b/255], h=hash(v.x,v.y,v.z), a=accent(b,h);
+    aBase[i*3]=b[0];aBase[i*3+1]=b[1];aBase[i*3+2]=b[2];
+    aAccent[i*3]=a[0];aAccent[i*3+1]=a[1];aAccent[i*3+2]=a[2];
+    aShape[i]=h%4;
   });
+  g.setAttribute('aBase', new T.InstancedBufferAttribute(aBase,3));
+  g.setAttribute('aAccent', new T.InstancedBufferAttribute(aAccent,3));
+  g.setAttribute('aShape', new T.InstancedBufferAttribute(aShape,1));
+  mesh.instanceMatrix.needsUpdate=true;
+  rig.add(mesh);
 }
 
 build('salty');
