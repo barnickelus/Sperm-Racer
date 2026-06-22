@@ -59,6 +59,18 @@
 
     // --- head: forward-stretched ellipsoid ---
     const cy=11*R;
+    // anchor tattoo snapped to the left cheek surface (pushed BEFORE the head so it
+    // occupies the surface voxels; the head then fills in around it)
+    {
+      const ink=[36,58,110], rx=6*R, ry=5*R, rz=7*R;
+      const A=[[0,0],[0,1],[0,2],[0,-1],[0,-2],[-1,1],[1,1],[-1,2],[1,2],[-2,-2],[-1,-3],[1,-3],[2,-2]];
+      for(const [dz,dy] of A){
+        const yy=cy+Math.round(dy*0.95*R), zz=Math.round(2.0*R)+Math.round(dz*0.95*R);
+        const rem=1-((yy-cy)/ry)*((yy-cy)/ry)-(zz/rz)*(zz/rz);
+        if(rem<=0) continue;
+        put(-Math.floor(rx*Math.sqrt(rem)), yy, zz, ink);   // leftmost (surface) voxel
+      }
+    }
     ellip(0,cy,0, 6*R,5*R,7*R, skin);
 
     // --- big cartoon eyes + pupils + sparkle (sit on the exposed front face) ---
@@ -77,11 +89,12 @@
     ellip(0,cy+3.8*R,4.9*R, 0.7*R,0.7*R,0.6*R, gold);        // badge ring
     box(-0.4*R,0.4*R, cy+4.4*R,cy+4.8*R, 4.6*R,5.0*R, gold); // badge bar
 
-    // --- wiggling tapered tail trailing back ---
+    // --- wiggling tapered tail trailing back, tattooed with navy/white sailor stripes ---
     const N=Math.round(44*R);
     for(let i=0;i<=N;i++){ const t=i/N;
       const z=-7*R - t*22*R, x=Math.sin(t*7)*2.4*R, rad=(3*R)*(1-t)*0.9+0.5;
-      ellip(x,cy,z, rad,rad,rad, skin);
+      const stripe = (Math.floor(t*11)%2)===0;        // banded blue/white stripes
+      ellip(x,cy,z, rad,rad,rad, stripe ? navy : white);
     }
 
     // --- a few magenta scenery cell-blobs (env) ---
