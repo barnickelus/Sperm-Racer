@@ -92,5 +92,68 @@
     return V;
   }
 
-  return { buildVoxels };
+  // ---------------------------------------------------------------------------
+  // CHUCK CLOSE-style voxel face: a frontal relief portrait (bald man + glasses)
+  // built on a grid. Each column is extruded back in -z; the front (z=0) layer
+  // carries the portrait color. Renderers add a small shape per voxel face so
+  // the colored tiles optically blend into a face from a distance.
+  // ---------------------------------------------------------------------------
+  function buildFace(res){
+    const R = res || 1.2;
+    const V=[];
+    const push=(x,y,z,c)=>V.push({x,y,z,r:c[0]|0,g:c[1]|0,b:c[2]|0,face:true});
+    const HW=Math.round(15*R), TOP=Math.round(38*R), CY=Math.round(21*R), SX=15*R, SY=18*R;
+    const nz=(x,y)=>{ const n=Math.sin(x*12.9898+y*78.233)*43758.5453; return (n-Math.floor(n))-0.5; };
+    const mix=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
+    const tone=(c,d)=>[c[0]+d,c[1]+d,c[2]+d];
+    const SKIN=[223,168,134], WARM=[205,134,107], HI=[241,206,171], SH=[150,104,84],
+          BEARD=[168,158,156], DARK=[34,30,33], LIP=[171,99,93], SHIRT=[46,48,62],
+          FRAME=[24,21,26], LENS=[122,140,160];
+
+    for(let iy=0; iy<=TOP; iy++){
+      for(let ix=-HW; ix<=HW; ix++){
+        const nx=ix/SX, ny=(iy-CY)/SY;                 // ny>0 = up
+        const headR=(nx*nx)/(0.95*0.95)+(ny*ny)/(1.12*1.12);
+        const inHead = headR<=1;
+        const inNeck = (ny<-0.80) && Math.abs(nx) < 0.34;
+        const inShoulder = (ny<-0.96) && Math.abs(nx) < 0.98;
+        if(!inHead && !inNeck && !inShoulder) continue;
+
+        // relief depth
+        let depth;
+        if(inHead){
+          depth = 2 + 6*Math.sqrt(Math.max(0,1-headR));
+          if(ny>-0.36 && ny<0.18 && Math.abs(nx)<0.16) depth += 2.6*(1-Math.abs(nx)/0.16); // nose
+          if(ny>0.14 && ny<0.30 && Math.abs(nx)<0.5) depth += 1.0;                          // brow
+          for(const ex of [-0.38,0.38]) if(Math.hypot(nx-ex,ny-0.05)<0.22) depth -= 1.0;    // sockets
+        } else depth = inShoulder?4:3;
+        depth = Math.max(1, Math.round(depth*R*0.7));
+
+        // portrait color at the front
+        let col;
+        if(inShoulder || inNeck){ col = tone(SHIRT, nz(ix,iy)*14); }
+        else {
+          const t=(ny+1)/2;
+          col = mix(WARM, HI, Math.max(0,Math.min(1,t*0.85+0.12)));
+          for(const cx of [-0.5,0.5]){ const d=Math.hypot(nx-cx,ny+0.05); if(d<0.3) col=mix(col,WARM,(0.3-d)/0.3*0.45); }
+          col = mix(col, SH, Math.max(0,headR-0.45)*0.7);
+          if(ny>0.55) col=mix(col,HI,(ny-0.55)/0.45*0.5);                 // bald crown highlight
+          if(ny<-0.10 && headR<0.95) col=mix(col,BEARD,Math.min(1,(-0.10-ny)/0.5)*0.5); // stubble
+          if(ny>-0.62 && ny<-0.18 && Math.abs(nx)<0.30) col=mix(col,tone(BEARD,-46),0.5); // goatee
+          for(const ex of [-0.38,0.38]){ const d=Math.hypot((nx-ex)/1.12, ny-0.05);
+            if(d<0.13) col=LENS; else if(d<0.205) col=FRAME; }                // lenses + frames
+          if(Math.abs(nx)<0.17 && Math.abs(ny-0.06)<0.045) col=FRAME;        // bridge
+          if(ny<0.10&&ny>-0.02 && Math.abs(nx)>0.55&&Math.abs(nx)<0.93) col=FRAME; // temple arms
+          for(const ex of [-0.38,0.38]) if(Math.abs(nx-ex)<0.17 && Math.abs(ny-0.27)<0.05) col=mix(col,DARK,0.45); // brows
+          for(const ex of [-0.09,0.09]) if(Math.hypot(nx-ex,ny+0.33)<0.05) col=mix(col,SH,0.7); // nostrils
+          if(Math.abs(ny+0.5)<0.055 && Math.abs(nx)<0.22) col=LIP;          // lips
+          col = tone(col, nz(ix*1.7,iy*1.3)*22);                            // optical-blend speckle
+        }
+        for(let dz=0; dz<depth; dz++) push(ix, iy, -dz, col);
+      }
+    }
+    return V;
+  }
+
+  return { buildVoxels, buildFace };
 });
