@@ -16,10 +16,24 @@ const V=buildVoxels(1.5);   // chunkier so each tile is big enough to carry a sh
 
 const clamp=v=>v<0?0:v>255?255:v;
 const hash=(x,y,z)=>{ let h=(x*73856093)^(y*19349663)^(z*83492791); return h>>>0; };
-function accent(base,h){ const m=h%3;
-  if(m===0) return [base[0]*0.42, base[1]*0.42, base[2]*0.42];                          // darker
-  if(m===1) return [clamp(base[0]*0.4+165), clamp(base[1]*0.4+165), clamp(base[2]*0.4+165)]; // lighter
-  return [base[2], base[0], base[1]];                                                   // channel-rotate pop
+const clampf=(v,a,b)=>v<a?a:v>b?b:v;
+function rgb2hsl(r,g,b){ r/=255;g/=255;b/=255; const mx=Math.max(r,g,b),mn=Math.min(r,g,b); let h,s,l=(mx+mn)/2;
+  if(mx===mn){h=s=0;} else { const d=mx-mn; s=l>0.5?d/(2-mx-mn):d/(mx+mn);
+    if(mx===r)h=(g-b)/d+(g<b?6:0); else if(mx===g)h=(b-r)/d+2; else h=(r-g)/d+4; h/=6; }
+  return [h,s,l]; }
+function hsl2rgb(h,s,l){ let r,g,b; if(s===0){r=g=b=l;} else {
+  const f=(p,q,t)=>{ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+  const q=l<0.5?l*(1+s):l+s-l*s, p=2*l-q; r=f(p,q,h+1/3); g=f(p,q,h); b=f(p,q,h-1/3); }
+  return [r*255,g*255,b*255]; }
+// Chuck-Close optical blend: jitter each tile's base + pair it with a hue-rotated
+// (complementary) accent so adjacent tiles differ strongly but average to the tone.
+function tile(rgb, h){
+  const r1=(h&255)/255, r2=((h>>>8)&255)/255, r3=((h>>>16)&255)/255, r4=((h>>>24)&255)/255;
+  const [H,S,L]=rgb2hsl(rgb[0],rgb[1],rgb[2]);
+  const base=hsl2rgb((H+(r1-0.5)*0.05+1)%1, clampf(S+(r3-0.5)*0.18,0,1), clampf(L+(r2-0.5)*0.24,0.06,0.95));
+  const shift=0.33+r4*0.34;
+  const acc=hsl2rgb((H+shift)%1, clampf(S*0.5+0.4,0.25,1), clampf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
+  return [base, acc];
 }
 function shapeHit(t,u,v){ const du=u-0.5, dv=v-0.5;
   if(t===0) return Math.hypot(du,dv)<0.30;
@@ -64,8 +78,8 @@ function fillFace(pts, base, acc, type, k){
 
 V.sort((a,b)=>(a.x+a.z-a.y)-(b.x+b.z-b.y));    // painter's: far first
 for(const v of V){
-  const {x,y,z}=v, base=[v.r,v.g,v.b];
-  const h=hash(x,y,z), type=h%4, acc=accent(base,h);
+  const {x,y,z}=v;
+  const h=hash(x,y,z), type=h%4, [base,acc]=tile([v.r,v.g,v.b], h);
   const o=(X,Y,Z)=>{ const [px,py]=P(x+X,y+Y,z+Z); return [px+ox,py+oy]; };
   fillFace([o(0,1,0),o(1,1,0),o(1,1,1),o(0,1,1)], base, acc, type, 1.0);   // top
   fillFace([o(0,0,1),o(1,0,1),o(1,1,1),o(0,1,1)], base, acc, type, 0.82);  // +Z (toward viewer)
