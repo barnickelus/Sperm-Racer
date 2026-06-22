@@ -21,10 +21,10 @@
 </style>
 </head>
 <body>
-<div id="tag"><b id="name">Chuck-Close Voxel Face</b> — drag to turn</div>
+<div id="tag"><b id="name">Salty — voxel</b> — drag to turn</div>
 <canvas id="c"></canvas>
-<div id="hint">Each voxel carries a colored shape that optically blends (Chuck Close). WebGL — runs on iPad Safari.</div>
-<button id="toggle">Show: Salty</button>
+<div id="hint">Each voxel carries a colored shape that optically blends (Chuck Close style). WebGL — runs on iPad Safari.</div>
+<button id="toggle">Show: Face</button>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="voxel-model.js"></script>
 <script>
@@ -61,14 +61,15 @@ const hash=(x,y,z)=>{ let h=(x*73856093)^(y*19349663)^(z*83492791); return (h>>>
 
 const geo=new T.BoxGeometry(1,1,1);
 let rig=new T.Group(); scene.add(rig);
-let dist=60, isFace=true;
+let dist=60, isFace=false;
 
 function clearRig(){ rig.traverse(o=>{ if(o.isMesh){ o.geometry.dispose?0:0; if(o.material.map) o.material.map.dispose?0:0; } });
   scene.remove(rig); rig=new T.Group(); scene.add(rig); }
 
 function build(model){
   clearRig();
-  const vox=model==='face' ? VoxelModel.buildFace(1.4) : VoxelModel.buildVoxels(2.4);
+  // Salty (our character) at a chunky res so each voxel is big enough to carry a shape
+  const vox = model==='face' ? VoxelModel.buildFace(1.4) : VoxelModel.buildVoxels(1.6);
   // centre on the character (ignore env voxels)
   let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
   for(const v of vox){ if(v.env)continue;
@@ -77,30 +78,23 @@ function build(model){
   const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
   dist=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])*1.7;
 
+  // Every model uses the Chuck-Close treatment: split voxels into 4 groups by
+  // shape so each shape gets its own shape-textured InstancedMesh.
   const dummy=new T.Object3D(), col=new T.Color();
-  if(model==='face'){
-    // split voxels into 4 groups by shape so each shape gets its own textured InstancedMesh
-    const groups=[[],[],[],[]];
-    for(const v of vox) groups[hash(v.x,v.y,v.z)%4].push(v);
-    groups.forEach((list,s)=>{
-      const mat=new T.MeshStandardMaterial({map:SHAPE_TEX[s], roughness:0.9, metalness:0});
-      const mesh=new T.InstancedMesh(geo, mat, list.length);
-      list.forEach((v,i)=>{ dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix();
-        mesh.setMatrixAt(i,dummy.matrix); mesh.setColorAt(i, col.setRGB(v.r/255,v.g/255,v.b/255)); });
-      mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
-      rig.add(mesh);
-    });
-  } else {
-    const mat=new T.MeshStandardMaterial({roughness:0.85, metalness:0});
-    const mesh=new T.InstancedMesh(geo, mat, vox.length);
-    vox.forEach((v,i)=>{ dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix();
+  const groups=[[],[],[],[]];
+  for(const v of vox) groups[hash(v.x,v.y,v.z)%4].push(v);
+  groups.forEach((list,s)=>{
+    if(!list.length) return;
+    const mat=new T.MeshStandardMaterial({map:SHAPE_TEX[s], roughness:0.9, metalness:0});
+    const mesh=new T.InstancedMesh(geo, mat, list.length);
+    list.forEach((v,i)=>{ dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix();
       mesh.setMatrixAt(i,dummy.matrix); mesh.setColorAt(i, col.setRGB(v.r/255,v.g/255,v.b/255)); });
     mesh.instanceMatrix.needsUpdate=true; if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
     rig.add(mesh);
-  }
+  });
 }
 
-build('face');
+build('salty');
 
 document.getElementById('toggle').addEventListener('click',()=>{
   isFace=!isFace;
@@ -111,7 +105,7 @@ document.getElementById('toggle').addEventListener('click',()=>{
 });
 
 // drag-to-turn + gentle auto motion (face = sway so the flat back stays hidden; salty = full spin)
-let yaw=0, pitch=0.30, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
+let yaw=0.6, pitch=0.35, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
 const cv=renderer.domElement;
 cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;autoT=0;cv.setPointerCapture(e.pointerId);});
 cv.addEventListener('pointermove',e=>{ if(!dragging)return;
