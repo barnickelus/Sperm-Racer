@@ -3,16 +3,18 @@
  * (Salty): every voxel face is a tile with grout + a small shape in a
  * contrasting accent, so the cubes optically blend. Lets me SEE the look. */
 const zlib=require('zlib'), fs=require('fs');
-const {buildVoxels}=require('./voxel-model.js');
+const {buildVoxels, buildFace, buildGoddess}=require('./voxel-model.js');
 
+const which=process.argv[2]||'salty';
 const SS=2;
-const c=18*SS;             // voxel pixel size (big enough that the shapes read)
+const c=(which==='goddess'?9:18)*SS;   // goddess is tall — smaller voxels to fit
 const margin=16*SS;
 const BG_TOP=[8,42,54], BG_BOT=[3,18,26];
 
 // isometric: +Z -> right+down (toward viewer), +X -> left+down, +Y -> up
 const P=(x,y,z)=>[ (z - x)*c, (x + z)*0.5*c - y*c ];
-const V=buildVoxels(1.5);   // chunkier so each tile is big enough to carry a shape
+const V = which==='goddess' ? buildGoddess(1.3) : which==='face' ? buildFace(1.3) : buildVoxels(1.5);
+const OUT = 'voxel-'+which+'.png';
 
 const clamp=v=>v<0?0:v>255?255:v;
 const hash=(x,y,z)=>{ let h=(x*73856093)^(y*19349663)^(z*83492791); return h>>>0; };
@@ -114,5 +116,5 @@ function png(w,h,rgb){
   const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(w,0);ihdr.writeUInt32BE(h,4);ihdr[8]=8;ihdr[9]=2;
   return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr),chunk('IDAT',idat),chunk('IEND',Buffer.alloc(0))]);
 }
-fs.writeFileSync('voxel-preview.png', png(OW,OH,Buffer.from(out)));
-console.log('wrote voxel-preview.png', OW+'x'+OH, 'voxels:', V.length);
+fs.writeFileSync(OUT, png(OW,OH,Buffer.from(out)));
+console.log('wrote', OUT, OW+'x'+OH, 'voxels:', V.length);

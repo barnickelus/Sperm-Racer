@@ -168,5 +168,75 @@
     return V;
   }
 
-  return { buildVoxels, buildFace };
+  // ---------------------------------------------------------------------------
+  // Golden warrior-goddess: a standing voxel figure (sunburst crown, gold armor,
+  // fringed skirt). Last-write-wins layering so armor/details sit over the skin.
+  // ---------------------------------------------------------------------------
+  function buildGoddess(res){
+    const R = res || 1.3, s=n=>n*R;
+    const M=new Map();
+    const put=(x,y,z,c)=>{ M.set((Math.round(x))+'|'+(Math.round(y))+'|'+(Math.round(z)), c); };
+    const e=(cx,cy,cz,rx,ry,rz,c)=>{ for(let x=Math.floor(cx-rx);x<=Math.ceil(cx+rx);x++)for(let y=Math.floor(cy-ry);y<=Math.ceil(cy+ry);y++)for(let z=Math.floor(cz-rz);z<=Math.ceil(cz+rz);z++){ const a=(x-cx)/rx,b=(y-cy)/ry,d=(z-cz)/rz; if(a*a+b*b+d*d<=1) put(x,y,z,c); } };
+    const bx=(x0,x1,y0,y1,z0,z1,c)=>{ for(let x=Math.round(x0);x<=Math.round(x1);x++)for(let y=Math.round(y0);y<=Math.round(y1);y++)for(let z=Math.round(z0);z<=Math.round(z1);z++) put(x,y,z,c); };
+
+    const skin=[224,172,142], gold=[212,166,54], goldHi=[244,210,120], goldDk=[150,112,30],
+          hair=[58,40,26], dark=[28,26,30], lip=[170,96,92];
+
+    // ===== SKIN (built first; armor/details overwrite) =====
+    for(const sx of [-1,1]){
+      e(s(sx*2.6), s(13), 0, s(2.3), s(6), s(2.4), skin);   // thigh
+      e(s(sx*2.6), s(4),  0, s(1.9), s(5), s(2.0), skin);   // shin
+      e(s(sx*6.2), s(33), 0, s(1.7), s(4.6), s(1.7), skin); // upper arm
+      e(s(sx*6.7), s(25), 0, s(1.5), s(4.6), s(1.5), skin); // forearm
+      e(s(sx*6.9), s(20), 0, s(1.5), s(1.8), s(1.4), skin); // hand
+    }
+    e(0, s(20), 0, s(5.2), s(3), s(3), skin);               // hips
+    e(0, s(26), 0, s(3.4), s(3), s(2.6), skin);             // waist
+    e(0, s(33), 0, s(4.4), s(4), s(2.8), skin);             // chest
+    e(0, s(41), 0, s(1.8), s(1.9), s(1.8), skin);           // neck
+    e(0, s(45.5), 0, s(3.0), s(3.6), s(3.0), skin);         // head
+
+    // ===== HAIR (behind/around the head) =====
+    e(0, s(46.5), s(-1.2), s(3.4), s(3.5), s(3.2), hair);
+    e(0, s(45.5), s(1.2), s(2.9), s(3.3), s(2.2), skin);    // re-expose the face
+
+    // ===== GOLD ARMOR =====
+    for(const sx of [-1,1]) bx(s(sx*2.6-1.6), s(sx*2.6+1.6), 0, s(1.2), s(-0.5), s(4.5), gold); // sandals
+    e(s(2.6), s(4), s(1.2), s(2.0), s(4.5), s(1.2), gold);  // right shin guard (front)
+    for(const sx of [-1,1]) e(s(sx*2.6), s(8.5), s(1.4), s(1.7), s(1.7), s(1.2), goldHi); // knee guards
+    e(0, s(20), s(2.0), s(5.3), s(3.2), s(1.6), gold);      // pelvic plate
+    bx(s(-5.4), s(5.4), s(22.5), s(24), s(-3), s(3.2), goldHi); // belt
+    e(0, s(26.5), s(1.9), s(3.6), s(3.3), s(1.5), gold);    // waist cuirass
+    e(0, s(35.5), s(2.1), s(4.1), s(2.4), s(1.5), gold);    // upper chest plate
+    for(const sx of [-1,1]) e(s(sx*1.8), s(33), s(2.6), s(2.1), s(2.1), s(1.6), goldHi); // bust cups
+    e(0, s(30), s(3.0), s(0.9), s(2.6), s(0.7), goldDk);    // center filigree
+    bx(s(-4.2), s(4.2), s(26), s(37), s(-2.9), s(-2.1), gold); // back plate
+    for(const sx of [-1,1]){
+      e(s(sx*5.7), s(38.7), 0, s(3.2), s(2.6), s(3.0), gold);     // pauldron
+      e(s(sx*5.7), s(39.6), s(0.6), s(2.6), s(1.5), s(2.6), goldHi);
+      e(s(sx*6.2), s(33), s(1.2), s(1.8), s(2.6), s(1.0), gold);  // shoulder guard
+      e(s(sx*6.7), s(24.5), 0, s(1.7), s(3.6), s(1.7), goldDk);   // vambrace
+    }
+    e(0, s(41), 0, s(2.0), s(0.9), s(2.0), goldHi);         // choker
+    // fringed gold skirt (1-wide strands with gaps)
+    for(let i=-6;i<=6;i++){ const fx=s(i*0.95), len=s(13-Math.abs(i)*0.7);
+      bx(fx, fx, s(22)-len, s(22), s(2.5), s(3.1), i%2?gold:goldDk); }
+    bx(s(-5), s(5), s(11), s(22), s(-3.2), s(-2.6), goldDk); // back of skirt
+
+    // ===== FACE =====
+    for(const sx of [-1,1]) e(s(sx*1.1), s(46), s(2.7), s(0.5), s(0.6), s(0.4), dark); // eyes
+    e(0, s(43.9), s(2.8), s(0.8), s(0.4), s(0.4), lip);     // lips
+
+    // ===== SUNBURST CROWN =====
+    e(0, s(49.6), 0, s(2.6), s(1.4), s(2.6), gold);         // crown band
+    const spikes=18;
+    for(let i=0;i<spikes;i++){ const a=Math.PI*2*i/spikes, dx=Math.sin(a), dz=Math.cos(a);
+      for(let r=0;r<5;r++){ const rr=2.6+r*0.95; put(s(dx*rr), s(50.2+r*0.6), s(dz*rr), r>3?goldHi:gold); } }
+
+    const V=[];
+    for(const [k,c] of M){ const p=k.split('|'); V.push({x:+p[0],y:+p[1],z:+p[2],r:c[0]|0,g:c[1]|0,b:c[2]|0}); }
+    return V;
+  }
+
+  return { buildVoxels, buildFace, buildGoddess };
 });
