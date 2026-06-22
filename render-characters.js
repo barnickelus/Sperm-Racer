@@ -114,8 +114,23 @@ function shotOf(typeId, hue){
   return {front,back,W,H};
 }
 
+// behind + above, looking forward-down — matches the in-race chase camera
+function raceShot(typeId,hue){
+  const g=makeCell(hue!=null?hue:200, typeId);
+  const W=210,H=240, cy=3.4;
+  const buf=renderView(g, {x:0,y:cy+8.5,z:-15}, {x:0,y:cy+0.5,z:2}, W,H);
+  return {buf,W,H};
+}
+
 const arg=process.argv[2]||'guido';
-if(arg==='all'){
+if(arg==='race'){
+  const types=['guido','irish','latin','dragon','king','chad','sailor','cholo','hillbilly','wall','korean','rick','french'];
+  const cols=3, rows=Math.ceil(types.length/cols), W=210,H=240, DW=W*cols, DH=H*rows;
+  const sheet=new Uint8Array(DW*DH*3);
+  types.forEach((t,i)=>{ const s=raceShot(t,200); paste(sheet,DW,s.buf,W,H,(i%cols)*W,((i/cols)|0)*H); console.log('race',t); });
+  fs.writeFileSync('characters-race.png', png(DW,DH,Buffer.from(sheet)));
+  console.log('wrote characters-race.png',DW+'x'+DH);
+}else if(arg==='all'){
   const types=['guido','irish','latin','dragon','king','chad','sailor','cholo','hillbilly','wall','korean','rick','french'];
   const W=300,H=380, DW=W*2, DH=H*types.length;
   const sheet=new Uint8Array(DW*DH*3);
