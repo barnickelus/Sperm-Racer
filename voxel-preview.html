@@ -15,14 +15,9 @@
   #tag b{color:#7df2d0}
   #hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,16px) + 52px);text-align:center;
     font-size:12px;opacity:.55;pointer-events:none;}
-  #toggle{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,16px));
-    padding:10px 22px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
-    color:#7df2d0;font-size:15px;font-weight:600;}
-  #photo{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,16px));
-    padding:10px 16px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
-    color:#7df2d0;font-size:14px;font-weight:600;}
-  #drive{position:fixed;left:14px;bottom:calc(env(safe-area-inset-bottom,16px));
-    padding:10px 16px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
+  #bar{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom,14px);
+    display:flex;justify-content:center;flex-wrap:wrap;gap:8px;padding:0 10px;}
+  #bar button{padding:9px 14px;border:1px solid #2b6e66;border-radius:20px;background:rgba(10,40,46,.85);
     color:#7df2d0;font-size:14px;font-weight:600;}
 </style>
 </head>
@@ -30,11 +25,18 @@
 <div id="tag"><b id="name">Salty — voxel</b> — drag to turn</div>
 <canvas id="c"></canvas>
 <div id="hint">Each voxel carries a colored shape that optically blends (Chuck Close style). WebGL — runs on iPad Safari.</div>
-<button id="toggle">Show: Face</button>
-<button id="photo">Load Photo</button>
-<button id="drive">Drive</button>
+<div id="bar">
+  <button id="toggle">Show: Face</button>
+  <button id="photo">Photo</button>
+  <button id="model3d">3D Model</button>
+  <button id="density">Density: Med</button>
+  <button id="drive">Drive</button>
+</div>
 <input id="file" type="file" accept="image/*" style="display:none">
+<input id="file3d" type="file" accept=".glb,.gltf,.obj" style="display:none">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 <script src="voxel-model.js"></script>
 <script>
 const T=THREE;
@@ -154,21 +156,26 @@ function buildMeshFromVox(vox){
   rig.add(voxMesh(vox, cx, cy, cz));
 }
 
+// ===== DENSITY + current-view tracking =====
+const DLEVELS=['Low','Med','High','Ultra'], DFAC=[0.7,1.0,1.4,1.9];
+let dLevel=1; const dfac=()=>DFAC[dLevel];
+let mode='model', lastImg=null, lastScene=null;
+
 function build(model){
   // chunky res so each voxel is big enough to carry a shape; surface-cull buried voxels
+  const f=dfac();
   const vox = VoxelModel.surfaceOnly(
-              model==='face' ? VoxelModel.buildFace(1.4)
-            : model==='goddess' ? VoxelModel.buildGoddess(2.2)
-            : VoxelModel.buildVoxels(3.5));
+              model==='face' ? VoxelModel.buildFace(1.4*f)
+            : model==='goddess' ? VoxelModel.buildGoddess(2.2*f)
+            : VoxelModel.buildVoxels(3.5*f));
   buildMeshFromVox(vox);
 }
 
 // ===== IMAGE -> VOXEL CONVERTER =====
 // Downsample the photo to a grid (each cell = averaged "neighborhood" color), then
-// extrude each cell into a short relief column (brighter = nearer the viewer). The
-// shared tile() shader then turns every face into an optically-blending mini-mosaic.
+// extrude each cell into a short relief column (brighter = nearer the viewer).
 function voxelsFromImage(img){
-  const GW=64, ar=img.height/img.width, GH=Math.max(8,Math.round(GW*ar));
+  const GW=Math.round(64*dfac()), ar=img.height/img.width, GH=Math.max(8,Math.round(GW*ar));
   const cnv=document.createElement('canvas'); cnv.width=GW; cnv.height=GH;
   const ctx=cnv.getContext('2d'); ctx.drawImage(img,0,0,GW,GH);
   const d=ctx.getImageData(0,0,GW,GH).data, vox=[];
@@ -184,11 +191,73 @@ function voxelsFromImage(img){
 }
 function loadPhoto(file){
   const url=URL.createObjectURL(file), img=new Image();
-  img.onload=()=>{ URL.revokeObjectURL(url);
-    isFace=true; buildMeshFromVox(voxelsFromImage(img)); yaw=0;
+  img.onload=()=>{ URL.revokeObjectURL(url); lastImg=img; mode='photo'; isFace=true;
+    buildMeshFromVox(voxelsFromImage(img)); yaw=0;
     document.getElementById('name').textContent='Your Photo — voxel'; };
   img.onerror=()=>{ document.getElementById('name').textContent='Could not load that image'; };
   img.src=url;
+}
+
+// ===== 3D MODEL (GLB/GLTF/OBJ) -> VOXEL =====
+// Surface-sample every triangle, colouring each voxel from the mesh's texture at
+// that point (UV -> texture pixel). Density sets the grid resolution (long axis).
+function voxelizeScene(root){
+  root.updateWorldMatrix(true,true);
+  const box=new T.Box3().setFromObject(root), size=new T.Vector3(); box.getSize(size);
+  const D=Math.round(46*dfac()), span=Math.max(size.x,size.y,size.z)||1, cell=span/D;
+  const map=new Map();
+  const a=new T.Vector3(),b=new T.Vector3(),c=new T.Vector3(),p=new T.Vector3();
+  const uA=new T.Vector2(),uB=new T.Vector2(),uC=new T.Vector2();
+  root.traverse(o=>{
+    if(!o.isMesh||!o.geometry||!o.geometry.attributes.position) return;
+    const g=o.geometry, pa=g.attributes.position, ua=g.attributes.uv, idx=g.index;
+    const mat=Array.isArray(o.material)?o.material[0]:o.material;
+    const baseCol=(mat&&mat.color)?[mat.color.r*255,mat.color.g*255,mat.color.b*255]:[200,200,200];
+    let tw=0,th=0,td=null; const tex=mat&&(mat.map||mat.emissiveMap);
+    if(tex&&tex.image){ try{ const i2=tex.image; tw=i2.width||i2.videoWidth; th=i2.height||i2.videoHeight;
+      const cv2=document.createElement('canvas'); cv2.width=tw; cv2.height=th; const c2=cv2.getContext('2d');
+      c2.drawImage(i2,0,0,tw,th); td=c2.getImageData(0,0,tw,th).data; }catch(e){ td=null; } }
+    const tris=idx?idx.count/3:pa.count/3;
+    for(let t=0;t<tris;t++){
+      const i0=idx?idx.getX(t*3):t*3, i1=idx?idx.getX(t*3+1):t*3+1, i2i=idx?idx.getX(t*3+2):t*3+2;
+      a.fromBufferAttribute(pa,i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(pa,i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(pa,i2i).applyMatrix4(o.matrixWorld);
+      if(ua){ uA.fromBufferAttribute(ua,i0); uB.fromBufferAttribute(ua,i1); uC.fromBufferAttribute(ua,i2i); }
+      const area=b.clone().sub(a).cross(c.clone().sub(a)).length()*0.5;
+      const ns=Math.max(1,Math.ceil(area/(cell*cell)*1.6));
+      for(let s=0;s<ns;s++){
+        let u=Math.random(), v=Math.random(); if(u+v>1){u=1-u;v=1-v;} const w=1-u-v;
+        p.set(a.x*w+b.x*u+c.x*v, a.y*w+b.y*u+c.y*v, a.z*w+b.z*u+c.z*v);
+        const X=Math.floor((p.x-box.min.x)/cell), Y=Math.floor((p.y-box.min.y)/cell), Z=Math.floor((p.z-box.min.z)/cell);
+        const key=X+'|'+Y+'|'+Z; if(map.has(key))continue;
+        let col=baseCol;
+        if(td&&ua){ let tu=uA.x*w+uB.x*u+uC.x*v, tv=uA.y*w+uB.y*u+uC.y*v; tu-=Math.floor(tu); tv-=Math.floor(tv);
+          const px=Math.min(tw-1,Math.max(0,(tu*tw)|0)), py=Math.min(th-1,Math.max(0,((1-tv)*th)|0));
+          const ti=(py*tw+px)*4; col=[td[ti],td[ti+1],td[ti+2]]; }
+        map.set(key,{x:X,y:Y,z:Z,r:col[0],g:col[1],b:col[2]});
+      }
+    }
+  });
+  const out=[]; for(const v of map.values()) out.push(v);
+  return out;
+}
+let gltfLoader=null;
+function loadModel3D(file){
+  const url=URL.createObjectURL(file), nm=file.name.toLowerCase();
+  document.getElementById('name').textContent='Loading model…';
+  const fail=()=>{ URL.revokeObjectURL(url); document.getElementById('name').textContent='Could not load that model'; };
+  const done=(root)=>{ URL.revokeObjectURL(url);
+    try{ lastScene=root; mode='glb'; isFace=false; buildMeshFromVox(voxelizeScene(root)); yaw=0.6;
+      document.getElementById('name').textContent='3D Model — voxel'; }
+    catch(e){ document.getElementById('name').textContent='Voxelize failed'; } };
+  if(nm.endsWith('.obj')){ if(!T.OBJLoader){ fail(); return; } new T.OBJLoader().load(url, done, undefined, fail); }
+  else { if(!T.GLTFLoader){ fail(); return; } gltfLoader=gltfLoader||new T.GLTFLoader(); gltfLoader.load(url, g=>done(g.scene), undefined, fail); }
+}
+function rebuildCurrent(){
+  if(mode==='photo'&&lastImg) buildMeshFromVox(voxelsFromImage(lastImg));
+  else if(mode==='glb'&&lastScene) buildMeshFromVox(voxelizeScene(lastScene));
+  else show();
 }
 
 // drag-to-turn + gentle auto motion (face = sway so the flat back stays hidden; others = full spin)
@@ -198,7 +267,7 @@ let yaw=0.6, pitch=0.35, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
 const MODELS=['salty','face','goddess'];
 const LABEL={salty:'Salty — voxel', face:'Chuck-Close Voxel Face', goddess:'Golden Goddess — voxel'};
 let mi=0;
-function show(){ const m=MODELS[mi]; isFace=(m==='face'); build(m);
+function show(){ mode='model'; const m=MODELS[mi]; isFace=(m==='face'); build(m);
   document.getElementById('name').textContent=LABEL[m];
   document.getElementById('toggle').textContent='Show: '+LABEL[MODELS[(mi+1)%MODELS.length]].split(' ')[0];
   yaw=isFace?0:0.6; }
@@ -206,6 +275,11 @@ show();
 document.getElementById('toggle').addEventListener('click',()=>{ if(driving)exitDrive(); mi=(mi+1)%MODELS.length; show(); });
 document.getElementById('photo').addEventListener('click',()=>document.getElementById('file').click());
 document.getElementById('file').addEventListener('change',e=>{ if(driving)exitDrive(); if(e.target.files&&e.target.files[0]) loadPhoto(e.target.files[0]); });
+document.getElementById('model3d').addEventListener('click',()=>document.getElementById('file3d').click());
+document.getElementById('file3d').addEventListener('change',e=>{ if(driving)exitDrive(); if(e.target.files&&e.target.files[0]) loadModel3D(e.target.files[0]); });
+document.getElementById('density').addEventListener('click',()=>{ dLevel=(dLevel+1)%DLEVELS.length;
+  document.getElementById('density').textContent='Density: '+DLEVELS[dLevel];
+  if(!driving) rebuildCurrent(); });
 
 // ===== DRIVE SAMPLE: steer the voxel sperm around a voxel floor =====
 let driving=false, playerG=null;
