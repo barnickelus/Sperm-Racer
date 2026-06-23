@@ -238,5 +238,20 @@
     return V;
   }
 
-  return { buildVoxels, buildFace, buildGoddess };
+  // Drop fully-buried voxels (all 6 face-neighbours present) — they're never seen,
+  // so this cuts the count a lot and lets the density go higher for the same cost.
+  function surfaceOnly(vox){
+    const occ=new Set();
+    for(const v of vox) occ.add(v.x+'|'+v.y+'|'+v.z);
+    const has=(x,y,z)=>occ.has(x+'|'+y+'|'+z);
+    const out=[];
+    for(const v of vox){
+      if(has(v.x+1,v.y,v.z)&&has(v.x-1,v.y,v.z)&&has(v.x,v.y+1,v.z)&&
+         has(v.x,v.y-1,v.z)&&has(v.x,v.y,v.z+1)&&has(v.x,v.y,v.z-1)) continue;
+      out.push(v);
+    }
+    return out;
+  }
+
+  return { buildVoxels, buildFace, buildGoddess, surfaceOnly };
 });

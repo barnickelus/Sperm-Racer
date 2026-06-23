@@ -3,17 +3,19 @@
  * (Salty): every voxel face is a tile with grout + a small shape in a
  * contrasting accent, so the cubes optically blend. Lets me SEE the look. */
 const zlib=require('zlib'), fs=require('fs');
-const {buildVoxels, buildFace, buildGoddess}=require('./voxel-model.js');
+const {buildVoxels, buildFace, buildGoddess, surfaceOnly}=require('./voxel-model.js');
 
 const which=process.argv[2]||'salty';
 const SS=2;
-const c=(which==='goddess'?9:18)*SS;   // goddess is tall — smaller voxels to fit
+const c=(which==='goddess'?8:18)*SS;   // goddess is tall — smaller voxels to fit
 const margin=16*SS;
 const BG_TOP=[8,42,54], BG_BOT=[3,18,26];
 
 // isometric: +Z -> right+down (toward viewer), +X -> left+down, +Y -> up
 const P=(x,y,z)=>[ (z - x)*c, (x + z)*0.5*c - y*c ];
-const V = which==='goddess' ? buildGoddess(1.3) : which==='face' ? buildFace(1.3) : buildVoxels(1.5);
+const raw = which==='goddess' ? buildGoddess(2.2) : which==='face' ? buildFace(1.3) : buildVoxels(1.5);
+const V = surfaceOnly(raw);
+console.log('voxels: solid', raw.length, '-> surface', V.length);
 const OUT = 'voxel-'+which+'.png';
 
 const clamp=v=>v<0?0:v>255?255:v;
