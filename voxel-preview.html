@@ -281,24 +281,37 @@ document.getElementById('density').addEventListener('click',()=>{ dLevel=(dLevel
   document.getElementById('density').textContent='Density: '+DLEVELS[dLevel];
   if(!driving) rebuildCurrent(); });
 
-// ===== DRIVE SAMPLE: steer the voxel sperm around a voxel floor =====
-let driving=false, playerG=null, tailPivot=null, shake=0;
-const pp={x:0,z:0,head:0,sp:0}, keys={}, joy={active:false,ox:0,oy:0,x:0,y:0}, MAXSP=26;
-const BLOBS=[{x:-16,z:-10,r:4},{x:15,z:9,r:5},{x:7,z:-19,r:3}];   // scenery + collision
-function floorVoxels(){ const v=[], A=[233,152,180], B=[214,126,160], R=30;
-  for(let x=-R;x<=R;x++)for(let z=-R;z<=R;z++){ const c=(((x+z)>>1)&1)?A:B; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
-  const blob=[224,84,150];
-  const ball=(cx,cz,rr)=>{ for(let x=-rr;x<=rr;x++)for(let y=0;y<=rr*2;y++)for(let z=-rr;z<=rr;z++)
-    if(x*x+(y-rr)*(y-rr)+z*z<=rr*rr) v.push({x:cx+x,y:y+1,z:cz+z,r:blob[0],g:blob[1],b:blob[2]}); };
-  for(const b of BLOBS) ball(b.x,b.z,b.r);
+// ===== DRIVE SAMPLE: drive Salty around a voxel course =====
+let driving=false, playerG=null, tailPivot=null, shadowMesh=null, shake=0;
+const pp={x:0,z:0,head:0,sp:0}, keys={}, joy={active:false,ox:0,oy:0,x:0,y:0}, MAXSP=30;
+let CL=[], HW=7, PADS=[];                       // centerline, road half-width, boost pads
+function buildCourse(){
+  CL=[]; const A=27,B=18, N=170;
+  for(let i=0;i<N;i++){ const t=i/N*Math.PI*2; CL.push({x:Math.cos(t)*A, z:Math.sin(t)*B}); }
+  HW=7;
+  const v=[], road1=[150,72,98], road2=[122,56,82], curb=[238,238,244], curb2=[44,32,46],
+        apron=[64,38,52], villi=[224,84,150], pad=[255,168,70];
+  const nd=(x,z)=>{ let m=1e9; for(const p of CL){ const dx=x-p.x,dz=z-p.z,d=dx*dx+dz*dz; if(d<m)m=d; } return Math.sqrt(m); };
+  for(let x=-42;x<=42;x++)for(let z=-34;z<=34;z++){ const d=nd(x,z);
+    if(d<HW){ const c=(((x+z)>>1)&1)?road1:road2; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
+    else if(d<HW+1.4){ const c=((x>>1)&1)?curb:curb2; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
+    else if(d<HW+5){ v.push({x,y:0,z,r:apron[0],g:apron[1],b:apron[2]}); }
+  }
+  const ball=(cx,cz,rr,col)=>{ for(let x=-rr;x<=rr;x++)for(let y=0;y<=rr*2;y++)for(let z=-rr;z<=rr;z++)
+    if(x*x+(y-rr)*(y-rr)+z*z<=rr*rr) v.push({x:cx+x,y:y+1,z:cz+z,r:col[0],g:col[1],b:col[2]}); };
+  for(let i=0;i<N;i+=5){ const p=CL[i], q=CL[(i+1)%N], tx=q.x-p.x, tz=q.z-p.z, L=Math.hypot(tx,tz)||1, nx=-tz/L, nz=tx/L;
+    for(const side of [-1,1]) ball(Math.round(p.x+nx*side*(HW+2.6)), Math.round(p.z+nz*side*(HW+2.6)), 2, villi); }
+  // boost pads on the road at two points
+  PADS=[]; for(const i of [30, 115]){ const p=CL[i]; PADS.push({x:p.x,z:p.z,r:5});
+    for(let x=-4;x<=4;x++)for(let z=-4;z<=4;z++) if(x*x+z*z<=16) v.push({x:Math.round(p.x)+x,y:1,z:Math.round(p.z)+z,r:pad[0],g:pad[1],b:pad[2]}); }
   return VoxelModel.surfaceOnly(v);
 }
 function enterDrive(){
   clearRig(); driving=true;
-  rig.add(voxMesh(floorVoxels(), 0,0,0));
+  rig.add(voxMesh(buildCourse(), 0,0,0));
   let pv=VoxelModel.buildVoxels(1.6*dfac()).filter(v=>!v.env);   // density applies to Salty here too
   const {mn,mx}=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
-  const s=8/Math.max(1,(mx[1]-mn[1]));
+  const s=7/Math.max(1,(mx[1]-mn[1]));
   const pcx=(mn[0]+mx[0])/2, pmin=mn[1], pcz=(mn[2]+mx[2])/2;
   const R=1.6*dfac(), TAILCUT=Math.round(-7.5*R);                // split head/body from the trailing tail
   const body=pv.filter(v=>v.z>=TAILCUT), tail=pv.filter(v=>v.z<TAILCUT);
@@ -308,11 +321,16 @@ function enterDrive(){
   tailPivot.add(voxMesh(tail, pcx, pmin, TAILCUT));
   playerG.add(tailPivot);
   playerG.scale.setScalar(s); scene.add(playerG);
-  pp.x=0; pp.z=0; pp.head=0; pp.sp=0; shake=0;
-  document.getElementById('name').textContent='Drive — steer, bump the blobs';
+  // soft cast shadow (a flat dark disc that follows Salty on the road)
+  const sg=new T.CircleGeometry(1,22); sg.rotateX(-Math.PI/2);
+  shadowMesh=new T.Mesh(sg, new T.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.3, depthWrite:false}));
+  scene.add(shadowMesh);
+  pp.x=CL[0].x; pp.z=CL[0].z; pp.head=0; pp.sp=0; shake=0;
+  document.getElementById('name').textContent='Drive the course — slide to steer, up = go';
   document.getElementById('drive').textContent='Exit';
 }
-function exitDrive(){ driving=false; if(playerG){ scene.remove(playerG); playerG=null; }
+function exitDrive(){ driving=false;
+  if(playerG){ scene.remove(playerG); playerG=null; } if(shadowMesh){ scene.remove(shadowMesh); shadowMesh=null; }
   document.getElementById('drive').textContent='Drive'; show(); }
 document.getElementById('drive').addEventListener('click',()=>{ driving?exitDrive():enterDrive(); });
 
@@ -331,29 +349,35 @@ resize();
 let last=performance.now();
 (function loop(now){ const dt=Math.min(0.05,(now-last)/1000); last=now; autoT+=dt;
   if(driving && playerG){
-    let mvx=joy.x, mvz=joy.y;
-    if(keys['arrowup']||keys['w'])mvz+=1; if(keys['arrowdown']||keys['s'])mvz-=1;
-    if(keys['arrowleft']||keys['a'])mvx-=1; if(keys['arrowright']||keys['d'])mvx+=1;
-    const mag=Math.hypot(mvx,mvz), moving=mag>0.06;
-    if(moving){ const want=Math.atan2(mvx,mvz);
-      let d=want-pp.head; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; pp.head+=d*Math.min(1,8*dt);
-      pp.sp+=(Math.min(1,mag)*MAXSP-pp.sp)*Math.min(1,4*dt);
-    } else pp.sp*=0.85;
+    // game-style floating-stick control: horizontal = steer, vertical = throttle
+    let steer=0, thr=0;
+    if(joy.active){ const dz=0.12, mg=Math.max(0,(Math.abs(joy.x)-dz)/(1-dz));
+      steer=Math.sign(joy.x)*mg*mg*0.9; thr=joy.y; }
+    if(keys['arrowleft']||keys['a'])steer-=0.9; if(keys['arrowright']||keys['d'])steer+=0.9;
+    if(keys['arrowup']||keys['w'])thr=1; if(keys['arrowdown']||keys['s'])thr=-0.5;
+    steer=Math.max(-1,Math.min(1,steer)); thr=Math.max(-0.5,Math.min(1,thr));
+    pp.sp += (thr*MAXSP - pp.sp)*Math.min(1, 2.4*dt);
+    pp.head += steer*2.1*dt*(pp.sp<0?-1:1)*Math.min(1,Math.abs(pp.sp)/6+0.15);   // turn scales with speed
     pp.x+=Math.sin(pp.head)*pp.sp*dt; pp.z+=Math.cos(pp.head)*pp.sp*dt;
-    // collision impact with the scenery blobs: push out, bleed speed, shake the camera
-    for(const bl of BLOBS){ const dx=pp.x-bl.x, dz=pp.z-bl.z, dd=Math.hypot(dx,dz), rad=bl.r+3.5;
-      if(dd<rad && dd>0.0001){ const push=rad-dd; pp.x+=dx/dd*push; pp.z+=dz/dd*push;
-        if(pp.sp>6) shake=Math.min(0.8, shake+0.55); pp.sp*=0.25; } }
-    pp.x=Math.max(-28,Math.min(28,pp.x)); pp.z=Math.max(-28,Math.min(28,pp.z));
-    // float (higher while moving) + gentle bob
-    const floatY = (moving?2.4:0.9) + Math.abs(Math.sin(now*0.012))*0.6*Math.min(1,pp.sp/8);
-    playerG.position.set(pp.x, 1+floatY, pp.z);
-    playerG.rotation.y=pp.head; playerG.rotation.z=Math.sin(now*0.009)*0.06;     // swim roll
-    // tail paddle/wag — faster & wider with speed
-    if(tailPivot) tailPivot.rotation.y = Math.sin(now*0.016*(1+pp.sp/7))*(0.35+0.6*Math.min(1,pp.sp/10));
+    // boost pads
+    for(const p of PADS){ if(Math.hypot(pp.x-p.x,pp.z-p.z)<p.r){ pp.sp=Math.max(pp.sp,MAXSP*1.35); } }
+    // keep on the road: soft wall at the road edge (push back toward centerline + bleed speed)
+    let best=CL[0],bd=1e9; for(const p of CL){ const dx=pp.x-p.x,dz=pp.z-p.z,d=dx*dx+dz*dz; if(d<bd){bd=d;best=p;} }
+    const dCtr=Math.sqrt(bd), LIM=HW+1.2;
+    if(dCtr>LIM){ const ex=dCtr-LIM, nx=(pp.x-best.x)/dCtr, nz=(pp.z-best.z)/dCtr;
+      pp.x-=nx*ex; pp.z-=nz*ex; if(pp.sp>10) shake=Math.min(0.7,shake+0.4); pp.sp*=0.7; }
+    // ---- float + swim (smooth, no hop/bounce) ----
+    const fy = 2.4 + Math.sin(now*0.0022)*0.3;                 // gentle constant float
+    playerG.position.set(pp.x, fy, pp.z);
+    playerG.rotation.y = pp.head + Math.sin(now*0.006)*0.05;   // subtle swim sway
+    playerG.rotation.z = Math.sin(now*0.008)*0.05;             // gentle roll
+    if(tailPivot) tailPivot.rotation.y = Math.sin(now*0.016*(1+Math.abs(pp.sp)/7))*(0.35+0.55*Math.min(1,Math.abs(pp.sp)/10));
+    // cast shadow on the road, softening as Salty floats higher
+    if(shadowMesh){ shadowMesh.position.set(pp.x, 0.6, pp.z); const sc=3.4+ (fy-2.4); shadowMesh.scale.set(sc,1,sc);
+      shadowMesh.material.opacity=0.32-(fy-2.4)*0.15; }
     const fx=Math.sin(pp.head), fz=Math.cos(pp.head);
     let sx=0,sy=0; if(shake>0){ sx=(Math.random()*2-1)*shake*4; sy=(Math.random()*2-1)*shake*4; shake=Math.max(0,shake-dt*2); }
-    cam.position.set(pp.x-fx*22+sx, 16+sy, pp.z-fz*22);
+    cam.position.set(pp.x-fx*22+sx, 15+sy, pp.z-fz*22);
     cam.lookAt(pp.x+fx*6, 3, pp.z+fz*6);
   } else {
     if(!dragging){ vyaw*=0.94; yaw+=vyaw;
