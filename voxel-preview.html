@@ -21,6 +21,9 @@
   #photo{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,16px));
     padding:10px 16px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
     color:#7df2d0;font-size:14px;font-weight:600;}
+  #drive{position:fixed;left:14px;bottom:calc(env(safe-area-inset-bottom,16px));
+    padding:10px 16px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
+    color:#7df2d0;font-size:14px;font-weight:600;}
 </style>
 </head>
 <body>
@@ -29,6 +32,7 @@
 <div id="hint">Each voxel carries a colored shape that optically blends (Chuck Close style). WebGL — runs on iPad Safari.</div>
 <button id="toggle">Show: Face</button>
 <button id="photo">Load Photo</button>
+<button id="drive">Drive</button>
 <input id="file" type="file" accept="image/*" style="display:none">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="voxel-model.js"></script>
@@ -64,7 +68,7 @@ function tile(rgb, h){
   const [H,S,L]=rgb2hsl(rgb[0],rgb[1],rgb[2]);
   const base=hsl2rgb((H+(r1-0.5)*0.05+1)%1, cf(S+(r3-0.5)*0.18,0,1), cf(L+(r2-0.5)*0.24,0.06,0.95));
   const acc =hsl2rgb((H+0.33+r4*0.34)%1, cf(S*0.5+0.4,0.25,1), cf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
-  const acc2=hsl2rgb((H+0.15+r2*0.1)%1, cf(S*0.4,0,0.7), cf(0.86+(r3-0.5)*0.12,0.6,0.97));
+  const acc2=hsl2rgb((H-0.12+r2*0.1+1)%1, cf(S*0.7+0.2,0.3,1), cf(L*0.55+0.16+(r3-0.5)*0.12,0.18,0.66));
   return [base, acc, acc2];
 }
 
@@ -98,8 +102,8 @@ const faceMat=new T.ShaderMaterial({
         else if(vShape<1.5) central=max(qx,qy)<0.16;                      // square
         else if(vShape<2.5) central=qx+qy<0.21;                           // diamond
         else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);           // triangle
-        bool dm = length(uv-vec2(0.30,0.30))<0.10 || length(uv-vec2(0.70,0.30))<0.10
-               || length(uv-vec2(0.30,0.70))<0.10 || length(uv-vec2(0.70,0.70))<0.10;
+        bool dm = length(uv-vec2(0.30,0.30))<0.075 || length(uv-vec2(0.70,0.30))<0.075
+               || length(uv-vec2(0.30,0.70))<0.075 || length(uv-vec2(0.70,0.70))<0.075;
         c = central ? vAccent : (dm ? vAccent2 : vBase);                  // shape + 4 corner dots
       }
       float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
@@ -114,23 +118,15 @@ let dist=60, isFace=false;
 function clearRig(){ rig.traverse(o=>{ if(o.isMesh && o.geometry) o.geometry.dispose(); });
   scene.remove(rig); rig=new T.Group(); scene.add(rig); }
 
-// build the InstancedMesh from a voxel array (already surface-culled)
-function buildMeshFromVox(vox){
-  clearRig();
-  let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
-  for(const v of vox){ if(v.env)continue;
-    mn[0]=Math.min(mn[0],v.x);mn[1]=Math.min(mn[1],v.y);mn[2]=Math.min(mn[2],v.z);
-    mx[0]=Math.max(mx[0],v.x);mx[1]=Math.max(mx[1],v.y);mx[2]=Math.max(mx[2],v.z); }
-  const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
-  dist=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])*1.7;
-
+// build an InstancedMesh from a voxel array, offset so (offX,offY,offZ) -> origin
+function voxMesh(vox, offX, offY, offZ){
   const n=vox.length;
   const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aAccent2=new Float32Array(n*3), aShape=new Float32Array(n);
   const g=geo.clone();
   const mesh=new T.InstancedMesh(g, faceMat, n);
   const dummy=new T.Object3D();
   vox.forEach((v,i)=>{
-    dummy.position.set(v.x-cx,v.y-cy,v.z-cz); dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
+    dummy.position.set(v.x-offX,v.y-offY,v.z-offZ); dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
     const h=hash(v.x,v.y,v.z), [b,a,a2]=tile([v.r/255,v.g/255,v.b/255], h);
     aBase[i*3]=b[0];aBase[i*3+1]=b[1];aBase[i*3+2]=b[2];
     aAccent[i*3]=a[0];aAccent[i*3+1]=a[1];aAccent[i*3+2]=a[2];
@@ -142,7 +138,20 @@ function buildMeshFromVox(vox){
   g.setAttribute('aAccent2', new T.InstancedBufferAttribute(aAccent2,3));
   g.setAttribute('aShape', new T.InstancedBufferAttribute(aShape,1));
   mesh.instanceMatrix.needsUpdate=true;
-  rig.add(mesh);
+  return mesh;
+}
+function bbox(vox, skipEnv){ let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for(const v of vox){ if(skipEnv&&v.env)continue;
+    mn[0]=Math.min(mn[0],v.x);mn[1]=Math.min(mn[1],v.y);mn[2]=Math.min(mn[2],v.z);
+    mx[0]=Math.max(mx[0],v.x);mx[1]=Math.max(mx[1],v.y);mx[2]=Math.max(mx[2],v.z); }
+  return {mn,mx}; }
+// build the InstancedMesh from a voxel array (already surface-culled), centred + framed
+function buildMeshFromVox(vox){
+  clearRig();
+  const {mn,mx}=bbox(vox,true);
+  const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
+  dist=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])*1.7;
+  rig.add(voxMesh(vox, cx, cy, cz));
 }
 
 function build(model){
@@ -194,25 +203,76 @@ function show(){ const m=MODELS[mi]; isFace=(m==='face'); build(m);
   document.getElementById('toggle').textContent='Show: '+LABEL[MODELS[(mi+1)%MODELS.length]].split(' ')[0];
   yaw=isFace?0:0.6; }
 show();
-document.getElementById('toggle').addEventListener('click',()=>{ mi=(mi+1)%MODELS.length; show(); });
+document.getElementById('toggle').addEventListener('click',()=>{ if(driving)exitDrive(); mi=(mi+1)%MODELS.length; show(); });
 document.getElementById('photo').addEventListener('click',()=>document.getElementById('file').click());
-document.getElementById('file').addEventListener('change',e=>{ if(e.target.files&&e.target.files[0]) loadPhoto(e.target.files[0]); });
+document.getElementById('file').addEventListener('change',e=>{ if(driving)exitDrive(); if(e.target.files&&e.target.files[0]) loadPhoto(e.target.files[0]); });
+
+// ===== DRIVE SAMPLE: steer the voxel sperm around a voxel floor =====
+let driving=false, playerG=null;
+const pp={x:0,z:0,head:0,sp:0}, keys={}, joy={active:false,ox:0,oy:0,x:0,y:0}, MAXSP=26;
+function floorVoxels(){ const v=[], A=[233,152,180], B=[214,126,160], R=30;
+  for(let x=-R;x<=R;x++)for(let z=-R;z<=R;z++){ const c=(((x+z)>>1)&1)?A:B; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
+  const blob=[224,84,150];
+  const ball=(cx,cz,rr)=>{ for(let x=-rr;x<=rr;x++)for(let y=0;y<=rr*2;y++)for(let z=-rr;z<=rr;z++)
+    if(x*x+(y-rr)*(y-rr)+z*z<=rr*rr) v.push({x:cx+x,y:y+1,z:cz+z,r:blob[0],g:blob[1],b:blob[2]}); };
+  ball(-16,-10,4); ball(15,9,5); ball(7,-19,3);
+  return VoxelModel.surfaceOnly(v);
+}
+function enterDrive(){
+  clearRig(); driving=true;
+  rig.add(voxMesh(floorVoxels(), 0,0,0));
+  let pv=VoxelModel.buildVoxels(1.5).filter(v=>!v.env);
+  const {mn,mx}=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
+  const s=8/Math.max(1,(mx[1]-mn[1]));
+  playerG=new T.Group();
+  playerG.add(voxMesh(pv, (mn[0]+mx[0])/2, mn[1], (mn[2]+mx[2])/2));   // feet at local y=0
+  playerG.scale.setScalar(s); scene.add(playerG);
+  pp.x=0; pp.z=0; pp.head=0; pp.sp=0;
+  document.getElementById('name').textContent='Drive the voxel sperm — drag to steer';
+  document.getElementById('drive').textContent='Exit';
+}
+function exitDrive(){ driving=false; if(playerG){ scene.remove(playerG); playerG=null; }
+  document.getElementById('drive').textContent='Drive'; show(); }
+document.getElementById('drive').addEventListener('click',()=>{ driving?exitDrive():enterDrive(); });
+
 const cv=renderer.domElement;
-cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;autoT=0;cv.setPointerCapture(e.pointerId);});
-cv.addEventListener('pointermove',e=>{ if(!dragging)return;
-  vyaw=(e.clientX-lx)*0.01; yaw+=vyaw; pitch=Math.max(0.05,Math.min(1.1,pitch-(e.clientY-ly)*0.01));
-  lx=e.clientX; ly=e.clientY; });
-addEventListener('pointerup',()=>{dragging=false;});
+cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId);
+  if(driving){ joy.active=true; joy.ox=e.clientX; joy.oy=e.clientY; joy.x=0; joy.y=0; }
+  else { dragging=true; lx=e.clientX; ly=e.clientY; autoT=0; } });
+cv.addEventListener('pointermove',e=>{
+  if(driving){ if(joy.active){ joy.x=Math.max(-1,Math.min(1,(e.clientX-joy.ox)/55)); joy.y=Math.max(-1,Math.min(1,-(e.clientY-joy.oy)/55)); } return; }
+  if(!dragging)return; vyaw=(e.clientX-lx)*0.01; yaw+=vyaw; pitch=Math.max(0.05,Math.min(1.1,pitch-(e.clientY-ly)*0.01)); lx=e.clientX; ly=e.clientY; });
+addEventListener('pointerup',()=>{ dragging=false; joy.active=false; joy.x=0; joy.y=0; });
+addEventListener('keydown',e=>{ keys[e.key.toLowerCase()]=true; });
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 
 resize();
 let last=performance.now();
-(function loop(now){ const dt=(now-last)/1000; last=now; autoT+=dt;
-  if(!dragging){ vyaw*=0.94; yaw+=vyaw;
-    if(autoT>1.0){ if(isFace) yaw=Math.sin(now*0.0004)*0.5; else yaw+=dt*0.35; } }
-  if(isFace) yaw=Math.max(-0.9,Math.min(0.9,yaw));   // keep the relief face-on
-  const r=dist, hy=Math.cos(pitch)*r;
-  cam.position.set(Math.sin(yaw)*hy, Math.sin(pitch)*r, Math.cos(yaw)*hy);
-  cam.lookAt(0,0,0);
+(function loop(now){ const dt=Math.min(0.05,(now-last)/1000); last=now; autoT+=dt;
+  if(driving && playerG){
+    let mvx=joy.x, mvz=joy.y;
+    if(keys['arrowup']||keys['w'])mvz+=1; if(keys['arrowdown']||keys['s'])mvz-=1;
+    if(keys['arrowleft']||keys['a'])mvx-=1; if(keys['arrowright']||keys['d'])mvx+=1;
+    const mag=Math.hypot(mvx,mvz);
+    if(mag>0.06){ const want=Math.atan2(mvx,mvz);
+      let d=want-pp.head; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; pp.head+=d*Math.min(1,8*dt);
+      pp.sp+=(Math.min(1,mag)*MAXSP-pp.sp)*Math.min(1,4*dt);
+    } else pp.sp*=0.85;
+    pp.x+=Math.sin(pp.head)*pp.sp*dt; pp.z+=Math.cos(pp.head)*pp.sp*dt;
+    pp.x=Math.max(-28,Math.min(28,pp.x)); pp.z=Math.max(-28,Math.min(28,pp.z));
+    playerG.position.set(pp.x, 1+Math.abs(Math.sin(now*0.012))*0.5*Math.min(1,pp.sp/8), pp.z);
+    playerG.rotation.y=pp.head;
+    const fx=Math.sin(pp.head), fz=Math.cos(pp.head);
+    cam.position.set(pp.x-fx*22, 16, pp.z-fz*22);
+    cam.lookAt(pp.x+fx*6, 3, pp.z+fz*6);
+  } else {
+    if(!dragging){ vyaw*=0.94; yaw+=vyaw;
+      if(autoT>1.0){ if(isFace) yaw=Math.sin(now*0.0004)*0.5; else yaw+=dt*0.35; } }
+    if(isFace) yaw=Math.max(-0.9,Math.min(0.9,yaw));
+    const r=dist, hy=Math.cos(pitch)*r;
+    cam.position.set(Math.sin(yaw)*hy, Math.sin(pitch)*r, Math.cos(yaw)*hy);
+    cam.lookAt(0,0,0);
+  }
   renderer.render(scene,cam);
   requestAnimationFrame(loop);
 })(last);

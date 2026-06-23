@@ -36,7 +36,7 @@ function tile(rgb, h){
   const [H,S,L]=rgb2hsl(rgb[0],rgb[1],rgb[2]);
   const base=hsl2rgb((H+(r1-0.5)*0.05+1)%1, clampf(S+(r3-0.5)*0.18,0,1), clampf(L+(r2-0.5)*0.24,0.06,0.95));
   const acc =hsl2rgb((H+0.33+r4*0.34)%1, clampf(S*0.5+0.4,0.25,1), clampf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
-  const acc2=hsl2rgb((H+0.15+r2*0.1)%1, clampf(S*0.4,0,0.7), clampf(0.86+(r3-0.5)*0.12,0.6,0.97));
+  const acc2=hsl2rgb((H-0.12+r2*0.1+1)%1, clampf(S*0.7+0.2,0.3,1), clampf(L*0.55+0.16+(r3-0.5)*0.12,0.18,0.66));
   return [base, acc, acc2];
 }
 function shapeHit(t,u,v){ const du=u-0.5, dv=v-0.5;
@@ -84,8 +84,8 @@ function fillFace(pts, base, acc, acc2, type, k){
       else if(type===1) central=Math.max(qx,qy)<0.16;
       else if(type===2) central=qx+qy<0.21;
       else central=(cv>-0.16&&cv<0.16&&qx<(0.16-cv)*0.9);
-      const dot = Math.hypot(u-0.30,v-0.30)<0.10||Math.hypot(u-0.70,v-0.30)<0.10
-               || Math.hypot(u-0.30,v-0.70)<0.10||Math.hypot(u-0.70,v-0.70)<0.10;
+      const dot = Math.hypot(u-0.30,v-0.30)<0.075||Math.hypot(u-0.70,v-0.30)<0.075
+               || Math.hypot(u-0.30,v-0.70)<0.075||Math.hypot(u-0.70,v-0.70)<0.075;
       col = central?acc:(dot?acc2:base);
     }
     const i=(y*W+x)*3; buf[i]=clamp(col[0]*k); buf[i+1]=clamp(col[1]*k); buf[i+2]=clamp(col[2]*k);
