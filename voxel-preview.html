@@ -282,27 +282,34 @@ document.getElementById('density').addEventListener('click',()=>{ dLevel=(dLevel
   if(!driving) rebuildCurrent(); });
 
 // ===== DRIVE SAMPLE: steer the voxel sperm around a voxel floor =====
-let driving=false, playerG=null;
+let driving=false, playerG=null, tailPivot=null, shake=0;
 const pp={x:0,z:0,head:0,sp:0}, keys={}, joy={active:false,ox:0,oy:0,x:0,y:0}, MAXSP=26;
+const BLOBS=[{x:-16,z:-10,r:4},{x:15,z:9,r:5},{x:7,z:-19,r:3}];   // scenery + collision
 function floorVoxels(){ const v=[], A=[233,152,180], B=[214,126,160], R=30;
   for(let x=-R;x<=R;x++)for(let z=-R;z<=R;z++){ const c=(((x+z)>>1)&1)?A:B; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
   const blob=[224,84,150];
   const ball=(cx,cz,rr)=>{ for(let x=-rr;x<=rr;x++)for(let y=0;y<=rr*2;y++)for(let z=-rr;z<=rr;z++)
     if(x*x+(y-rr)*(y-rr)+z*z<=rr*rr) v.push({x:cx+x,y:y+1,z:cz+z,r:blob[0],g:blob[1],b:blob[2]}); };
-  ball(-16,-10,4); ball(15,9,5); ball(7,-19,3);
+  for(const b of BLOBS) ball(b.x,b.z,b.r);
   return VoxelModel.surfaceOnly(v);
 }
 function enterDrive(){
   clearRig(); driving=true;
   rig.add(voxMesh(floorVoxels(), 0,0,0));
-  let pv=VoxelModel.buildVoxels(1.5).filter(v=>!v.env);
+  let pv=VoxelModel.buildVoxels(1.6*dfac()).filter(v=>!v.env);   // density applies to Salty here too
   const {mn,mx}=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
   const s=8/Math.max(1,(mx[1]-mn[1]));
+  const pcx=(mn[0]+mx[0])/2, pmin=mn[1], pcz=(mn[2]+mx[2])/2;
+  const R=1.6*dfac(), TAILCUT=Math.round(-7.5*R);                // split head/body from the trailing tail
+  const body=pv.filter(v=>v.z>=TAILCUT), tail=pv.filter(v=>v.z<TAILCUT);
   playerG=new T.Group();
-  playerG.add(voxMesh(pv, (mn[0]+mx[0])/2, mn[1], (mn[2]+mx[2])/2));   // feet at local y=0
+  playerG.add(voxMesh(body, pcx, pmin, pcz));
+  tailPivot=new T.Group(); tailPivot.position.set(0,0,TAILCUT-pcz);  // pivot at the tail base
+  tailPivot.add(voxMesh(tail, pcx, pmin, TAILCUT));
+  playerG.add(tailPivot);
   playerG.scale.setScalar(s); scene.add(playerG);
-  pp.x=0; pp.z=0; pp.head=0; pp.sp=0;
-  document.getElementById('name').textContent='Drive the voxel sperm — drag to steer';
+  pp.x=0; pp.z=0; pp.head=0; pp.sp=0; shake=0;
+  document.getElementById('name').textContent='Drive — steer, bump the blobs';
   document.getElementById('drive').textContent='Exit';
 }
 function exitDrive(){ driving=false; if(playerG){ scene.remove(playerG); playerG=null; }
@@ -327,17 +334,26 @@ let last=performance.now();
     let mvx=joy.x, mvz=joy.y;
     if(keys['arrowup']||keys['w'])mvz+=1; if(keys['arrowdown']||keys['s'])mvz-=1;
     if(keys['arrowleft']||keys['a'])mvx-=1; if(keys['arrowright']||keys['d'])mvx+=1;
-    const mag=Math.hypot(mvx,mvz);
-    if(mag>0.06){ const want=Math.atan2(mvx,mvz);
+    const mag=Math.hypot(mvx,mvz), moving=mag>0.06;
+    if(moving){ const want=Math.atan2(mvx,mvz);
       let d=want-pp.head; while(d>Math.PI)d-=6.283; while(d<-Math.PI)d+=6.283; pp.head+=d*Math.min(1,8*dt);
       pp.sp+=(Math.min(1,mag)*MAXSP-pp.sp)*Math.min(1,4*dt);
     } else pp.sp*=0.85;
     pp.x+=Math.sin(pp.head)*pp.sp*dt; pp.z+=Math.cos(pp.head)*pp.sp*dt;
+    // collision impact with the scenery blobs: push out, bleed speed, shake the camera
+    for(const bl of BLOBS){ const dx=pp.x-bl.x, dz=pp.z-bl.z, dd=Math.hypot(dx,dz), rad=bl.r+3.5;
+      if(dd<rad && dd>0.0001){ const push=rad-dd; pp.x+=dx/dd*push; pp.z+=dz/dd*push;
+        if(pp.sp>6) shake=Math.min(0.8, shake+0.55); pp.sp*=0.25; } }
     pp.x=Math.max(-28,Math.min(28,pp.x)); pp.z=Math.max(-28,Math.min(28,pp.z));
-    playerG.position.set(pp.x, 1+Math.abs(Math.sin(now*0.012))*0.5*Math.min(1,pp.sp/8), pp.z);
-    playerG.rotation.y=pp.head;
+    // float (higher while moving) + gentle bob
+    const floatY = (moving?2.4:0.9) + Math.abs(Math.sin(now*0.012))*0.6*Math.min(1,pp.sp/8);
+    playerG.position.set(pp.x, 1+floatY, pp.z);
+    playerG.rotation.y=pp.head; playerG.rotation.z=Math.sin(now*0.009)*0.06;     // swim roll
+    // tail paddle/wag — faster & wider with speed
+    if(tailPivot) tailPivot.rotation.y = Math.sin(now*0.016*(1+pp.sp/7))*(0.35+0.6*Math.min(1,pp.sp/10));
     const fx=Math.sin(pp.head), fz=Math.cos(pp.head);
-    cam.position.set(pp.x-fx*22, 16, pp.z-fz*22);
+    let sx=0,sy=0; if(shake>0){ sx=(Math.random()*2-1)*shake*4; sy=(Math.random()*2-1)*shake*4; shake=Math.max(0,shake-dt*2); }
+    cam.position.set(pp.x-fx*22+sx, 16+sy, pp.z-fz*22);
     cam.lookAt(pp.x+fx*6, 3, pp.z+fz*6);
   } else {
     if(!dragging){ vyaw*=0.94; yaw+=vyaw;
