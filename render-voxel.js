@@ -13,7 +13,7 @@ const BG_TOP=[8,42,54], BG_BOT=[3,18,26];
 
 // isometric: +Z -> right+down (toward viewer), +X -> left+down, +Y -> up
 const P=(x,y,z)=>[ (z - x)*c, (x + z)*0.5*c - y*c ];
-const raw = which==='goddess' ? buildGoddess(2.2) : which==='face' ? buildFace(1.3) : buildVoxels(3.0);
+const raw = which==='goddess' ? buildGoddess(2.2) : which==='face' ? buildFace(1.3) : buildVoxels(3.5);
 const V = surfaceOnly(raw);
 console.log('voxels: solid', raw.length, '-> surface', V.length);
 const OUT = 'voxel-'+which+'.png';
