@@ -18,6 +18,9 @@
   #toggle{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,16px));
     padding:10px 22px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
     color:#7df2d0;font-size:15px;font-weight:600;}
+  #photo{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,16px));
+    padding:10px 16px;border:1px solid #2b6e66;border-radius:22px;background:rgba(10,40,46,.85);
+    color:#7df2d0;font-size:14px;font-weight:600;}
 </style>
 </head>
 <body>
@@ -25,6 +28,8 @@
 <canvas id="c"></canvas>
 <div id="hint">Each voxel carries a colored shape that optically blends (Chuck Close style). WebGL — runs on iPad Safari.</div>
 <button id="toggle">Show: Face</button>
+<button id="photo">Load Photo</button>
+<input id="file" type="file" accept="image/*" style="display:none">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="voxel-model.js"></script>
 <script>
@@ -109,14 +114,9 @@ let dist=60, isFace=false;
 function clearRig(){ rig.traverse(o=>{ if(o.isMesh && o.geometry) o.geometry.dispose(); });
   scene.remove(rig); rig=new T.Group(); scene.add(rig); }
 
-function build(model){
+// build the InstancedMesh from a voxel array (already surface-culled)
+function buildMeshFromVox(vox){
   clearRig();
-  // chunky res so each voxel is big enough to carry a shape; surface-cull buried voxels
-  const vox = VoxelModel.surfaceOnly(
-              model==='face' ? VoxelModel.buildFace(1.4)
-            : model==='goddess' ? VoxelModel.buildGoddess(2.2)
-            : VoxelModel.buildVoxels(3.0));
-  // centre on the character (ignore env voxels)
   let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
   for(const v of vox){ if(v.env)continue;
     mn[0]=Math.min(mn[0],v.x);mn[1]=Math.min(mn[1],v.y);mn[2]=Math.min(mn[2],v.z);
@@ -124,7 +124,6 @@ function build(model){
   const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
   dist=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])*1.7;
 
-  // one InstancedMesh; per-voxel base/accent/shape passed as instanced attributes
   const n=vox.length;
   const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aAccent2=new Float32Array(n*3), aShape=new Float32Array(n);
   const g=geo.clone();
@@ -146,6 +145,43 @@ function build(model){
   rig.add(mesh);
 }
 
+function build(model){
+  // chunky res so each voxel is big enough to carry a shape; surface-cull buried voxels
+  const vox = VoxelModel.surfaceOnly(
+              model==='face' ? VoxelModel.buildFace(1.4)
+            : model==='goddess' ? VoxelModel.buildGoddess(2.2)
+            : VoxelModel.buildVoxels(3.5));
+  buildMeshFromVox(vox);
+}
+
+// ===== IMAGE -> VOXEL CONVERTER =====
+// Downsample the photo to a grid (each cell = averaged "neighborhood" color), then
+// extrude each cell into a short relief column (brighter = nearer the viewer). The
+// shared tile() shader then turns every face into an optically-blending mini-mosaic.
+function voxelsFromImage(img){
+  const GW=64, ar=img.height/img.width, GH=Math.max(8,Math.round(GW*ar));
+  const cnv=document.createElement('canvas'); cnv.width=GW; cnv.height=GH;
+  const ctx=cnv.getContext('2d'); ctx.drawImage(img,0,0,GW,GH);
+  const d=ctx.getImageData(0,0,GW,GH).data, vox=[];
+  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){
+    const i=(gy*GW+gx)*4, r=d[i],g=d[i+1],b=d[i+2],a=d[i+3];
+    if(a<40) continue;
+    const lum=(0.299*r+0.587*g+0.114*b)/255;
+    const front=1+Math.round(lum*4);                 // bas-relief: bright pokes toward viewer
+    const X=gx-(GW>>1), Y=GH-1-gy;                    // flip y so up is up
+    for(let z=0; z<=front; z++) vox.push({x:X, y:Y, z:z-front, r,g,b});
+  }
+  return VoxelModel.surfaceOnly(vox);
+}
+function loadPhoto(file){
+  const url=URL.createObjectURL(file), img=new Image();
+  img.onload=()=>{ URL.revokeObjectURL(url);
+    isFace=true; buildMeshFromVox(voxelsFromImage(img)); yaw=0;
+    document.getElementById('name').textContent='Your Photo — voxel'; };
+  img.onerror=()=>{ document.getElementById('name').textContent='Could not load that image'; };
+  img.src=url;
+}
+
 // drag-to-turn + gentle auto motion (face = sway so the flat back stays hidden; others = full spin)
 let yaw=0.6, pitch=0.35, autoT=0, dragging=false, lx=0, ly=0, vyaw=0;
 
@@ -159,6 +195,8 @@ function show(){ const m=MODELS[mi]; isFace=(m==='face'); build(m);
   yaw=isFace?0:0.6; }
 show();
 document.getElementById('toggle').addEventListener('click',()=>{ mi=(mi+1)%MODELS.length; show(); });
+document.getElementById('photo').addEventListener('click',()=>document.getElementById('file').click());
+document.getElementById('file').addEventListener('change',e=>{ if(e.target.files&&e.target.files[0]) loadPhoto(e.target.files[0]); });
 const cv=renderer.domElement;
 cv.addEventListener('pointerdown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;autoT=0;cv.setPointerCapture(e.pointerId);});
 cv.addEventListener('pointermove',e=>{ if(!dragging)return;
