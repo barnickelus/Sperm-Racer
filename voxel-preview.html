@@ -281,67 +281,104 @@ document.getElementById('density').addEventListener('click',()=>{ dLevel=(dLevel
   document.getElementById('density').textContent='Density: '+DLEVELS[dLevel];
   if(!driving) rebuildCurrent(); });
 
-// ===== DRIVE SAMPLE: drive Salty around a voxel course =====
+// ===== PAC-MAZE SAMPLE: drive Salty through a maze, eat pellets, dodge ghosts =====
 let driving=false, playerG=null, tailPivot=null, shadowMesh=null, shake=0;
-const pp={x:0,z:0,head:0,sp:0}, keys={}, joy={active:false,ox:0,oy:0,x:0,y:0}, MAXSP=30;
-let CL=[], HW=7, PADS=[];                       // centerline, road half-width, boost pads
-function buildCourse(){
-  CL=[]; const A=27,B=18, N=170;
-  for(let i=0;i<N;i++){ const t=i/N*Math.PI*2; CL.push({x:Math.cos(t)*A, z:Math.sin(t)*B}); }
-  HW=7;
-  const v=[], road1=[150,72,98], road2=[122,56,82], curb=[238,238,244], curb2=[44,32,46],
-        apron=[64,38,52], villi=[224,84,150], pad=[255,168,70];
-  const nd=(x,z)=>{ let m=1e9; for(const p of CL){ const dx=x-p.x,dz=z-p.z,d=dx*dx+dz*dz; if(d<m)m=d; } return Math.sqrt(m); };
-  for(let x=-42;x<=42;x++)for(let z=-34;z<=34;z++){ const d=nd(x,z);
-    if(d<HW){ const c=(((x+z)>>1)&1)?road1:road2; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
-    else if(d<HW+1.4){ const c=((x>>1)&1)?curb:curb2; v.push({x,y:0,z,r:c[0],g:c[1],b:c[2]}); }
-    else if(d<HW+5){ v.push({x,y:0,z,r:apron[0],g:apron[1],b:apron[2]}); }
+let pp={x:0,z:0,head:0}, camYaw=0, score=0, lastScore=-1;
+const keys={}, pdummy=new T.Object3D();
+let jL={active:false,id:null,ox:0,oy:0,x:0,y:0}, jR={active:false,id:null,ox:0,oy:0,x:0,y:0};
+let MZ=[], MW=0, MH=0; const CS=3;                  // maze grid + cell size (voxels)
+let pellets=[], pelletMesh=null, ghosts=[]; const startCell=[1,1];
+const cellWX=gx=>(gx-(MW-1)/2)*CS, cellWZ=gz=>(gz-(MH-1)/2)*CS;
+const cellOfX=wx=>Math.round(wx/CS+(MW-1)/2), cellOfZ=wz=>Math.round(wz/CS+(MH-1)/2);
+const isWallCell=(gx,gz)=>(gx<0||gx>=MW||gz<0||gz>=MH)?true:MZ[gz][gx]===1;
+const isWallWorld=(wx,wz)=>isWallCell(cellOfX(wx),cellOfZ(wz));
+
+function genMaze(cw,ch){
+  const W=2*cw+1, H=2*ch+1, g=[];
+  for(let y=0;y<H;y++) g.push(new Array(W).fill(1));
+  const st=[[1,1]]; g[1][1]=0;
+  while(st.length){ const c=st[st.length-1], cx=c[0], cy=c[1], d=[[2,0],[-2,0],[0,2],[0,-2]];
+    for(let i=3;i>0;i--){ const j=(Math.random()*(i+1))|0, t=d[i]; d[i]=d[j]; d[j]=t; }
+    let moved=false;
+    for(const dd of d){ const nx=cx+dd[0], ny=cy+dd[1];
+      if(nx>0&&nx<W-1&&ny>0&&ny<H-1&&g[ny][nx]===1){ g[ny][nx]=0; g[cy+dd[1]/2][cx+dd[0]/2]=0; st.push([nx,ny]); moved=true; break; } }
+    if(!moved) st.pop();
   }
-  const ball=(cx,cz,rr,col)=>{ for(let x=-rr;x<=rr;x++)for(let y=0;y<=rr*2;y++)for(let z=-rr;z<=rr;z++)
-    if(x*x+(y-rr)*(y-rr)+z*z<=rr*rr) v.push({x:cx+x,y:y+1,z:cz+z,r:col[0],g:col[1],b:col[2]}); };
-  for(let i=0;i<N;i+=5){ const p=CL[i], q=CL[(i+1)%N], tx=q.x-p.x, tz=q.z-p.z, L=Math.hypot(tx,tz)||1, nx=-tz/L, nz=tx/L;
-    for(const side of [-1,1]) ball(Math.round(p.x+nx*side*(HW+2.6)), Math.round(p.z+nz*side*(HW+2.6)), 2, villi); }
-  // boost pads on the road at two points
-  PADS=[]; for(const i of [30, 115]){ const p=CL[i]; PADS.push({x:p.x,z:p.z,r:5});
-    for(let x=-4;x<=4;x++)for(let z=-4;z<=4;z++) if(x*x+z*z<=16) v.push({x:Math.round(p.x)+x,y:1,z:Math.round(p.z)+z,r:pad[0],g:pad[1],b:pad[2]}); }
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++) if(g[y][x]===1 && Math.random()<0.10) g[y][x]=0;  // loops
+  return g;
+}
+function ghostVox(col){ const v=[], R=4, eye=[245,245,250], pup=[30,30,70];
+  for(let x=-R;x<=R;x++)for(let y=0;y<=2*R;y++)for(let z=-R;z<=R;z++){
+    if(y<=R){ if(x*x+z*z<=R*R) v.push({x,y,z,r:col[0],g:col[1],b:col[2]}); }
+    else if(x*x+(y-R)*(y-R)+z*z<=R*R) v.push({x,y,z,r:col[0],g:col[1],b:col[2]}); }
+  for(const sx of [-2,2])for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++) v.push({x:sx+dx,y:R+1+dy,z:R-1,r:eye[0],g:eye[1],b:eye[2]});
+  for(const sx of [-2,2]) v.push({x:sx,y:R+1,z:R,r:pup[0],g:pup[1],b:pup[2]});
   return VoxelModel.surfaceOnly(v);
 }
+function chooseGhostDir(gh){
+  const pcx=cellOfX(pp.x), pcz=cellOfZ(pp.z); let pool=[];
+  for(const o of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=gh.cx+o[0], nz=gh.cz+o[1];
+    if(!isWallCell(nx,nz) && !(nx===gh.lx&&nz===gh.lz)) pool.push([nx,nz]); }
+  if(!pool.length) for(const o of [[1,0],[-1,0],[0,1],[0,-1]]){ const nx=gh.cx+o[0], nz=gh.cz+o[1]; if(!isWallCell(nx,nz)) pool.push([nx,nz]); }
+  if(!pool.length) return;
+  let best=pool[0], bo=1e9; for(const o of pool){ const dd=(o[0]-pcx)*(o[0]-pcx)+(o[1]-pcz)*(o[1]-pcz); if(dd<bo){bo=dd;best=o;} }
+  gh.lx=gh.cx; gh.lz=gh.cz; gh.tcx=best[0]; gh.tcz=best[1];
+}
 function enterDrive(){
-  clearRig(); driving=true;
-  rig.add(voxMesh(buildCourse(), 0,0,0));
-  let pv=VoxelModel.buildVoxels(1.6*dfac()).filter(v=>!v.env);   // density applies to Salty here too
-  const {mn,mx}=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
-  const s=7/Math.max(1,(mx[1]-mn[1]));
-  const pcx=(mn[0]+mx[0])/2, pmin=mn[1], pcz=(mn[2]+mx[2])/2;
-  const R=1.6*dfac(), TAILCUT=Math.round(-7.5*R);                // split head/body from the trailing tail
-  const body=pv.filter(v=>v.z>=TAILCUT), tail=pv.filter(v=>v.z<TAILCUT);
-  playerG=new T.Group();
-  playerG.add(voxMesh(body, pcx, pmin, pcz));
-  tailPivot=new T.Group(); tailPivot.position.set(0,0,TAILCUT-pcz);  // pivot at the tail base
-  tailPivot.add(voxMesh(tail, pcx, pmin, TAILCUT));
-  playerG.add(tailPivot);
+  clearRig(); driving=true; score=0; lastScore=-1; camYaw=0;
+  MZ=genMaze(11,11); MH=MZ.length; MW=MZ[0].length;
+  const v=[], fA=[26,24,54], fB=[20,18,46], wA=[46,72,212], wB=[30,52,170];
+  for(let gz=0;gz<MH;gz++)for(let gx=0;gx<MW;gx++){ const ox=cellWX(gx), oz=cellWZ(gz), wallC=MZ[gz][gx]===1;
+    for(let ax=0;ax<CS;ax++)for(let az=0;az<CS;az++){ const X=ox-1+ax, Z=oz-1+az, p=((X+Z)&1);
+      v.push({x:X,y:0,z:Z, r:(p?fA:fB)[0], g:(p?fA:fB)[1], b:(p?fA:fB)[2]});
+      if(wallC) for(let y=1;y<=2;y++) v.push({x:X,y,z:Z, r:(p?wA:wB)[0], g:(p?wA:wB)[1], b:(p?wA:wB)[2]}); } }
+  rig.add(voxMesh(VoxelModel.surfaceOnly(v), 0,0,0));
+  // pellets on path cells (skip start + ghost spawns)
+  const ghostCells=[[MW-2,1],[1,MH-2],[MW-2,MH-2],[11,11]];
+  const skip=new Set([startCell[0]+','+startCell[1]]); ghostCells.forEach(c=>skip.add(c[0]+','+c[1]));
+  pellets=[]; for(let gz=0;gz<MH;gz++)for(let gx=0;gx<MW;gx++) if(MZ[gz][gx]===0 && !skip.has(gx+','+gz))
+    pellets.push({x:cellWX(gx), z:cellWZ(gz), alive:true, i:0});
+  pelletMesh=new T.InstancedMesh(new T.BoxGeometry(0.8,0.8,0.8), new T.MeshBasicMaterial({color:0xffe06a}), pellets.length);
+  pellets.forEach((pe,i)=>{ pe.i=i; pdummy.position.set(pe.x,1.6,pe.z); pdummy.scale.set(1,1,1); pdummy.updateMatrix(); pelletMesh.setMatrixAt(i,pdummy.matrix); });
+  pelletMesh.instanceMatrix.needsUpdate=true; scene.add(pelletMesh);
+  // player (density applies here)
+  let pv=VoxelModel.buildVoxels(1.5*dfac()).filter(q=>!q.env);
+  const bb=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
+  const s=(CS*0.85)/Math.max(1,(bb.mx[1]-bb.mn[1]));
+  const pcx=(bb.mn[0]+bb.mx[0])/2, pmin=bb.mn[1], pcz=(bb.mn[2]+bb.mx[2])/2;
+  const R=1.5*dfac(), TAILCUT=Math.round(-7.5*R);
+  playerG=new T.Group(); playerG.add(voxMesh(pv.filter(q=>q.z>=TAILCUT), pcx, pmin, pcz));
+  tailPivot=new T.Group(); tailPivot.position.set(0,0,TAILCUT-pcz); tailPivot.add(voxMesh(pv.filter(q=>q.z<TAILCUT), pcx, pmin, TAILCUT)); playerG.add(tailPivot);
   playerG.scale.setScalar(s); scene.add(playerG);
-  // soft cast shadow (a flat dark disc that follows Salty on the road)
-  const sg=new T.CircleGeometry(1,22); sg.rotateX(-Math.PI/2);
-  shadowMesh=new T.Mesh(sg, new T.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.3, depthWrite:false}));
-  scene.add(shadowMesh);
-  pp.x=CL[0].x; pp.z=CL[0].z; pp.head=0; pp.sp=0; shake=0;
-  document.getElementById('name').textContent='Drive the course — slide to steer, up = go';
+  const sg=new T.CircleGeometry(1,20); sg.rotateX(-Math.PI/2);
+  shadowMesh=new T.Mesh(sg, new T.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.3,depthWrite:false})); scene.add(shadowMesh);
+  pp.x=cellWX(startCell[0]); pp.z=cellWZ(startCell[1]); pp.head=0;
+  // ghosts
+  ghosts=[]; const gcol=[[230,60,60],[245,150,200],[80,210,230],[245,170,70]];
+  ghostCells.forEach((gc,k)=>{ const gv=ghostVox(gcol[k%4]), gb=bbox(gv,false), gs=(CS*0.8)/Math.max(1,(gb.mx[1]-gb.mn[1]));
+    const gm=new T.Group(); gm.add(voxMesh(gv,(gb.mn[0]+gb.mx[0])/2, gb.mn[1], (gb.mn[2]+gb.mx[2])/2)); gm.scale.setScalar(gs); scene.add(gm);
+    const gh={grp:gm, cx:gc[0], cz:gc[1], lx:gc[0], lz:gc[1], tcx:gc[0], tcz:gc[1], x:cellWX(gc[0]), z:cellWZ(gc[1])};
+    chooseGhostDir(gh); ghosts.push(gh); });
+  document.getElementById('name').textContent='Pac-Maze — left half: move, right half: turn';
   document.getElementById('drive').textContent='Exit';
 }
 function exitDrive(){ driving=false;
-  if(playerG){ scene.remove(playerG); playerG=null; } if(shadowMesh){ scene.remove(shadowMesh); shadowMesh=null; }
+  if(playerG){scene.remove(playerG);playerG=null;} if(shadowMesh){scene.remove(shadowMesh);shadowMesh=null;}
+  if(pelletMesh){scene.remove(pelletMesh);pelletMesh=null;} for(const gh of ghosts) scene.remove(gh.grp); ghosts=[];
   document.getElementById('drive').textContent='Drive'; show(); }
 document.getElementById('drive').addEventListener('click',()=>{ driving?exitDrive():enterDrive(); });
 
+// Two-touch control: LEFT half of screen = directional movement stick,
+// RIGHT half = turn (rotate the view). Both work at once (two fingers).
 const cv=renderer.domElement;
 cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId);
-  if(driving){ joy.active=true; joy.ox=e.clientX; joy.oy=e.clientY; joy.x=0; joy.y=0; }
+  if(driving){ const j=(e.clientX < window.innerWidth/2)?jL:jR; j.active=true; j.id=e.pointerId; j.ox=e.clientX; j.oy=e.clientY; j.x=0; j.y=0; }
   else { dragging=true; lx=e.clientX; ly=e.clientY; autoT=0; } });
 cv.addEventListener('pointermove',e=>{
-  if(driving){ if(joy.active){ joy.x=Math.max(-1,Math.min(1,(e.clientX-joy.ox)/55)); joy.y=Math.max(-1,Math.min(1,-(e.clientY-joy.oy)/55)); } return; }
+  if(driving){ for(const j of [jL,jR]) if(j.active&&j.id===e.pointerId){
+      j.x=Math.max(-1,Math.min(1,(e.clientX-j.ox)/55)); j.y=Math.max(-1,Math.min(1,-(e.clientY-j.oy)/55)); } return; }
   if(!dragging)return; vyaw=(e.clientX-lx)*0.01; yaw+=vyaw; pitch=Math.max(0.05,Math.min(1.1,pitch-(e.clientY-ly)*0.01)); lx=e.clientX; ly=e.clientY; });
-addEventListener('pointerup',()=>{ dragging=false; joy.active=false; joy.x=0; joy.y=0; });
+addEventListener('pointerup',e=>{ dragging=false; for(const j of [jL,jR]) if(j.id===e.pointerId){ j.active=false; j.id=null; j.x=0; j.y=0; } });
 addEventListener('keydown',e=>{ keys[e.key.toLowerCase()]=true; });
 addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
 
@@ -349,36 +386,39 @@ resize();
 let last=performance.now();
 (function loop(now){ const dt=Math.min(0.05,(now-last)/1000); last=now; autoT+=dt;
   if(driving && playerG){
-    // game-style floating-stick control: horizontal = steer, vertical = throttle
-    let steer=0, thr=0;
-    if(joy.active){ const dz=0.12, mg=Math.max(0,(Math.abs(joy.x)-dz)/(1-dz));
-      steer=Math.sign(joy.x)*mg*mg*0.9; thr=joy.y; }
-    if(keys['arrowleft']||keys['a'])steer-=0.9; if(keys['arrowright']||keys['d'])steer+=0.9;
-    if(keys['arrowup']||keys['w'])thr=1; if(keys['arrowdown']||keys['s'])thr=-0.5;
-    steer=Math.max(-1,Math.min(1,steer)); thr=Math.max(-0.5,Math.min(1,thr));
-    pp.sp += (thr*MAXSP - pp.sp)*Math.min(1, 2.4*dt);
-    pp.head += steer*2.1*dt*(pp.sp<0?-1:1)*Math.min(1,Math.abs(pp.sp)/6+0.15);   // turn scales with speed
-    pp.x+=Math.sin(pp.head)*pp.sp*dt; pp.z+=Math.cos(pp.head)*pp.sp*dt;
-    // boost pads
-    for(const p of PADS){ if(Math.hypot(pp.x-p.x,pp.z-p.z)<p.r){ pp.sp=Math.max(pp.sp,MAXSP*1.35); } }
-    // keep on the road: soft wall at the road edge (push back toward centerline + bleed speed)
-    let best=CL[0],bd=1e9; for(const p of CL){ const dx=pp.x-p.x,dz=pp.z-p.z,d=dx*dx+dz*dz; if(d<bd){bd=d;best=p;} }
-    const dCtr=Math.sqrt(bd), LIM=HW+1.2;
-    if(dCtr>LIM){ const ex=dCtr-LIM, nx=(pp.x-best.x)/dCtr, nz=(pp.z-best.z)/dCtr;
-      pp.x-=nx*ex; pp.z-=nz*ex; if(pp.sp>10) shake=Math.min(0.7,shake+0.4); pp.sp*=0.7; }
-    // ---- float + swim (smooth, no hop/bounce) ----
-    const fy = 2.4 + Math.sin(now*0.0022)*0.3;                 // gentle constant float
+    // RIGHT stick / arrow keys = turn the view
+    if(jR.active) camYaw += jR.x*1.7*dt;
+    if(keys['arrowleft']) camYaw += 1.3*dt; if(keys['arrowright']) camYaw -= 1.3*dt;
+    // LEFT stick / WASD = directional movement (camera-relative)
+    let mvx=0,mvz=0; if(jL.active){ mvx=jL.x; mvz=jL.y; }
+    if(keys['w'])mvz+=1; if(keys['s'])mvz-=1; if(keys['a'])mvx-=1; if(keys['d'])mvx+=1;
+    const mag=Math.hypot(mvx,mvz);
+    if(mag>0.06){
+      const fwx=Math.sin(camYaw), fwz=Math.cos(camYaw), rgx=Math.cos(camYaw), rgz=-Math.sin(camYaw);
+      let dx=fwx*mvz+rgx*mvx, dz=fwz*mvz+rgz*mvx; const dl=Math.hypot(dx,dz)||1; dx/=dl; dz/=dl;
+      const SP=18, rad=CS*0.42;
+      const nx=pp.x+dx*SP*dt; if(!isWallWorld(nx+dx*rad, pp.z)) pp.x=nx;
+      const nz=pp.z+dz*SP*dt; if(!isWallWorld(pp.x, nz+dz*rad)) pp.z=nz;
+      let hd=Math.atan2(dx,dz)-pp.head; while(hd>Math.PI)hd-=6.283; while(hd<-Math.PI)hd+=6.283; pp.head+=hd*Math.min(1,12*dt);
+    }
+    // eat pellets
+    if(pelletMesh) for(const pe of pellets){ if(pe.alive && Math.hypot(pp.x-pe.x,pp.z-pe.z)<CS*0.7){
+      pe.alive=false; score++; pdummy.position.set(0,-999,0); pdummy.updateMatrix(); pelletMesh.setMatrixAt(pe.i,pdummy.matrix); pelletMesh.instanceMatrix.needsUpdate=true; } }
+    // ghosts chase + catch
+    for(const gh of ghosts){ const tx=cellWX(gh.tcx), tz=cellWZ(gh.tcz), dx=tx-gh.x, dz=tz-gh.z, d=Math.hypot(dx,dz);
+      if(d<0.4){ gh.cx=gh.tcx; gh.cz=gh.tcz; chooseGhostDir(gh); } else { gh.x+=dx/d*12*dt; gh.z+=dz/d*12*dt; }
+      gh.grp.position.set(gh.x, 2.0+Math.sin(now*0.003+gh.cx)*0.25, gh.z); if(d>0.001) gh.grp.rotation.y=Math.atan2(dx,dz);
+      if(Math.hypot(pp.x-gh.x,pp.z-gh.z)<CS*0.8){ pp.x=cellWX(startCell[0]); pp.z=cellWZ(startCell[1]); shake=0.8; } }
+    // float + swim (no hop) + tail paddle + shadow
+    const fy=2.0+Math.sin(now*0.0022)*0.25;
     playerG.position.set(pp.x, fy, pp.z);
-    playerG.rotation.y = pp.head + Math.sin(now*0.006)*0.05;   // subtle swim sway
-    playerG.rotation.z = Math.sin(now*0.008)*0.05;             // gentle roll
-    if(tailPivot) tailPivot.rotation.y = Math.sin(now*0.016*(1+Math.abs(pp.sp)/7))*(0.35+0.55*Math.min(1,Math.abs(pp.sp)/10));
-    // cast shadow on the road, softening as Salty floats higher
-    if(shadowMesh){ shadowMesh.position.set(pp.x, 0.6, pp.z); const sc=3.4+ (fy-2.4); shadowMesh.scale.set(sc,1,sc);
-      shadowMesh.material.opacity=0.32-(fy-2.4)*0.15; }
-    const fx=Math.sin(pp.head), fz=Math.cos(pp.head);
+    playerG.rotation.y=pp.head+Math.sin(now*0.006)*0.05; playerG.rotation.z=Math.sin(now*0.008)*0.05;
+    if(tailPivot) tailPivot.rotation.y=Math.sin(now*0.02)*(0.3+0.45*Math.min(1,mag));
+    if(shadowMesh){ shadowMesh.position.set(pp.x,0.55,pp.z); const sc=CS*0.95; shadowMesh.scale.set(sc,1,sc); }
+    if(score!==lastScore){ lastScore=score; document.getElementById('name').textContent='Pellets '+score+'/'+pellets.length+' — left: move, right: turn'; }
     let sx=0,sy=0; if(shake>0){ sx=(Math.random()*2-1)*shake*4; sy=(Math.random()*2-1)*shake*4; shake=Math.max(0,shake-dt*2); }
-    cam.position.set(pp.x-fx*22+sx, 15+sy, pp.z-fz*22);
-    cam.lookAt(pp.x+fx*6, 3, pp.z+fz*6);
+    cam.position.set(pp.x - Math.sin(camYaw)*26 + sx, 24+sy, pp.z - Math.cos(camYaw)*26);
+    cam.lookAt(pp.x, 2, pp.z);
   } else {
     if(!dragging){ vyaw*=0.94; yaw+=vyaw;
       if(autoT>1.0){ if(isFace) yaw=Math.sin(now*0.0004)*0.5; else yaw+=dt*0.35; } }
