@@ -279,7 +279,7 @@ document.getElementById('model3d').addEventListener('click',()=>document.getElem
 document.getElementById('file3d').addEventListener('change',e=>{ if(driving)exitDrive(); if(e.target.files&&e.target.files[0]) loadModel3D(e.target.files[0]); });
 document.getElementById('density').addEventListener('click',()=>{ dLevel=(dLevel+1)%DLEVELS.length;
   document.getElementById('density').textContent='Density: '+DLEVELS[dLevel];
-  if(!driving) rebuildCurrent(); });
+  if(driving) buildDrivePlayer(); else rebuildCurrent(); });
 
 // ===== PAC-MAZE SAMPLE: drive Salty through a maze, eat pellets, dodge ghosts =====
 let driving=false, playerG=null, tailPivot=null, shadowMesh=null, shake=0;
@@ -324,6 +324,18 @@ function chooseGhostDir(gh){
   let best=pool[0], bo=1e9; for(const o of pool){ const dd=(o[0]-pcx)*(o[0]-pcx)+(o[1]-pcz)*(o[1]-pcz); if(dd<bo){bo=dd;best=o;} }
   gh.lx=gh.cx; gh.lz=gh.cz; gh.tcx=best[0]; gh.tcz=best[1];
 }
+// (re)build the Salty player at the current density — used on enter + when density changes mid-maze
+function buildDrivePlayer(){
+  if(playerG){ scene.remove(playerG); playerG=null; }
+  let pv=VoxelModel.buildVoxels(1.5*dfac()).filter(q=>!q.env);
+  const bb=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
+  const s=(CS*0.85)/Math.max(1,(bb.mx[1]-bb.mn[1]));
+  const pcx=(bb.mn[0]+bb.mx[0])/2, pmin=bb.mn[1], pcz=(bb.mn[2]+bb.mx[2])/2;
+  const R=1.5*dfac(), TAILCUT=Math.round(-7.5*R);
+  playerG=new T.Group(); playerG.add(voxMesh(pv.filter(q=>q.z>=TAILCUT), pcx, pmin, pcz));
+  tailPivot=new T.Group(); tailPivot.position.set(0,0,TAILCUT-pcz); tailPivot.add(voxMesh(pv.filter(q=>q.z<TAILCUT), pcx, pmin, TAILCUT)); playerG.add(tailPivot);
+  playerG.scale.setScalar(s); scene.add(playerG);
+}
 function enterDrive(){
   clearRig(); driving=true; score=0; lastScore=-1; camYaw=0;
   MZ=genMaze(11,11); MH=MZ.length; MW=MZ[0].length;
@@ -341,15 +353,7 @@ function enterDrive(){
   pelletMesh=new T.InstancedMesh(new T.BoxGeometry(0.8,0.8,0.8), new T.MeshBasicMaterial({color:0xffe06a}), pellets.length);
   pellets.forEach((pe,i)=>{ pe.i=i; pdummy.position.set(pe.x,1.6,pe.z); pdummy.scale.set(1,1,1); pdummy.updateMatrix(); pelletMesh.setMatrixAt(i,pdummy.matrix); });
   pelletMesh.instanceMatrix.needsUpdate=true; scene.add(pelletMesh);
-  // player (density applies here)
-  let pv=VoxelModel.buildVoxels(1.5*dfac()).filter(q=>!q.env);
-  const bb=bbox(pv,false); pv=VoxelModel.surfaceOnly(pv);
-  const s=(CS*0.85)/Math.max(1,(bb.mx[1]-bb.mn[1]));
-  const pcx=(bb.mn[0]+bb.mx[0])/2, pmin=bb.mn[1], pcz=(bb.mn[2]+bb.mx[2])/2;
-  const R=1.5*dfac(), TAILCUT=Math.round(-7.5*R);
-  playerG=new T.Group(); playerG.add(voxMesh(pv.filter(q=>q.z>=TAILCUT), pcx, pmin, pcz));
-  tailPivot=new T.Group(); tailPivot.position.set(0,0,TAILCUT-pcz); tailPivot.add(voxMesh(pv.filter(q=>q.z<TAILCUT), pcx, pmin, TAILCUT)); playerG.add(tailPivot);
-  playerG.scale.setScalar(s); scene.add(playerG);
+  buildDrivePlayer();   // density applies here
   const sg=new T.CircleGeometry(1,20); sg.rotateX(-Math.PI/2);
   shadowMesh=new T.Mesh(sg, new T.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.3,depthWrite:false})); scene.add(shadowMesh);
   pp.x=cellWX(startCell[0]); pp.z=cellWZ(startCell[1]); pp.head=0;
