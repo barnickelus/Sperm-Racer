@@ -30,6 +30,7 @@
   <button id="photo">Photo</button>
   <button id="model3d">3D Model</button>
   <button id="density">Density: Med</button>
+  <button id="shapes">Shapes: Mixed</button>
   <button id="level">Level: Maze</button>
   <button id="drive">Play</button>
 </div>
@@ -78,41 +79,50 @@ function tile(rgb, h){
 // Each voxel face = a tile: grout border + a shape (circle/square/diamond/triangle)
 // drawn in the per-voxel ACCENT colour over the per-voxel BASE colour, computed
 // procedurally from the cube-face UV in the fragment shader (true two-tone).
-const faceMat=new T.ShaderMaterial({
-  uniforms:{ lightDir:{ value:new T.Vector3(0.5,0.9,0.6).normalize() } },
-  vertexShader:`
+const VS=`
     attribute vec3 aBase; attribute vec3 aAccent; attribute vec3 aAccent2; attribute float aShape;
     varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape; varying vec2 vUv; varying vec3 vN;
     void main(){
       vBase=aBase; vAccent=aAccent; vAccent2=aAccent2; vShape=aShape; vUv=uv;
-      // build mat3 from columns (mat3(mat4) is invalid in GLSL ES 1.00 / WebGL1)
       mat3 im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
       mat3 mm = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
       vN = normalize(mm * im * normal);
       gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position,1.0);
-    }`,
-  fragmentShader:`
-    uniform vec3 lightDir;
+    }`;
+const FS=`
+    uniform vec3 lightDir; uniform float uPlate;
     varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape; varying vec2 vUv; varying vec3 vN;
     void main(){
+      float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
+      if(uPlate < 0.5){ gl_FragColor=vec4(vBase*(0.45+0.6*ndl), 1.0); return; }  // solid primitive (sphere/diamond/hex)
       vec2 uv=vUv; float cu=uv.x-0.5, cv=uv.y-0.5; float qx=abs(cu), qy=abs(cv); vec3 c;
-      // rounded-tile grout
       bool grout = (qx>0.40||qy>0.40) || (qx>0.32&&qy>0.32&&length(vec2(qx-0.32,qy-0.32))>0.09);
       if(grout){ c=vBase*0.45; }
       else {
         bool central;
-        if(vShape<0.5) central=length(vec2(cu,cv))<0.18;                  // circle
-        else if(vShape<1.5) central=max(qx,qy)<0.16;                      // square
-        else if(vShape<2.5) central=qx+qy<0.21;                           // diamond
-        else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);           // triangle
+        if(vShape<0.5) central=length(vec2(cu,cv))<0.18;
+        else if(vShape<1.5) central=max(qx,qy)<0.16;
+        else if(vShape<2.5) central=qx+qy<0.21;
+        else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);
         bool dm = length(uv-vec2(0.30,0.30))<0.075 || length(uv-vec2(0.70,0.30))<0.075
                || length(uv-vec2(0.30,0.70))<0.075 || length(uv-vec2(0.70,0.70))<0.075;
-        c = central ? vAccent : (dm ? vAccent2 : vBase);                  // shape + 4 corner dots
+        c = central ? vAccent : (dm ? vAccent2 : vBase);
       }
-      float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
       gl_FragColor=vec4(c*(0.5+0.55*ndl), 1.0);
-    }`
-});
+    }`;
+const faceMat=new T.ShaderMaterial({ uniforms:{ lightDir:{value:new T.Vector3(0.5,0.9,0.6).normalize()}, uPlate:{value:1.0} }, vertexShader:VS, fragmentShader:FS });
+const solidMat=new T.ShaderMaterial({ uniforms:{ lightDir:{value:new T.Vector3(0.5,0.9,0.6).normalize()}, uPlate:{value:0.0} }, vertexShader:VS, fragmentShader:FS });
+
+// ----- VibeMesh primitive palette: different shapes per material region -----
+const GEO={ cube:new T.BoxGeometry(1,1,1), sphere:new T.SphereGeometry(0.62,8,6),
+            diamond:new T.OctahedronGeometry(0.8), hex:new T.CylinderGeometry(0.6,0.6,1,6) };
+let usePrims=true;
+function primFor(r,g,b){ const lum=(r+g+b)/3, mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+  if(r>150&&g>115&&b<120&&(r-b)>55) return 'diamond';     // gold / jewelry -> diamonds
+  if(lum<72) return 'sphere';                             // dark (hair, frames, eyes) -> round
+  if(mx-mn<26 && lum<195) return 'hex';                   // neutral greys / metal -> hex prisms
+  return 'cube';                                          // skin / bright -> plated cubes
+}
 
 const geo=new T.BoxGeometry(1,1,1);
 let rig=new T.Group(); scene.add(rig);
@@ -121,8 +131,36 @@ let dist=60, isFace=false;
 function clearRig(){ rig.traverse(o=>{ if(o.isMesh && o.geometry) o.geometry.dispose(); });
   scene.remove(rig); rig=new T.Group(); scene.add(rig); }
 
-// build an InstancedMesh from a voxel array, offset so (offX,offY,offZ) -> origin
+// build one InstancedMesh for a voxel list with a given geometry + material
+function makeInst(vox, g0, mat){
+  const n=vox.length, aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aAccent2=new Float32Array(n*3), aShape=new Float32Array(n);
+  const g=g0.clone(), mesh=new T.InstancedMesh(g, mat, n), dummy=new T.Object3D();
+  vox.forEach((v,i)=>{ const s=v.s||1;
+    dummy.position.set(v.x-makeInst._ox+(s-1)/2, v.y-makeInst._oy+(s-1)/2, v.z-makeInst._oz+(s-1)/2);
+    dummy.scale.setScalar(s); dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
+    const h=hash(v.x,v.y,v.z), [b,a,a2]=tile([v.r/255,v.g/255,v.b/255], h);
+    aBase[i*3]=b[0];aBase[i*3+1]=b[1];aBase[i*3+2]=b[2];
+    aAccent[i*3]=a[0];aAccent[i*3+1]=a[1];aAccent[i*3+2]=a[2];
+    aAccent2[i*3]=a2[0];aAccent2[i*3+1]=a2[1];aAccent2[i*3+2]=a2[2];
+    aShape[i]=h%4; });
+  g.setAttribute('aBase', new T.InstancedBufferAttribute(aBase,3));
+  g.setAttribute('aAccent', new T.InstancedBufferAttribute(aAccent,3));
+  g.setAttribute('aAccent2', new T.InstancedBufferAttribute(aAccent2,3));
+  g.setAttribute('aShape', new T.InstancedBufferAttribute(aShape,1));
+  mesh.instanceMatrix.needsUpdate=true; return mesh;
+}
+// build a Group: split the voxels by primitive (or all cubes if the palette is off)
 function voxMesh(vox, offX, offY, offZ){
+  makeInst._ox=offX; makeInst._oy=offY; makeInst._oz=offZ;
+  const grp=new T.Group();
+  if(!usePrims){ grp.add(makeInst(vox, GEO.cube, faceMat)); return grp; }
+  const buckets={cube:[],sphere:[],diamond:[],hex:[]};
+  for(const v of vox) buckets[primFor(v.r,v.g,v.b)].push(v);
+  for(const k in buckets){ if(!buckets[k].length) continue;
+    grp.add(makeInst(buckets[k], GEO[k], k==='cube'?faceMat:solidMat)); }
+  return grp;
+}
+function _voxMesh_unused(vox, offX, offY, offZ){
   const n=vox.length;
   const aBase=new Float32Array(n*3), aAccent=new Float32Array(n*3), aAccent2=new Float32Array(n*3), aShape=new Float32Array(n);
   const g=geo.clone();
@@ -422,6 +460,9 @@ function exitDrive(){ driving=false;
 document.getElementById('drive').addEventListener('click',()=>{ driving?exitDrive():enterDrive(); });
 document.getElementById('level').addEventListener('click',()=>{ level=(level==='maze')?'eve':'maze';
   document.getElementById('level').textContent='Level: '+(level==='maze'?'Maze':'Eve'); if(driving) enterDrive(); });
+document.getElementById('shapes').addEventListener('click',()=>{ usePrims=!usePrims;
+  document.getElementById('shapes').textContent='Shapes: '+(usePrims?'Mixed':'Cubes');
+  if(driving) enterDrive(); else rebuildCurrent(); });
 
 // Controls: SWIPE (or arrows/WASD) to set a cardinal direction — Pac-Man style.
 const cv=renderer.domElement;
