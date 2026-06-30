@@ -31,6 +31,12 @@
   #lap b{display:block;font-size:30px;line-height:1;color:var(--bone);font-variant-numeric:tabular-nums;}
   #pos{top:64px;right:14px;text-align:right;font-size:12px;color:var(--ink);}
   #pos b{display:block;font-size:38px;line-height:1;color:var(--signal);font-variant-numeric:tabular-nums;}
+  /* quit control — clear of the lap/pos badges (end ~y124) and the touch action
+     buttons docked in the bottom corners, so it sits alone in the quiet right edge */
+  #quitbtn{top:124px;right:14px;width:32px;height:32px;border-radius:50%;border:none;
+    display:flex;align-items:center;justify-content:center;font-size:14px;letter-spacing:0;
+    color:var(--ink);cursor:pointer;pointer-events:auto;font-family:inherit;padding:0;}
+  #quitbtn.armed{background:rgba(255,93,143,.3);border:1px solid #ff5d8f;color:#ff5d8f;font-size:9px;}
   #clock{bottom:14px;left:50%;transform:translateX(-50%);font-size:15px;color:var(--ink);
     font-variant-numeric:tabular-nums;letter-spacing:.12em;}
   #speedo{bottom:12px;left:14px;font-size:11px;color:var(--ink);}
@@ -42,6 +48,7 @@
     display:flex;align-items:center;justify-content:center;font-size:38px;
     box-shadow:0 0 22px rgba(0,0,0,.4);}
   #item.spin{animation:itm .09s linear infinite;}
+  #item:empty::before{content:'▢';opacity:.25;font-size:32px;color:var(--ink);}
   @keyframes itm{50%{filter:hue-rotate(60deg)}}
 
   /* touch controls */
@@ -162,7 +169,7 @@
   #map{position:static;display:block;filter:drop-shadow(0 0 6px rgba(109,242,208,.25));}
 
   /* speed gauge (arc) bottom-left */
-  #speedo{bottom:14px;left:16px;display:flex;align-items:flex-end;gap:8px;}
+  #speedo{bottom:14px;left:16px;display:flex;align-items:flex-end;gap:8px;padding:6px 10px;}
   #gauge{filter:drop-shadow(0 0 8px rgba(109,242,208,.3));}
   #speedo .lbl{font-size:10px;color:var(--ink);letter-spacing:.16em;padding-bottom:4px;}
   #speedo .lbl b{font-size:26px;color:var(--bone);display:block;line-height:.9;
@@ -197,7 +204,8 @@
   /* ===== One Piece cel-shaded character portraits (select screen) ===== */
   .opcard{position:relative;overflow:hidden;}
   .opcard::before{content:"";position:absolute;inset:0;z-index:0;
-    background:radial-gradient(78% 62% at 50% 38%, #ffd79a 0%, #d8884a 44%, #7c4326 78%, #2c1709 100%);
+    background:radial-gradient(78% 62% at 50% 38%, #ffd79a 0%, #d8884a 44%,
+      hsl(var(--hue,28) 45% 30%) 78%, hsl(var(--hue,28) 55% 12%) 100%);
     opacity:.9;}
   .opcard > *{position:relative;z-index:1;}
   .opsvg{width:84px;height:112px;display:block;margin:0 auto 4px;
@@ -207,6 +215,12 @@
   @media (prefers-reduced-motion:reduce){ .opsvg .optail{animation:none} }
   .opname{font-weight:700;letter-spacing:.5px;text-shadow:0 2px 4px rgba(0,0,0,.6);}
   .opdesc{text-shadow:0 1px 3px rgba(0,0,0,.7);}
+  .opcard.locked{filter:grayscale(.85) brightness(.6);cursor:not-allowed;}
+  .oplock{position:absolute;inset:auto 0 0 0;z-index:2;background:rgba(3,12,15,.82);
+    color:var(--signal);font-size:9.5px;letter-spacing:.04em;padding:5px 6px;text-transform:none;
+    text-align:center;border-top:1px solid rgba(109,242,208,.3);}
+  .shake{animation:cardshake .35s ease;}
+  @keyframes cardshake{20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
 </style>
 </head>
 <body>
@@ -232,8 +246,9 @@
   <div id="leader" class="glass"></div>
   <div class="hud glass" id="lap"><span id="laplbl">Lap</span><b><span id="lapn">1</span><span id="lapsuf">/3</span></b></div>
   <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
+  <button class="hud glass" id="quitbtn" title="Quit race">✕</button>
   <div id="item"></div>
-  <div class="hud" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
+  <div class="hud glass" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
   <div class="hud" id="clock">00:00.0</div>
   <div id="drift-meter"><div id="drift-fill"></div></div>
   <div id="banner"></div>
@@ -299,6 +314,7 @@
   <div class="tag" id="ftag">race complete</div>
   <h1 id="fhead">2nd</h1>
   <div class="board" id="board"></div>
+  <div id="besttime" style="font-size:12px;letter-spacing:.1em;color:var(--ink);margin:2px 0 14px;min-height:1.4em;"></div>
   <div id="fbtns" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:560px">
     <button class="go" id="againbtn">Race again</button>
     <button class="go alt" id="changebtn">Change racer</button>
@@ -771,19 +787,19 @@ function drawGauge(frac,boosting){
 const HW=22;                                       // road half-width
 const TRACKS=[
   // Ophelia — smooth wide oval
-  {name:'Ophelia',  key:0, tempo:220, tunnels:[[0.30,0.40]],
+  {name:'Ophelia',  key:0, tempo:220, sky:0x3a2632, tunnels:[[0.30,0.40]],
    ctrl:[[380,6,0],[270,22,-300],[0,42,-400],[-270,30,-300],[-380,12,0],[-270,22,300],[0,36,400],[270,26,300]]},
   // Seraphina — big flowing kidney
-  {name:'Seraphina',key:3, tempo:200, tunnels:[[0.46,0.56]],
+  {name:'Seraphina',key:3, tempo:200, sky:0x2a3552, tunnels:[[0.46,0.56]],
    ctrl:[[420,8,-40],[300,26,-360],[0,46,-460],[-300,34,-340],[-420,14,40],[-220,22,300],[-40,32,170],[180,28,360],[360,18,240]]},
   // Delilah — figure-8 with an elevated crossover (go over/under through the tunnel)
-  {name:'Delilah',  cross:true, key:-2, tempo:188, tunnels:[[0.43,0.57]],
+  {name:'Delilah',  cross:true, key:-2, tempo:188, sky:0x3a1f3e, tunnels:[[0.43,0.57]],
    ctrl:[[0,6,-30],[210,14,-230],[60,28,-450],[-210,20,-250],[-60,42,-60],[0,48,40],[210,42,250],[40,28,460],[-210,22,250],[-40,12,40]]},
   // Bianca — tall narrow egg loop
-  {name:'Bianca',   key:5, tempo:208, tunnels:[[0.32,0.42]],
+  {name:'Bianca',   key:5, tempo:208, sky:0x1f3a36, tunnels:[[0.32,0.42]],
    ctrl:[[230,8,-320],[120,30,-440],[-120,30,-440],[-230,10,-300],[-270,16,0],[-180,30,300],[0,42,430],[180,30,300],[270,16,0]]},
   // Eve — long point-to-point dash (≈4×), finishes at the glowing egg (ovum)
-  {name:'Eve', loop:false, egg:true, key:7, tempo:176, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
+  {name:'Eve', loop:false, egg:true, key:7, tempo:176, sky:0x4a2a1f, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
    ctrl:[[0,0,0],[150,12,-300],[-40,34,-600],[210,52,-900],[60,72,-1240],[-170,54,-1540],[120,40,-1840],[320,26,-2200],[150,56,-2560],[-80,40,-2880],[170,30,-3240],[380,48,-3600],[190,66,-3980],[-50,46,-4320],[140,30,-4680],[330,40,-5040],[150,30,-5440],[80,20,-5800]]},
 ];
 const STEPS=700;
@@ -817,6 +833,10 @@ function buildTrack(idx){
   }
   trackGroup=new T.Group(); scene.add(trackGroup);
   TRACK_PULSE=[];
+
+  const trackSky=TRACKS[idx].sky||SKY;       // subtle per-track ambient tint
+  scene.background.set(trackSky);
+  scene.fog.color.set(trackSky);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -1595,19 +1615,22 @@ const ROSTER=[
 ];
 
 // STEREOTYPE SPERM OPTIONS - fun Shore vibes, each with personality & slight stat tweaks
+// hues respaced ~20-30deg apart (was: guido/king both 28, korean/dragon 4deg apart,
+// chad/sailor/wall/french bunched into a 30deg band) so racers stay distinguishable
+// on the minimap/leaderboard dots, which have no art to disambiguate, only color
 const SPERM_TYPES = [
   {id:'guido', name:'Guido Tony', hue:28, desc:'Jersey\'s finest. Mad drift skills + gold chain swagger.', stats:{skill:0.96, driftMult:1.35, boostLen:1.15}},
   {id:'irish', name:'Seamus O\'Lucky', hue:142, desc:'Lucky Irish charm. Items spawn more often, green beast.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
-  {id:'latin', name:'Juan Stallion', hue:355, desc:'Latin lover energy. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
-  {id:'dragon', name:'Wei Long', hue:52, desc:'Dragon spirit. Laser precise turns, hard to spin out.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
-  {id:'king', name:'Darius King', hue:28, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
+  {id:'latin', name:'Juan Stallion', hue:340, desc:'Latin lover energy. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
+  {id:'dragon', name:'Wei Long', hue:69, desc:'Dragon spirit. Laser precise turns, hard to spin out.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
+  {id:'king', name:'Darius King', hue:320, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}, locked:true},
   {id:'chad', name:'Chad Brody', hue:195, desc:'Surfer bro vibes. Top end speed for days, chill but quick.', stats:{skill:0.99, maxV:1.22, brake:0.75}},
   {id:'hillbilly', name:'Cleetus', hue:90,  desc:'Backwoods moonshine power. Slow start, mean top end.', stats:{skill:0.97, maxV:1.15}},
-  {id:'wall', name:'Chad Sterling', hue:210, desc:'Wall Street shark. Greedy boosts, ruthless lines.', stats:{skill:1.0, boostPower:1.2}},
+  {id:'wall', name:'Chad Sterling', hue:245, desc:'Wall Street shark. Greedy boosts, ruthless lines.', stats:{skill:1.0, boostPower:1.2}},
   {id:'korean', name:'Mr. Park', hue:48, desc:'Precision businessman. Flawless racing lines.', stats:{skill:1.05, turn:1.2}},
-  {id:'rick', name:'Super Freak', hue:300, desc:'Funk superstar. Wild drifts, dazzling boosts.', stats:{skill:0.98, driftMult:1.3}},
-  {id:'french', name:'Pierre', hue:225, desc:'Effortless flair. Smooth handling, oui oui.', stats:{skill:1.0, turn:1.1}},
-  {id:'sailor', name:'Salty', hue:205, desc:'Old sea dog. Steady in the rough, hard to spin out.', stats:{skill:1.0, spinResist:0.6}},
+  {id:'rick', name:'Super Freak', hue:300, desc:'Funk superstar. Wild drifts, dazzling boosts.', stats:{skill:0.98, driftMult:1.3}, locked:true},
+  {id:'french', name:'Pierre', hue:270, desc:'Effortless flair. Smooth handling, oui oui.', stats:{skill:1.0, turn:1.1}},
+  {id:'sailor', name:'Salty', hue:220, desc:'Old sea dog. Steady in the rough, hard to spin out.', stats:{skill:1.0, spinResist:0.6}},
   {id:'cholo', name:'Lil Pepe', hue:0, desc:'Barrio legend. Low-rider bounce, fearless drifts.', stats:{skill:0.98, driftMult:1.3}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
@@ -2329,6 +2352,7 @@ function endRace(){
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
+  $('besttime').textContent='';   // cleared each finish; only the single-race branch repopulates it
 
   if(gpActive){
     ranked.forEach((r,i)=>{ gpScores[r._li]+=(GP_PTS[i]||0); });   // points
@@ -2348,6 +2372,7 @@ function endRace(){
       $('fhead').textContent = champ.you ? `Top Stud! ${champ.eggs}🥚` : `${champ.name} — ${champ.eggs}🥚`;
       $('ftag').textContent='circuit complete';
       gpActive=false; normalBtns(''); $('nextgpbtn').style.display='none';
+      if(!localStorage.getItem('sr_gp_done')){ localStorage.setItem('sr_gp_done','1'); $('besttime').textContent='🔓 New racers unlocked!'; }
     } else {
       $('fhead').textContent = (order.find(o=>o.you).eggs)+'🥚 fertilized';
       normalBtns('none'); $('nextgpbtn').style.display='';
@@ -2362,6 +2387,18 @@ function endRace(){
       bd.appendChild(row);
     });
     normalBtns(''); $('nextgpbtn').style.display='none';
+    // best-time tracking (per track, persists across sessions) — every race counts for something
+    const bt=$('besttime');
+    if(me.finished && isFinite(me.finishT)){
+      const key='sr_best_'+TRACKS[selTrack].name;
+      const prev=parseFloat(localStorage.getItem(key));
+      if(!prev || me.finishT<prev){
+        localStorage.setItem(key, me.finishT);
+        bt.textContent = prev ? `🏆 NEW BEST! ${fmt(me.finishT)} (was ${fmt(prev)})` : `🏆 NEW BEST! ${fmt(me.finishT)}`;
+      } else {
+        bt.textContent = `Best on ${TRACKS[selTrack].name}: ${fmt(prev)}  (+${fmt(me.finishT-prev)})`;
+      }
+    } else bt.textContent='';
   }
   $('finish').classList.remove('hidden');
 }
@@ -2382,16 +2419,23 @@ function setupSelect(){
   // One Piece cel-shaded portraits (hand-built SVG kit above)
   const cardVisual = OP_SVG;
 
+  const gpDone = !!localStorage.getItem('sr_gp_done');
   SPERM_TYPES.forEach((t, idx) => {
+    const locked = t.locked && !gpDone;
     const card = document.createElement('div');
-    card.className = 'opcard';
-    card.style.cssText = 'background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;';
+    card.className = 'opcard'+(locked?' locked':'');
+    card.style.cssText = `--hue:${t.hue};background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;`;
     card.innerHTML = `
       ${cardVisual[t.id] || `<div style="width:54px;height:54px;border-radius:50%;background:hsl(${t.hue} 85% 62%);box-shadow:0 0 18px hsl(${t.hue} 85% 55%);margin-bottom:6px;border:3px solid #eafff8;"></div>`}
       <div class="opname" style="color:var(--bone);font-size:15px;">${t.name}</div>
-      <div class="opdesc" style="font-size:10.5px;color:var(--bone);margin-top:3px;line-height:1.25;opacity:.85;">${t.desc}</div>
+      <div class="opdesc" style="font-size:11.5px;color:var(--bone);margin-top:3px;line-height:1.3;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.55);">${t.desc}</div>
+      ${locked?`<div class="oplock">🔒 Win a Grand Prix to unlock</div>`:''}
     `;
     card.onclick = () => {
+      if(locked){
+        card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+        return;
+      }
       if(selectedEl) selectedEl.style.borderColor = 'var(--dim)';
       card.style.borderColor = 'var(--signal)';
       chosenType = t;
@@ -2715,6 +2759,23 @@ $('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
 $('mainbtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
+
+// mid-race quit — tap-to-arm, tap again within 2.5s to confirm (no accidental race loss)
+let quitArm=false, quitTimer=null;
+$('quitbtn').onclick=()=>{
+  if(state!=='race') return;
+  if(!quitArm){
+    quitArm=true; const b=$('quitbtn'); b.textContent='Sure?'; b.classList.add('armed');
+    quitTimer=setTimeout(()=>{ quitArm=false; b.textContent='✕'; b.classList.remove('armed'); }, 2500);
+    return;
+  }
+  clearTimeout(quitTimer); quitArm=false;
+  $('quitbtn').textContent='✕'; $('quitbtn').classList.remove('armed');
+  gpActive=false; state='menu'; stopEngine(); stopMusic(); unlockOrient();
+  $('throttle').style.display='none';
+  $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
+  $('start').classList.remove('hidden');
+};
 // unlock audio on the very first touch/click anywhere (iOS needs a gesture)
 window.addEventListener('pointerdown', initAudio, {once:false});
 
