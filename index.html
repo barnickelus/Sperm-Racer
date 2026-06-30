@@ -402,6 +402,7 @@ const SFX={
     o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400); },
   lap(){ beep(700,0.08,'sine',0.18); },
   bump(){ noiseBurst(0.18,0.12,900); beep(180,0.1,'triangle',0.16); },
+  finalLap(){ beep(660,0.12,'triangle',0.26); setTimeout(()=>beep(990,0.18,'triangle',0.28),110); },
 };
 
 /* ---- looping background music (procedural, no files; per-track theme) ---- */
@@ -1872,7 +1873,7 @@ function updateRacer(r,dt){
       r.boostT=Math.max(r.boostT,0.85);
       const now=performance.now();
       if(now-(r._padHit||0)>700){ r._padHit=now;
-        burst(r.x, r.y+2, r.z, 0xffb44a, 10, 50, 0.4, 4);
+        burst(r.x, r.y+2, r.z, 0xffb44a, 15, 50, 0.4, 4);
         if(r.you) SFX.boost();
       }
       break;
@@ -1981,7 +1982,7 @@ function collide(){
       if(Math.hypot(r.x-it.base.x,r.z-it.base.z)<6 && !r.item){
         giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
         burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
-        if(r.you){ kickShake(0.25); SFX.item(); }
+        if(r.you){ kickShake(0.25); flashFx(0.15,'#6df2d0'); SFX.item(); }
         break;
       }
     }
@@ -2257,8 +2258,8 @@ function syncHUD(){
   } else { elDM.style.opacity=0; }
 
   // final-lap banner (once)
-  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); }
-  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); }
+  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); SFX.finalLap(); }
+  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); SFX.finalLap(); }
 
   // speed-line + vignette intensity
   const boost=me.boostT>0;
@@ -2546,16 +2547,23 @@ function setupJoystick(){
     setKnob(0, 0);
   }
   function move(e){ if(joyActive && e.pointerId === joyId) setKnob(e.clientX - originX, e.clientY - originY); }
-  function end(e){
-    if(e.pointerId !== joyId) return;                         // only the owning finger resets it
+  function release(){                                         // unconditional reset
     joyId = null; joyActive = false; joyX = 0; joyY = 0; padSteer = 0;
     joy.style.display = 'none';
     knob.style.transform = 'translate(-50%,-50%)';
+  }
+  function end(e){
+    if(e.pointerId !== joyId) return;                         // only the owning finger resets it
+    release();
   }
   window.addEventListener('pointerdown', down);
   window.addEventListener('pointermove', move, {passive:true});
   window.addEventListener('pointerup', end);
   window.addEventListener('pointercancel', end);
+  // iOS can swallow pointerup/pointercancel when a system gesture (control center,
+  // app switch) interrupts a touch — release on focus loss so the stick can't get stuck
+  window.addEventListener('blur', release);
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) release(); });
 }
 
 // (the joystick now feeds an analog `padSteer` straight into updateRacer above,
