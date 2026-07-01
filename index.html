@@ -434,9 +434,30 @@ const SFX={
   finalLap(){ beep(660,0.12,'triangle',0.26); setTimeout(()=>beep(990,0.18,'triangle',0.28),110); },
 };
 
-/* ---- looping background music (procedural, no files; per-track theme) ---- */
-let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0;
-const MEL=[0,3,7,10,12,10,7,3], BASS=[0,0,7,5];
+/* ---- looping background music (procedural, no files) ----
+   Each character has a distinct musical style (scale/riff, bass line, oscillator
+   timbre, hi-hat density, beat grouping, tempo feel) layered on top of the
+   per-track key + tempo, so the race sounds different depending on who you drive
+   as, not just which circuit you picked. */
+let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null;
+const MUSIC_STYLES={
+  // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
+  // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
+  // tempoMul = relative to the track's own tempo (<1 = faster, >1 = slower/spacious)
+  guido:    { melWave:'square',   bassWave:'square',   mel:[0,3,5,7,10,7,5,3],                         bass:[0,0,5,7],   hihat:1, beatGroup:4, tempoMul:0.85 }, // Jersey club anthem
+  irish:    { melWave:'triangle', bassWave:'triangle', mel:[0,2,4,7,9,12,9,7,4,2,0,4,7,9,7,4],          bass:[0,0,7,0],   hihat:2, beatGroup:4, tempoMul:0.75 }, // fiddle jig, fast run
+  latin:    { melWave:'square',   bassWave:'sawtooth', mel:[0,3,7,10,7,3,0,3],                          bass:[0,0,3,7],   hihat:1, beatGroup:4, tempoMul:0.95 }, // clave syncopation
+  dragon:   { melWave:'sine',     bassWave:'sine',     mel:[0,2,5,7,9,7,5,2],                           bass:[0,0,0,7],   hihat:0, beatGroup:4, tempoMul:1.4  }, // pentatonic, gong-slow
+  king:     { melWave:'square',   bassWave:'sine',     mel:[0,0,3,0,7,0,10,7],                          bass:[0,0,0,0],   hihat:1, beatGroup:4, tempoMul:0.7  }, // trap 808 + busy hats
+  chad:     { melWave:'triangle', bassWave:'triangle', mel:[0,4,7,4,0,4,7,9],                           bass:[0,0,4,5],   hihat:2, beatGroup:4, tempoMul:1.0  }, // surf-rock major
+  hillbilly:{ melWave:'triangle', bassWave:'triangle', mel:[0,2,4,5,7,9,7,5,4,2,0,2,4,5,7,9],           bass:[0,0,5,7],   hihat:2, beatGroup:4, tempoMul:0.65 }, // banjo picking, fast
+  wall:     { melWave:'sine',     bassWave:'sine',     mel:[0,4,7,11,9,7,4,0],                          bass:[0,4,7,4],   hihat:3, beatGroup:4, tempoMul:1.2  }, // smooth elevator jazz
+  korean:   { melWave:'square',   bassWave:'square',   mel:[0,3,6,9,0,3,6,9],                           bass:[0,6,0,6],   hihat:1, beatGroup:4, tempoMul:0.7  }, // precise, glitchy
+  rick:     { melWave:'sawtooth', bassWave:'square',   mel:[0,7,3,10,7,3,10,0],                         bass:[0,0,7,5],   hihat:1, beatGroup:4, tempoMul:0.9  }, // P-funk syncopation
+  french:   { melWave:'triangle', bassWave:'triangle', mel:[0,4,7,4,0,4,7,4],                           bass:[0,7,4],     hihat:0, beatGroup:3, tempoMul:1.3  }, // musette waltz, 3-feel
+  sailor:   { melWave:'triangle', bassWave:'sawtooth', mel:[0,3,5,7,10,7,5,3],                          bass:[0,0,5,3],   hihat:2, beatGroup:4, tempoMul:1.0  }, // sea-shanty roll
+  cholo:    { melWave:'sine',     bassWave:'sine',     mel:[0,3,5,8,10,8,5,3],                          bass:[0,0,0,5],   hihat:2, beatGroup:4, tempoMul:1.1  }, // lowrider soul groove
+};
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 function playNote(freq,dur,vol,type){
   if(!actx||!musicGain)return; const t=actx.currentTime;
@@ -447,16 +468,31 @@ function playNote(freq,dur,vol,type){
   o.connect(g); g.connect(musicGain); o.start(t); o.stop(t+dur+0.03);
 }
 function musicTick(){
-  const step=musicStep++ %16;
-  if(step%4===0) playNote(noteFreq(BASS[(step/4)|0]-12),0.5,0.2,'sawtooth');
-  playNote(noteFreq(MEL[step%MEL.length]+12),0.16,0.085,'triangle');
-  if(step%2===1) noiseBurst(0.025,0.03,6500);
+  const st=curStyle||MUSIC_STYLES.guido;
+  const bg=st.beatGroup||4, steps=bg*4;
+  const step=musicStep++ % steps;
+  if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.2,st.bassWave);
+  playNote(noteFreq(st.mel[step%st.mel.length]+12),0.16,0.085,st.melWave);
+  if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.03,6500);
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
-  const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key + tempo
-  musicStep=0; musicTimer=setInterval(musicTick, tk.tempo||210); }
+  const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
+  curStyle=MUSIC_STYLES[chosenType&&chosenType.id]||MUSIC_STYLES.guido;   // per-character style
+  musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; } }
+// victory fanfare: the racing music cuts out at the finish line, then this plays a rising
+// run through the FINISHING character's own scale/timbre — the climax is character-flavored
+// too, not just a generic jingle, same idea as the per-character music loop
+function playVictoryFanfare(styleId){
+  if(!actx)return;
+  const st=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;
+  const run=[...st.mel.slice(0,4),12,15,19,24];   // the character's own opening notes, then a big climb
+  run.forEach((n,i)=>setTimeout(()=>{
+    playNote(noteFreq(n), 0.32, 0.22, st.melWave);
+    playNote(noteFreq(n-12), 0.32, 0.12, st.bassWave);
+  }, i*90));
+}
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
  *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
@@ -769,7 +805,7 @@ function burst(x,y,z,color,n,spread,life,size){
 }
 
 /* camera shake */
-let camShake=0;
+let camShake=0, hitStopT=0, finishPunchT=0;
 function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 
 /* HUD fx element refs */
@@ -1995,16 +2031,20 @@ function placeOnTrack(r,dt){
   }
   if(!r.finished && done){
     r.finished=true; r.finishT=raceTime;
-    if(r.you){                                   // finish flourish for the player
-      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(0.9); SFX.finish(); stopEngine();
+    if(r.you){                                   // finish flourish for the player — THE climax of the race
+      hitStopT=0.12;                             // freeze-frame beat before everything else lands
+      finishPunchT=1.2;                          // camera zoom-punch, bigger than a boost kick
+      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine();
+      flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
+      playVictoryFanfare(chosenType&&chosenType.id);  // rising run through the finisher's own musical style
       const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
-      for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 18, 70, 1.0, 5);
-      // second and third confetti waves, staggered — the finish used to be one instant
-      // pop; this keeps particles raining for ~700ms so the moment actually lands
-      for(let wave=1;wave<=2;wave++) setTimeout(()=>{
-        for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 10, 55+wave*15, 0.8, 4);
-      }, wave*230);
+      for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
+      // four staggered confetti waves — the finish used to be one instant pop, this keeps
+      // particles raining for over a second so the moment actually reads as a climax
+      for(let wave=1;wave<=4;wave++) setTimeout(()=>{
+        for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 12, 60+wave*15, 0.9, 5);
+      }, wave*220);
       if(!trackLoop) eggAnim=2.4;                 // trigger the fertilize animation on the egg
     }
   }
@@ -2247,8 +2287,9 @@ function updateCamera(dt){
   }
   const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(18)).add(new T.Vector3(0,4,0));
   camera.lookAt(look);
-  const fovWant = boost?74:64;
-  camera.fov += (fovWant-camera.fov)*Math.min(1,5*dt);
+  if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
+  const fovWant = finishPunchT>0 ? 98 : (boost?74:64);   // finish-line zoom punch beats boost's
+  camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
 
@@ -2347,6 +2388,10 @@ function syncHUD(){
 let last=performance.now();
 function frame(now){
   const dt=Math.min(0.033,(now-last)/1000); last=now;
+  if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
+    hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
+    renderer.render(scene,camera); requestAnimationFrame(frame); return;
+  }
   const tsec=now/1000;
   if(_vw!==document.documentElement.clientWidth||_vh!==document.documentElement.clientHeight) resize();   // self-heal framing if viewport changed
   if(state==='race'){
