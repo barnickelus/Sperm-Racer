@@ -1636,10 +1636,10 @@ const SPERM_TYPES = [
   {id:'irish', name:'Seamus O\'Lucky', hue:142, desc:'Lucky Irish charm. Items spawn more often, green beast.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
   {id:'latin', name:'Juan Stallion', hue:340, desc:'Latin lover energy. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
   {id:'dragon', name:'Wei Long', hue:69, desc:'Dragon spirit. Laser precise turns, hard to spin out.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
-  {id:'king', name:'Darius King', hue:320, desc:'Big baller. When you boost, you BOOST. King stuff.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}, locked:true},
+  {id:'king', name:'Darius King', hue:320, desc:'Courtside legend. Pops champagne mid-drift, throws cash at problems.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}, locked:true},
   {id:'chad', name:'Chad Brody', hue:195, desc:'Surfer bro vibes. Top end speed for days, chill but quick.', stats:{skill:0.99, maxV:1.22, brake:0.75}},
   {id:'hillbilly', name:'Cleetus', hue:90,  desc:'Backwoods moonshine power. Slow start, mean top end.', stats:{skill:0.97, maxV:1.15}},
-  {id:'wall', name:'Chad Sterling', hue:245, desc:'Wall Street shark. Greedy boosts, ruthless lines.', stats:{skill:1.0, boostPower:1.2}},
+  {id:'wall', name:'Chad Sterling', hue:245, desc:'Suspenders + Bluetooth earpiece, always yelling "SELL!" Insider-trades every shortcut.', stats:{skill:1.0, boostPower:1.2}},
   {id:'korean', name:'Mr. Park', hue:48, desc:'Precision businessman. Flawless racing lines.', stats:{skill:1.05, turn:1.2}},
   {id:'rick', name:'Super Freak', hue:300, desc:'Funk superstar. Wild drifts, dazzling boosts.', stats:{skill:0.98, driftMult:1.3}, locked:true},
   {id:'french', name:'Pierre', hue:270, desc:'Effortless flair. Smooth handling, oui oui.', stats:{skill:1.0, turn:1.1}},
@@ -1718,13 +1718,17 @@ bind('whipbtn','whip');
 let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
-const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣'};
+const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧'};
 function giveItem(r){
   const roll=Math.random();
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
   if(r.place>=3 && roll<0.6){ r.item='boost';
     burst(r.x,r.y+5,r.z,0xffd24a,10,30,0.5,3); }   // visible "catching up!" sparkle, not silent luck
-  else r.item = roll<0.45?'boost' : roll<0.78?'spore' : 'cyst';
+  else if(roll<0.32) r.item='boost';
+  else if(roll<0.52) r.item='spore';
+  else if(roll<0.68) r.item='cyst';
+  else if(roll<0.84) r.item='shield';
+  else r.item='slick';
   if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
 function useItem(r){
@@ -1742,6 +1746,21 @@ function useItem(r){
     const bx=r.x-Math.sin(r.head)*8, bz=r.z-Math.cos(r.head)*8;
     m.position.set(bx,r.y+2.5,bz); scene.add(m);
     hazards.push({mesh:m,x:bx,z:bz,life:14,owner:r,arm:0.6});
+  } else if(r.item==='shield'){
+    // pure counterplay item: no offense, just blocks the next few seconds of spore/cyst/slick
+    // hits outright — answers "there's no way to defend against getting hit" from review
+    r.shieldT=5;
+    burst(r.x,r.y+3,r.z,0x6df2d0,16,40,0.6,4);
+    if(r.you){ showBanner('Shielded!'); SFX.item(); }
+  } else if(r.item==='slick'){
+    // tossed forward (not dropped behind like cyst) — a wider, longer puddle that saps
+    // speed on contact instead of the disorienting cyst/spore spin-out: a different kind
+    // of punish (lost momentum) so the item pool isn't three flavors of the same hit
+    const m=new T.Mesh(new T.CylinderGeometry(6,6,0.3,16),
+      new T.MeshPhongMaterial({color:0x3ab0ff,emissive:0x0a3a5a,transparent:true,opacity:0.75,flatShading:true}));
+    const bx=r.x+Math.sin(r.head)*14, bz=r.z+Math.cos(r.head)*14;
+    m.position.set(bx,r.y+0.3,bz); scene.add(m);
+    hazards.push({mesh:m,x:bx,z:bz,life:9,owner:r,arm:0.4,slick:true});
   }
   r.item=null;
 }
@@ -1791,6 +1810,8 @@ function updateRacer(r,dt){
     r.aiDelay-=dt;
     if(r.item && r.aiDelay<=0){ useItem(r); r.aiDelay=2; }
   }
+
+  if(r.shieldT>0) r.shieldT-=dt;   // passive counter; hazard/projectile hit checks consult it directly
 
   if(r.spinT>0){ r.spinT-=dt; r.head+=dt*16; r.spd*=Math.pow(0.2,dt);
     r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
@@ -1976,8 +1997,14 @@ function placeOnTrack(r,dt){
     r.finished=true; r.finishT=raceTime;
     if(r.you){                                   // finish flourish for the player
       showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(0.9); SFX.finish(); stopEngine();
-      for(const c of [0xffd27a,0x6df2d0,0xff7ac0,0xffffff])
-        burst(r.x, r.y+5, r.z, c, 18, 70, 1.0, 5);
+      noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
+      const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
+      for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 18, 70, 1.0, 5);
+      // second and third confetti waves, staggered — the finish used to be one instant
+      // pop; this keeps particles raining for ~700ms so the moment actually lands
+      for(let wave=1;wave<=2;wave++) setTimeout(()=>{
+        for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 10, 55+wave*15, 0.8, 4);
+      }, wave*230);
       if(!trackLoop) eggAnim=2.4;                 // trigger the fertilize animation on the egg
     }
   }
@@ -2027,9 +2054,19 @@ function collide(){
   for(const h of hazards){
     h.arm-=1/60;
     for(const r of racers){
-      if(r.finished||r.spinT>0)continue;
+      if(r.finished||r.spinT>0||r.shieldT>0)continue;
       if(h.arm>0 && r===h.owner)continue;
-      if(Math.hypot(r.x-h.x,r.z-h.z)<5){ r.spinT=1.1; h.life=0; }
+      if(h.slick){
+        // a puddle, not a one-shot mine: stays live and can catch several different
+        // racers over its lifetime, but each racer only pays the speed penalty once
+        // (else standing in it re-applies *0.45 every frame and stalls to zero instantly,
+        // same class of bug the wall-collision cooldown fixed earlier)
+        (h.hit||(h.hit=new Set()));
+        if(!h.hit.has(r) && Math.hypot(r.x-h.x,r.z-h.z)<7){
+          h.hit.add(r); r.spd*=0.45; burst(r.x,r.y+1,r.z,0x3ab0ff,10,26,0.4,3);
+          if(r.you){ kickShake(0.2); SFX.bump&&SFX.bump(); }
+        }
+      } else if(Math.hypot(r.x-h.x,r.z-h.z)<5){ r.spinT=1.1; h.life=0; }
     }
   }
   hazards=hazards.filter(h=>{ h.life-=1/60; if(h.life<=0){scene.remove(h.mesh);return false;} return true; });
@@ -2045,7 +2082,7 @@ function collide(){
   projectiles=projectiles.filter(p=>{
     p.life-=1/60; p.x+=Math.sin(p.head)*p.spd/60; p.z+=Math.cos(p.head)*p.spd/60;
     const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z);
-    for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0)continue;
+    for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0)continue;
       if(Math.hypot(r.x-p.x,r.z-p.z)<5){ r.spinT=1.2; p.life=0; } }
     if(p.life<=0){scene.remove(p.mesh);return false;} return true;
   });
@@ -2274,7 +2311,7 @@ function syncHUD(){
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
-    slot.textContent=['🔥','🦠','🟣'][Math.floor(performance.now()/70)%3];
+    slot.textContent=['🔥','🦠','🟣','🛡️','💧'][Math.floor(performance.now()/70)%5];
     slot.classList.add('spin'); me._pItem=null;
   } else {
     const ic=me.item?ITEM_ICONS[me.item]:'';
