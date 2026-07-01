@@ -224,6 +224,10 @@
   @keyframes toastPop{0%{opacity:0;transform:translateX(-50%) translateY(6px);}
     20%{opacity:1;transform:translateX(-50%) translateY(0);}
     80%{opacity:1;} 100%{opacity:0;transform:translateX(-50%) translateY(-6px);}}
+  /* event-type color coding for banners + toasts */
+  #toast.t-red,#banner.b-red{color:#ff5d8f;text-shadow:0 0 18px rgba(255,60,110,.8);}
+  #toast.t-gold{color:#ffd24a;text-shadow:0 0 18px rgba(255,200,60,.8);}
+  #toast.t-green{color:#7ddb4a;text-shadow:0 0 18px rgba(120,220,70,.8);}
 
   #count{animation:cdPulse .75s ease;}
   @keyframes cdPulse{0%{transform:scale(.4);opacity:0;}40%{transform:scale(1.1);opacity:1;}100%{transform:scale(1);opacity:1;}}
@@ -518,9 +522,12 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
   curStyle=MUSIC_STYLES[chosenType&&chosenType.id]||MUSIC_STYLES.guido;   // per-character style
   musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
-function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; } }
-// final lap: kick the music faster and pulse the HUD red at the edges — the whole
-// screen should feel like it knows this is the last push, not just a text banner
+let hbTimer=null;
+function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
+  if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
+// final lap: kick the music faster, pulse the HUD red at the edges, AND thump a
+// heartbeat under everything — the red vignette alone can vanish against the game's
+// own red-pink palette, but a heartbeat is unmistakable on any track
 function rampFinalLap(){
   document.body.classList.add('final-lap');
   if(musicTimer && curStyle){
@@ -528,6 +535,10 @@ function rampFinalLap(){
     const tk=TRACKS[selTrack]||{};
     musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)*0.72);   // faster, more urgent
   }
+  if(actx && !hbTimer) hbTimer=setInterval(()=>{
+    if(state!=='race'){ clearInterval(hbTimer); hbTimer=null; return; }
+    beep(52,0.1,'sine',0.4); setTimeout(()=>beep(46,0.08,'sine',0.3),150);   // lub-dub
+  }, 850);
 }
 // victory fanfare: the racing music cuts out at the finish line, then this plays a rising
 // run through the FINISHING character's own scale/timbre — the climax is character-flavored
@@ -860,13 +871,15 @@ function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 const elSpeed=$('speed'), elFlash=$('boostflash'), elVig=$('vignette'),
       elDM=$('drift-meter'), elDF=$('drift-fill'), elBanner=$('banner');
 const gaugeCtx=$('gauge').getContext('2d');
-function showBanner(txt){ elBanner.textContent=txt; elBanner.classList.remove('show');
+function showBanner(txt,cls){ elBanner.textContent=txt; elBanner.className=cls||'';
   void elBanner.offsetWidth; elBanner.classList.add('show'); }
 // small toast under the item slot for minor callouts (overtakes, whip taunts, item
 // states) — they were all fighting over the one center banner, each restarting its
-// 1.6s pop and stomping "Final Lap"-class messages mid-display
-function showToast(txt){ const el=$('toast'); if(!el)return;
-  el.textContent=txt; el.classList.remove('show');
+// 1.6s pop and stomping "Final Lap"-class messages mid-display.
+// cls variants (t-red/t-gold/t-green) color-code the event type so a whip reads
+// differently from an overtake at a glance instead of all being the same pale text
+function showToast(txt,cls){ const el=$('toast'); if(!el)return;
+  el.textContent=txt; el.className=cls||'';
   void el.offsetWidth; el.classList.add('show'); }
 
 /* arc speed gauge */
@@ -1810,8 +1823,12 @@ let firePrev=false, whipPrev=false;
 const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'💥',mega:'🍄',glue:'🍯'};
 function giveItem(r){
   const roll=Math.random();
+  // desperation luck: dead last in a 6-racer field gets a real comeback tool sometimes —
+  // 6th place should be a story, not a grave
+  if(r.place>=5 && roll<0.22){ r.item='mega';
+    burst(r.x,r.y+5,r.z,0xffd24a,14,36,0.6,4); }
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
-  if(r.place>=3 && roll<0.6){ r.item='boost';
+  else if(r.place>=3 && roll<0.6){ r.item='boost';
     burst(r.x,r.y+5,r.z,0xffd24a,10,30,0.5,3); }   // visible "catching up!" sparkle, not silent luck
   else if(roll<0.24) r.item='boost';
   else if(roll<0.40) r.item='spore';
@@ -1830,6 +1847,7 @@ function useItem(r){
   else if(r.item==='spore'){
     const m=new T.Mesh(new T.SphereGeometry(2.4,10,8),
       new T.MeshPhongMaterial({color:0xff5d8f,emissive:0x661022,flatShading:true}));
+    m.add(glowSprite(0xff5d8f,11));                 // fat glowing halo so the shot reads in flight
     m.position.set(r.x,r.y+3,r.z); scene.add(m);
     projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230});
   } else if(r.item==='cyst'){
@@ -1872,12 +1890,13 @@ function useItem(r){
     // to hazards/projectiles, slight speed bonus — the power trip item
     r.megaT=5;
     burst(r.x,r.y+4,r.z,0xffd24a,20,60,0.7,5);
-    if(r.you){ showToast('HUGE!'); kickShake(0.5); flashFx(0.25,'#ffd24a'); SFX.boost(); }
+    if(r.you){ showToast('HUGE!','t-gold'); kickShake(0.5); flashFx(0.25,'#ffd24a'); SFX.boost(); }
   } else if(r.item==='glue'){
     // sticky glue shot: same homing delivery as the spore, but the payload SLOWS the
     // victim (3.5s at half speed) instead of spinning them — momentum punish vs disorientation
     const m=new T.Mesh(new T.SphereGeometry(2.2,10,8),
       new T.MeshPhongMaterial({color:0x7ddb4a,emissive:0x1e4a0a,flatShading:true}));
+    m.add(glowSprite(0x7ddb4a,11));                 // fat glowing halo so the shot reads in flight
     m.position.set(r.x,r.y+3,r.z); scene.add(m);
     projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230,glue:true});
   }
@@ -2128,17 +2147,23 @@ function placeOnTrack(r,dt){
       playVictoryFanfare(chosenType&&chosenType.id);  // rising run through the finisher's own musical style
       const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
       for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
-      // four staggered confetti waves — the finish used to be one instant pop, this keeps
-      // particles raining for over a second so the moment actually reads as a climax
-      for(let wave=1;wave<=4;wave++) setTimeout(()=>{
+      // six staggered confetti waves — the finish used to be one instant pop, this keeps
+      // particles raining right through the victory-orbit shot so the moment reads as a climax
+      for(let wave=1;wave<=6;wave++) setTimeout(()=>{
         for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 12, 60+wave*15, 0.9, 5);
-      }, wave*220);
+      }, wave*240);
       if(!trackLoop) eggAnim=2.4;                 // trigger the fertilize animation on the egg
     }
   }
 }
 
 const WHIP_TAUNTS=['WHIPPED!','SMACKED!','TAIL-SLAP!','SENT HIM!','CRACKED!'];
+// one signature bark per character — fired at YOU when an AI lands a whip, so rivals
+// have a voice mid-race instead of being silent traffic
+const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arriba!',
+  dragon:'Feel the dragon!', king:'Pay up!', chad:'Wipeout, brah!', hillbilly:'Yeehaw!',
+  wall:'SELL!', korean:'Precision.', rick:'Super freaky!', french:'Sacré bleu!',
+  sailor:'Yarrr!', cholo:'¡Órale!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
@@ -2149,7 +2174,14 @@ function doWhip(atk,vic){
   if(big){
     hitStopT=Math.max(hitStopT,0.06);               // a tiny freeze — whip should feel like a HIT, not a nudge
     kickShake(0.75); flashFx(0.25,'#ffe08a'); SFX.whip();
-    if(atk.you) showToast(WHIP_TAUNTS[Math.floor(Math.random()*WHIP_TAUNTS.length)]);
+    if(atk.you){
+      // rivalry memory: paying back the racer who last whipped YOU is its own moment
+      if(atk._lastAtk===vic){ showToast('REVENGE!','t-red'); kickShake(1.0); atk._lastAtk=null; }
+      else showToast(WHIP_TAUNTS[Math.floor(Math.random()*WHIP_TAUNTS.length)],'t-red');
+    } else if(vic.you){
+      vic._lastAtk=atk;
+      showToast((atk.name.split(' ')[0])+': '+(BARKS[atk.id]||'Gotcha!'),'t-red');
+    }
   }
 }
 function collide(){
@@ -2231,7 +2263,7 @@ function collide(){
     for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;
       if(Math.hypot(r.x-p.x,r.z-p.z)<5){
         if(p.glue){ r.glueT=3.5; burst(r.x,r.y+2,r.z,0x7ddb4a,16,40,0.6,4);
-          if(r.you){ kickShake(0.3); showToast('GLUED!'); SFX.bump&&SFX.bump(); } }
+          if(r.you){ kickShake(0.3); showToast('GLUED!','t-green'); SFX.bump&&SFX.bump(); } }
         else r.spinT=1.2;
         p.life=0; } }
     if(p.life<=0){scene.remove(p.mesh);return false;} return true;
@@ -2255,7 +2287,7 @@ function rank(){
     // cooldown so a place that flickers back and forth right at the pass doesn't spam
     // several banners for what's really one overtake
     if(me._lastPlace!=null && me.place<me._lastPlace && now-(me._otCD||0)>1500){
-      showToast(OVERTAKE_CALLS[Math.floor(Math.random()*OVERTAKE_CALLS.length)]);
+      showToast(OVERTAKE_CALLS[Math.floor(Math.random()*OVERTAKE_CALLS.length)],'t-gold');
       flashFx(0.12,'#6df2d0'); me._otCD=now;
     }
     me._lastPlace=me.place;
@@ -2392,8 +2424,10 @@ function flashFx(amt,color){
 function updateCamera(dt){
   const me=racers.find(r=>r.you); if(!me)return;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
-  // cinematic slow orbit around the player during the 3-2-1 countdown
-  if(state==='count'){
+  // cinematic slow orbit around the player during the 3-2-1 countdown,
+  // and again as a victory-lap orbit while the race wraps up after you finish
+  // (only once the finish-line FOV punch has played out — it runs in the chase branch)
+  if(state==='count' || (state==='race' && me.finished && finishPunchT<=0)){
     const a=performance.now()*0.0006;
     camera.position.lerp(new T.Vector3(
       me.x+Math.sin(a)*34, me.y+16, me.z+Math.cos(a)*34), Math.min(1,3*dt));
@@ -2402,9 +2436,12 @@ function updateCamera(dt){
     camera.updateProjectionMatrix();
     return;
   }
-  const boost=me.boostT>0;
-  const back=fwd.clone().multiplyScalar(boost?-27:-30);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,boost?11.5:13,0));
+  const boost=me.boostT>0, mega=me.megaT>0;
+  // mega: pull the camera back and up so growing 1.8x actually READS as huge,
+  // plus a constant low rumble while it lasts
+  if(mega) camShake=Math.max(camShake,0.09);
+  const back=fwd.clone().multiplyScalar(mega?-42:(boost?-27:-30));
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,mega?18:(boost?11.5:13),0));
   camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
     camera.position.x += (Math.random()*2-1)*camShake;
@@ -2499,8 +2536,8 @@ function syncHUD(){
   } else { elDM.style.opacity=0; }
 
   // final-lap banner (once)
-  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); SFX.finalLap(); rampFinalLap(); }
-  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); SFX.finalLap(); rampFinalLap(); }
+  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap','b-red'); SFX.finalLap(); rampFinalLap(); }
+  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!','b-red'); SFX.finalLap(); rampFinalLap(); }
 
   // speed-line + vignette intensity
   const boost=me.boostT>0;
@@ -2525,7 +2562,18 @@ function frame(now){
     raceTime=(now-tStart)/1000;
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
-    if(racers.every(r=>r.finished))endRace();
+    // once YOU'RE done, don't leave the winner floating in dead air while AI stragglers
+    // dribble home — give it a few seconds of orbit-cam glory, then call the race,
+    // projecting unfinished AI times from their remaining distance (order preserved)
+    const meF=racers.find(r=>r.you);
+    if(racers.every(r=>r.finished)) endRace();
+    else if(meF && meF.finished){
+      meF._wrapT=(meF._wrapT===undefined?3.5:meF._wrapT)-dt;
+      if(meF._wrapT<=0){
+        for(const r of racers) if(!r.finished){ r.finished=true; r.finishT=raceTime+(LAPS-r.total)*12; }
+        endRace();
+      }
+    }
     syncHUD();
   }
   if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); drawMap(); }
@@ -2570,6 +2618,7 @@ function countdown(){
 }
 function endRace(){
   state='done'; stopEngine(); unlockOrient(); stopMusic();
+  document.body.classList.remove('final-lap');   // stop the red pulse on the results screen
   $('throttle').style.display='none';
   const me=racers.find(r=>r.you);
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
@@ -2760,7 +2809,7 @@ buildRacers = function(){
     const shadow=new T.Mesh(new T.PlaneGeometry(9,9),
       new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0.7}));
     shadow.rotation.x=-Math.PI/2; scene.add(shadow);
-    return {you, name:t.name, hue:t.hue, obj, shadow,
+    return {you, id:t.id, name:t.name, hue:t.hue, obj, shadow,
       x:pos.x, z:pos.z, y:pos.y,
       head:Math.atan2(s.t.x,s.t.z),
       spd:0, idx:2, prog:s.u, lap:0, total:0,
@@ -3009,6 +3058,7 @@ $('quitbtn').onclick=()=>{
   clearTimeout(quitTimer); quitArm=false;
   $('quitbtn').textContent='✕'; $('quitbtn').classList.remove('armed');
   gpActive=false; state='menu'; stopEngine(); stopMusic(); unlockOrient();
+  document.body.classList.remove('final-lap');
   $('throttle').style.display='none';
   $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
   $('start').classList.remove('hidden');
