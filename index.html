@@ -24,6 +24,10 @@
   #app{position:fixed;inset:0;}
   canvas{display:block;}
   #ui{position:absolute;inset:0;pointer-events:none;}
+  /* final-lap urgency vignette — pulsing red edge glow, screen-wide, toggled via a body class */
+  body.final-lap::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:6;
+    box-shadow:inset 0 0 90px 12px rgba(255,60,60,.55);animation:finalLapPulse 0.9s ease-in-out infinite;}
+  @keyframes finalLapPulse{0%,100%{opacity:.35}50%{opacity:.9}}
   #map{position:absolute;top:12px;left:12px;}
 
   .hud{position:absolute;text-transform:uppercase;letter-spacing:.14em;}
@@ -481,6 +485,16 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   curStyle=MUSIC_STYLES[chosenType&&chosenType.id]||MUSIC_STYLES.guido;   // per-character style
   musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; } }
+// final lap: kick the music faster and pulse the HUD red at the edges — the whole
+// screen should feel like it knows this is the last push, not just a text banner
+function rampFinalLap(){
+  document.body.classList.add('final-lap');
+  if(musicTimer && curStyle){
+    clearInterval(musicTimer);
+    const tk=TRACKS[selTrack]||{};
+    musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)*0.72);   // faster, more urgent
+  }
+}
 // victory fanfare: the racing music cuts out at the finish line, then this plays a rising
 // run through the FINISHING character's own scale/timbre — the climax is character-flavored
 // too, not just a generic jingle, same idea as the per-character music loop
@@ -1754,17 +1768,18 @@ bind('whipbtn','whip');
 let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
-const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧'};
+const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'👏'};
 function giveItem(r){
   const roll=Math.random();
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
   if(r.place>=3 && roll<0.6){ r.item='boost';
     burst(r.x,r.y+5,r.z,0xffd24a,10,30,0.5,3); }   // visible "catching up!" sparkle, not silent luck
-  else if(roll<0.32) r.item='boost';
-  else if(roll<0.52) r.item='spore';
-  else if(roll<0.68) r.item='cyst';
-  else if(roll<0.84) r.item='shield';
-  else r.item='slick';
+  else if(roll<0.28) r.item='boost';
+  else if(roll<0.46) r.item='spore';
+  else if(roll<0.62) r.item='cyst';
+  else if(roll<0.76) r.item='shield';
+  else if(roll<0.90) r.item='slick';
+  else r.item='clap';       // rarest — it's the wildest one, hits everyone nearby at once
   if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
 function useItem(r){
@@ -1797,6 +1812,20 @@ function useItem(r){
     const bx=r.x+Math.sin(r.head)*14, bz=r.z+Math.cos(r.head)*14;
     m.position.set(bx,r.y+0.3,bz); scene.add(m);
     hazards.push({mesh:m,x:bx,z:bz,life:9,owner:r,arm:0.4,slick:true});
+  } else if(r.item==='clap'){
+    // instant AoE shockwave, no travel time and no dropped hazard — hits EVERYONE nearby
+    // at once instead of one target, the most chaotic item in the pool on purpose
+    const RAD=22;
+    for(const o of racers){
+      if(o===r||o.finished||o.shieldT>0)continue;
+      const dx=o.x-r.x,dz=o.z-r.z,dd=Math.hypot(dx,dz);
+      if(dd<RAD){ const ux=dx/(dd||1),uz=dz/(dd||1);
+        o.x+=ux*10; o.z+=uz*10; o.spinT=Math.max(o.spinT,0.9);
+        if(o.you){ kickShake(0.6); } }
+    }
+    burst(r.x,r.y+2,r.z,0xffe08a,30,90,0.7,6);
+    burst(r.x,r.y+2,r.z,0xff5d8f,20,70,0.6,5);
+    if(r.you){ kickShake(0.5); flashFx(0.3,'#ffe08a'); SFX.whip(); }
   }
   r.item=null;
 }
@@ -2050,12 +2079,19 @@ function placeOnTrack(r,dt){
   }
 }
 
+const WHIP_TAUNTS=['WHIPPED!','SMACKED!','TAIL-SLAP!','SENT HIM!','CRACKED!'];
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
   atk.spd=Math.min(BOOSTV, atk.spd+8); atk._whip=performance.now();
-  burst((atk.x+vic.x)/2,(atk.y+vic.y)/2+3,(atk.z+vic.z)/2,0xffe08a,12,46,0.45,4);
-  if(atk.you||vic.you){ kickShake(0.5); SFX.whip(); }
+  const mx=(atk.x+vic.x)/2, my=(atk.y+vic.y)/2+3, mz=(atk.z+vic.z)/2;
+  const big=atk.you||vic.you;                      // bigger, punchier version when it's YOUR fight
+  burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
+  if(big){
+    hitStopT=Math.max(hitStopT,0.06);               // a tiny freeze — whip should feel like a HIT, not a nudge
+    kickShake(0.75); flashFx(0.25,'#ffe08a'); SFX.whip();
+    if(atk.you) showBanner(WHIP_TAUNTS[Math.floor(Math.random()*WHIP_TAUNTS.length)]);
+  }
 }
 function collide(){
   whipReady=false; whipTarget=null;
@@ -2129,6 +2165,7 @@ function collide(){
 }
 
 /* ranking */
+const OVERTAKE_CALLS=['OVERTAKE!','PASSED HIM!','MOVING UP!','TAKEN!'];
 function rank(){
   const order=[...racers].sort((a,b)=>{
     if(a.finished&&b.finished)return a.finishT-b.finishT;
@@ -2136,6 +2173,19 @@ function rank(){
     return b.total-a.total;
   });
   order.forEach((r,i)=>r.place=i+1);
+  // "narrates its own highlight reel" — call out the player moving up in real time,
+  // not just at the finish line
+  const me=racers.find(r=>r.you);
+  if(me && !me.finished){
+    const now=performance.now();
+    // cooldown so a place that flickers back and forth right at the pass doesn't spam
+    // several banners for what's really one overtake
+    if(me._lastPlace!=null && me.place<me._lastPlace && now-(me._otCD||0)>1500){
+      showBanner(OVERTAKE_CALLS[Math.floor(Math.random()*OVERTAKE_CALLS.length)]);
+      flashFx(0.12,'#6df2d0'); me._otCD=now;
+    }
+    me._lastPlace=me.place;
+  }
 }
 
 /* ============== VISUALS PER FRAME ============== */
@@ -2352,7 +2402,7 @@ function syncHUD(){
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
-    slot.textContent=['🔥','🦠','🟣','🛡️','💧'][Math.floor(performance.now()/70)%5];
+    slot.textContent=['🔥','🦠','🟣','🛡️','💧','👏'][Math.floor(performance.now()/70)%6];
     slot.classList.add('spin'); me._pItem=null;
   } else {
     const ic=me.item?ITEM_ICONS[me.item]:'';
@@ -2372,8 +2422,8 @@ function syncHUD(){
   } else { elDM.style.opacity=0; }
 
   // final-lap banner (once)
-  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); SFX.finalLap(); }
-  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); SFX.finalLap(); }
+  if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap'); SFX.finalLap(); rampFinalLap(); }
+  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!'); SFX.finalLap(); rampFinalLap(); }
 
   // speed-line + vignette intensity
   const boost=me.boostT>0;
@@ -2430,6 +2480,7 @@ function frame(now){
 /* ============== FLOW ============== */
 function countdown(){
   buildRacers();
+  document.body.classList.remove('final-lap');   // clear any pulse left over from a previous race
   $('start').classList.add('hidden'); $('finish').classList.add('hidden');
   $('cd').classList.remove('hidden'); $('count').textContent='3';
   state='count'; let n=3;
