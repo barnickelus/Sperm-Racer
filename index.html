@@ -448,18 +448,25 @@ const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
   // tempoMul = relative to the track's own tempo (<1 = faster, >1 = slower/spacious)
-  guido:    { melWave:'square',   bassWave:'square',   mel:[0,3,5,7,10,7,5,3],                         bass:[0,0,5,7],   hihat:1, beatGroup:4, tempoMul:0.85 }, // Jersey club anthem
-  irish:    { melWave:'triangle', bassWave:'triangle', mel:[0,2,4,7,9,12,9,7,4,2,0,4,7,9,7,4],          bass:[0,0,7,0],   hihat:2, beatGroup:4, tempoMul:0.75 }, // fiddle jig, fast run
-  latin:    { melWave:'square',   bassWave:'sawtooth', mel:[0,3,7,10,7,3,0,3],                          bass:[0,0,3,7],   hihat:1, beatGroup:4, tempoMul:0.95 }, // clave syncopation
+  // guido/irish/latin/hillbilly/sailor carry REAL traditional melodies (all public
+  // domain folk tunes), encoded as even eighth-notes; null = rest/held note
+  guido:    { melWave:'square',   bassWave:'square',                                                     bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55,
+              mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3] },                          // Tarantella Napoletana (trad.)
+  irish:    { melWave:'triangle', bassWave:'triangle',                                                   bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
+              mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4] },                           // The Irish Washerwoman (trad. jig)
+  latin:    { melWave:'square',   bassWave:'sawtooth',                                                   bass:[0,0,3,7],   hihat:1, beatGroup:4, tempoMul:0.8,
+              mel:[0,0,0,5,9,null, 0,0,0,5,9,null, 9,9,8,8,5,5, 4,2,0,null,null,null] },                // La Cucaracha (trad.)
   dragon:   { melWave:'sine',     bassWave:'sine',     mel:[0,2,5,7,9,7,5,2],                           bass:[0,0,0,7],   hihat:0, beatGroup:4, tempoMul:1.4  }, // pentatonic, gong-slow
   king:     { melWave:'square',   bassWave:'sine',     mel:[0,0,3,0,7,0,10,7],                          bass:[0,0,0,0],   hihat:1, beatGroup:4, tempoMul:0.7  }, // trap 808 + busy hats
   chad:     { melWave:'triangle', bassWave:'triangle', mel:[0,4,7,4,0,4,7,9],                           bass:[0,0,4,5],   hihat:2, beatGroup:4, tempoMul:1.0  }, // surf-rock major
-  hillbilly:{ melWave:'triangle', bassWave:'triangle', mel:[0,2,4,5,7,9,7,5,4,2,0,2,4,5,7,9],           bass:[0,0,5,7],   hihat:2, beatGroup:4, tempoMul:0.65 }, // banjo picking, fast
+  hillbilly:{ melWave:'triangle', bassWave:'triangle',                                                   bass:[0,0,5,7],   hihat:2, beatGroup:4, tempoMul:0.6,
+              mel:[0,0,2,4,7,7,4,7, 9,9,7,4,0,2,4,2, 0,0,2,4,7,7,4,7, 9,7,4,2,0,null,null,null] },      // Turkey in the Straw (trad.)
   wall:     { melWave:'sine',     bassWave:'sine',     mel:[0,4,7,11,9,7,4,0],                          bass:[0,4,7,4],   hihat:3, beatGroup:4, tempoMul:1.2  }, // smooth elevator jazz
   korean:   { melWave:'square',   bassWave:'square',   mel:[0,3,6,9,0,3,6,9],                           bass:[0,6,0,6],   hihat:1, beatGroup:4, tempoMul:0.7  }, // precise, glitchy
   rick:     { melWave:'sawtooth', bassWave:'square',   mel:[0,7,3,10,7,3,10,0],                         bass:[0,0,7,5],   hihat:1, beatGroup:4, tempoMul:0.9  }, // P-funk syncopation
   french:   { melWave:'triangle', bassWave:'triangle', mel:[0,4,7,4,0,4,7,4],                           bass:[0,7,4],     hihat:0, beatGroup:3, tempoMul:1.3  }, // musette waltz, 3-feel
-  sailor:   { melWave:'triangle', bassWave:'sawtooth', mel:[0,3,5,7,10,7,5,3],                          bass:[0,0,5,3],   hihat:2, beatGroup:4, tempoMul:1.0  }, // sea-shanty roll
+  sailor:   { melWave:'triangle', bassWave:'sawtooth',                                                   bass:[0,0,5,3],   hihat:2, beatGroup:4, tempoMul:0.7,
+              mel:[0,null,4,2,4,7,4,2, 0,null,4,2,4,0,-1,0, 2,null,5,4,5,9,5,4, 2,4,5,4,2,0,null,null] },// Sailor's Hornpipe (trad.)
   cholo:    { melWave:'sine',     bassWave:'sine',     mel:[0,3,5,8,10,8,5,3],                          bass:[0,0,0,5],   hihat:2, beatGroup:4, tempoMul:1.1  }, // lowrider soul groove
 };
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
@@ -474,9 +481,13 @@ function playNote(freq,dur,vol,type){
 function musicTick(){
   const st=curStyle||MUSIC_STYLES.guido;
   const bg=st.beatGroup||4, steps=bg*4;
-  const step=musicStep++ % steps;
+  const raw=musicStep++;
+  const step=raw % steps;                 // bar position (bass/hats gate on this)
   if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.2,st.bassWave);
-  playNote(noteFreq(st.mel[step%st.mel.length]+12),0.16,0.085,st.melWave);
+  // melody indexes off the RAW counter so tunes longer than one 16-step bar play all
+  // the way through — real melodies (32+ notes) were silently truncated to bar 1 before
+  const n=st.mel[raw%st.mel.length];
+  if(n!==null) playNote(noteFreq(n+12),0.16,0.085,st.melWave);   // null = rest
   if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.03,6500);
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
@@ -501,7 +512,7 @@ function rampFinalLap(){
 function playVictoryFanfare(styleId){
   if(!actx)return;
   const st=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;
-  const run=[...st.mel.slice(0,4),12,15,19,24];   // the character's own opening notes, then a big climb
+  const run=[...st.mel.filter(n=>n!==null).slice(0,4),12,15,19,24];   // the character's own opening notes (skipping rests), then a big climb
   run.forEach((n,i)=>setTimeout(()=>{
     playNote(noteFreq(n), 0.32, 0.22, st.melWave);
     playNote(noteFreq(n-12), 0.32, 0.12, st.bassWave);
@@ -1768,17 +1779,19 @@ bind('whipbtn','whip');
 let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
-const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'👏'};
+const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'👏',mega:'🍄',glue:'🕸️'};
 function giveItem(r){
   const roll=Math.random();
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
   if(r.place>=3 && roll<0.6){ r.item='boost';
     burst(r.x,r.y+5,r.z,0xffd24a,10,30,0.5,3); }   // visible "catching up!" sparkle, not silent luck
-  else if(roll<0.28) r.item='boost';
-  else if(roll<0.46) r.item='spore';
-  else if(roll<0.62) r.item='cyst';
-  else if(roll<0.76) r.item='shield';
-  else if(roll<0.90) r.item='slick';
+  else if(roll<0.24) r.item='boost';
+  else if(roll<0.40) r.item='spore';
+  else if(roll<0.52) r.item='cyst';
+  else if(roll<0.64) r.item='shield';
+  else if(roll<0.76) r.item='slick';
+  else if(roll<0.86) r.item='glue';
+  else if(roll<0.94) r.item='mega';
   else r.item='clap';       // rarest — it's the wildest one, hits everyone nearby at once
   if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
@@ -1826,6 +1839,19 @@ function useItem(r){
     burst(r.x,r.y+2,r.z,0xffe08a,30,90,0.7,6);
     burst(r.x,r.y+2,r.z,0xff5d8f,20,70,0.6,5);
     if(r.you){ kickShake(0.5); flashFx(0.3,'#ffe08a'); SFX.whip(); }
+  } else if(r.item==='mega'){
+    // grow huge for 5s: physically bigger, rams normal-size rivals into a spin, immune
+    // to hazards/projectiles, slight speed bonus — the power trip item
+    r.megaT=5;
+    burst(r.x,r.y+4,r.z,0xffd24a,20,60,0.7,5);
+    if(r.you){ showBanner('HUGE!'); kickShake(0.5); flashFx(0.25,'#ffd24a'); SFX.boost(); }
+  } else if(r.item==='glue'){
+    // sticky glue shot: same homing delivery as the spore, but the payload SLOWS the
+    // victim (3.5s at half speed) instead of spinning them — momentum punish vs disorientation
+    const m=new T.Mesh(new T.SphereGeometry(2.2,10,8),
+      new T.MeshPhongMaterial({color:0x7ddb4a,emissive:0x1e4a0a,flatShading:true}));
+    m.position.set(r.x,r.y+3,r.z); scene.add(m);
+    projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230,glue:true});
   }
   r.item=null;
 }
@@ -1877,6 +1903,9 @@ function updateRacer(r,dt){
   }
 
   if(r.shieldT>0) r.shieldT-=dt;   // passive counter; hazard/projectile hit checks consult it directly
+  if(r.megaT>0) r.megaT-=dt;       // grow-large: rams rivals aside, immune to hits (checked like shield)
+  if(r.glueT>0){ r.glueT-=dt;      // glued: speed target halved below, green drip particles
+    if(Math.random()<0.25) burst(r.x,r.y+1,r.z,0x7ddb4a,2,10,0.3,2); }
 
   if(r.spinT>0){ r.spinT-=dt; r.head+=dt*16; r.spd*=Math.pow(0.2,dt);
     r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
@@ -1904,6 +1933,8 @@ function updateRacer(r,dt){
 
   let target = onRoad?MAXV:MAXV*0.45;
   if(!r.you) target*=r.skill;
+  if(r.glueT>0) target*=0.5;       // stuck in glue — slow crawl until it wears off
+  if(r.megaT>0) target*=1.12;      // mega runs a little hot on top of the ram immunity
   // analog cruise from slider or tilt: partial throttle -> lower top speed
   if(r.you && isTouch && !r.boostT){
     const thr = sliderMode ? sliderThrottle : (tiltMode ? tiltThrottle : 1);
@@ -2106,8 +2137,19 @@ function collide(){
   for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
     const a=racers[i],b=racers[j];
     const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);
-    if(d<7&&d>0.01){ const push=(7-d)/2, ux=dx/d,uz=dz/d;
-      a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push;
+    const rad=(a.megaT>0||b.megaT>0)?10:7;    // mega body is physically bigger
+    if(d<rad&&d>0.01){ const push=(rad-d)/2, ux=dx/d,uz=dz/d;
+      // mega ram: a grown racer bulldozes normal-size rivals aside instead of trading a soft push
+      const am=a.megaT>0, bm=b.megaT>0;
+      if(am!==bm){
+        const big=am?a:b, sml=am?b:a, sgn=am?1:-1;
+        sml.x+=ux*sgn*push*2.4; sml.z+=uz*sgn*push*2.4;
+        if(sml.spinT<=0 && sml.shieldT<=0){ sml.spinT=0.8; sml.spd*=0.5;
+          burst(sml.x,sml.y+2,sml.z,0xffb44a,14,50,0.5,4);
+          if(big.you||sml.you){ kickShake(0.5); SFX.bump&&SFX.bump(); } }
+      } else {
+        a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push;
+      }
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
       if(!atk.you && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) doWhip(atk,vic); // AI auto whip
@@ -2130,7 +2172,7 @@ function collide(){
   for(const h of hazards){
     h.arm-=1/60;
     for(const r of racers){
-      if(r.finished||r.spinT>0||r.shieldT>0)continue;
+      if(r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;   // mega plows through hazards
       if(h.arm>0 && r===h.owner)continue;
       if(h.slick){
         // a puddle, not a one-shot mine: stays live and can catch several different
@@ -2158,8 +2200,12 @@ function collide(){
   projectiles=projectiles.filter(p=>{
     p.life-=1/60; p.x+=Math.sin(p.head)*p.spd/60; p.z+=Math.cos(p.head)*p.spd/60;
     const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z);
-    for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0)continue;
-      if(Math.hypot(r.x-p.x,r.z-p.z)<5){ r.spinT=1.2; p.life=0; } }
+    for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;
+      if(Math.hypot(r.x-p.x,r.z-p.z)<5){
+        if(p.glue){ r.glueT=3.5; burst(r.x,r.y+2,r.z,0x7ddb4a,16,40,0.6,4);
+          if(r.you){ kickShake(0.3); showBanner('GLUED!'); SFX.bump&&SFX.bump(); } }
+        else r.spinT=1.2;
+        p.life=0; } }
     if(p.life<=0){scene.remove(p.mesh);return false;} return true;
   });
 }
@@ -2194,6 +2240,9 @@ function syncObjects(dt,now){
     const o=r.obj;
     const lift = r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0;
     o.position.set(r.x, r.y + lift, r.z);
+    // mega item: swell up (and ease back down) — the whole model scales
+    const wantSc=r.megaT>0?1.8:1;
+    if(Math.abs((o.scale.x||1)-wantSc)>0.01){ const ns=o.scale.x+(wantSc-o.scale.x)*Math.min(1,6*dt); o.scale.setScalar(ns); }
     // glance over at rivals who are pulling alongside / about to pass — turn the head to look
     let near=null,nd=1e9;
     const GR=24;
@@ -2402,7 +2451,7 @@ function syncHUD(){
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
-    slot.textContent=['🔥','🦠','🟣','🛡️','💧','👏'][Math.floor(performance.now()/70)%6];
+    slot.textContent=['🔥','🦠','🟣','🛡️','💧','👏','🍄','🕸️'][Math.floor(performance.now()/70)%8];
     slot.classList.add('spin'); me._pItem=null;
   } else {
     const ic=me.item?ITEM_ICONS[me.item]:'';
