@@ -24,10 +24,13 @@
   #app{position:fixed;inset:0;}
   canvas{display:block;}
   #ui{position:absolute;inset:0;pointer-events:none;}
-  /* final-lap urgency vignette — pulsing red edge glow, screen-wide, toggled via a body class */
+  /* final-lap urgency vignette — pulsing red edge glow, screen-wide, toggled via a body class.
+     Kept moderate: at high opacity/size it floods small screens red-brown and kills HUD contrast */
   body.final-lap::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:6;
-    box-shadow:inset 0 0 90px 12px rgba(255,60,60,.55);animation:finalLapPulse 0.9s ease-in-out infinite;}
-  @keyframes finalLapPulse{0%,100%{opacity:.35}50%{opacity:.9}}
+    box-shadow:inset 0 0 90px 12px rgba(255,60,60,.55);animation:finalLapPulse 1.6s ease-in-out infinite;}
+  @keyframes finalLapPulse{0%,100%{opacity:.25}50%{opacity:.55}}
+  @media (max-width:480px){ body.final-lap::after{box-shadow:inset 0 0 50px 6px rgba(255,60,60,.5);} }
+  @media (prefers-reduced-motion:reduce){ body.final-lap::after{animation:none;opacity:.3;} }
   #map{position:absolute;top:12px;left:12px;}
 
   .hud{position:absolute;text-transform:uppercase;letter-spacing:.14em;}
@@ -96,6 +99,17 @@
     #actL{left:30px;bottom:24px;}
     #itemWrapL{left:150px;bottom:30px;}
     #throttle{right:24px;height:62vh;max-height:300px;}
+  }
+  /* narrow portrait phones: the full two-sided control mirror doesn't fit — the two
+     Item buttons overlapped each other, left Drift covered the speedo, and the item
+     slot clipped the minimap. Collapse to a single control set: Item left, Drift
+     right, speedo lifted above the Item button, minimap slightly shrunk. */
+  @media (max-width:500px) and (orientation:portrait){
+    #actL,#itemWrapL{display:none!important;}
+    #itemWrap{left:18px;right:auto;}
+    #speedo{bottom:140px;}
+    #mapwrap{transform:scale(.78);transform-origin:top left;}
+    #item{width:60px;height:60px;font-size:30px;}
   }
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -202,6 +216,14 @@
     18%{opacity:1;transform:translate(-50%,-50%) scale(1.05);letter-spacing:.16em;}
     78%{opacity:1;transform:translate(-50%,-50%) scale(1);}
     100%{opacity:0;transform:translate(-50%,-50%) scale(1.1);} }
+  /* minor-event toast: small, below the item slot, its own lane so it never fights the banner */
+  #toast{position:absolute;top:100px;left:50%;transform:translateX(-50%);font-size:17px;
+    font-weight:700;letter-spacing:.14em;color:var(--bone);text-transform:uppercase;
+    text-shadow:0 0 14px rgba(109,242,208,.6);opacity:0;pointer-events:none;white-space:nowrap;}
+  #toast.show{animation:toastPop 1s ease forwards;}
+  @keyframes toastPop{0%{opacity:0;transform:translateX(-50%) translateY(6px);}
+    20%{opacity:1;transform:translateX(-50%) translateY(0);}
+    80%{opacity:1;} 100%{opacity:0;transform:translateX(-50%) translateY(-6px);}}
 
   #count{animation:cdPulse .75s ease;}
   @keyframes cdPulse{0%{transform:scale(.4);opacity:0;}40%{transform:scale(1.1);opacity:1;}100%{transform:scale(1);opacity:1;}}
@@ -259,9 +281,10 @@
   <button class="hud glass" id="quitbtn" title="Quit race">✕</button>
   <div id="item"></div>
   <div class="hud glass" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
-  <div class="hud" id="clock">00:00.0</div>
+  <div class="hud glass" id="clock" style="padding:3px 10px;">00:00.0</div>
   <div id="drift-meter"><div id="drift-fill"></div></div>
   <div id="banner"></div>
+  <div id="toast"></div>
 
   <div class="pad" id="steer"><button class="btn" id="bl">◀</button><button class="btn" id="br">▶</button></div>
   <div class="pad" id="act"><button class="btn" id="drift">Drift</button></div>
@@ -837,9 +860,14 @@ function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 const elSpeed=$('speed'), elFlash=$('boostflash'), elVig=$('vignette'),
       elDM=$('drift-meter'), elDF=$('drift-fill'), elBanner=$('banner');
 const gaugeCtx=$('gauge').getContext('2d');
-let bannerTimer=0;
 function showBanner(txt){ elBanner.textContent=txt; elBanner.classList.remove('show');
   void elBanner.offsetWidth; elBanner.classList.add('show'); }
+// small toast under the item slot for minor callouts (overtakes, whip taunts, item
+// states) — they were all fighting over the one center banner, each restarting its
+// 1.6s pop and stomping "Final Lap"-class messages mid-display
+function showToast(txt){ const el=$('toast'); if(!el)return;
+  el.textContent=txt; el.classList.remove('show');
+  void el.offsetWidth; el.classList.add('show'); }
 
 /* arc speed gauge */
 function drawGauge(frac,boosting){
@@ -1779,7 +1807,7 @@ bind('whipbtn','whip');
 let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
-const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'👏',mega:'🍄',glue:'🕸️'};
+const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'💥',mega:'🍄',glue:'🍯'};
 function giveItem(r){
   const roll=Math.random();
   // catch-up luck: trailing racers get the boost more often (Mario-Kart style)
@@ -1815,7 +1843,7 @@ function useItem(r){
     // hits outright — answers "there's no way to defend against getting hit" from review
     r.shieldT=5;
     burst(r.x,r.y+3,r.z,0x6df2d0,16,40,0.6,4);
-    if(r.you){ showBanner('Shielded!'); SFX.item(); }
+    if(r.you){ showToast('Shielded!'); SFX.item(); }
   } else if(r.item==='slick'){
     // tossed forward (not dropped behind like cyst) — a wider, longer puddle that saps
     // speed on contact instead of the disorienting cyst/spore spin-out: a different kind
@@ -1844,7 +1872,7 @@ function useItem(r){
     // to hazards/projectiles, slight speed bonus — the power trip item
     r.megaT=5;
     burst(r.x,r.y+4,r.z,0xffd24a,20,60,0.7,5);
-    if(r.you){ showBanner('HUGE!'); kickShake(0.5); flashFx(0.25,'#ffd24a'); SFX.boost(); }
+    if(r.you){ showToast('HUGE!'); kickShake(0.5); flashFx(0.25,'#ffd24a'); SFX.boost(); }
   } else if(r.item==='glue'){
     // sticky glue shot: same homing delivery as the spore, but the payload SLOWS the
     // victim (3.5s at half speed) instead of spinning them — momentum punish vs disorientation
@@ -1927,7 +1955,7 @@ function updateRacer(r,dt){
       r.head=Math.atan2(cs.t.x, cs.t.z);          // face forward along the track
       r.spd=Math.min(Math.max(r.spd,30),60);
       r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r.offT=0;
-      if(r.you){ showBanner('Repositioned'); kickShake(0.4); }
+      if(r.you){ showToast('Repositioned'); kickShake(0.4); }
     }
   }
 
@@ -2050,7 +2078,7 @@ function updateRacer(r,dt){
       if(Math.hypot(r.x-p.x, r.z-p.z) < p.r){
         r.air=true; r.vy=82 + Math.abs(r.spd)*0.2;     // big, satisfying launch
         r.spd=Math.max(r.spd, MAXV*0.9);                // carry momentum off the ramp
-        if(r.you){ kickShake(0.6); SFX.boost(); showBanner('Liftoff!'); }
+        if(r.you){ kickShake(0.6); SFX.boost(); showToast('Liftoff!'); }
         burst(r.x, r.y+1, r.z, 0x7dffaa, 16, 60, 0.5, 5);
         break;
       }
@@ -2121,7 +2149,7 @@ function doWhip(atk,vic){
   if(big){
     hitStopT=Math.max(hitStopT,0.06);               // a tiny freeze — whip should feel like a HIT, not a nudge
     kickShake(0.75); flashFx(0.25,'#ffe08a'); SFX.whip();
-    if(atk.you) showBanner(WHIP_TAUNTS[Math.floor(Math.random()*WHIP_TAUNTS.length)]);
+    if(atk.you) showToast(WHIP_TAUNTS[Math.floor(Math.random()*WHIP_TAUNTS.length)]);
   }
 }
 function collide(){
@@ -2203,7 +2231,7 @@ function collide(){
     for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;
       if(Math.hypot(r.x-p.x,r.z-p.z)<5){
         if(p.glue){ r.glueT=3.5; burst(r.x,r.y+2,r.z,0x7ddb4a,16,40,0.6,4);
-          if(r.you){ kickShake(0.3); showBanner('GLUED!'); SFX.bump&&SFX.bump(); } }
+          if(r.you){ kickShake(0.3); showToast('GLUED!'); SFX.bump&&SFX.bump(); } }
         else r.spinT=1.2;
         p.life=0; } }
     if(p.life<=0){scene.remove(p.mesh);return false;} return true;
@@ -2227,7 +2255,7 @@ function rank(){
     // cooldown so a place that flickers back and forth right at the pass doesn't spam
     // several banners for what's really one overtake
     if(me._lastPlace!=null && me.place<me._lastPlace && now-(me._otCD||0)>1500){
-      showBanner(OVERTAKE_CALLS[Math.floor(Math.random()*OVERTAKE_CALLS.length)]);
+      showToast(OVERTAKE_CALLS[Math.floor(Math.random()*OVERTAKE_CALLS.length)]);
       flashFx(0.12,'#6df2d0'); me._otCD=now;
     }
     me._lastPlace=me.place;
@@ -2437,7 +2465,7 @@ function syncLeader(){
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
-  $('whipbtn').style.display = (whipReady && !me.finished) ? 'inline-flex' : 'none';
+  $('whipbtn').style.display = (isTouch && whipReady && !me.finished) ? 'inline-flex' : 'none';   // touch-only; desktop whips via keyboard
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
@@ -2451,7 +2479,7 @@ function syncHUD(){
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
-    slot.textContent=['🔥','🦠','🟣','🛡️','💧','👏','🍄','🕸️'][Math.floor(performance.now()/70)%8];
+    slot.textContent=['🔥','🦠','🟣','🛡️','💧','💥','🍄','🍯'][Math.floor(performance.now()/70)%8];
     slot.classList.add('spin'); me._pItem=null;
   } else {
     const ic=me.item?ITEM_ICONS[me.item]:'';
