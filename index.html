@@ -2469,9 +2469,16 @@ function updateRacer(r,dt){
 }
 
 function placeOnTrack(r,dt){
-  // hug the track height (unless airborne after a jump ramp)
+  // hug the track height (unless airborne after a jump ramp) — on a banked corner the
+  // road surface isn't flat across its width, so the target height has to account for
+  // how far off centerline the racer actually is, or it clips into the raised outer
+  // edge / floats over the dropped inner edge instead of sitting ON the tilted surface
   const s=SAMP[r.idx];
-  if(!r.air) r.y += (s.p.y - r.y)*Math.min(1,6*dt);
+  if(!r.air){
+    const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;         // signed distance from centerline
+    const surfY=s.p.y + Math.sin(s.bank||0)*lat;              // height of the banked surface at that offset
+    r.y += (surfY - r.y)*Math.min(1,6*dt);
+  }
   // continuous progress: project the racer onto the idx -> idx+1 segment for a
   // smooth, precise position value (stable places, no nearest-sample jitter)
   const i0=r.idx, i1=trackLoop?((i0+1)%STEPS):Math.min(i0+1,STEPS-1);
