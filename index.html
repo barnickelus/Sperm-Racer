@@ -76,8 +76,12 @@
   #drift{width:110px;height:110px;}
   #itemWrap{width:78px;height:78px;right:120px;bottom:22px;}
   #itemWrap .btn,#itemWrapL .btn{width:100%;height:100%;}
+  /* always visible now (was appear/disappear based on range) so players know the move
+     exists and can anticipate it; dim/static until a rival is actually in range, then
+     lights up orange and pulses — same button, two states instead of shown/hidden */
   #whipbtn{position:absolute;right:40px;bottom:150px;width:92px;height:92px;font-size:15px;
-    border-color:#ffb44a;color:#ffb44a;box-shadow:0 0 22px rgba(255,180,74,.5);animation:whippulse .6s ease-in-out infinite;}
+    border-color:#4a4038;color:#6a5c4c;box-shadow:none;transition:border-color .2s,color .2s,box-shadow .2s;}
+  #whipbtn.ready{border-color:#ffb44a;color:#ffb44a;box-shadow:0 0 22px rgba(255,180,74,.5);animation:whippulse .6s ease-in-out infinite;}
   @keyframes whippulse{50%{transform:scale(1.08)}}
   /* mirrored action buttons, lower-left */
   #actL{left:18px;}
@@ -293,7 +297,7 @@
   <div class="pad" id="steer"><button class="btn" id="bl">◀</button><button class="btn" id="br">▶</button></div>
   <div class="pad" id="act"><button class="btn" id="drift">Drift</button></div>
   <div class="pad" id="itemWrap"><button class="btn" id="fire">Item</button></div>
-  <button class="btn pad nojoy" id="whipbtn" style="display:none">Whip!</button>
+  <button class="btn pad nojoy" id="whipbtn">Whip!</button>
   <!-- mirrored action buttons in the lower-LEFT corner -->
   <div class="pad" id="actL"><button class="btn" id="driftL">Drift</button></div>
   <div class="pad" id="itemWrapL"><button class="btn" id="fireL">Item</button></div>
@@ -893,7 +897,7 @@ const OP_ART={
     <path d="M74,116 q26,-8 52,0 q-12,9 -26,9 q-14,0 -26,-9 Z" fill="#15110f" ${OP_LINE} stroke-width="2.5"/>
     <path d="M90,130 q10,6 20,0 q-2,14 -10,18 q-8,-4 -10,-18 Z" fill="#15110f" ${OP_LINE} stroke-width="2.5"/>
     <!-- red sequin jacket with gold trim -->
-    <path d="M60,144 q40,24 80,0 v14 q-40,22 -80,0 Z" fill="#c81e3a" ${OP_LINE} stroke-width="3"/>
+    <path d="M60,144 q40,24 80,0 v14 q-40,22 -80,0 Z" fill="#c81ec8" ${OP_LINE} stroke-width="3"/>
     <path d="M60,144 q40,24 80,0" fill="none" stroke="#ffd700" stroke-width="4"/>
     <g fill="#ffffff" opacity=".8"><circle cx="80" cy="156" r="1.4"/><circle cx="100" cy="162" r="1.4"/><circle cx="120" cy="156" r="1.4"/><circle cx="90" cy="158" r="1.2"/><circle cx="110" cy="158" r="1.2"/></g>`,
   // Pierre — French: black beret, thin curled mustache, Breton stripes
@@ -1149,6 +1153,29 @@ function buildTrack(idx){
     SAMP.push({p,t,n,u});
   }
   const LAST = loop ? STEPS : STEPS-1;             // strip segments (no closing seam on open courses)
+  // ---- superelevation: bank turns like a real track — outer edge rises, inner edge
+  // dips, roughly proportional to how sharp the turn is. Signed curvature from a
+  // lookahead tangent comparison (noisy at 1-sample spacing, so compare across a 12-step
+  // window like the corner-detector already does), smoothed with a short moving average,
+  // then converted to a per-sample bank angle and a "banked normal" (n rotated around the
+  // tangent by that angle) that both the road mesh and the car's visual roll read from. ----
+  { const LOOK=12, MAX_BANK=0.36, GAIN=2.6;
+    const raw=new Float32Array(STEPS);
+    for(let i=0;i<STEPS;i++){
+      const a=SAMP[i].t, b=SAMP[(i+LOOK)%STEPS].t;
+      raw[i]=a.x*b.z - a.z*b.x;                    // signed turn amount (y of a×b)
+    }
+    const SM=10, bank=new Float32Array(STEPS);
+    for(let i=0;i<STEPS;i++){
+      let s=0; for(let k=-SM;k<=SM;k++) s+=raw[((i+k)%STEPS+STEPS)%STEPS];
+      bank[i]=Math.max(-MAX_BANK, Math.min(MAX_BANK, (s/(SM*2+1))*GAIN));
+    }
+    for(let i=0;i<STEPS;i++){
+      const s=SAMP[i], ba=loop?bank[i]:0;           // point-to-point courses stay flat
+      s.bank=ba;
+      s.bn=new T.Vector3(s.n.x*Math.cos(ba), Math.sin(ba), s.n.z*Math.cos(ba));  // banked lateral basis
+    }
+  }
   // figure out which lateral side is the loop's infield (toward the centroid)
   let ccx=0,ccz=0; for(const s of SAMP){ ccx+=s.p.x; ccz+=s.p.z; } ccx/=SAMP.length; ccz/=SAMP.length;
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
@@ -1178,7 +1205,9 @@ function buildTrack(idx){
   const pos=[],ridx=[],uvs=[];
   for(let i=0;i<=LAST;i++){
     const s=SAMP[i%STEPS];
-    const l=s.p.clone().addScaledVector(s.n,HW), r=s.p.clone().addScaledVector(s.n,-HW);
+    // banked cross-section: bn tilts with the turn (superelevation), so the outer edge
+    // of a corner physically rises and the inner edge dips, instead of a flat strip
+    const l=s.p.clone().addScaledVector(s.bn,HW), r=s.p.clone().addScaledVector(s.bn,-HW);
     pos.push(l.x,l.y+0.05,l.z, r.x,r.y+0.05,r.z);
     uvs.push(0,i/STEPS*40, 1,i/STEPS*40);
   }
@@ -1199,7 +1228,7 @@ function buildTrack(idx){
   trackGroup.add(road);
   for(const side of [HW,-HW]){
     const ep=[];
-    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.n,side); ep.push(e.x,e.y+0.6,e.z); }
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
     trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.6,blending:T.AdditiveBlending,depthWrite:false})));
   }
@@ -1428,23 +1457,25 @@ function addOutline(mesh,k){
   mesh.add(o);
 }
 // Smoothly wiggle the single tapering tail tube by displacing its spine in x.
+const TAIL_OUTLINE_W=0.32;   // constant absolute width — tapers with the tube, doesn't flare
 function wiggleTail(g, phase, amp){
   const d=g.userData.tailData; if(!d) return;
-  const {pos,ringZ,ringR,rings,sides,y,geo}=d;
+  const {pos,ringZ,ringR,rings,sides,y,geo,outlinePos,outlineGeo}=d;
   let p=0;
   for(let i=0;i<=rings;i++){
     const t=i/rings;
     const cx=Math.sin(phase - i*0.5)*amp*t*t;   // more sway toward the tip
-    const cz=ringZ[i], r=ringR[i];
+    const cz=ringZ[i], r=ringR[i], ro=r+TAIL_OUTLINE_W;
     for(let j=0;j<=sides;j++){
-      const ang=j/sides*Math.PI*2;
-      pos[p++]=cx+Math.cos(ang)*r;
-      pos[p++]=y+Math.sin(ang)*r;
-      pos[p++]=cz;
+      const ang=j/sides*Math.PI*2, c=Math.cos(ang), s=Math.sin(ang);
+      pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
+      pos[p]=y+s*r;  outlinePos[p]=y+s*ro;  p++;
+      pos[p]=cz;     outlinePos[p]=cz;      p++;
     }
   }
   geo.attributes.position.needsUpdate=true;
   geo.computeVertexNormals();
+  if(outlineGeo){ outlineGeo.attributes.position.needsUpdate=true; }
 }
 function celShade(g){
   g.traverse(o=>{
@@ -1513,9 +1544,22 @@ function makeCell(hue, typeId){
   tgeo.setIndex(tidx);
   const tmat=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),side:T.DoubleSide});
   const tailMesh=new T.Mesh(tgeo, tmat); g.add(tailMesh);
+  // tail outline: the head's outline (a backface shell uniformly SCALED 8% bigger) can't
+  // work here — scaling this long tapering tube around its own origin would flare the
+  // shell out by inches at the tip instead of a thin outline. Build a second tube with
+  // the same topology but each ring's radius offset by a constant absolute width instead,
+  // which tapers correctly right along with the real tail (was previously just skipped —
+  // "tail is left clean" — which is the seam between a hard-outlined head and a bare tail)
+  const toGeo=new T.BufferGeometry();
+  const topos=new Float32Array(tpos.length);
+  toGeo.setAttribute('position', new T.BufferAttribute(topos,3));
+  toGeo.setIndex(tidx);
+  const tailOutline=new T.Mesh(toGeo, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide}));
+  g.add(tailOutline);
   g.userData.head = head;
   g.userData.tailMesh = tailMesh;
-  g.userData.tailData = {pos:tpos, ringZ, ringR, rings:TSEG, sides:TSIDE, y:TY, geo:tgeo};
+  g.userData.tailData = {pos:tpos, ringZ, ringR, rings:TSEG, sides:TSIDE, y:TY, geo:tgeo,
+    outlinePos:topos, outlineGeo:toGeo};
   wiggleTail(g, 0, 0);   // initialise the tail vertices
 
   // === STEREOTYPE FACIAL FEATURES + ACCESSORIES ===
@@ -1960,7 +2004,7 @@ function makeCell(hue, typeId){
       }
     }
     // red sequin jacket conveyed by a shiny red collar ring (clears the head) + gold lapel studs — NO torso box
-    const collar=new T.Mesh(new T.TorusGeometry(4.3,0.5,8,20), new T.MeshPhongMaterial({color:0xc81e3a, emissive:0x4a0a16, shininess:100, specular:0xffffff}));
+    const collar=new T.Mesh(new T.TorusGeometry(4.3,0.5,8,20), new T.MeshPhongMaterial({color:0xc81ec8, emissive:0x4a0a4a, shininess:100, specular:0xffffff}));
     collar.position.set(0,1.5,0.4); collar.rotation.x=Math.PI/2; collar.scale.set(0.85,1,1); g.add(collar);
     // gold lapel studs threaded along the front of the collar (sequin-trim glint)
     const lapelMat=new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400});
@@ -1986,19 +2030,24 @@ function makeCell(hue, typeId){
     mu.position.set(0,3.0,3.7); mu.rotation.x=1.6; g.add(mu);
     const collar=new T.Mesh(new T.TorusGeometry(3.2,0.36,8,16), new T.MeshPhongMaterial({color:0xf0f0f0}));
     collar.position.set(0,2.85,0); collar.rotation.x=Math.PI/2; g.add(collar);
-    // portrait-sync: red neckerchief knot + a baguette tucked along the body
+    // portrait-sync: red neckerchief knot + a baguette tucked along the body.
+    // Fixed two "floating disconnected piece" issues visible at close range in-game:
+    // the knot sat off-center and well below the ring it belonged to (read as a loose
+    // red ball near the jaw), and the baguette floated in open space with a visible gap
+    // — these characters have no arm to tuck it under, so it needs to actually touch
+    // the body to read as "held," not hover beside it.
     const kerchief=new T.Mesh(new T.TorusGeometry(3.0,0.4,8,16),
       new T.MeshPhongMaterial({color:0xb52a2a, emissive:0x3a0a0a}));
     kerchief.position.set(0,2.3,0); kerchief.rotation.x=Math.PI/2; g.add(kerchief);
     const kKnot=new T.Mesh(new T.SphereGeometry(0.55,8,6),
       new T.MeshPhongMaterial({color:0xb52a2a, emissive:0x3a0a0a}));
-    kKnot.position.set(0.8,1.9,3.4); g.add(kKnot);
+    kKnot.position.set(0,2.3,3.0); g.add(kKnot);                 // centered, sitting ON the ring's front
     const baguette=new T.Mesh(new T.CylinderGeometry(0.55,0.55,4.2,8),
       new T.MeshPhongMaterial({color:0xd9a45a, emissive:0x3a2606}));
-    baguette.position.set(-2.9,1.6,1.2); baguette.rotation.z=0.5; baguette.rotation.x=-0.4; g.add(baguette);
+    baguette.position.set(-3.4,2.6,0.6); baguette.rotation.z=0.5; baguette.rotation.x=-0.4; g.add(baguette);  // tucked in against the head, touching
     for(const dy of [-1.0,0,1.0]){ const score=new T.Mesh(new T.BoxGeometry(0.7,0.12,0.12),
         new T.MeshPhongMaterial({color:0x9a6a2c}));
-      score.position.set(-2.9-dy*0.45,1.6+dy*0.8,1.2-dy*0.35); score.rotation.z=0.9; g.add(score); }
+      score.position.set(-3.4-dy*0.45,2.6+dy*0.8,0.6-dy*0.35); score.rotation.z=0.9; g.add(score); }
   }
 
   // tail matches the head/skin colour (unless it has its own tattoo/stripe texture)
@@ -2212,6 +2261,7 @@ function updateRacer(r,dt){
       steer = tiltMode ? tiltSteer : (joyActive ? padSteer : steer);  // tilt or hold-anywhere stick
       if(sliderMode){ gas = sliderThrottle>0.05; brake = sliderThrottle<-0.05; }      // right-side slider
       else if(tiltMode){ gas = tiltThrottle>0.05; brake = tiltThrottle<-0.05; }       // fore/aft tilt
+      else if(joyActive && joyY>0.3){ gas = false; brake = true; }                    // stick pulled down = brake (Mario Kart-style)
       else { gas = true; brake = false; }                                            // auto-drive forward
     } else {
       gas = keys.has('arrowup')||keys.has('w');
@@ -2334,7 +2384,10 @@ function updateRacer(r,dt){
   placeOnTrack(r,dt);
 
   r._wallCD=Math.max(0,(r._wallCD||0)-dt);   // wall-hit speed penalty cooldown — see below
-  r._bank=r._bank||0; let bankWant=0;
+  r._bank=r._bank||0;
+  // default lean matches the road's own superelevation (corners bank like a real track);
+  // the Valentina berm case below overrides this with a much bigger, rider-controlled lean
+  let bankWant=(SAMP[r.idx].bank||0)/0.85;   // /0.85 cancels the roll-output scale downstream
   if(!r.air){ const s=SAMP[r.idx];   // no walls while airborne — jump over barriers/gaps
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;   // +lat toward +normal
     if(TRACKS[selTrack].berm && tunnelAt(r.prog)){
@@ -2859,7 +2912,10 @@ function syncLeader(){
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
-  $('whipbtn').style.display = (isTouch && whipReady && !me.finished) ? 'inline-flex' : 'none';   // touch-only; desktop whips via keyboard
+  // always visible on touch (was appear/disappear with range — players couldn't tell the
+  // move existed until it flashed up); .ready lights it up orange only when actually usable
+  $('whipbtn').style.display = (isTouch && !me.finished) ? 'inline-flex' : 'none';
+  $('whipbtn').classList.toggle('ready', whipReady);
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
