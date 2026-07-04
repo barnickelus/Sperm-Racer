@@ -129,10 +129,16 @@
     justify-content:center;text-align:center;padding:24px;pointer-events:auto;
     background:radial-gradient(circle at 50% 42%,rgba(6,30,38,.74),rgba(3,16,21,.95));backdrop-filter:blur(3px);}
   /* menu screens scroll, and clear the iOS browser toolbar / home indicator */
-  #start,#select,#finish{justify-content:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  #start,#finish{justify-content:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;
     touch-action:pan-y;
     padding-top:max(20px,env(safe-area-inset-top));
     padding-bottom:calc(110px + env(safe-area-inset-bottom));}
+  /* #select does NOT scroll as a whole screen (that let the fixed scroll-hint band overlap
+     cards/the race button at arbitrary scroll offsets). Instead only #sperm-scroll scrolls,
+     framed between a static header and a static, always-visible "Lock in & Race" button. */
+  #select{justify-content:flex-start;overflow:hidden;touch-action:none;
+    padding-top:max(16px,env(safe-area-inset-top));
+    padding-bottom:max(16px,env(safe-area-inset-bottom));}
   .screen .tag{color:var(--signal);letter-spacing:.42em;font-size:11px;text-transform:uppercase;margin-bottom:14px;}
   .screen h1{margin:0;font-size:clamp(40px,12vw,96px);letter-spacing:.04em;font-weight:700;
     text-shadow:0 0 30px rgba(109,242,208,.35);}
@@ -351,19 +357,24 @@
 <!-- CHARACTER SELECT - Pick your stereotype sperm warrior -->
 <div class="screen hidden" id="select">
   <div class="tag">choose your specimen</div>
-  <h1 style="font-size:clamp(32px,8vw,64px);">PICK YOUR SPERM</h1>
-  <p style="max-width:520px;">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
-  <div id="sperm-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;max-width:640px;width:100%;margin:18px 0;">
-    <!-- Populated by JS -->
+  <h1 style="font-size:clamp(28px,7vw,64px);margin-bottom:2px;">PICK YOUR SPERM</h1>
+  <p style="max-width:520px;margin:4px 0 8px;">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
+  <!-- grid-frame's box is fixed by flex layout (flex:1 in a non-scrolling #select column), so its
+       bottom edge never moves — that's what keeps scrollHint from ever overlapping the cards or
+       the race button below, no matter how far #sperm-scroll is scrolled. -->
+  <div id="grid-frame" style="position:relative;flex:1 1 auto;min-height:0;width:100%;max-width:640px;">
+    <div id="sperm-scroll" style="position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;">
+      <div id="sperm-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%;margin:0 0 10px;">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+    <div id="scrollHint" style="position:absolute;left:0;right:0;bottom:0;height:40px;pointer-events:none;z-index:5;
+      display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;
+      background:linear-gradient(to bottom, rgba(5,22,28,0) 0%, rgba(5,22,28,.92) 80%);
+      color:var(--signal);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+      opacity:0;transition:opacity .2s;">▼ more ▼</div>
   </div>
-  <button class="go" id="racebtn" disabled style="opacity:0.5;">Lock in & Race</button>
-  <!-- fixed child of #select: disappears automatically when #select gets .hidden (display:none
-       on an ancestor un-renders fixed descendants too), so no extra show/hide JS needed. This
-       screen scrolls (13 cards + button don't fit one viewport) with zero prior affordance. -->
-  <div id="scrollHint" style="position:fixed;left:0;right:0;bottom:0;height:56px;pointer-events:none;z-index:5;
-    display:flex;align-items:flex-end;justify-content:center;padding-bottom:9px;
-    background:linear-gradient(to bottom, rgba(5,22,28,0) 0%, rgba(5,22,28,.9) 75%);
-    color:var(--signal);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;">▼ scroll for more ▼</div>
+  <button class="go" id="racebtn" disabled style="opacity:0.5;margin-top:14px;flex:0 0 auto;">Lock in & Race</button>
 </div>
 
 <div class="screen hidden" id="cd"><div id="count">3</div></div>
@@ -1002,18 +1013,24 @@ function resize(){
   _vw=w; _vh=h;
   renderer.setSize(w,h);
   camera.aspect=w/h; camera.updateProjectionMatrix();
-  // iOS can leave position:fixed elements pinned to a STALE viewport size right after a
-  // fullscreen enter/exit (the fixed box doesn't get recomputed against the new height
-  // until something forces a fresh layout), so the scroll hint would end up floating mid-
-  // screen instead of pinned to the true bottom. Force a reflow on every resize this hooks
-  // into — the same call sites already needed for exactly this class of iOS viewport quirk.
-  const sh=document.getElementById('scrollHint');
-  if(sh){ sh.style.display='none'; void sh.offsetHeight; sh.style.display='flex'; }
+  updateScrollHint();
 }
 addEventListener('resize',resize);
 addEventListener('orientationchange',()=>{ tiltBase=null; setTimeout(resize,200); setTimeout(resize,500); });
 addEventListener('load',()=>{ resize(); setTimeout(resize,250); setTimeout(resize,800); });
 if(window.visualViewport) visualViewport.addEventListener('resize',resize);
+// #scrollHint lives inside #grid-frame, a normal-flow flex box (not position:fixed), so its
+// bottom edge is fixed by layout and never drifts under scrolling content or iOS viewport
+// quirks. It only needs to know WHETHER to show — true while #sperm-scroll has more content
+// below the fold, hidden once scrolled to the bottom or if everything already fits.
+function updateScrollHint(){
+  const sc=document.getElementById('sperm-scroll'), sh=document.getElementById('scrollHint');
+  if(!sc||!sh) return;
+  const overflowing = sc.scrollHeight - sc.clientHeight > 4;
+  const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4;
+  sh.style.opacity = (overflowing && !atBottom) ? '1' : '0';
+}
+(function(){ const sc=document.getElementById('sperm-scroll'); if(sc) sc.addEventListener('scroll', updateScrollHint); })();
 resize();
 
 /* ============== FX ENGINE (additive glow + pooled particles) ============== */
@@ -3259,6 +3276,8 @@ function setupSelect(){
     }
     grid.appendChild(card);
   });
+  const sc=$('sperm-scroll'); if(sc) sc.scrollTop=0;
+  updateScrollHint();
 
   $('racebtn').onclick = () => {
     initAudio();
@@ -3596,7 +3615,8 @@ setupFullscreen();
     altActive[id]=!altActive[id];
     noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
     b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
-    if(musicTimer) startMusic();   // live-swap mid-race instead of waiting for the next start
+    if(musicTimer){ stopMusic(); startMusic(); }   // startMusic() no-ops while musicTimer is already set, so
+                                                     // force a clean stop/restart to actually pick up the new station
     const st=MUSIC_STYLES[effectiveStyleId(id)];
     showToast(st.station||'Station tuned','t-gold');
   }; })();
@@ -3612,10 +3632,11 @@ $('startbtn').onclick = () => {
   $('start').classList.add('hidden');
   pendingGP=false;
   $('select').classList.remove('hidden');
+  updateScrollHint();
 };
-$('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; $('start').classList.add('hidden'); $('select').classList.remove('hidden'); };
+$('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; $('start').classList.add('hidden'); $('select').classList.remove('hidden'); updateScrollHint(); };
 $('againbtn').onclick=()=>{ gpActive=false; countdown(); };
-$('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; };
+$('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; updateScrollHint(); };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
 $('mainbtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
