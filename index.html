@@ -437,6 +437,23 @@ document.addEventListener('touchstart', e=>{
 // try to hold orientation during gameplay so a tilt can't flip the layout (no-op on iOS Safari)
 function lockOrient(){ try{ screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait').catch(()=>{}); }catch(e){} }
 function unlockOrient(){ try{ screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); }catch(e){} }
+// iPadOS can yank the page OUT of fullscreen mid-race from a multi-finger system gesture
+// (Stage Manager window resize, app-switcher swipe) that the OS reserves for itself — no
+// web API can prevent that gesture from being recognized in the first place, it's an OS-level
+// reservation, not something touch-action/preventDefault can override. What IS fixable is how
+// long the game stays stuck in that shrunk state afterward: hop straight back into fullscreen
+// the instant we notice we left it, instead of leaving the player in a tiny floating window
+// for the rest of the race.
+['fullscreenchange','webkitfullscreenchange'].forEach(ev=>document.addEventListener(ev, ()=>{
+  const inFs = !!(document.fullscreenElement||document.webkitFullscreenElement);
+  const standaloneMode = navigator.standalone || matchMedia('(display-mode:standalone)').matches;
+  if(!inFs && !standaloneMode && (state==='race'||state==='count')){
+    const el=document.documentElement;
+    const req=el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen;
+    if(req){ try{ const p=req.call(el); if(p&&p.catch) p.catch(()=>{}); }catch(_){} }
+  }
+  setTimeout(resize,300);
+}));
 
 /* ============== AUDIO (procedural Web Audio SFX — no files) ============== */
 let actx=null, masterGain=null, engineOsc=null, engineGain=null;
@@ -1755,12 +1772,19 @@ function makeCell(hue, typeId){
     browL.position.set(-1.1,4.7,2.55); browL.rotation.z = -0.1;
     browR.position.set(1.1,4.7,2.55); browR.rotation.z = 0.1;
     g.add(browL); g.add(browR);
-    // ginger hair ringing the crown, peeking out LOW under the hat brim (tops kept below the brim underside)
+    // ginger curly hair: a rounded base cap covering the crown, plus a handful of
+    // irregular curl clusters for texture — the old version was 10 identical small
+    // spheres evenly ringed around the head at one height, which read as a string of
+    // beads/balls rather than a head of hair. Kept low so tops stay under the brim
+    // underside (~5.425).
     const hairMat=new T.MeshPhongMaterial({color:0xc2491e, emissive:0x3a1206, flatShading:true});
-    for(let i=0;i<10;i++){ const a=Math.PI*2*i/10;
-      const t=new T.Mesh(new T.SphereGeometry(0.78,8,6), hairMat);
-      // sit the tufts low (y~4.25) and flatten them so their tops stay under the brim underside (~5.55)
-      t.position.set(Math.sin(a)*2.6, 4.25, Math.cos(a)*4.0); t.scale.set(1.0,0.85,1.0); g.add(t); }
+    const hairBase=new T.Mesh(new T.SphereGeometry(3.3,16,11,0,Math.PI*2,0,Math.PI*0.48), hairMat);
+    hairBase.position.set(0,4.1,-0.15); hairBase.scale.set(1.02,0.78,1.18); g.add(hairBase);
+    [[-2.5,4.35,2.5,1.0],[2.5,4.35,2.5,1.0],[-2.8,4.15,-1.3,0.95],[2.8,4.15,-1.3,0.95],
+     [0,4.55,3.3,0.95],[-1.3,4.2,-3.1,0.85],[1.3,4.2,-3.1,0.85]].forEach(([x,y,z,s])=>{
+      const c=new T.Mesh(new T.SphereGeometry(0.95*s,8,6), hairMat);
+      c.position.set(x,y,z); c.scale.set(1,0.82,1); g.add(c);
+    });
     // green top hat — brim widened (r=4.6) so it overhangs the hair all around, and raised so its underside clears the tufts
     const hatBrim = new T.Mesh(new T.CylinderGeometry(4.6,4.6,0.45,20), new T.MeshPhongMaterial({color:0x1f7a3a}));
     hatBrim.position.set(0,5.65,0); g.add(hatBrim);
@@ -2274,6 +2298,24 @@ let firePrev=false, whipPrev=false;
 
 /* ============== ITEMS ============== */
 const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'💧',clap:'💥',mega:'🍄',glue:'🍯'};
+// personalized "signature" projectile per character — mechanically identical to 'spore'
+// (a homing shot that spins out whoever it touches, i.e. "causes other racers to crash"),
+// just uniquely themed per racer so each one has an item that's recognizably theirs.
+const SIGNATURE_ITEMS={
+  guido:    { name:'Meatball',      icon:'🍝', color:0x9c3a1e, emissive:0x3a0f08, geo:()=>new T.SphereGeometry(2.3,10,8) },
+  irish:    { name:'Lucky Charms',  icon:'🍀', color:0x2ecc71, emissive:0x0e4a24, geo:()=>new T.OctahedronGeometry(2.1,0) },
+  latin:    { name:'Chili Pepper',  icon:'🌶️', color:0xd7261e, emissive:0x4a0a08, geo:()=>new T.ConeGeometry(1.3,3.4,8) },
+  dragon:   { name:'Dragon Fire',   icon:'🔥', color:0xff6a1e, emissive:0x7a1a02, geo:()=>new T.SphereGeometry(2.3,10,8) },
+  king:     { name:'Champagne',     icon:'🍾', color:0x1f6a2e, emissive:0x0a2a10, geo:()=>new T.CylinderGeometry(0.9,1.3,3.6,10) },
+  chad:     { name:'Coconut',       icon:'🥥', color:0x5a3c22, emissive:0x1a0f08, geo:()=>new T.SphereGeometry(2.2,8,7) },
+  hillbilly:{ name:'Moonshine Jug', icon:'🏺', color:0xc79a5a, emissive:0x3a2a10, geo:()=>new T.CylinderGeometry(1.5,1.8,2.6,10) },
+  wall:     { name:'Briefcase',     icon:'💼', color:0x2a2018, emissive:0x0a0806, geo:()=>new T.BoxGeometry(3.0,2.2,1.2) },
+  korean:   { name:'Soju Bottle',   icon:'🍶', color:0x8fae7a, emissive:0x1a2a10, geo:()=>new T.CylinderGeometry(0.8,0.8,3.6,10) },
+  rick:     { name:'Disco Ball',    icon:'🪩', color:0xd8e6ee, emissive:0x3a4a56, geo:()=>new T.IcosahedronGeometry(2.1,1) },
+  french:   { name:'Baguette',      icon:'🥖', color:0xd9a44a, emissive:0x3a2408, geo:()=>new T.CylinderGeometry(0.55,0.55,4.4,8) },
+  sailor:   { name:'Anchor',        icon:'⚓', color:0x555a5e, emissive:0x0e1012, geo:()=>new T.TorusGeometry(1.5,0.5,8,14) },
+  cholo:    { name:'Fuzzy Dice',    icon:'🎲', color:0xd8397a, emissive:0x3a0e22, geo:()=>new T.BoxGeometry(2.4,2.4,2.4) },
+};
 function giveItem(r){
   const roll=Math.random();
   // desperation luck: dead last in a 6-racer field gets a real comeback tool sometimes —
@@ -2284,7 +2326,8 @@ function giveItem(r){
   else if(r.place>=3 && roll<0.6){ r.item='boost';
     burst(r.x,r.y+5,r.z,0xffd24a,10,30,0.5,3); }   // visible "catching up!" sparkle, not silent luck
   else if(roll<0.24) r.item='boost';
-  else if(roll<0.40) r.item='spore';
+  else if(roll<0.30) r.item='spore';
+  else if(roll<0.40) r.item='signature';   // personalized crash shot — same slice generic spore gave up
   else if(roll<0.52) r.item='cyst';
   else if(roll<0.64) r.item='shield';
   else if(roll<0.76) r.item='slick';
@@ -2303,6 +2346,13 @@ function useItem(r){
     m.add(glowSprite(0xff5d8f,11));                 // fat glowing halo so the shot reads in flight
     m.position.set(r.x,r.y+3,r.z); scene.add(m);
     projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230});
+  } else if(r.item==='signature'){
+    const sig=SIGNATURE_ITEMS[r.id]||SIGNATURE_ITEMS.guido;
+    const m=new T.Mesh(sig.geo(), new T.MeshPhongMaterial({color:sig.color,emissive:sig.emissive,flatShading:true}));
+    m.add(glowSprite(sig.color,11));
+    m.position.set(r.x,r.y+3,r.z); scene.add(m);
+    projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230});
+    if(r.you) showToast(sig.name+'!','t-gold');
   } else if(r.item==='cyst'){
     const m=new T.Mesh(new T.IcosahedronGeometry(3,0),
       new T.MeshPhongMaterial({color:0xb06dff,emissive:0x3a1a66,flatShading:true}));
@@ -3104,7 +3154,7 @@ function syncHUD(){
     slot.textContent=['🔥','🦠','🟣','🛡️','💧','💥','🍄','🍯'][Math.floor(performance.now()/70)%8];
     slot.classList.add('spin'); me._pItem=null;
   } else {
-    const ic=me.item?ITEM_ICONS[me.item]:'';
+    const ic=me.item?(me.item==='signature'?((SIGNATURE_ITEMS[me.id]||{}).icon||'✨'):ITEM_ICONS[me.item]):'';
     if(ic && me._pItem!==me.item){ slot.classList.remove('item-pop'); void slot.offsetWidth; slot.classList.add('item-pop'); }
     me._pItem=me.item;
     slot.textContent=ic;
