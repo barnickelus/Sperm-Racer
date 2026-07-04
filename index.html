@@ -47,6 +47,15 @@
     transition:width .15s;}
   #quitbtn.armed{background:rgba(255,93,143,.3);border:1px solid #ff5d8f;color:#ff5d8f;
     font-size:9px;width:auto;padding:0 8px;}
+  /* car-radio station toggle — only shown for characters with a second station tuned in.
+     Styled like a dashboard radio button: an antenna glyph that glows amber briefly on
+     tap, like a backlit "seek" button, then settles back to the idle tint. */
+  #radioBtn{top:184px;right:14px;width:32px;height:32px;border-radius:50%;
+    border:1px solid rgba(255,180,74,.35);background:rgba(13,48,56,.55);
+    align-items:center;justify-content:center;font-size:15px;
+    color:#ffb44a;cursor:pointer;pointer-events:auto;padding:0;
+    box-shadow:0 0 10px rgba(255,180,74,.15);transition:box-shadow .15s,transform .15s;}
+  #radioBtn.tuning{box-shadow:0 0 22px rgba(255,180,74,.75);transform:scale(1.15);}
   #clock{bottom:14px;left:50%;transform:translateX(-50%);font-size:15px;color:var(--ink);
     font-variant-numeric:tabular-nums;letter-spacing:.12em;}
   #speedo{bottom:12px;left:14px;font-size:11px;color:var(--ink);}
@@ -287,6 +296,7 @@
   <div class="hud glass" id="lap"><span id="laplbl">Lap</span><b><span id="lapn">1</span><span id="lapsuf">/3</span></b></div>
   <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
   <button class="hud glass" id="quitbtn" title="Quit race">✕</button>
+  <button class="hud" id="radioBtn" title="Change station" style="display:none">📻</button>
   <div id="item"></div>
   <div class="hud glass" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
   <div class="hud glass" id="clock" style="padding:3px 10px;">00:00.0</div>
@@ -333,7 +343,6 @@
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
-  <button class="go alt" id="guidoAltBtn" style="margin-top:10px">Guido Theme: Classic</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Single race</button>
   <button class="go alt" id="circuitbtn" style="margin-top:10px;border-color:#ff9ec4;color:#ff9ec4">🥚 Circuit Cup — fertilize every egg</button>
@@ -351,7 +360,7 @@
   <!-- fixed child of #select: disappears automatically when #select gets .hidden (display:none
        on an ancestor un-renders fixed descendants too), so no extra show/hide JS needed. This
        screen scrolls (13 cards + button don't fit one viewport) with zero prior affordance. -->
-  <div style="position:fixed;left:0;right:0;bottom:0;height:56px;pointer-events:none;z-index:5;
+  <div id="scrollHint" style="position:fixed;left:0;right:0;bottom:0;height:56px;pointer-events:none;z-index:5;
     display:flex;align-items:flex-end;justify-content:center;padding-bottom:9px;
     background:linear-gradient(to bottom, rgba(5,22,28,0) 0%, rgba(5,22,28,.9) 75%);
     color:var(--signal);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;">▼ scroll for more ▼</div>
@@ -475,23 +484,31 @@ const SFX={
    timbre, hi-hat density, beat grouping, tempo feel) layered on top of the
    per-track key + tempo, so the race sounds different depending on who you drive
    as, not just which circuit you picked. */
-let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null, guidoAltTheme=false;
+let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null;
+// characters with a selectable second "station" — tuned live via the in-race radio icon
+const ALT_MAP={guido:'guidoAlt', chad:'chadAlt'};
+const altActive={};   // {charId: true/false} — which characters currently have their alt picked
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
   // tempoMul = relative to the track's own tempo (<1 = faster, >1 = slower/spacious)
   // guido/irish/latin/hillbilly/sailor carry REAL traditional melodies (all public
   // domain folk tunes), encoded as even eighth-notes; null = rest/held note
-  guido:    { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55,
+  guido:    { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55, station:'94.5 Tarantella FM',
               mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3],                            // Tarantella Napoletana (trad.)
               melB:[7,4,0,4,7,9, 7,null,9,5,2,5, 9,11,9,null,12,11, 9,7,9,11,12,null] },                 // B: Funiculì Funiculà refrain (1880, PD)
-  // Guido's alternate "Club Mix" — an ORIGINAL 90s Eurodance-style track (gated synthwave
-  // stabs, four-on-the-floor kick, off-beat open hats), not a transcription of any existing
-  // song — toggled via #guidoAltBtn on the start screen, selected in startMusic() below
-  guidoAlt: { inst:'synthwave', melWave:'square', bassWave:'square', drums:{kick:[0,2,4,6,8,10,12,14],snare:[4,12]},
-              bass:[0,0,0,0], hihat:1, beatGroup:4, tempoMul:0.42,
-              mel:[0,0,0,3,5,5,7,5, 0,0,0,3,5,7,10,7, 0,0,0,3,5,5,7,5, 3,2,0,2,3,5,3,0],
-              melB:[10,10,12,10,7,7,5,7, 10,10,12,14,15,14,12,10, 10,10,12,10,7,7,5,7, 5,3,5,7,5,3,0,null] },
+  // Guido's alternate "Club Mix" — a house/techno-style REMIX of the SAME two public-domain
+  // hooks above (Tarantella's ascending leap 0-3-7-12, Funiculì's opening 7-4-0-4-7-9),
+  // looped as short 16-step stab riffs the way house tracks loop a hook, instead of an
+  // unrelated made-up tune — recognizable AND genre-appropriate, still fully PD-sourced.
+  // Real house/techno drum language: four-on-the-floor kick every beat, backbeat snare,
+  // OPEN hi-hats on the off-beat 8ths (drums.openhat, a new pattern type — that off-beat
+  // "chick" is what actually reads as house/techno; the old track had none of it).
+  guidoAlt: { inst:'house', melWave:'square', bassWave:'square', station:'101.7 Club Mix',
+              drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]},
+              bass:[0,0,0,0], hihat:0, beatGroup:4, tempoMul:0.42,
+              mel:[0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3],   // Tarantella hook, looped
+              melB:[7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,null,null] }, // Funiculì hook, looped
   irish:    { inst:'pluck', melWave:'sawtooth', bassWave:'triangle', drums:{kick:[0,6],snare:[]},                       bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
               mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4],                             // The Irish Washerwoman (trad. jig)
               melB:[12,7,4,7,12,7, 12,7,9,11,9,7, 12,7,4,7,12,7, 11,9,7,4,2,-1] },                       // B: the jig's high strain
@@ -500,10 +517,19 @@ const MUSIC_STYLES={
               melB:[12,12,12,10,10,10, 8,8,8,9,null,null, 5,5,4,4,2,2, 0,null,null,0,null,null] },       // B: chorus answer phrase
   dragon:   { inst:'bell', melWave:'sine',     bassWave:'sine',     mel:[0,2,5,7,9,7,5,2], melB:[12,9,7,9,12,14,12,9], bass:[0,0,0,7],   hihat:0, beatGroup:4, tempoMul:1.4  }, // pentatonic + high answer
   king:     { inst:'808', melWave:'square',   bassWave:'sine', drums:{kick:[0,3,6,10],snare:[8]}, mel:[0,0,3,0,7,0,10,7], melB:[3,3,null,3,2,null,0,null], bass:[0,0,0,0],   hihat:3, beatGroup:4, tempoMul:0.7  }, // trap 808 + dark drop, sparse hats (moodier, reads darker overall)
-  chad:     { inst:'surf', melWave:'square', bassWave:'triangle', bass:[0,0,5,7], hihat:1, beatGroup:4, tempoMul:0.62,
+  chad:     { inst:'surf', melWave:'square', bassWave:'triangle', bass:[0,0,5,7], hihat:1, beatGroup:4, tempoMul:0.62, station:'96.9 Surf Rock',
               drums:{kick:[0,8],snare:[4,12]},
               mel:[0,1,4,5,7,8,7,5, 4,5,4,1,0,null,0,null, 7,8,11,12,11,8,7,5, 4,5,4,1,0,null,null,null], // surf-rock tremolo run
               melB:[12,13,16,17,16,13,12,11, 8,7,8,11,12,null,12,null, 12,11,8,7,5,4,1,0, 1,4,5,4,1,0,null,null] }, // B: up-the-neck run
+  // Chad's alternate "Luau" — an ORIGINAL Hawaiian-style piece, not a transcription of any
+  // classic surf tune. Checked: Wipe Out (1963), Dick Dale's Miserlou arrangement (1962),
+  // and The Endless Summer theme (1966) are all still within standard copyright terms —
+  // none of them are safely usable here. Warm ukulele-ish pluck (triangle wave instead of
+  // pluck's default sawtooth), relaxed sway, parallel-thirds major-key melody.
+  chadAlt:  { inst:'pluck', melWave:'triangle', bassWave:'triangle', station:'88.3 Luau FM',
+              drums:{kick:[0,8],snare:[]}, bass:[0,0,5,4], hihat:0, beatGroup:4, tempoMul:1.15,
+              mel:[0,4,7,9,7,4,0,null, 0,4,7,9,7,4,0,null, 2,5,9,11,9,5,2,null, 2,5,9,11,9,5,2,null],
+              melB:[9,12,14,12,9,7,9,null, 9,12,14,16,14,12,9,null, 9,7,4,7,9,12,9,null, 9,7,4,0,null,null,null,null] },
   hillbilly:{ inst:'pluck', melWave:'sawtooth', bassWave:'triangle',                                                   bass:[0,0,5,7],   hihat:2, beatGroup:4, tempoMul:0.6,
               mel:[0,0,2,4,7,7,4,7, 9,9,7,4,0,2,4,2, 0,0,2,4,7,7,4,7, 9,7,4,2,0,null,null,null],        // Turkey in the Straw (trad.)
               melB:[12,12,9,7,12,12,9,7, 12,14,12,9,7,4,7,9, 7,7,4,0,7,7,4,0, 9,7,4,2,0,null,null,null] },// B: the chorus strain
@@ -575,6 +601,9 @@ function playNote(freq,dur,vol,type,inst){
     case 'funk':                                    // wah clav: square through a fast filter sweep
       mk('square',freq,-5); mk('square',freq,6);
       atk=0.006; filt0=Math.min(9000,freq*10); filt1=freq*1.2; fDecay=0.12; f.Q.value=5; break;
+    case 'house':                                    // house/techno stab: bright resonant snap,
+      mk('sawtooth',freq,-6); mk('square',freq,6); mk('sawtooth',freq*2,0);   // dies fast — the "chord stab" sound, distinct
+      atk=0.005; filt0=Math.min(9500,freq*8); filt1=freq*1.15; fDecay=0.09; f.Q.value=4.5; rel=Math.min(dur,0.22); break;   // from synthwave's longer sustain
     case 'surf': {                                  // surf guitar: fast tremolo (gain LFO) + drippy echo — pulled
       mk('square',freq,-4); mk('square',freq,5);     // warmer/rounder than synthwave so they don't collide
       atk=0.008; filt0=Math.min(5500,freq*4.2); filt1=freq*1.5; fDecay=Math.min(0.3,dur); rel=dur*1.4;
@@ -623,6 +652,15 @@ function drumSnare(){ if(!actx||!musicGain)return; const t=actx.currentTime;
   const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1900; bp.Q.value=0.8;
   const g=actx.createGain(); g.gain.value=0.22;
   src.connect(bp); bp.connect(g); g.connect(musicGain); src.start(t); }
+// open hi-hat "chick" — longer, brighter than the closed-hat noiseBurst ping used
+// elsewhere; the classic off-beat accent that makes a beat read as house/techno
+function drumOpenHat(){ if(!actx||!musicGain)return; const t=actx.currentTime;
+  const len=actx.sampleRate*0.26, buf=actx.createBuffer(1,len,actx.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+  const src=actx.createBufferSource(); src.buffer=buf;
+  const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6500;
+  const g=actx.createGain(); g.gain.value=0.15;
+  src.connect(hp); hp.connect(g); g.connect(musicGain); src.start(t); }
 function musicTick(){
   const st=curStyle||MUSIC_STYLES.guido;
   const bg=st.beatGroup||4, steps=bg*4;
@@ -634,6 +672,7 @@ function musicTick(){
   if(st.drums){
     if(st.drums.kick.includes(step)) drumKick();
     if(st.drums.snare.includes(step)) drumSnare();
+    if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
     if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave);
   } else {
     if(step%bg===0){ drumKick();
@@ -650,12 +689,14 @@ function musicTick(){
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
 }
+// resolves a base character id to its currently-tuned station (alt if picked and available)
+function effectiveStyleId(id){ return (id && altActive[id] && ALT_MAP[id]) ? ALT_MAP[id] : id; }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
-  const styleId=(chosenType&&chosenType.id==='guido'&&guidoAltTheme)?'guidoAlt':(chosenType&&chosenType.id);
-  curStyle=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;   // per-character style (Guido has a selectable alt)
+  const styleId=effectiveStyleId(chosenType&&chosenType.id);
+  curStyle=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;   // per-character style (some have a selectable alt "station")
   // assemble the AABA song form: verse twice, contrasting B strain (chorus), verse again
   curStyle.seq = curStyle.melB ? [...curStyle.mel, ...curStyle.mel, ...curStyle.melB, ...curStyle.mel] : curStyle.mel;
   musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
@@ -961,6 +1002,13 @@ function resize(){
   _vw=w; _vh=h;
   renderer.setSize(w,h);
   camera.aspect=w/h; camera.updateProjectionMatrix();
+  // iOS can leave position:fixed elements pinned to a STALE viewport size right after a
+  // fullscreen enter/exit (the fixed box doesn't get recomputed against the new height
+  // until something forces a fresh layout), so the scroll hint would end up floating mid-
+  // screen instead of pinned to the true bottom. Force a reflow on every resize this hooks
+  // into — the same call sites already needed for exactly this class of iOS viewport quirk.
+  const sh=document.getElementById('scrollHint');
+  if(sh){ sh.style.display='none'; void sh.offsetHeight; sh.style.display='flex'; }
 }
 addEventListener('resize',resize);
 addEventListener('orientationchange',()=>{ tiltBase=null; setTimeout(resize,200); setTimeout(resize,500); });
@@ -2487,24 +2535,28 @@ function updateRacer(r,dt){
   // airborne physics: rise, fall under gravity, land back on the track (lighter gravity = more hang time)
   if(r.air){
     r.vy -= 95*dt; r.y += r.vy*dt;
-    const groundY=SAMP[r.idx].p.y;
+    const groundY=SAMP[r.idx].p.y + HOVER_H;   // land at hover height, not bare ground —
+                                                // otherwise it'd touch down low then visibly
+                                                // pop up to the hover height a few frames later
     if(r.vy<0 && r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0;
       r.boostT=Math.max(r.boostT,0.7);            // landing boost rewards the jump
       burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); } }
   }
 }
 
+const HOVER_H=2.4;   // characters float this far above the literal road surface — the
+                      // shadow (tracked separately via r.surfY, see syncObjects) sells it
 function placeOnTrack(r,dt){
   // hug the track height (unless airborne after a jump ramp) — on a banked corner the
   // road surface isn't flat across its width, so the target height has to account for
   // how far off centerline the racer actually is, or it clips into the raised outer
-  // edge / floats over the dropped inner edge instead of sitting ON the tilted surface
+  // edge / floats over the dropped inner edge instead of sitting ON the tilted surface.
+  // surfY is computed unconditionally (even mid-air) so the ground shadow always tracks
+  // the real terrain height beneath the racer, not a stale pre-jump value.
   const s=SAMP[r.idx];
-  if(!r.air){
-    const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;         // signed distance from centerline
-    const surfY=s.p.y + Math.sin(s.bank||0)*lat;              // height of the banked surface at that offset
-    r.y += (surfY - r.y)*Math.min(1,6*dt);
-  }
+  const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;            // signed distance from centerline
+  r.surfY = s.p.y + Math.sin(s.bank||0)*lat;                  // height of the banked surface at that offset
+  if(!r.air) r.y += ((r.surfY+HOVER_H) - r.y)*Math.min(1,6*dt);
   // continuous progress: project the racer onto the idx -> idx+1 segment for a
   // smooth, precise position value (stable places, no nearest-sample jitter)
   const i0=r.idx, i1=trackLoop?((i0+1)%STEPS):Math.min(i0+1,STEPS-1);
@@ -2533,7 +2585,7 @@ function placeOnTrack(r,dt){
       showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine();
       flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
-      playVictoryFanfare(chosenType&&chosenType.id==='guido'&&guidoAltTheme?'guidoAlt':(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or Club Mix if toggled)
+      playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
       const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
       for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
       // six staggered confetti waves — the finish used to be one instant pop, this keeps
@@ -2745,11 +2797,16 @@ function syncObjects(dt,now){
     _oTrueUp.crossVectors(_oFwd, _oRight).normalize();
     _oBasis.makeBasis(_oRight, _oTrueUp, _oFwd);
     o.quaternion.setFromRotationMatrix(_oBasis);
-    if(r.shadow){                                                // ground shadow shrinks as you hop
-      r.shadow.position.set(r.x, r.y+0.12, r.z);
+    if(r.shadow){
+      // ground shadow tracks the TRUE road surface height (r.surfY), not the character's
+      // own y — which now floats HOVER_H above the road. Without this split the shadow
+      // would rise right along with the character and the hover would read as nothing
+      // (no visible gap = no sense of floating), instead of a car-style hover-with-cast-
+      // shadow look. Also darkened a touch so the separation actually reads as a shadow.
+      r.shadow.position.set(r.x, (r.surfY!==undefined?r.surfY:r.y)+0.12, r.z);
       const sc=1 - Math.min(0.4, lift*0.1);
       r.shadow.scale.setScalar(sc);
-      r.shadow.material.opacity=0.7*sc;
+      r.shadow.material.opacity=0.82*sc;
     }
     // tail wiggle scaled by speed (smooth per-vertex, no segments)
     r.phase += dt*(4+Math.abs(r.spd)*0.06);
@@ -2967,6 +3024,8 @@ function syncHUD(){
   // move existed until it flashed up); .ready lights it up orange only when actually usable
   $('whipbtn').style.display = (isTouch && !me.finished) ? 'inline-flex' : 'none';
   $('whipbtn').classList.toggle('ready', whipReady);
+  // radio icon only shows for characters that actually have a second station tuned in
+  $('radioBtn').style.display = (chosenType && ALT_MAP[chosenType.id]) ? 'flex' : 'none';
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
@@ -3529,12 +3588,18 @@ setupFullscreen();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
     if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
-(function setupGuidoAlt(){ const b=$('guidoAltBtn'); if(!b)return;
-  b.onclick=()=>{ guidoAltTheme=!guidoAltTheme; b.textContent='Guido Theme: '+(guidoAltTheme?'Club Mix':'Classic');
-    b.classList.toggle('on',guidoAltTheme);
-    // live-swap if Guido's music is already playing (mid-race theme picker, or the
-    // menu preview) instead of waiting for the next race start
-    if(chosenType && chosenType.id==='guido' && musicTimer) startMusic(); }; })();
+// in-race "car radio" station toggle — tap to seek to the other station, dashboard-style:
+// a quick tuning static burst + glow, then a frequency-readout toast for the new station
+(function setupRadio(){ const b=$('radioBtn'); if(!b)return;
+  b.onclick=()=>{
+    const id=chosenType&&chosenType.id; if(!id||!ALT_MAP[id])return;
+    altActive[id]=!altActive[id];
+    noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
+    b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
+    if(musicTimer) startMusic();   // live-swap mid-race instead of waiting for the next start
+    const st=MUSIC_STYLES[effectiveStyleId(id)];
+    showToast(st.station||'Station tuned','t-gold');
+  }; })();
 
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
