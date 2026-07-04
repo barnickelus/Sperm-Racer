@@ -2366,19 +2366,35 @@ function updateRacer(r,dt){
     r.z+=Math.cos(r.head)*r.spd*dt;    // never actually got around to the face
     return;
   }
-  let steer=0, gas=false, brake=false, drift=false, fire=false;
+  let steer=0, gas=false, brake=false, reverse=false, drift=false, fire=false;
   if(r.you){
     if(keys.has('arrowleft')||keys.has('a')||touch.left)steer+=1;   // (sign matches touch; desktop was inverted)
     if(keys.has('arrowright')||keys.has('d')||touch.right)steer-=1;
     if(isTouch){
       steer = tiltMode ? tiltSteer : (joyActive ? padSteer : steer);  // tilt or hold-anywhere stick
-      if(sliderMode){ gas = sliderThrottle>0.05; brake = sliderThrottle<-0.05; }      // right-side slider
-      else if(tiltMode){ gas = tiltThrottle>0.05; brake = tiltThrottle<-0.05; }       // fore/aft tilt
-      else if(joyActive && joyY>0.3){ gas = false; brake = true; }                    // stick pulled down = brake (Mario Kart-style)
-      else { gas = true; brake = false; }                                            // auto-drive forward
+      if(sliderMode){ gas = sliderThrottle>0.05; brake = sliderThrottle<-0.05; reverse = brake; }      // right-side slider
+      else if(tiltMode){ gas = tiltThrottle>0.05; brake = tiltThrottle<-0.05; reverse = brake; }       // fore/aft tilt
+      else if(joyActive){
+        // Brake/reverse need a deliberate pull, not just "any downward drift while steering":
+        // 1) the stick must be close to STRAIGHT back (small X relative to Y), so a diagonal
+        //    steering drag that happens to dip down doesn't false-trigger it, and
+        // 2) it needs a real threshold pull (BRAKE_T) to even start braking — 0.3 with no
+        //    angle check was firing on almost any backward wobble.
+        // Reverse is a second, deeper threshold (REV_T) that also has to be HELD
+        // (REV_HOLD seconds) before it engages, so a quick deep pull just brakes hard
+        // instead of snapping straight into reverse.
+        const BRAKE_T=0.55, REV_T=0.85, REV_HOLD=0.4;
+        const straightBack = joyY>0 && Math.abs(joyX) < joyY*0.5;
+        if(straightBack && joyY>BRAKE_T){
+          r._revHoldT = (r._revHoldT||0) + (joyY>REV_T ? dt : 0);
+          gas=false; brake=true; reverse = r._revHoldT>=REV_HOLD;
+        } else { r._revHoldT=0; gas=true; brake=false; }
+      }
+      else { r._revHoldT=0; gas = true; brake = false; }                             // auto-drive forward
     } else {
       gas = keys.has('arrowup')||keys.has('w');
       brake = keys.has('arrowdown')||keys.has('s');
+      reverse = brake;   // keyboard is a deliberate digital press already — no gating needed
     }
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
@@ -2448,7 +2464,8 @@ function updateRacer(r,dt){
 
   // accelerate
   if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
-  else if(brake) r.spd += (-60-r.spd)*Math.min(1,3*dt);
+  else if(reverse) r.spd += (-60-r.spd)*Math.min(1,3*dt);
+  else if(brake) r.spd += (0-r.spd)*Math.min(1,4*dt);   // firm stop — doesn't creep into reverse on its own
   else r.spd += (0-r.spd)*Math.min(1,1.4*dt);
   r.spd=Math.max(-50,Math.min(BOOSTV,r.spd));
 
