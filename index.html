@@ -22,6 +22,15 @@
   html,body{margin:0;height:100%;background:#05202a;overflow:hidden;touch-action:none;
     font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--bone);overscroll-behavior:none;}
   #app{position:fixed;inset:0;}
+  /* The WebGL canvas is forced to ALWAYS fill its full-screen parent via CSS (100%/100%),
+     independent of the render buffer's pixel dimensions. renderer.setSize(...,false) below
+     changes only the buffer resolution and never writes an inline width/height onto this
+     canvas — so even if a resize computes a stale/smaller buffer size mid-gesture, the canvas
+     still visually covers the whole screen (at worst a momentary aspect stretch, self-healed
+     next frame) instead of collapsing into a small box in the corner while the fixed HUD
+     controls stay pinned to the true screen edges. That desync was the "controls all over the
+     place" bug on iPad. !important guards against three.js ever re-adding an inline size. */
+  #app canvas{display:block;width:100%!important;height:100%!important;}
   canvas{display:block;}
   /* fixed, not absolute, and for the same reason #app is fixed: iOS Safari's dynamic
      toolbar / rubber-band overscroll can shift body by a few px even with overflow:hidden
@@ -437,22 +446,15 @@ document.addEventListener('touchstart', e=>{
 // try to hold orientation during gameplay so a tilt can't flip the layout (no-op on iOS Safari)
 function lockOrient(){ try{ screen.orientation && screen.orientation.lock && screen.orientation.lock('portrait').catch(()=>{}); }catch(e){} }
 function unlockOrient(){ try{ screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); }catch(e){} }
-// iPadOS can yank the page OUT of fullscreen mid-race from a multi-finger system gesture
-// (Stage Manager window resize, app-switcher swipe) that the OS reserves for itself — no
-// web API can prevent that gesture from being recognized in the first place, it's an OS-level
-// reservation, not something touch-action/preventDefault can override. What IS fixable is how
-// long the game stays stuck in that shrunk state afterward: hop straight back into fullscreen
-// the instant we notice we left it, instead of leaving the player in a tiny floating window
-// for the rest of the race.
+// iPadOS can yank the page out of fullscreen / resize the window mid-race from a multi-finger
+// system gesture (Stage Manager, Split View, app-switcher) that the OS reserves for itself —
+// no web API can stop that gesture being recognized. An earlier attempt to auto-re-request
+// fullscreen on every change just fought the OS and caused resize churn ("all over the
+// place"). The reliable fix is instead structural: the canvas always fills the screen via CSS
+// and tracks the visualViewport, so whatever size the window ends up, the render and the HUD
+// stay in sync. All this handler does now is nudge a clean re-layout after the dust settles.
 ['fullscreenchange','webkitfullscreenchange'].forEach(ev=>document.addEventListener(ev, ()=>{
-  const inFs = !!(document.fullscreenElement||document.webkitFullscreenElement);
-  const standaloneMode = navigator.standalone || matchMedia('(display-mode:standalone)').matches;
-  if(!inFs && !standaloneMode && (state==='race'||state==='count')){
-    const el=document.documentElement;
-    const req=el.requestFullscreen||el.webkitRequestFullscreen||el.webkitRequestFullScreen;
-    if(req){ try{ const p=req.call(el); if(p&&p.catch) p.catch(()=>{}); }catch(_){} }
-  }
-  setTimeout(resize,300);
+  resize(); setTimeout(resize,300);
 }));
 
 /* ============== AUDIO (procedural Web Audio SFX — no files) ============== */
@@ -1051,19 +1053,30 @@ const fill = new T.PointLight(0xffe0b0,0.30,400); fill.position.set(20,60,-120);
 const flesh = new T.PointLight(0xff6f8a,0.35,500); flesh.position.set(-30,-10,40); scene.add(flesh); // fleshy underglow
 
 let _vw=0,_vh=0;
+// single source of truth for the current visible size. visualViewport reflects the ACTUAL
+// visible window on iPad — including Stage Manager / Split View window resizes and the
+// dynamic-toolbar shrink — which documentElement.clientWidth/Height can report stale during
+// those transitions (that stale read was what pinned the render buffer to a small box). Fall
+// back to clientWidth/Height only when visualViewport is unavailable.
+function viewSize(){
+  const vv=window.visualViewport;
+  return vv ? {w:Math.round(vv.width), h:Math.round(vv.height)}
+            : {w:document.documentElement.clientWidth, h:document.documentElement.clientHeight};
+}
 function resize(){
-  // use the LAYOUT viewport (clientWidth), not innerWidth — innerWidth is
-  // zoom-affected on iOS and made the canvas overflow past the CSS overlays
-  const w=document.documentElement.clientWidth, h=document.documentElement.clientHeight;
+  const {w,h}=viewSize();
+  if(w<2||h<2) return;                       // ignore degenerate mid-transition reads
   _vw=w; _vh=h;
-  renderer.setSize(w,h);
+  // updateStyle=false: change ONLY the render buffer, never the canvas's CSS box. The canvas
+  // stays full-screen via the #app canvas{100%/100%} rule, so it can't collapse into a corner.
+  renderer.setSize(w,h,false);
   camera.aspect=w/h; camera.updateProjectionMatrix();
   updateScrollHint();
 }
 addEventListener('resize',resize);
 addEventListener('orientationchange',()=>{ tiltBase=null; setTimeout(resize,200); setTimeout(resize,500); });
 addEventListener('load',()=>{ resize(); setTimeout(resize,250); setTimeout(resize,800); });
-if(window.visualViewport) visualViewport.addEventListener('resize',resize);
+if(window.visualViewport){ visualViewport.addEventListener('resize',resize); visualViewport.addEventListener('scroll',resize); }
 // #scrollHint lives inside #grid-frame, a normal-flow flex box (not position:fixed), so its
 // bottom edge is fixed by layout and never drifts under scrolling content or iOS viewport
 // quirks. It only needs to know WHETHER to show — true while #sperm-scroll has more content
@@ -3192,7 +3205,7 @@ function frame(now){
     renderer.render(scene,camera); requestAnimationFrame(frame); return;
   }
   const tsec=now/1000;
-  if(_vw!==document.documentElement.clientWidth||_vh!==document.documentElement.clientHeight) resize();   // self-heal framing if viewport changed
+  { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
   if(state==='race'){
     raceTime=(now-tStart)/1000;
     for(const r of racers)updateRacer(r,dt);
