@@ -333,6 +333,7 @@
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
+  <button class="go alt" id="guidoAltBtn" style="margin-top:10px">Guido Theme: Classic</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Single race</button>
   <button class="go alt" id="circuitbtn" style="margin-top:10px;border-color:#ff9ec4;color:#ff9ec4">🥚 Circuit Cup — fertilize every egg</button>
@@ -474,7 +475,7 @@ const SFX={
    timbre, hi-hat density, beat grouping, tempo feel) layered on top of the
    per-track key + tempo, so the race sounds different depending on who you drive
    as, not just which circuit you picked. */
-let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null;
+let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null, guidoAltTheme=false;
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
@@ -484,6 +485,13 @@ const MUSIC_STYLES={
   guido:    { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55,
               mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3],                            // Tarantella Napoletana (trad.)
               melB:[7,4,0,4,7,9, 7,null,9,5,2,5, 9,11,9,null,12,11, 9,7,9,11,12,null] },                 // B: Funiculì Funiculà refrain (1880, PD)
+  // Guido's alternate "Club Mix" — an ORIGINAL 90s Eurodance-style track (gated synthwave
+  // stabs, four-on-the-floor kick, off-beat open hats), not a transcription of any existing
+  // song — toggled via #guidoAltBtn on the start screen, selected in startMusic() below
+  guidoAlt: { inst:'synthwave', melWave:'square', bassWave:'square', drums:{kick:[0,2,4,6,8,10,12,14],snare:[4,12]},
+              bass:[0,0,0,0], hihat:1, beatGroup:4, tempoMul:0.42,
+              mel:[0,0,0,3,5,5,7,5, 0,0,0,3,5,7,10,7, 0,0,0,3,5,5,7,5, 3,2,0,2,3,5,3,0],
+              melB:[10,10,12,10,7,7,5,7, 10,10,12,14,15,14,12,10, 10,10,12,10,7,7,5,7, 5,3,5,7,5,3,0,null] },
   irish:    { inst:'pluck', melWave:'sawtooth', bassWave:'triangle', drums:{kick:[0,6],snare:[]},                       bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
               mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4],                             // The Irish Washerwoman (trad. jig)
               melB:[12,7,4,7,12,7, 12,7,9,11,9,7, 12,7,4,7,12,7, 11,9,7,4,2,-1] },                       // B: the jig's high strain
@@ -646,7 +654,8 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
-  curStyle=MUSIC_STYLES[chosenType&&chosenType.id]||MUSIC_STYLES.guido;   // per-character style
+  const styleId=(chosenType&&chosenType.id==='guido'&&guidoAltTheme)?'guidoAlt':(chosenType&&chosenType.id);
+  curStyle=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;   // per-character style (Guido has a selectable alt)
   // assemble the AABA song form: verse twice, contrasting B strain (chorus), verse again
   curStyle.seq = curStyle.melB ? [...curStyle.mel, ...curStyle.mel, ...curStyle.melB, ...curStyle.mel] : curStyle.mel;
   musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
@@ -2397,8 +2406,14 @@ function updateRacer(r,dt){
   r._wallCD=Math.max(0,(r._wallCD||0)-dt);   // wall-hit speed penalty cooldown — see below
   r._bank=r._bank||0;
   // default lean matches the road's own superelevation (corners bank like a real track);
-  // the Valentina berm case below overrides this with a much bigger, rider-controlled lean
-  let bankWant=(SAMP[r.idx].bank||0)/0.85;   // /0.85 cancels the roll-output scale downstream
+  // the Valentina berm case below overrides this with a much bigger, rider-controlled lean.
+  // Negated + /0.85: downstream the roll is applied as rollAngle=-(r._bank)*0.85 (a sign
+  // tuned for the berm's own lat-based convention below) — for the true road bank, an
+  // axis-angle rotation of world-up around the direction of travel by +s.bank is what
+  // actually aligns with the road's real surface normal (verified against cross(t,bn),
+  // proven algebraically equal to Rodrigues' rotation formula), so this needs the opposite
+  // sign flowing in to cancel the downstream negation and come out as +s.bank in the end.
+  let bankWant=-(SAMP[r.idx].bank||0)/0.85;
   if(!r.air){ const s=SAMP[r.idx];   // no walls while airborne — jump over barriers/gaps
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;   // +lat toward +normal
     if(TRACKS[selTrack].berm && tunnelAt(r.prog)){
@@ -2518,7 +2533,7 @@ function placeOnTrack(r,dt){
       showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine();
       flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
-      playVictoryFanfare(chosenType&&chosenType.id);  // rising run through the finisher's own musical style
+      playVictoryFanfare(chosenType&&chosenType.id==='guido'&&guidoAltTheme?'guidoAlt':(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or Club Mix if toggled)
       const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
       for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
       // six staggered confetti waves — the finish used to be one instant pop, this keeps
@@ -2682,6 +2697,10 @@ function rank(){
 }
 
 /* ============== VISUALS PER FRAME ============== */
+// scratch objects reused every frame/racer for the banked-orientation basis below —
+// avoids allocating fresh Vector3/Matrix4 instances 360+ times a second at 6 racers
+const _worldUp=new T.Vector3(0,1,0), _oFwd=new T.Vector3(), _oUp=new T.Vector3(),
+      _oRight=new T.Vector3(), _oTrueUp=new T.Vector3(), _oBasis=new T.Matrix4();
 function syncObjects(dt,now){
   for(const r of racers){
     const o=r.obj;
@@ -2710,8 +2729,22 @@ function syncObjects(dt,now){
       glance=Math.max(-1.0,Math.min(1.0,diff*1.3))*prox;   // wider, snappier head turn
     }
     r._glance=(r._glance||0)+(glance-(r._glance||0))*Math.min(1,8*dt);
-    o.rotation.y = r.head + r.slip + r._glance;
-    o.rotation.z = -r.slip*0.5 - (r._bank||0)*0.85;              // lean into the slide + berm wall-ride roll
+    // Orientation via an explicit basis instead of raw Euler y+z: a plain rotation.z roll
+    // doesn't compose correctly with a rotation.y heading turn for any heading other than
+    // "facing world +Z" — that mismatch is exactly why banked characters looked flat/wrong
+    // relative to a visibly tilted road instead of leaning into it. Build forward from the
+    // heading, tilt world-up around THAT forward axis by the roll amount (same value as
+    // before — ordinary road superelevation and the berm wall-ride lean both already flow
+    // into r._bank), then derive an orthonormal right/up so the model banks relative to its
+    // own direction of travel, matching the road surface underneath it.
+    const headAngle=r.head + r.slip + r._glance;
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85;
+    _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
+    _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
+    _oRight.crossVectors(_oUp, _oFwd).normalize();
+    _oTrueUp.crossVectors(_oFwd, _oRight).normalize();
+    _oBasis.makeBasis(_oRight, _oTrueUp, _oFwd);
+    o.quaternion.setFromRotationMatrix(_oBasis);
     if(r.shadow){                                                // ground shadow shrinks as you hop
       r.shadow.position.set(r.x, r.y+0.12, r.z);
       const sc=1 - Math.min(0.4, lift*0.1);
@@ -3496,6 +3529,12 @@ setupFullscreen();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
     if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
+(function setupGuidoAlt(){ const b=$('guidoAltBtn'); if(!b)return;
+  b.onclick=()=>{ guidoAltTheme=!guidoAltTheme; b.textContent='Guido Theme: '+(guidoAltTheme?'Club Mix':'Classic');
+    b.classList.toggle('on',guidoAltTheme);
+    // live-swap if Guido's music is already playing (mid-race theme picker, or the
+    // menu preview) instead of waiting for the next race start
+    if(chosenType && chosenType.id==='guido' && musicTimer) startMusic(); }; })();
 
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
