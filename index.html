@@ -524,9 +524,11 @@ const SFX={
    per-track key + tempo, so the race sounds different depending on who you drive
    as, not just which circuit you picked. */
 let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null;
-// characters with a selectable second "station" — tuned live via the in-race radio icon
-const ALT_MAP={guido:'guidoAlt', chad:'chadAlt'};
-const altActive={};   // {charId: true/false} — which characters currently have their alt picked
+// characters with one or more selectable alt "stations" — tuned live via the in-race radio
+// icon, cycling home -> alt1 -> alt2 -> ... -> home. Guido has two: a house remix of his own
+// PD folk hooks, and an original party anthem.
+const ALT_MAP={guido:['guidoAlt','guidoParty'], chad:['chadAlt']};
+const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
@@ -548,6 +550,16 @@ const MUSIC_STYLES={
               bass:[0,0,0,0], hihat:0, beatGroup:4, tempoMul:0.42,
               mel:[0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3],   // Tarantella hook, looped
               melB:[7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,null,null] }, // Funiculì hook, looped
+  // Guido's third station: an ORIGINAL party-anthem composition (not a transcription of any
+  // existing song) — requested as a "Party Boy"-style track, but the actual song by that name
+  // isn't something we have rights or reliable source material for, so this is a from-scratch
+  // piece built to the same brief: big, chanty, fist-pump energy. Deliberately simple, wide
+  // root/third/fifth/octave leaps (the "hey! hey!" chant vocabulary common to the whole pump-
+  // up-anthem genre, not any one song) so the hook stays legible even through the low-bit
+  // synth — the whole point of the request was recognizability despite the audio limitations.
+  guidoParty: { inst:'popstab', melWave:'sawtooth', bassWave:'square', station:'106.3 Party Boy FM',
+              drums:{kick:[0,4,8,12],snare:[4,12]}, bass:[0,0,0,0], hihat:2, beatGroup:4, tempoMul:0.46,
+              mel:[0,0,7,7,12,12,7,4], melB:[9,9,7,7,4,4,0,4] },
   irish:    { inst:'whistle', melWave:'sawtooth', bassWave:'triangle', drums:{kick:[0,6],snare:[]},                       bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
               mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4],                             // The Irish Washerwoman (trad. jig)
               melB:[12,7,4,7,12,7, 12,7,9,11,9,7, 12,7,4,7,12,7, 11,9,7,4,2,-1] },                       // B: the jig's high strain
@@ -646,6 +658,9 @@ function playNote(freq,dur,vol,type,inst){
     case 'house':                                    // house/techno stab: bright resonant snap,
       mk('sawtooth',freq,-6); mk('square',freq,6); mk('sawtooth',freq*2,0);   // dies fast — the "chord stab" sound, distinct
       atk=0.005; filt0=Math.min(9500,freq*8); filt1=freq*1.15; fDecay=0.09; f.Q.value=4.5; rel=Math.min(dur,0.22); break;   // from synthwave's longer sustain
+    case 'popstab':                                   // party-anthem lead: glossier/less resonant than 'house' —
+      mk('sawtooth',freq,-8); mk('sawtooth',freq,8); mk('square',freq*2,0);      // a big open pop/EDM chant stab
+      atk=0.004; filt0=Math.min(11000,freq*10); filt1=freq*2; f.Q.value=2.5; fDecay=0.14; rel=Math.min(dur,0.3); break;
     case 'banjo':                                    // bright metallic pluck: snappier & harder than 'pluck',
       mk('square',freq,-6); mk('square',freq,6); mk('triangle',freq*3,0);      // for backwoods/bluegrass specifically
       atk=0.002; filt0=Math.min(12000,freq*13); filt1=freq*2.8; fDecay=0.045; rel=Math.min(dur,0.28); break;
@@ -753,8 +768,11 @@ function musicTick(){
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
 }
-// resolves a base character id to its currently-tuned station (alt if picked and available)
-function effectiveStyleId(id){ return (id && altActive[id] && ALT_MAP[id]) ? ALT_MAP[id] : id; }
+// resolves a base character id to its currently-tuned station (home, or one of its alts)
+function effectiveStyleId(id){
+  const alts=ALT_MAP[id], idx=altIndex[id]||0;
+  return (alts && idx>0 && alts[idx-1]) ? alts[idx-1] : id;
+}
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
   // strength, while ALL music passes through this extra musicGain stage first, so the whole
@@ -3172,7 +3190,7 @@ function syncHUD(){
   $('whipbtn').style.display = (isTouch && !me.finished) ? 'inline-flex' : 'none';
   $('whipbtn').classList.toggle('ready', whipReady);
   // radio icon only shows for characters that actually have a second station tuned in
-  $('radioBtn').style.display = (chosenType && ALT_MAP[chosenType.id]) ? 'flex' : 'none';
+  $('radioBtn').style.display = (chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length) ? 'flex' : 'none';
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
@@ -3741,8 +3759,8 @@ setupFullscreen();
 // a quick tuning static burst + glow, then a frequency-readout toast for the new station
 (function setupRadio(){ const b=$('radioBtn'); if(!b)return;
   b.onclick=()=>{
-    const id=chosenType&&chosenType.id; if(!id||!ALT_MAP[id])return;
-    altActive[id]=!altActive[id];
+    const id=chosenType&&chosenType.id; const alts=ALT_MAP[id]; if(!alts||!alts.length)return;
+    altIndex[id]=((altIndex[id]||0)+1)%(alts.length+1);   // cycle: home -> alt1 -> alt2 -> ... -> home
     noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
     b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
     if(musicTimer){ stopMusic(); startMusic(); }   // startMusic() no-ops while musicTimer is already set, so
