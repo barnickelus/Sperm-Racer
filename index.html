@@ -551,7 +551,10 @@ const MUSIC_STYLES={
   irish:    { inst:'whistle', melWave:'sawtooth', bassWave:'triangle', drums:{kick:[0,6],snare:[]},                       bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
               mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4],                             // The Irish Washerwoman (trad. jig)
               melB:[12,7,4,7,12,7, 12,7,9,11,9,7, 12,7,4,7,12,7, 11,9,7,4,2,-1] },                       // B: the jig's high strain
-  latin:    { inst:'brass', melWave:'square',   bassWave:'sawtooth', drums:{kick:[0,3,6,10,12],snare:[4,12]},           bass:[0,0,3,7],   hihat:1, beatGroup:4, tempoMul:0.8,
+  latin:    { inst:'brass', melWave:'square',   bassWave:'sawtooth', drums:{kick:[0,3,6,10],snare:[4,12]},           bass:[0,0,3,7],   hihat:1, beatGroup:4, tempoMul:0.8,
+              // kick was [0,3,6,10,12] — 5 hits per 16-step bar, the densest kick pattern of
+              // any character (peers run 2-4) at a relatively quick tempoMul (0.8), which
+              // read as a cluttered rhythm section stepping on the melody. Trimmed to 4.
               mel:[0,0,0,5,9,null, 0,0,0,5,9,null, 9,9,8,8,5,5, 4,2,0,null,null,null],                  // La Cucaracha (trad.)
               melB:[12,12,12,10,10,10, 8,8,8,9,null,null, 5,5,4,4,2,2, 0,null,null,0,null,null] },       // B: chorus answer phrase
   dragon:   { inst:'koto', melWave:'sine',     bassWave:'sine',     mel:[0,2,5,7,9,7,5,2], melB:[12,9,7,9,12,14,12,9], bass:[0,0,0,7],   hihat:0, beatGroup:4, tempoMul:1.4  }, // pentatonic + high answer
@@ -742,7 +745,10 @@ function musicTick(){
   // built at startMusic — a single looping strain was why everything felt repetitive
   const song=st.seq||st.mel;
   const n=song[raw%song.length];
-  if(n!==null) playNote(noteFreq(n+12),0.22,0.1,st.melWave,st.inst);   // null = rest
+  // vol was 0.1 — quieter than the bass (0.22) and even the kick (0.5 own-gain), so the
+  // actual TUNE sat under its own rhythm section before gameplay SFX ever entered the mix.
+  // Bumped so the melody reads as the lead voice instead of getting buried.
+  if(n!==null) playNote(noteFreq(n+12),0.22,0.15,st.melWave,st.inst);   // null = rest
   if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.028,7500);
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
@@ -750,7 +756,12 @@ function musicTick(){
 // resolves a base character id to its currently-tuned station (alt if picked and available)
 function effectiveStyleId(id){ return (id && altActive[id] && ALT_MAP[id]) ? ALT_MAP[id] : id; }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
-  if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.5; musicGain.connect(masterGain); }
+  // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
+  // strength, while ALL music passes through this extra musicGain stage first, so the whole
+  // music bed sat roughly half as loud as a same-volume SFX call before it ever reached
+  // masterGain. That's the "music gets overwhelmed by sound effects" complaint — universal
+  // across every character, just most noticeable on whichever racer is triggering SFX often.
+  if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.68; musicGain.connect(masterGain); }
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
   const styleId=effectiveStyleId(chosenType&&chosenType.id);
@@ -1506,8 +1517,19 @@ function buildTrack(idx){
     if(TRACKS[idx].extraRamp!=null) corners.push(Math.floor(TRACKS[idx].extraRamp*STEPS)+16);
     for(const ci of corners){
       const i=((ci-16)%STEPS+STEPS)%STEPS; const s=SAMP[i];   // ramp a bit before the apex
-      const ang=Math.atan2(s.t.x,s.t.z);
-      const grp=new T.Group(); grp.position.copy(s.p); grp.rotation.y=ang;
+      const grp=new T.Group(); grp.position.copy(s.p);
+      // Plain rotation.y=heading (the old code) ignores the road's superelevation entirely,
+      // so on any banked approach the ramp's flat base sits level while the actual road
+      // surface under it is tilted — that's the "ramp doesn't follow the axis of the course,
+      // gets partially submerged" bug. Same fix as the car/character lean: build an explicit
+      // basis (forward = flattened tangent, up = world-up rolled around that forward by the
+      // sample's bank angle) instead of composing raw Euler y+z, which doesn't commute for
+      // any heading other than facing world +Z.
+      const fwd=new T.Vector3(s.t.x,0,s.t.z).normalize();
+      const up=_worldUp.clone().applyAxisAngle(fwd, s.bank||0);
+      const right=new T.Vector3().crossVectors(up,fwd).normalize();
+      const trueUp=new T.Vector3().crossVectors(fwd,right).normalize();
+      grp.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(right,trueUp,fwd));
       const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
         new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
