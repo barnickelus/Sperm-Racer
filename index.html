@@ -565,12 +565,20 @@ const MUSIC_STYLES={
   // not tied to any specific song) instead of a static pulse.
   // v3: tempoMul 0.46 was WAY too fast — on the default circuit (Ophelia, tempo:220) that
   // works out to (60000/(220*0.46*4)) = ~148 BPM, well above typical "Electronic" genre pace.
-  // Retuned to 0.54, landing the default circuit at ~126 BPM (dead center of the genre-typical
-  // 120-135 BPM range); faster circuits (lower tk.tempo, e.g. Valentina) will naturally run a
-  // bit hotter than that since tempoMul is a flat multiplier on each circuit's own base pace —
-  // same tradeoff every other character's music already has, not something unique to this one.
-  guidoParty: { inst:'popstab', melWave:'sawtooth', bassWave:'square', station:'106.3 Party Boy FM',
-              drums:{kick:[0,4,8,12],snare:[4,12]}, bass:[0,7,9,5], hihat:2, beatGroup:4, tempoMul:0.54,
+  // Retuned to 0.54 (~126 BPM), dead center of the genre-typical 120-135 BPM range.
+  // v4: a user-provided reference recording's pulse density read faster/more driving than
+  // 126 — judgment-call estimate landed around ~139 BPM (not a precise measurement; a 13s
+  // compressed waveform screenshot doesn't support single-BPM precision, but it clearly reads
+  // as upbeat/energetic rather than a moderate house pace). Retuned to 0.49 accordingly; faster
+  // circuits will run hotter still, same tradeoff as every other character's music.
+  // v5: layered in two genre-generic production techniques (not tied to any specific song) —
+  // a wah-pedal bass (bassInst:'wahbass', a resonant filter swept up/down per note) and a
+  // muted rhythm-guitar "chug" (percussive, pitchless eighth-note texture, accented every 2
+  // beats) — under the SAME original melody/chords from v2, for a more authentically
+  // funk-rock-meets-EDM party texture.
+  guidoParty: { inst:'popstab', melWave:'sawtooth', bassWave:'square', bassInst:'wahbass', chug:true,
+              station:'106.3 Party Boy FM',
+              drums:{kick:[0,4,8,12],snare:[4,12]}, bass:[0,7,9,5], hihat:2, beatGroup:4, tempoMul:0.49,
               mel:[0,4,7,12,11,9,7,4], melB:[9,12,14,16,14,12,9,7] },
   irish:    { inst:'whistle', melWave:'sawtooth', bassWave:'triangle', drums:{kick:[0,6],snare:[]},                       bass:[0,0,7,0],   hihat:2, beatGroup:3, tempoMul:0.55,
               mel:[7,0,0,4,0,4, 7,4,0,4,7,9, 11,7,7,11,7,11, 12,9,7,9,7,4],                             // The Irish Washerwoman (trad. jig)
@@ -673,6 +681,14 @@ function playNote(freq,dur,vol,type,inst){
     case 'popstab':                                   // party-anthem lead: glossier/less resonant than 'house' —
       mk('sawtooth',freq,-8); mk('sawtooth',freq,8); mk('square',freq*2,0);      // a big open pop/EDM chant stab
       atk=0.004; filt0=Math.min(11000,freq*10); filt1=freq*2; f.Q.value=2.5; fDecay=0.14; rel=Math.min(dur,0.3); break;
+    case 'wahbass': {                                 // wah-pedal bass: resonant filter swept UP then back DOWN
+      mk('sawtooth',freq,-3); mk('square',freq,3);    // per note (a rise-then-fall sweep, not the decay-only
+      atk=0.01; f.Q.value=6;                          // envelope every other preset uses) — the classic "wah" quack
+      const peak=Math.min(3200,freq*5);
+      f.frequency.setValueAtTime(Math.max(200,freq*1.2),t);
+      f.frequency.linearRampToValueAtTime(peak, t+dur*0.4);
+      f.frequency.exponentialRampToValueAtTime(Math.max(160,freq*1.1), t+dur);
+      fDecay=-1; rel=dur; break; }
     case 'banjo':                                    // bright metallic pluck: snappier & harder than 'pluck',
       mk('square',freq,-6); mk('square',freq,6); mk('triangle',freq*3,0);      // for backwoods/bluegrass specifically
       atk=0.002; filt0=Math.min(12000,freq*13); filt1=freq*2.8; fDecay=0.045; rel=Math.min(dur,0.28); break;
@@ -749,6 +765,16 @@ function drumOpenHat(){ if(!actx||!musicGain)return; const t=actx.currentTime;
   const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6500;
   const g=actx.createGain(); g.gain.value=0.15;
   src.connect(hp); hp.connect(g); g.connect(musicGain); src.start(t); }
+// muted rhythm-guitar "chug": short, percussive, palm-muted-sounding hit — a generic funk/rock
+// rhythm-guitar technique (no pitch content at all, just filtered noise), not tied to any
+// specific song. Accented hits are louder/brighter, unaccented ones sit further back.
+function guitarChug(accent){ if(!actx||!musicGain)return; const t=actx.currentTime;
+  const len=actx.sampleRate*0.055, buf=actx.createBuffer(1,len,actx.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+  const src=actx.createBufferSource(); src.buffer=buf;
+  const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=accent?1500:950; bp.Q.value=1.4;
+  const g=actx.createGain(); g.gain.value=accent?0.24:0.13;
+  src.connect(bp); bp.connect(g); g.connect(musicGain); src.start(t); src.stop(t+0.06); }
 function musicTick(){
   const st=curStyle||MUSIC_STYLES.guido;
   const bg=st.beatGroup||4, steps=bg*4;
@@ -761,12 +787,16 @@ function musicTick(){
     if(st.drums.kick.includes(step)) drumKick();
     if(st.drums.snare.includes(step)) drumSnare();
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
-    if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave);
+    if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave,st.bassInst);
   } else {
     if(step%bg===0){ drumKick();
-      playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave); }
+      playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave,st.bassInst); }
     if(step%(bg*2)===bg) drumSnare();     // default backbeat
   }
+  // optional muted "chugging" rhythm-guitar layer (funk/rock texture: percussive palm-muted
+  // eighth notes with a wah-accented hit every 2 beats) — a generic production technique, not
+  // tied to any specific song's melodic content, layered under styles that opt in via st.chug
+  if(st.chug && step%2===0) guitarChug(step%8===0);
   // melody indexes off the RAW counter so tunes longer than one 16-step bar play all
   // the way through. st.seq is the assembled AABA song form (verse/verse/chorus/verse)
   // built at startMusic — a single looping strain was why everything felt repetitive
