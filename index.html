@@ -535,21 +535,23 @@ const MUSIC_STYLES={
   // tempoMul = relative to the track's own tempo (<1 = faster, >1 = slower/spacious)
   // guido/irish/latin/hillbilly/sailor carry REAL traditional melodies (all public
   // domain folk tunes), encoded as even eighth-notes; null = rest/held note
-  guido:    { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55, station:'94.5 Tarantella FM',
-              mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3],                            // Tarantella Napoletana (trad.)
-              melB:[7,4,0,4,7,9, 7,null,9,5,2,5, 9,11,9,null,12,11, 9,7,9,11,12,null] },                 // B: Funiculì Funiculà refrain (1880, PD)
-  // Guido's alternate "Club Mix" — a house/techno-style REMIX of the SAME two public-domain
-  // hooks above (Tarantella's ascending leap 0-3-7-12, Funiculì's opening 7-4-0-4-7-9),
+  // Guido's HOME station is now "Club Mix" (was his alt) — a house/techno-style REMIX of two
+  // public-domain hooks (Tarantella's ascending leap 0-3-7-12, Funiculì's opening 7-4-0-4-7-9),
   // looped as short 16-step stab riffs the way house tracks loop a hook, instead of an
   // unrelated made-up tune — recognizable AND genre-appropriate, still fully PD-sourced.
   // Real house/techno drum language: four-on-the-floor kick every beat, backbeat snare,
   // OPEN hi-hats on the off-beat 8ths (drums.openhat, a new pattern type — that off-beat
   // "chick" is what actually reads as house/techno; the old track had none of it).
-  guidoAlt: { inst:'house', melWave:'square', bassWave:'square', station:'101.7 Club Mix',
+  guido:    { inst:'house', melWave:'square', bassWave:'square', station:'101.7 Club Mix',
               drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]},
               bass:[0,0,0,0], hihat:0, beatGroup:4, tempoMul:0.42,
               mel:[0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3],   // Tarantella hook, looped
               melB:[7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,null,null] }, // Funiculì hook, looped
+  // Guido's first alt station (was his home station) — the original Tarantella/Funiculì
+  // brass arrangement, straight public-domain folk melody, no remix.
+  guidoAlt: { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55, station:'94.5 Tarantella FM',
+              mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3],                            // Tarantella Napoletana (trad.)
+              melB:[7,4,0,4,7,9, 7,null,9,5,2,5, 9,11,9,null,12,11, 9,7,9,11,12,null] },                 // B: Funiculì Funiculà refrain (1880, PD)
   // Guido's third station: an ORIGINAL party-anthem composition (not a transcription of any
   // existing song) — requested as a "Party Boy"-style track, but the actual song by that name
   // isn't something we have rights or reliable source material for, so this is a from-scratch
@@ -837,18 +839,23 @@ function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null
 // own red-pink palette, but a heartbeat is unmistakable on any track
 function rampFinalLap(){
   document.body.classList.add('final-lap');
-  if(musicTimer && curStyle){
-    clearInterval(musicTimer);
-    const tk=TRACKS[selTrack]||{};
-    // interval multiplier = 1/(1+speedup), so 0.8 -> tempo is exactly 25% faster (1/0.8=1.25x).
-    // Was 0.72, which is actually a 1/0.72=1.389x tempo increase (~39%) despite reading like a
-    // modest bump — too aggressive, per feedback that final-lap music sped up too much.
-    musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)*0.8);   // 25% faster, more urgent
-  }
   if(actx && !hbTimer) hbTimer=setInterval(()=>{
     if(state!=='race'){ clearInterval(hbTimer); hbTimer=null; return; }
     beep(52,0.1,'sine',0.4); setTimeout(()=>beep(46,0.08,'sine',0.3),150);   // lub-dub
   }, 850);
+}
+// music tempo bump fires SEPARATELY from the final-lap banner/heartbeat above, and later —
+// once only half a lap (or, on point-to-point tracks, roughly the last tenth of the run)
+// remains, not from the moment the final lap starts.
+function speedUpFinalStretch(){
+  if(musicTimer && curStyle){
+    clearInterval(musicTimer);
+    const tk=TRACKS[selTrack]||{};
+    // interval multiplier = 1/(1+speedup), so ~0.8696 -> tempo is exactly 15% faster
+    // (1/0.8696=1.15x). Was 0.8 (25%), then 0.72 (~39% despite reading like a modest bump) —
+    // dialed back per feedback that the ramp was too aggressive.
+    musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)*(1/1.15));   // 15% faster, more urgent
+  }
 }
 // victory fanfare: the racing music cuts out at the finish line, then this plays a rising
 // run through the FINISHING character's own scale/timbre — the climax is character-flavored
@@ -3268,9 +3275,14 @@ function syncHUD(){
     elDM.classList.toggle('t2', me.driftCharge>1.2);
   } else { elDM.style.opacity=0; }
 
-  // final-lap banner (once)
+  // final-lap banner (once) — fires at the start of the final lap, as before
   if(trackLoop && me.lap===LAPS-1 && !me._fl){ me._fl=true; showBanner('Final Lap','b-red'); SFX.finalLap(); rampFinalLap(); }
   if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!','b-red'); SFX.finalLap(); rampFinalLap(); }
+  // music tempo bump (once, separately) — only once HALF a lap remains (prog>=0.5 into the
+  // final lap), not from the moment the final lap starts; point-to-point tracks get an
+  // analogous later trigger (prog>=0.9, roughly the last tenth of the run after the 0.8 banner)
+  if(trackLoop && me.lap===LAPS-1 && me.prog>=0.5 && !me._flMusic){ me._flMusic=true; speedUpFinalStretch(); }
+  if(!trackLoop && me.prog>=0.9 && !me._flMusic){ me._flMusic=true; speedUpFinalStretch(); }
 
   // speed-line + vignette intensity
   const boost=me.boostT>0;
