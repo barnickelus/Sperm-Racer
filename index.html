@@ -1286,18 +1286,23 @@ const HW=22;                                       // road half-width
 const TRACKS=[
   // Ophelia — smooth wide oval
   {name:'Ophelia',  key:0, tempo:220, sky:0x3a2632, tunnels:[[0.30,0.40]],
+   critters:[0.55], pills:[0.18],
    ctrl:[[380,6,0],[270,22,-300],[0,42,-400],[-270,30,-300],[-380,12,0],[-270,22,300],[0,36,400],[270,26,300]]},
   // Seraphina — big flowing kidney
   {name:'Seraphina',key:3, tempo:200, sky:0x2a3552, tunnels:[[0.46,0.56]],
+   critters:[0.14], pills:[0.35,0.72],
    ctrl:[[420,8,-40],[300,26,-360],[0,46,-460],[-300,34,-340],[-420,14,40],[-220,22,300],[-40,32,170],[180,28,360],[360,18,240]]},
   // Delilah — figure-8 with an elevated crossover (go over/under through the tunnel)
   {name:'Delilah',  cross:true, key:-2, tempo:188, sky:0x241f4a, tunnels:[[0.43,0.57]],
+   critters:[0.2], dams:[0.72],
    ctrl:[[0,6,-30],[210,14,-230],[60,28,-450],[-210,20,-250],[-60,42,-60],[0,48,40],[210,42,250],[40,28,460],[-210,22,250],[-40,12,40]]},
   // Bianca — tall narrow egg loop
   {name:'Bianca',   key:5, tempo:208, sky:0x1f3a36, tunnels:[[0.32,0.42]],
+   critters:[0.5], dams:[0.78],
    ctrl:[[230,8,-320],[120,30,-440],[-120,30,-440],[-230,10,-300],[-270,16,0],[-180,30,300],[0,42,430],[180,30,300],[270,16,0]]},
   // Eve — long point-to-point dash (≈4×), finishes at the glowing egg (ovum)
   {name:'Eve', loop:false, egg:true, key:7, tempo:176, sky:0x4a2a1f, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
+   critters:[0.3,0.58], pills:[0.25,0.85], dams:[0.5],
    ctrl:[[0,0,0],[150,12,-300],[-40,34,-600],[210,52,-900],[60,72,-1240],[-170,54,-1540],[120,40,-1840],[320,26,-2200],[150,56,-2560],[-80,40,-2880],[170,30,-3240],[380,48,-3600],[190,66,-3980],[-50,46,-4320],[140,30,-4680],[330,40,-5040],[150,30,-5440],[80,20,-5800]]},
   // Valentina — "the Cervix Pass": switchback mountain climb, most of it blind inside a
   // tunnel, opening onto a y=88 summit and a quarter-lap freefall descent. Longest lap
@@ -1307,7 +1312,7 @@ const TRACKS=[
   // berm: tunnel walls are rideable (gravitational distortion — you bank up the tube).
   // biolum: glowing plankton light the tunnel interiors. critters: patrolling crabs.
   {name:'Valentina', key:-5, tempo:168, sky:0x421530, tunnels:[[0.19,0.25],[0.42,0.60]],
-   extraRamp:0.75, slalom:0.31, berm:true, biolum:true, critters:[0.47,0.55,0.83],
+   extraRamp:0.75, slalom:0.31, berm:true, biolum:true, critters:[0.47,0.55,0.83], pills:[0.68],
    ctrl:[[380,4,40],[360,8,-260],[220,16,-430],[-40,22,-450],[-300,28,-380],
          [-405,40,-190],[-280,52,-55],[-390,66,80],[-295,80,195],[-390,86,330],
          [-320,88,430],[-140,84,440],[120,60,420],[280,30,320],[400,10,160]]},
@@ -2669,6 +2674,7 @@ function updateRacer(r,dt){
   placeOnTrack(r,dt);
 
   r._wallCD=Math.max(0,(r._wallCD||0)-dt);   // wall-hit speed penalty cooldown — see below
+  r._trapCD=Math.max(0,(r._trapCD||0)-dt);   // dental-dam re-trap cooldown
   r._bank=r._bank||0;
   // default lean matches the road's own superelevation (corners bank like a real track);
   // the Valentina berm case below overrides this with a much bigger, rider-controlled lean.
@@ -2895,6 +2901,17 @@ function collide(){
       h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
       h.mesh.position.set(h.x, s.p.y+1.6+Math.abs(Math.sin(tN*9))*0.4, h.z);   // scuttle-bob
       h.mesh.rotation.y=Math.atan2(s.n.x,s.n.z)+(Math.cos(tN*h.cspd+h.phase)>0?0:Math.PI); // face travel dir
+      const snap=Math.max(0,Math.sin(tN*6+h.phase))*0.55;   // pincers open/shut as it hunts
+      if(h.mesh.userData.claws) for(const c of h.mesh.userData.claws){
+        c.userData.u.rotation.x=Math.PI/2-0.35-snap; c.userData.l.rotation.x=Math.PI/2+0.35+snap; }
+    } else if(h.pill){   // Plan B pill: slower lateral drift + a hovering spin
+      const s=SAMP[h.ci], tN=performance.now()*0.001;
+      const off=Math.sin(tN*h.cspd+h.phase)*HW*0.6;
+      h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
+      h.mesh.position.set(h.x, s.p.y+2.2+Math.sin(tN*2+h.phase)*0.3, h.z);
+      h.mesh.rotation.y=tN*2.2;   // spin so both colored ends sweep into view
+    } else if(h.dam){   // dental dam: gentle translucency shimmer
+      h.mesh.children[0].material.opacity=0.24+0.12*Math.abs(Math.sin(performance.now()*0.002+h.phase));
     }
     for(const r of racers){
       if(r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;   // mega plows through hazards
@@ -2909,11 +2926,28 @@ function collide(){
           h.hit.add(r); r.spd*=0.45; burst(r.x,r.y+1,r.z,0x3ab0ff,10,26,0.4,3);
           if(r.you){ kickShake(0.2); SFX.bump&&SFX.bump(); }
         }
+      } else if(h.dam){
+        // trap spanning part of the road: project the racer's offset onto the dam's own
+        // tangent (longitudinal) and normal (lateral) axes so it catches anyone crossing the
+        // membrane's face, anywhere within its width — a per-racer cooldown (_trapCD, ticked in
+        // updateRacer) lets it re-catch a recovered racer without re-firing every frame
+        const dx=r.x-h.x, dz=r.z-h.z;
+        const along=dx*h.tx+dz*h.tz, lat=dx*h.nx+dz*h.nz;
+        if(Math.abs(along)<3.5 && Math.abs(lat)<h.halfW && (r._trapCD||0)<=0){
+          r._trapCD=1.2; r.spd*=0.25; r.glueT=Math.max(r.glueT||0,1.2);
+          r.x-=h.tx*6; r.z-=h.tz*6;   // shoved back out of the membrane
+          burst(r.x,r.y+2,r.z,0x7dffd0,16,44,0.5,4);
+          if(r.you){ kickShake(0.5); showToast('TRAPPED!','t-green'); SFX.hit&&SFX.hit(); }
+        }
       } else if(Math.hypot(r.x-h.x,r.z-h.z)<5){
         r.spinT=1.1;
         if(h.critter){   // crabs ATTACK and keep hunting — they never die from contact
           burst(r.x,r.y+2,r.z,0xd8503a,14,45,0.5,4);
           if(r.you){ kickShake(0.6); showToast('CRABS!','t-red'); SFX.hit&&SFX.hit(); }
+        } else if(h.pill){   // Plan B: reject + shove the racer back along their heading
+          r.x-=Math.sin(r.head)*8; r.z-=Math.cos(r.head)*8; r.spd*=0.5;
+          burst(r.x,r.y+2,r.z,0xff5d8f,16,46,0.5,4);
+          if(r.you){ kickShake(0.55); showToast('PLAN B!','t-red'); SFX.hit&&SFX.hit(); }
         } else h.life=0;
       }
     }
@@ -3521,6 +3555,80 @@ countdown = function(){
   setTimeout(tick,750);
 };
 
+// ---- track-hazard model builders (crab / Plan B pill / dental dam) ----
+// Enhanced crab: domed two-tone carapace, glossy back ridge + dark belly, segmented forward
+// pincer claws (animatable — see snap in the hazard loop), stalked eyes with pupils, antennae,
+// and 4 pairs of jointed legs with pointed feet. userData.claws holds the pincer groups so the
+// update loop can snap them open/shut as it scuttles.
+function makeCrab(){
+  const grp=new T.Group();
+  const shellMat=new T.MeshPhongMaterial({color:0xd8503a,emissive:0x4a1008,flatShading:true,shininess:40});
+  const shellDark=new T.MeshPhongMaterial({color:0x9c2e1e,emissive:0x2a0804,flatShading:true});
+  const shellHi=new T.MeshPhongMaterial({color:0xf07a4a,emissive:0x5a1808,flatShading:true,shininess:70});
+  const body=new T.Mesh(new T.SphereGeometry(2.6,12,9), shellMat); body.scale.set(1.45,0.62,1.05); grp.add(body);
+  const backRidge=new T.Mesh(new T.SphereGeometry(2.0,10,7), shellHi);
+  backRidge.position.set(0,0.5,-0.2); backRidge.scale.set(1.3,0.5,0.9); grp.add(backRidge);
+  const belly=new T.Mesh(new T.SphereGeometry(2.4,10,7), shellDark);
+  belly.position.set(0,-0.5,0); belly.scale.set(1.3,0.4,0.95); grp.add(belly);
+  const claws=[];
+  for(const sx of [-1,1]){
+    const arm=new T.Group(); arm.position.set(sx*3.0,0.1,1.4);
+    const upper=new T.Mesh(new T.SphereGeometry(0.7,7,6), shellMat); upper.position.set(sx*0.2,0,-0.4); arm.add(upper);
+    const clawGrp=new T.Group(); clawGrp.position.set(sx*0.6,0,0.9);
+    const knuckle=new T.Mesh(new T.SphereGeometry(0.9,8,6), shellHi); knuckle.scale.set(1.1,0.9,1.3); clawGrp.add(knuckle);
+    const pincerU=new T.Mesh(new T.ConeGeometry(0.35,1.6,6), shellDark); pincerU.position.set(0,0.45,1.0); pincerU.rotation.x=Math.PI/2-0.35; clawGrp.add(pincerU);
+    const pincerL=new T.Mesh(new T.ConeGeometry(0.35,1.6,6), shellDark); pincerL.position.set(0,-0.45,1.0); pincerL.rotation.x=Math.PI/2+0.35; clawGrp.add(pincerL);
+    clawGrp.userData={u:pincerU,l:pincerL}; arm.add(clawGrp); grp.add(arm); claws.push(clawGrp);
+  }
+  for(const ex of [-0.8,0.8]){
+    const stalk=new T.Mesh(new T.CylinderGeometry(0.14,0.18,1.2,6), shellMat); stalk.position.set(ex,1.5,1.6); grp.add(stalk);
+    const eye=new T.Mesh(new T.SphereGeometry(0.42,8,7), new T.MeshBasicMaterial({color:0xffe08a})); eye.position.set(ex,2.15,1.7); grp.add(eye);
+    const pupil=new T.Mesh(new T.SphereGeometry(0.2,6,5), new T.MeshBasicMaterial({color:0x1a0a06})); pupil.position.set(ex,2.2,2.05); grp.add(pupil);
+  }
+  for(const ax of [-0.4,0.4]){
+    const ant=new T.Mesh(new T.CylinderGeometry(0.05,0.09,1.6,4), shellDark); ant.position.set(ax,1.1,2.2); ant.rotation.x=-0.8; ant.rotation.z=ax*0.75; grp.add(ant);
+  }
+  for(let l=0;l<4;l++) for(const sx of [-1,1]){
+    const zz=-1.4+l*0.9;
+    const leg=new T.Mesh(new T.CylinderGeometry(0.14,0.09,2.6,5), shellDark);
+    leg.position.set(sx*2.9,-0.7,zz); leg.rotation.z=sx*1.15; leg.rotation.x=(l-1.5)*0.12; grp.add(leg);
+    const foot=new T.Mesh(new T.ConeGeometry(0.12,0.7,4), shellDark); foot.position.set(sx*3.9,-1.5,zz); foot.rotation.z=sx*0.5; grp.add(foot);
+  }
+  grp.userData.claws=claws;
+  return grp;
+}
+// Plan B pill: a classic two-tone capsule (white end + pink end, seam band at the middle),
+// laid horizontal. A hazard to AVOID — patrols laterally and spins out + shoves back any racer
+// that hits it (thematically: the sperm gets rejected).
+function makePill(){
+  const grp=new T.Group(), cap=new T.Group();
+  const aMat=new T.MeshPhongMaterial({color:0xf2f2f6,emissive:0x50505a,shininess:100});
+  const bMat=new T.MeshPhongMaterial({color:0xff5d8f,emissive:0x5a1026,shininess:100});
+  const R=1.4,H=2.6;
+  const topCyl=new T.Mesh(new T.CylinderGeometry(R,R,H/2,16,1,true), aMat); topCyl.position.y=H/4; cap.add(topCyl);
+  const botCyl=new T.Mesh(new T.CylinderGeometry(R,R,H/2,16,1,true), bMat); botCyl.position.y=-H/4; cap.add(botCyl);
+  const topCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,0,Math.PI/2), aMat); topCap.position.y=H/2; cap.add(topCap);
+  const botCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,Math.PI/2,Math.PI/2), bMat); botCap.position.y=-H/2; cap.add(botCap);
+  const band=new T.Mesh(new T.CylinderGeometry(R*1.03,R*1.03,0.2,16), new T.MeshPhongMaterial({color:0xcfcfd6,emissive:0x333338})); cap.add(band);
+  cap.rotation.z=Math.PI/2; grp.add(cap);   // lay the capsule along local X (two ends left/right)
+  grp.add(glowSprite(0xff9dbd,4.5));   // small halo — enough to catch the eye without washing out the two-tone
+  return grp;
+}
+// Dental dam: a translucent stretched membrane on a rim frame, standing upright ACROSS part of
+// the road (offset to one side, leaving a gap to steer through — a TRAP you dodge, not a wall).
+// Hitting it kills most of your speed and leaves you briefly stuck ("glued") in the membrane.
+function makeDam(width){
+  const grp=new T.Group();
+  const mat=new T.MeshPhongMaterial({color:0x7dffd0,emissive:0x1a4a3e,transparent:true,opacity:0.3,side:T.DoubleSide,shininess:90,depthWrite:false});
+  const sheet=new T.Mesh(new T.PlaneGeometry(width,9,6,3), mat); grp.add(sheet);
+  const rimMat=new T.MeshPhongMaterial({color:0x3ad0a6,emissive:0x0e3a30,flatShading:true});
+  const w=width,hgt=9;
+  for(const [px,py,sx,sy] of [[0,hgt/2,w,0.5],[0,-hgt/2,w,0.5],[-w/2,0,0.5,hgt],[w/2,0,0.5,hgt]]){
+    const bar=new T.Mesh(new T.BoxGeometry(sx,sy,0.5), rimMat); bar.position.set(px,py,0); grp.add(bar);
+  }
+  return grp;
+}
+
 // Modify buildRacers to use chosenType for "You"
 const _origBuildRacers = buildRacers;
 buildRacers = function(){
@@ -3544,27 +3652,39 @@ buildRacers = function(){
       hazards.push({mesh:m,x:m.position.x,z:m.position.z,life:9e9,owner:null,arm:0});
     }
   }
-  // track-authored crabs (Valentina): patrolling critters that sweep back and forth
-  // across the road and ATTACK — they survive contact and keep hunting all race
+  // track-authored crabs: patrolling critters that sweep back and forth across the road and
+  // ATTACK — they survive contact and keep hunting all race. Now on several courses.
   if(TRACKS[selTrack].critters){
     for(const [ci,u] of TRACKS[selTrack].critters.entries()){
       const si=Math.floor(u*STEPS)%STEPS, s=SAMP[si];
-      const grp=new T.Group();
-      const shellMat=new T.MeshPhongMaterial({color:0xd8503a,emissive:0x4a1008,flatShading:true});
-      const body=new T.Mesh(new T.SphereGeometry(2.6,10,8), shellMat);
-      body.scale.set(1.35,0.65,1); grp.add(body);
-      for(const cx of [-2.6,2.6]){ const claw=new T.Mesh(new T.SphereGeometry(1.1,8,6), shellMat);
-        claw.position.set(cx,0.4,1.6); claw.scale.set(1,0.8,1.2); grp.add(claw); }
-      for(let l=0;l<3;l++) for(const sx of [-1,1]){
-        const leg=new T.Mesh(new T.CylinderGeometry(0.16,0.16,2.4,5), shellMat);
-        leg.position.set(sx*2.8,-0.8,-0.8+l*0.9); leg.rotation.z=sx*1.1; grp.add(leg); }
-      const eyeMat=new T.MeshBasicMaterial({color:0xffe08a});
-      for(const ex of [-0.7,0.7]){ const eye=new T.Mesh(new T.SphereGeometry(0.3,6,5), eyeMat);
-        eye.position.set(ex,1.2,2.0); grp.add(eye); }
+      const grp=makeCrab();
       grp.position.set(s.p.x, s.p.y+1.6, s.p.z); scene.add(grp);
       hazards.push({mesh:grp,x:s.p.x,z:s.p.z,life:9e9,owner:null,arm:0,
         critter:true,ci:si,phase:ci*2.1,cspd:0.9+ci*0.25});
     }
+  }
+  // track-authored Plan B pills: a lateral-patrolling hazard to AVOID — spins out + shoves
+  // back any racer that touches it (persists all race, like the crabs)
+  if(TRACKS[selTrack].pills){
+    for(const [ci,u] of TRACKS[selTrack].pills.entries()){
+      const si=Math.floor(u*STEPS)%STEPS, s=SAMP[si];
+      const grp=makePill(); grp.position.set(s.p.x, s.p.y+2.2, s.p.z); scene.add(grp);
+      hazards.push({mesh:grp,x:s.p.x,z:s.p.z,life:9e9,owner:null,arm:0,
+        pill:true,ci:si,phase:ci*1.7,cspd:0.55+ci*0.16});
+    }
+  }
+  // track-authored dental dams: an upright membrane across PART of the road (offset to one
+  // side, a gap to steer through) that traps + heavily slows whoever drives into it
+  if(TRACKS[selTrack].dams){
+    TRACKS[selTrack].dams.forEach((u,di)=>{
+      const si=Math.floor(u*STEPS)%STEPS, s=SAMP[si];
+      const side=(di%2?1:-1), off=side*HW*0.5, halfW=HW*0.62;
+      const cx=s.p.x+s.n.x*off, cz=s.p.z+s.n.z*off;
+      const grp=makeDam(halfW*2); grp.position.set(cx, s.p.y+3.2, cz);
+      grp.rotation.y=Math.atan2(s.t.x,s.t.z); scene.add(grp);
+      hazards.push({mesh:grp,x:cx,z:cz,life:9e9,owner:null,arm:0,dam:true,
+        tx:s.t.x,tz:s.t.z,nx:s.n.x,nz:s.n.z,halfW,phase:si*0.3});
+    });
   }
 
   // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
