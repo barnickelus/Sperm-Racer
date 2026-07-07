@@ -527,7 +527,8 @@ let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, cur
 // characters with one or more selectable alt "stations" — tuned live via the in-race radio
 // icon, cycling home -> alt1 -> alt2 -> ... -> home. Guido has two: a house remix of his own
 // PD folk hooks, and an original party anthem.
-const ALT_MAP={guido:['guidoAlt','guidoParty'], chad:['chadAlt']};
+const ALT_MAP={guido:['guidoAlt','guidoParty'], chad:['chadAlt'],
+  king:['kingCash','kingLounge'], rick:['rickMothership','rickDisco']};
 const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
@@ -592,7 +593,25 @@ const MUSIC_STYLES={
               mel:[0,0,0,5,9,null, 0,0,0,5,9,null, 9,9,8,8,5,5, 4,2,0,null,null,null],                  // La Cucaracha (trad.)
               melB:[12,12,12,10,10,10, 8,8,8,9,null,null, 5,5,4,4,2,2, 0,null,null,0,null,null] },       // B: chorus answer phrase
   dragon:   { inst:'koto', melWave:'sine',     bassWave:'sine',     mel:[0,2,5,7,9,7,5,2], melB:[12,9,7,9,12,14,12,9], bass:[0,0,0,7],   hihat:0, beatGroup:4, tempoMul:1.4  }, // pentatonic + high answer
-  king:     { inst:'808', melWave:'square',   bassWave:'sine', drums:{kick:[0,3,6,10],snare:[8]}, mel:[0,0,3,0,7,0,10,7], melB:[3,3,null,3,2,null,0,null], bass:[0,0,0,0],   hihat:3, beatGroup:4, tempoMul:0.7  }, // trap 808 + dark drop, sparse hats (moodier, reads darker overall)
+  // Darius King's home station: louder (volMul) and a harder-hitting beat (drumVol + a
+  // denser kick pattern with a trap "flam" double-hit, plus a real 808 sub-bass slide under
+  // the bass line instead of a generic pluck) — same original riff as before, just mixed and
+  // arranged harder. Now the first of 3 stations (see kingCash/kingLounge + ALT_MAP below).
+  king:     { inst:'808', melWave:'square',   bassWave:'sine', bassInst:'808', volMul:1.35, drumVol:1.4,
+              drums:{kick:[0,2,3,6,10,11],snare:[8,12]}, mel:[0,0,3,0,7,0,10,7], melB:[3,3,null,3,2,null,0,null],
+              bass:[0,0,0,0],   hihat:2, beatGroup:4, tempoMul:0.68, station:'107.5 Baller FM' }, // trap 808 + dark drop, now hitting harder
+  // Darius' 2nd station: a hookier, brighter trap-pop cut — triumphant horn-stab lead over
+  // the same 808 sub-bass slide, faster and louder than the moody home station.
+  kingCash: { inst:'brass', melWave:'square', bassWave:'square', bassInst:'808', volMul:1.3, drumVol:1.3,
+              drums:{kick:[0,3,6,8,11,14],snare:[4,12],openhat:[2,6,10,14]}, bass:[0,0,5,7],
+              hihat:0, beatGroup:4, tempoMul:0.62, station:'97.3 Cash Flow',
+              mel:[0,4,7,11,7,4,0,4], melB:[12,11,7,11,12,15,12,11] },
+  // Darius' 3rd station: the smooth luxury-lounge come-down — sparse, moody, spacious, still
+  // riding the same 808 sub-bass identity underneath a lush pad lead.
+  kingLounge:{ inst:'strings', melWave:'sine', bassWave:'sine', bassInst:'808', volMul:1.15, drumVol:1.0,
+              drums:{kick:[0,6,10],snare:[8]}, bass:[0,0,-2,-2],
+              hihat:4, beatGroup:4, tempoMul:1.1, station:'88.9 Courtside Lounge',
+              mel:[0,3,0,-2,0,5,3,0], melB:[7,10,12,10,7,5,3,0] },
   chad:     { inst:'surf', melWave:'square', bassWave:'triangle', bass:[0,0,5,7], hihat:1, beatGroup:4, tempoMul:0.62, station:'96.9 Surf Rock',
               drums:{kick:[0,8],snare:[4,12]},
               mel:[0,1,4,5,7,8,7,5, 4,5,4,1,0,null,0,null, 7,8,11,12,11,8,7,5, 4,5,4,1,0,null,null,null], // surf-rock tremolo run
@@ -614,7 +633,27 @@ const MUSIC_STYLES={
               mel:[0,4,7,12,7,4, 0,4,9,12,9,4, -2,2,7,11,7,2, 0,4,7,12,14,12],   // 80s trading-floor synthwave
               melB:[12,null,11,9,11,null, 12,null,14,12,11,9, 7,null,9,11,12,14, 16,14,12,11,9,7] },     // B: the big chorus hook
   korean:   { inst:'marimba', melWave:'square',   bassWave:'square',   mel:[0,3,6,9,0,3,6,9], melB:[12,9,6,3,12,9,15,12], bass:[0,6,0,6],   hihat:1, beatGroup:4, tempoMul:0.7  }, // precise mallet hits — flawless racing lines
-  rick:     { inst:'funk', melWave:'sawtooth', bassWave:'square', drums:{kick:[0,7,10],snare:[4,12]}, mel:[0,7,3,10,7,3,10,0], melB:[15,12,10,12,15,null,12,10], bass:[0,0,7,5], hihat:1, beatGroup:4, tempoMul:0.9 }, // funk + chorus vamp
+  // Super Freak's home station: funkier arrangement of the same original riff — a real
+  // slap-bass instrument (bright percussive attack + fast decay) instead of a generic square
+  // pluck, a muted wah-guitar "chug" layer (st.chug, built earlier this session), and more
+  // syncopation in the drum pattern (funk lives in the off-beats and ghost notes, not a
+  // straight backbeat). Now the first of 3 stations (see rickMothership/rickDisco below).
+  rick:     { inst:'funk', melWave:'sawtooth', bassWave:'square', bassInst:'slapbass', chug:true, volMul:1.25,
+              drums:{kick:[0,3,7,10,13],snare:[4,8,12]}, mel:[0,7,3,10,7,3,10,0], melB:[15,12,10,12,15,null,12,10],
+              bass:[0,0,10,7], hihat:2, beatGroup:4, tempoMul:0.85, station:'93.1 Funk Master FM' },
+  // Super Freak's 2nd station: a deeper, spacier cosmic-funk cut — synth lead over a slow,
+  // weighty 808 sub, sparse hats, still riding the wah-guitar chug underneath.
+  rickMothership:{ inst:'synthwave', melWave:'sawtooth', bassWave:'sine', bassInst:'808', chug:true, volMul:1.15,
+              drums:{kick:[0,6,10],snare:[8]}, bass:[0,0,5,3],
+              hihat:3, beatGroup:4, tempoMul:1.05, station:'104.5 Mothership FM',
+              mel:[0,5,3,7,5,3,0,null], melB:[12,10,7,10,12,15,12,10] },
+  // Super Freak's 3rd station: an uptempo disco-funk crossover (matches his own "Disco Ball"
+  // signature item) — four-on-the-floor kick, open hi-hats on the off-beat, slap bass driving
+  // underneath a bright clav lead, much faster than the other two.
+  rickDisco:{ inst:'funk', melWave:'square', bassWave:'square', bassInst:'slapbass', volMul:1.3, drumVol:1.2,
+              drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]}, bass:[0,0,7,9],
+              hihat:0, beatGroup:4, tempoMul:0.5, station:'97.7 Disco Freak',
+              mel:[0,3,7,10,7,3,0,3], melB:[10,7,3,7,10,12,10,7] },
   french:   { inst:'accordion', melWave:'triangle', bassWave:'triangle', drums:{kick:[0],snare:[4,8]}, mel:[0,4,7,4,0,4,7,4], melB:[9,7,5,7,9,12,11,7], bass:[0,7,4], hihat:0, beatGroup:3, tempoMul:1.3 }, // musette + B phrase
   sailor:   { inst:'organ', melWave:'triangle', bassWave:'sawtooth', bass:[0,0,-2,-2], hihat:2, beatGroup:4, tempoMul:0.68,
               drums:{kick:[0,8],snare:[4,12]},
@@ -691,6 +730,9 @@ function playNote(freq,dur,vol,type,inst){
       f.frequency.linearRampToValueAtTime(peak, t+dur*0.4);
       f.frequency.exponentialRampToValueAtTime(Math.max(160,freq*1.1), t+dur);
       fDecay=-1; rel=dur; break; }
+    case 'slapbass':                                  // funk slap bass: bright percussive
+      mk('square',freq,-4); mk('triangle',freq,4); mk('square',freq*2,0);   // attack transient (the "slap")
+      atk=0.002; filt0=Math.min(9000,freq*9); filt1=freq*1.3; fDecay=0.05; f.Q.value=3; rel=Math.min(dur,0.32); break;   // fast decay to a low sustained fundamental
     case 'banjo':                                    // bright metallic pluck: snappier & harder than 'pluck',
       mk('square',freq,-6); mk('square',freq,6); mk('triangle',freq*3,0);      // for backwoods/bluegrass specifically
       atk=0.002; filt0=Math.min(12000,freq*13); filt1=freq*2.8; fDecay=0.045; rel=Math.min(dur,0.28); break;
@@ -746,17 +788,17 @@ function playNote(freq,dur,vol,type,inst){
   for(const o of oscs){ o.start(t); o.stop(t+rel+0.06); }
 }
 // real drums instead of filtered white noise for everything
-function drumKick(){ if(!actx||!musicGain)return; const t=actx.currentTime;
+function drumKick(vol){ if(!actx||!musicGain)return; const t=actx.currentTime;
   const o=actx.createOscillator(), g=actx.createGain();
   o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(42,t+0.11);
-  g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);
+  g.gain.setValueAtTime(0.5*(vol||1),t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);
   o.connect(g); g.connect(musicGain); o.start(t); o.stop(t+0.18); }
-function drumSnare(){ if(!actx||!musicGain)return; const t=actx.currentTime;
+function drumSnare(vol){ if(!actx||!musicGain)return; const t=actx.currentTime;
   const len=actx.sampleRate*0.12, buf=actx.createBuffer(1,len,actx.sampleRate), d=buf.getChannelData(0);
   for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
   const src=actx.createBufferSource(); src.buffer=buf;
   const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1900; bp.Q.value=0.8;
-  const g=actx.createGain(); g.gain.value=0.22;
+  const g=actx.createGain(); g.gain.value=0.22*(vol||1);
   src.connect(bp); bp.connect(g); g.connect(musicGain); src.start(t); }
 // open hi-hat "chick" — longer, brighter than the closed-hat noiseBurst ping used
 // elsewhere; the classic off-beat accent that makes a beat read as house/techno
@@ -785,15 +827,19 @@ function musicTick(){
   // per-style drum PATTERNS (st.drums={kick:[steps],snare:[steps]}) — a trap beat, a
   // four-on-the-floor, and a shanty stomp should not all share one generic groove;
   // this is the biggest single lever for telling the character themes apart
+  // st.volMul (melody/bass loudness) and st.drumVol (kick/snare hit strength) let a specific
+  // character's music run louder/harder than the shared baseline without touching the global
+  // music-vs-SFX balance tuned earlier — both default to 1 (no change) for every other style.
+  const volMul=st.volMul||1, drumVol=st.drumVol||1;
   if(st.drums){
-    if(st.drums.kick.includes(step)) drumKick();
-    if(st.drums.snare.includes(step)) drumSnare();
+    if(st.drums.kick.includes(step)) drumKick(drumVol);
+    if(st.drums.snare.includes(step)) drumSnare(drumVol);
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
-    if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave,st.bassInst);
+    if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22*volMul,st.bassWave,st.bassInst);
   } else {
-    if(step%bg===0){ drumKick();
-      playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22,st.bassWave,st.bassInst); }
-    if(step%(bg*2)===bg) drumSnare();     // default backbeat
+    if(step%bg===0){ drumKick(drumVol);
+      playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22*volMul,st.bassWave,st.bassInst); }
+    if(step%(bg*2)===bg) drumSnare(drumVol);     // default backbeat
   }
   // optional muted "chugging" rhythm-guitar layer (funk/rock texture: percussive palm-muted
   // eighth notes with a wah-accented hit every 2 beats) — a generic production technique, not
@@ -807,7 +853,7 @@ function musicTick(){
   // vol was 0.1 — quieter than the bass (0.22) and even the kick (0.5 own-gain), so the
   // actual TUNE sat under its own rhythm section before gameplay SFX ever entered the mix.
   // Bumped so the melody reads as the lead voice instead of getting buried.
-  if(n!==null) playNote(noteFreq(n+12),0.22,0.15,st.melWave,st.inst);   // null = rest
+  if(n!==null) playNote(noteFreq(n+12),0.22,0.15*volMul,st.melWave,st.inst);   // null = rest
   if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.028,7500);
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
@@ -2224,6 +2270,14 @@ function makeCell(hue, typeId){
     photo.position.set(1.8,-0.45,4.02); g.add(photo);
   } else if(typeId === 'rick'){
     head.material.color.setHex(0x6e4a35); head.material.emissive.setHex(0x241810);
+    // nucleus + halo were still the hue-based purple (hue:300, kept for HUD/minimap dot
+    // differentiation) while the head/tail are this warm brown — matching them to the body
+    // color instead of the leftover hue tint.
+    nuc.material.color.setHex(0x6e4a35);
+    glow.material.color.setHex(0x6e4a35);
+    // gold grill teeth, same treatment as Darius King's
+    const grill=new T.Mesh(new T.BoxGeometry(2.2,0.6,0.5), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
+    grill.position.set(0, 2.45, 4.5); g.add(grill);
     const bm=new T.MeshPhongMaterial({color:0x171015});
     // Rounded hair crown that hugs the top + back of the head (not a giant angular mass)
     const crown=new T.Mesh(new T.SphereGeometry(3.55,18,14), bm);
