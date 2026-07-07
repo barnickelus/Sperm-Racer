@@ -74,10 +74,30 @@
     color:#ffb44a;cursor:pointer;pointer-events:auto;padding:0;
     box-shadow:0 0 14px rgba(255,180,74,.3);transition:box-shadow .15s,transform .15s;}
   #radioBtn.tuning{box-shadow:0 0 26px rgba(255,180,74,.85);transform:scale(1.15);}
-  #clock{bottom:14px;left:50%;transform:translateX(-50%);font-size:15px;color:var(--ink);
-    font-variant-numeric:tabular-nums;letter-spacing:.12em;}
-  #speedo{bottom:12px;left:14px;font-size:11px;color:var(--ink);}
-  #speedo b{font-size:22px;color:var(--bone);font-variant-numeric:tabular-nums;}
+  /* car-radio head-unit display: bottom-center, above the drift buttons — station name +
+     tuning dial on top, a big MPH speed readout as the "trip computer" corner, styled like
+     an actual car stereo's LCD faceplate (dark screen, thin amber/teal segment-style text). */
+  /* bottom:260px, not the 20px every other bottom-row HUD element uses. #whipbtn alone
+     reaches up to ~top:150px/bottom:242px worth of clearance above the pad baseline, and on
+     narrow phone widths the panel's horizontal gap between the left/right button clusters
+     shrinks to a squeeze too tight to rely on (confirmed empirically: bottom:148px still
+     overlapped #whipbtn both horizontally AND vertically at 390px width). Sitting fully
+     above the whole bottom control row — drift, item, whip, all of it — is the only
+     placement that's safe regardless of viewport width or which controls are active. */
+  #radioPanel{bottom:260px;left:50%;transform:translateX(-50%);
+    width:min(72vw,340px);padding:7px 12px 8px;border-radius:12px;
+    border-color:rgba(255,180,74,.25);}
+  #radioTop{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#ffb44a;
+    text-shadow:0 0 8px rgba(255,180,74,.4);margin-bottom:4px;}
+  #radioClock{color:var(--ink);letter-spacing:.08em;font-variant-numeric:tabular-nums;}
+  #radioMain{display:flex;align-items:center;gap:10px;}
+  #radioDial{flex:1;min-width:0;height:14px;opacity:.85;}
+  #radioSpeedWrap{flex:0 0 auto;text-align:right;line-height:1;}
+  #radioSpeedWrap b{font-size:26px;color:var(--bone);font-variant-numeric:tabular-nums;
+    text-shadow:0 0 14px rgba(109,242,208,.4);transition:text-shadow .15s,color .15s;}
+  #radioSpeedWrap span{display:block;font-size:8.5px;letter-spacing:.2em;color:var(--ink);margin-top:1px;}
+  #radioPanel.boosting #radioSpeedWrap b{color:#ffd48a;text-shadow:0 0 16px rgba(255,178,74,.75);}
 
   /* item slot */
   #item{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:74px;height:74px;
@@ -322,8 +342,15 @@
   <button class="hud glass nojoy" id="quitbtn" title="Quit race">✕</button>
   <button class="hud nojoy" id="radioBtn" title="Change station" style="display:none">📻</button>
   <div id="item"></div>
-  <div class="hud glass" id="speedo"><canvas id="gauge" width="86" height="86"></canvas><span class="lbl"><b id="spd">0</b>µm/s</span></div>
-  <div class="hud glass" id="clock" style="padding:3px 10px;">00:00.0</div>
+  <!-- car-radio head-unit display: station readout + tuning dial + speed (MPH), replacing
+       the old gauge-arc speedo that sat cramped under the drift button. -->
+  <div class="hud glass" id="radioPanel">
+    <div id="radioTop"><span id="radioStation">— NO SIGNAL —</span><span id="radioClock">00:00.0</span></div>
+    <div id="radioMain">
+      <canvas id="radioDial" width="220" height="20"></canvas>
+      <div id="radioSpeedWrap"><b id="radioSpeed">0</b><span>MPH</span></div>
+    </div>
+  </div>
   <div id="drift-meter"><div id="drift-fill"></div></div>
   <div id="banner"></div>
   <div id="toast"></div>
@@ -1325,7 +1352,7 @@ function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 /* HUD fx element refs */
 const elSpeed=$('speed'), elFlash=$('boostflash'), elVig=$('vignette'),
       elDM=$('drift-meter'), elDF=$('drift-fill'), elBanner=$('banner');
-const gaugeCtx=$('gauge').getContext('2d');
+const dialCtx=$('radioDial').getContext('2d');
 function showBanner(txt,cls){ elBanner.textContent=txt; elBanner.className=cls||'';
   void elBanner.offsetWidth; elBanner.classList.add('show'); }
 // small toast under the item slot for minor callouts (overtakes, whip taunts, item
@@ -1337,20 +1364,24 @@ function showToast(txt,cls){ const el=$('toast'); if(!el)return;
   el.textContent=txt; el.className=cls||'';
   void el.offsetWidth; el.classList.add('show'); }
 
-/* arc speed gauge */
-function drawGauge(frac,boosting){
-  const g=gaugeCtx, S=86, cx=S/2, cy=S/2+6, r=30;
-  g.clearRect(0,0,S,S);
-  const a0=Math.PI*0.8, a1=Math.PI*2.2;
-  g.lineCap='round';
-  g.lineWidth=6; g.strokeStyle='rgba(43,110,102,.5)';
-  g.beginPath(); g.arc(cx,cy,r,a0,a1); g.stroke();
-  const a=a0+(a1-a0)*Math.max(0,Math.min(1,frac));
-  const grd=g.createLinearGradient(0,0,S,S);
-  if(boosting){grd.addColorStop(0,'#ffb24a');grd.addColorStop(1,'#ffe28a');}
-  else{grd.addColorStop(0,'#3fd8c0');grd.addColorStop(1,'#9bffe6');}
-  g.lineWidth=6; g.strokeStyle=grd; g.shadowColor=boosting?'#ffb24a':'#6df2d0'; g.shadowBlur=10;
-  g.beginPath(); g.arc(cx,cy,r,a0,a); g.stroke(); g.shadowBlur=0;
+/* car-radio tuning dial: a row of frequency ticks with a lit pointer at the currently
+   tuned station's position (0..stationCount-1) — purely a "this is a radio" visual cue,
+   independent of the speed readout that sits beside it in the same panel. */
+function drawDial(stationIdx,stationCount){
+  const g=dialCtx, W=220, H=20, midY=13;
+  g.clearRect(0,0,W,H);
+  g.strokeStyle='rgba(255,180,74,.3)'; g.lineWidth=1;
+  g.beginPath(); g.moveTo(2,midY); g.lineTo(W-2,midY); g.stroke();
+  const N=16;
+  for(let i=0;i<=N;i++){
+    const x=2+(W-4)*(i/N), tall=i%4===0;
+    g.strokeStyle='rgba(255,180,74,.4)'; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x,midY-(tall?6:3)); g.lineTo(x,midY+(tall?6:3)); g.stroke();
+  }
+  const frac=stationCount>1 ? stationIdx/(stationCount-1) : 0.5;
+  const px=2+(W-4)*frac;
+  g.fillStyle='#ffb44a'; g.shadowColor='#ffb44a'; g.shadowBlur=8;
+  g.beginPath(); g.arc(px,midY,4,0,Math.PI*2); g.fill(); g.shadowBlur=0;
 }
 
 /* ============== TRACK ============== */
@@ -3383,10 +3414,16 @@ function syncHUD(){
     $('laplbl').textContent='To Egg'; $('lapn').textContent=Math.round(me.prog*100)+'%'; $('lapsuf').textContent='';
   }
   $('posn').textContent=ord(me.place);
-  $('clock').textContent=fmt(raceTime);
+  $('radioClock').textContent=fmt(raceTime);
   const sp=Math.abs(me.spd);
-  $('spd').textContent=Math.round(sp);
-  drawGauge(sp/BOOSTV, me.boostT>0);
+  // sp is an in-game unit speed (max ~MAXV=142, ~BOOSTV=211 boosted) with no real-world
+  // meaning — 0.7 scales that range to a believable arcade top speed (~99mph cruising,
+  // ~148mph boosted) instead of showing the raw sim units.
+  $('radioSpeed').textContent=Math.round(sp*0.7);
+  $('radioPanel').classList.toggle('boosting', me.boostT>0);
+  const alts=ALT_MAP[chosenType&&chosenType.id];
+  $('radioStation').textContent=(curStyle&&curStyle.station)||'— NO SIGNAL —';
+  drawDial(chosenType?(altIndex[chosenType.id]||0):0, 1+(alts?alts.length:0));
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
