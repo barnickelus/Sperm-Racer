@@ -62,31 +62,26 @@
     transition:width .15s;}
   #quitbtn.armed{background:rgba(255,93,143,.3);border:1px solid #ff5d8f;color:#ff5d8f;
     font-size:9px;width:auto;padding:0 8px;}
-  /* car-radio station toggle — only shown for characters with a second station tuned in.
-     Styled like a dashboard radio button: an antenna glyph that glows amber briefly on
-     tap, like a backlit "seek" button, then settles back to the idle tint.
-     Moved off the right edge entirely (was stacked right under #quitbtn, an 8px gap that
-     made it easy to fat-finger the quit confirmation while reaching for the radio) — now
-     on the left, clear below the map+leaderboard column, nowhere near any other control. */
-  #radioBtn{top:320px;left:12px;width:40px;height:40px;border-radius:50%;
-    border:1.5px solid rgba(255,180,74,.55);background:rgba(58,36,10,.6);
-    align-items:center;justify-content:center;font-size:19px;
-    color:#ffb44a;cursor:pointer;pointer-events:auto;padding:0;
-    box-shadow:0 0 14px rgba(255,180,74,.3);transition:box-shadow .15s,transform .15s;}
-  #radioBtn.tuning{box-shadow:0 0 26px rgba(255,180,74,.85);transform:scale(1.15);}
-  /* car-radio head-unit display: bottom-center, above the drift buttons — station name +
-     tuning dial on top, a big MPH speed readout as the "trip computer" corner, styled like
-     an actual car stereo's LCD faceplate (dark screen, thin amber/teal segment-style text). */
-  /* bottom:260px, not the 20px every other bottom-row HUD element uses. #whipbtn alone
-     reaches up to ~top:150px/bottom:242px worth of clearance above the pad baseline, and on
-     narrow phone widths the panel's horizontal gap between the left/right button clusters
-     shrinks to a squeeze too tight to rely on (confirmed empirically: bottom:148px still
-     overlapped #whipbtn both horizontally AND vertically at 390px width). Sitting fully
-     above the whole bottom control row — drift, item, whip, all of it — is the only
-     placement that's safe regardless of viewport width or which controls are active. */
-  #radioPanel{bottom:260px;left:50%;transform:translateX(-50%);
-    width:min(72vw,340px);padding:7px 12px 8px;border-radius:12px;
+  /* car-radio head-unit display: bottom-center, at the true bottom of the screen (not
+     stacked with the drift/item/whip buttons — it sits BELOW their circles, in the sliver
+     of clearance under them, narrow enough to also clear the horizontal gap between the
+     left and right button clusters). Station name + tuning dial + clock on top, a big MPH
+     speed readout as the "trip computer" corner, styled like an actual car stereo's LCD
+     faceplate (dark screen, thin amber/teal segment-style text) — flanked by two physical
+     seek knobs (◀ ▶) so the station is actually adjustable from the unit itself, instead of
+     a separate icon elsewhere on screen. */
+  #radioPanel{bottom:6px;left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:6px;
+    width:min(62vw,300px);padding:5px 7px;border-radius:12px;
     border-color:rgba(255,180,74,.25);}
+  .radioKnob{flex:0 0 auto;width:28px;height:28px;border-radius:50%;
+    border:1.5px solid rgba(255,180,74,.55);background:rgba(58,36,10,.6);
+    display:flex;align-items:center;justify-content:center;font-size:13px;
+    color:#ffb44a;cursor:pointer;pointer-events:auto;padding:0;
+    box-shadow:0 0 10px rgba(255,180,74,.25);transition:box-shadow .15s,transform .15s;}
+  .radioKnob.tuning{box-shadow:0 0 20px rgba(255,180,74,.85);transform:scale(1.15);}
+  .radioKnob:disabled{opacity:.3;box-shadow:none;cursor:default;}
+  #radioScreen{flex:1;min-width:0;}
   #radioTop{display:flex;justify-content:space-between;align-items:baseline;
     font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#ffb44a;
     text-shadow:0 0 8px rgba(255,180,74,.4);margin-bottom:4px;}
@@ -158,9 +153,18 @@
   @media (max-width:500px) and (orientation:portrait){
     #actL,#itemWrapL{display:none!important;}
     #itemWrap{left:18px;right:auto;}
-    #speedo{bottom:140px;}
     #mapwrap{transform:scale(.78);transform-origin:top left;}
     #item{width:60px;height:60px;font-size:30px;}
+  }
+  /* on genuinely narrow screens (phones) the center gap between the two button clusters
+     shrinks to a squeeze the radio panel can't fit in even at its normal reduced width —
+     confirmed by measuring an actual overlap with #drift at 390px. Shrink further and lift
+     it clear above the whole bottom control row there, same fix already used once before
+     for this exact class of narrow-viewport collision. The wide iPad-landscape layout this
+     was actually designed for (and requested to sit at the true bottom for) is untouched. */
+  @media (max-width:700px){
+    #radioPanel{width:min(78vw,260px);bottom:260px;padding:4px 6px;}
+    .radioKnob{width:24px;height:24px;font-size:11px;}
   }
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -340,16 +344,20 @@
   <div class="hud glass" id="lap"><span id="laplbl">Lap</span><b><span id="lapn">1</span><span id="lapsuf">/3</span></b></div>
   <div class="hud glass" id="pos">Pos<b id="posn">—</b></div>
   <button class="hud glass nojoy" id="quitbtn" title="Quit race">✕</button>
-  <button class="hud nojoy" id="radioBtn" title="Change station" style="display:none">📻</button>
   <div id="item"></div>
-  <!-- car-radio head-unit display: station readout + tuning dial + speed (MPH), replacing
-       the old gauge-arc speedo that sat cramped under the drift button. -->
+  <!-- car-radio head-unit display: station readout + tuning dial + speed (MPH), with two
+       physical seek knobs (prev/next) so the station is actually adjustable from the unit
+       itself — replaces both the old gauge-arc speedo AND the separate #radioBtn icon. -->
   <div class="hud glass" id="radioPanel">
-    <div id="radioTop"><span id="radioStation">— NO SIGNAL —</span><span id="radioClock">00:00.0</span></div>
-    <div id="radioMain">
-      <canvas id="radioDial" width="220" height="20"></canvas>
-      <div id="radioSpeedWrap"><b id="radioSpeed">0</b><span>MPH</span></div>
+    <button class="radioKnob nojoy" id="radioPrev" title="Previous station">◀</button>
+    <div id="radioScreen">
+      <div id="radioTop"><span id="radioStation">— NO SIGNAL —</span><span id="radioClock">00:00.0</span></div>
+      <div id="radioMain">
+        <canvas id="radioDial" width="220" height="20"></canvas>
+        <div id="radioSpeedWrap"><b id="radioSpeed">0</b><span>MPH</span></div>
+      </div>
     </div>
+    <button class="radioKnob nojoy" id="radioNext" title="Next station">▶</button>
   </div>
   <div id="drift-meter"><div id="drift-fill"></div></div>
   <div id="banner"></div>
@@ -3406,8 +3414,10 @@ function syncHUD(){
   // move existed until it flashed up); .ready lights it up orange only when actually usable
   $('whipbtn').style.display = (isTouch && !me.finished) ? 'inline-flex' : 'none';
   $('whipbtn').classList.toggle('ready', whipReady);
-  // radio icon only shows for characters that actually have a second station tuned in
-  $('radioBtn').style.display = (chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length) ? 'flex' : 'none';
+  // seek knobs only enabled for characters that actually have more than one station —
+  // the screen itself (station/clock/speed) always shows regardless
+  { const hasAlts=!!(chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length);
+    $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(LAPS,me.lap+1); $('lapsuf').textContent='/'+LAPS;
   } else {
@@ -4069,19 +4079,27 @@ setupFullscreen();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
     if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
-// in-race "car radio" station toggle — tap to seek to the other station, dashboard-style:
-// a quick tuning static burst + glow, then a frequency-readout toast for the new station
-(function setupRadio(){ const b=$('radioBtn'); if(!b)return;
-  b.onclick=()=>{
-    const id=chosenType&&chosenType.id; const alts=ALT_MAP[id]; if(!alts||!alts.length)return;
-    altIndex[id]=((altIndex[id]||0)+1)%(alts.length+1);   // cycle: home -> alt1 -> alt2 -> ... -> home
-    noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
-    b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
-    if(musicTimer){ stopMusic(); startMusic(); }   // startMusic() no-ops while musicTimer is already set, so
-                                                     // force a clean stop/restart to actually pick up the new station
-    const st=MUSIC_STYLES[effectiveStyleId(id)];
-    showToast(st.station||'Station tuned','t-gold');
-  }; })();
+// in-race "car radio" seek knobs — tap either one to step to the prev/next station,
+// dashboard-style: a quick tuning static burst + glow, then a frequency-readout toast.
+// Two physical knobs instead of one forward-only toggle, so it's actually adjustable
+// both directions right on the unit rather than needing several taps to "wrap around".
+function seekStation(dir){
+  const id=chosenType&&chosenType.id; const alts=ALT_MAP[id]; if(!alts||!alts.length)return;
+  const n=alts.length+1;
+  altIndex[id]=(((altIndex[id]||0)+dir)%n+n)%n;   // wraps both directions: home <-> alt1 <-> alt2 <-> ...
+  noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
+  const b=$(dir>0?'radioNext':'radioPrev');
+  b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
+  if(musicTimer){ stopMusic(); startMusic(); }   // startMusic() no-ops while musicTimer is already set, so
+                                                   // force a clean stop/restart to actually pick up the new station
+  const st=MUSIC_STYLES[effectiveStyleId(id)];
+  showToast(st.station||'Station tuned','t-gold');
+}
+(function setupRadio(){
+  const p=$('radioPrev'), n=$('radioNext'); if(!p||!n)return;
+  p.onclick=()=>seekStation(-1);
+  n.onclick=()=>seekStation(1);
+})();
 
 $('startbtn').onclick = () => {
   initAudio();                       // unlock audio on this user gesture
