@@ -1427,6 +1427,15 @@ const TRACKS=[
    ctrl:[[380,4,40],[360,8,-260],[220,16,-430],[-40,22,-450],[-300,28,-380],
          [-405,40,-190],[-280,52,-55],[-390,66,80],[-295,80,195],[-390,86,330],
          [-320,88,430],[-140,84,440],[120,60,420],[280,30,320],[400,10,160]]},
+  // Pixie — "the 8-Bit Bloodstream": the same road geometry, physics and hazards as every
+  // other circuit, but the entire world is dressed in voxels instead of wet tissue. The
+  // fleshy tube is replaced by a stepped cube viaduct, the villi border by red/white blocky
+  // curbs, the torus tunnel rings by cube arches, and the scenery by colour-banded towers.
+  // Three giant voxel Salty statues stand trackside as landmarks. voxel:true drives all of it.
+  {name:'Pixie', voxel:true, key:2, tempo:196, sky:0x101a2e, tunnels:[[0.36,0.46]],
+   critters:[0.62], pills:[0.22], dams:[0.80],
+   ctrl:[[380,6,140],[410,16,-120],[280,32,-350],[30,48,-440],[-230,56,-350],
+         [-400,62,-140],[-300,48,60],[-360,34,200],[-120,24,330],[120,16,420],[320,10,290]]},
 ];
 const STEPS=700;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
@@ -1452,6 +1461,81 @@ let whipReady=false, whipTarget=null;   // player tail-whip availability
   const ground=new T.Mesh(g,m); ground.position.y=-2; scene.add(ground);
 })();
 
+/* ============== VOXEL DRESSING (Pixie) ============== *
+ * Everything blocky on a voxel course funnels through voxBatch(): push plain
+ * {x,y,z,s,c} records, get back ONE InstancedMesh. A whole voxel circuit — viaduct,
+ * curbs, arches, towers, statues — is therefore a handful of draw calls, which is what
+ * keeps it running on the same phones the fleshy courses target.
+ * Each cube's colour gets a small deterministic HSL jitter keyed off its grid position,
+ * so neighbouring blocks shimmer and optically blend instead of reading as flat plastic
+ * (the same trick the voxel preview page uses).
+ * ---------------------------------------------------------------------------------- */
+// VOX_GEO is a pristine template that is never handed to a mesh directly: buildTrack()
+// disposes every geometry under trackGroup when it rebuilds, so a shared instance would be
+// disposed the moment you switched off a voxel course and be stale on the way back. Each
+// batch gets its own clone (a unit cube is 24 verts — the copy costs nothing).
+const VOX_GEO=new T.BoxGeometry(1,1,1);
+function voxHash(x,y,z){ const h=((x*73856093)^(y*19349663)^(z*83492791))>>>0; return h/4294967295; }
+function voxBatch(list, mat){
+  const m=new T.InstancedMesh(VOX_GEO.clone(), mat, list.length); m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color(), hsl={h:0,s:0,l:0};
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.s);
+    d.rotation.set(0, v.ry||0, 0);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.set(v.c); c.getHSL(hsl);
+    const j=voxHash(Math.round(v.x),Math.round(v.y),Math.round(v.z));
+    c.setHSL((hsl.h+(j-0.5)*0.04+1)%1,
+             Math.max(0,Math.min(1,hsl.s+(j-0.5)*0.16)),
+             Math.max(0.05,Math.min(0.95,hsl.l+(j-0.5)*0.20)));
+    m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
+// A blocky Salty the Sailor, built the way the voxel preview builds him: fill a handful of
+// ellipsoids on an integer grid (last write wins, so details overwrite the skin underneath),
+// then drop every fully-buried cube and keep only the visible shell.
+function saltyVox(){
+  const M=new Map(), key=(x,y,z)=>x+'|'+y+'|'+z;
+  const put=(x,y,z,c)=>M.set(key(Math.round(x),Math.round(y),Math.round(z)),c);
+  const ellip=(cx,cy,cz,rx,ry,rz,c,yMin)=>{
+    for(let x=Math.floor(cx-rx);x<=Math.ceil(cx+rx);x++)
+    for(let y=Math.floor(cy-ry);y<=Math.ceil(cy+ry);y++)
+    for(let z=Math.floor(cz-rz);z<=Math.ceil(cz+rz);z++){
+      if(yMin!=null && y<yMin) continue;
+      const a=(x-cx)/rx, b=(y-cy)/ry, d=(z-cz)/rz;
+      if(a*a+b*b+d*d<=1) put(x,y,z,c);
+    }
+  };
+  const skin=0xf3c9cf, white=0xf4f4f4, navy=0x1b3766, dark=0x2c1e20, gold=0xffd24a;
+  ellip(0,0,0, 6,5,7, skin);                                        // head
+  for(const sx of [-3,3]){                                          // eyes + pupils
+    ellip(sx,1.4,6.1, 2,2.3,1.6, white);
+    ellip(sx,1.2,7.2, 1,1.4,1.0, dark);
+  }
+  ellip(0,-2.4,6.6, 2.4,0.8,0.9, dark);                             // mouth
+  ellip(0,5.2,-0.4, 4.9,3,4.9, white, 4);                           // sailor cap dome
+  for(let x=-6;x<=6;x++) for(let z=-6;z<=6;z++){                     // navy cap band
+    const d=Math.hypot(x, z+0.4);
+    if(d>=4.3 && d<=5.1) for(let y=3;y<=4;y++) put(x,y,z,navy);
+  }
+  ellip(0,3.8,4.9, 0.8,0.8,0.7, gold);                              // cap badge
+  for(let i=0;i<=40;i++){                                           // striped tapering tail
+    const t=i/40, z=-7-t*20, x=Math.sin(t*7)*2.4, r=3*(1-t)*0.9+0.5;
+    ellip(x,0,z, r,r,r, (Math.floor(t*11)%2)===0 ? navy : white);
+  }
+  const out=[];
+  for(const [k,c] of M){
+    const p=k.split('|'), x=+p[0], y=+p[1], z=+p[2];
+    if(M.has(key(x+1,y,z))&&M.has(key(x-1,y,z))&&M.has(key(x,y+1,z))&&
+       M.has(key(x,y-1,z))&&M.has(key(x,y,z+1))&&M.has(key(x,y,z-1))) continue;
+    out.push({x,y,z,c});
+  }
+  return out;
+}
+
 // Build (or rebuild) the whole track world for TRACKS[idx]
 function buildTrack(idx){
   selTrack=idx;
@@ -1469,6 +1553,7 @@ function buildTrack(idx){
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
+  const vox  = !!TRACKS[idx].voxel;      // dress this course in cubes instead of tissue
   trackLoop = loop; trackCross = cross;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
@@ -1510,7 +1595,23 @@ function buildTrack(idx){
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
   innerSign = acc>=0 ? 1 : -1;   // +normal points toward the infield when innerSign===1
 
-  // ---- fleshy tube + inner lining + fimbriae ----
+  // ---- understructure: fleshy tube + lining + fimbriae, or a stepped cube viaduct ----
+  if(vox){
+    // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
+    // course reads as something BUILT. Wider as it descends, which makes the elevation
+    // changes legible from a distance instead of the road floating in the dark.
+    const piers=[];
+    for(let i=0;i<STEPS;i+=12){
+      const s=SAMP[i], drop=s.p.y+12;
+      const rungs=Math.max(1,Math.round(drop/7));
+      for(let k=0;k<rungs;k++){
+        const w=7+k*1.3;
+        piers.push({x:s.p.x, y:s.p.y-3-k*7, z:s.p.z, s:w, sy:6.6,
+                    ry:Math.atan2(s.t.x,s.t.z), c:k%2?0x39508f:0x2a3a6b});
+      }
+    }
+    trackGroup.add(voxBatch(piers,new T.MeshPhongMaterial({flatShading:true,shininess:8})));
+  } else {
   const tubeRadius=9;
   const tubeMat=new T.MeshPhongMaterial({color:0xffb6c1,emissive:0x5a2630,shininess:40,specular:0x664444});
   const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius,14,loop),tubeMat);
@@ -1528,6 +1629,7 @@ function buildTrack(idx){
     f.position.copy(startS.p).add(startS.n.clone().multiplyScalar(6)).add(new T.Vector3(0,4,0));
     f.rotation.x=1.2+Math.random()*0.4; f.rotation.y=angle; f.scale.set(1,1+Math.random()*0.5,1);
     trackGroup.add(f);
+  }
   }
 
   // ---- glowing road membrane + edge ropes + bio-motes ----
@@ -1547,13 +1649,27 @@ function buildTrack(idx){
   geo.setIndex(ridx); geo.computeVertexNormals();
   const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
   const rg=rc.getContext('2d');
+  if(vox){
+    // hard-edged 8px blocks, a chunky dashed centre line and cyan rails. NearestFilter
+    // below keeps the pixels crisp — bilinear filtering would smear them straight back
+    // into the soft membrane look this course exists to get away from.
+    for(let y=0;y<256;y+=8) for(let x=0;x<64;x+=8){
+      rg.fillStyle=(((x+y)/8)|0)%2 ? '#26406e' : '#1d3157'; rg.fillRect(x,y,8,8); }
+    rg.fillStyle='#7de0ff'; rg.fillRect(0,0,8,256); rg.fillRect(56,0,8,256);
+    rg.fillStyle='#ffd24a'; for(let y=0;y<256;y+=32) rg.fillRect(28,y,8,16);
+  } else {
   rg.fillStyle='#3a1f2a'; rg.fillRect(0,0,64,256);
   rg.strokeStyle='rgba(255,170,200,0.28)'; rg.lineWidth=4; rg.strokeRect(2,0,60,256);
   rg.fillStyle='rgba(255,150,190,0.55)'; rg.fillRect(30,0,4,256);
   for(let y=0;y<256;y+=32){ rg.fillStyle='rgba(255,235,242,0.4)'; rg.fillRect(29,y,6,12); }
+  }
   const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
-  const road=new T.Mesh(geo,new T.MeshPhongMaterial({map:rt,color:0xffd6e2,emissive:0x401826,
-    transparent:true,opacity:0.92,shininess:80,specular:0x7a2247,side:T.DoubleSide}));
+  if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
+  const road=new T.Mesh(geo, vox
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d1832,
+        shininess:6,specular:0x223355,side:T.DoubleSide,flatShading:true})
+    : new T.MeshPhongMaterial({map:rt,color:0xffd6e2,emissive:0x401826,
+        transparent:true,opacity:0.92,shininess:80,specular:0x7a2247,side:T.DoubleSide}));
   trackGroup.add(road);
   for(const side of [HW,-HW]){
     const ep=[];
@@ -1600,7 +1716,20 @@ function buildTrack(idx){
     post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
   }
 
-  // ---- pink villi edge border (one instanced draw) ----
+  // ---- edge border: pink villi, or stepped red/white voxel curbs (one instanced draw) ----
+  if(vox){
+    // classic kerb colours, stair-stepped up and outward so corners get a readable wall
+    const curbs=[];
+    for(let i=0;i<STEPS;i+=3){
+      const s=SAMP[i], ry=Math.atan2(s.t.x,s.t.z);
+      for(const side of [-1,1]) for(let b=0;b<3;b++){
+        const out=HW+1.8+b*3.2;
+        curbs.push({x:s.p.x+s.n.x*side*out, y:s.p.y+0.7+b*1.6, z:s.p.z+s.n.z*side*out,
+                    s:3.3, sy:3.1, ry, c:((i/3|0)+b)%2 ? 0xc4152f : 0xf2f2f2});
+      }
+    }
+    trackGroup.add(voxBatch(curbs,new T.MeshPhongMaterial({flatShading:true,shininess:12})));
+  } else {
   const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0,shininess:18});
   const spots=[];
   for(let i=0;i<STEPS;i+=2){
@@ -1628,9 +1757,25 @@ function buildTrack(idx){
   });
   villi.instanceMatrix.needsUpdate=true; if(villi.instanceColor) villi.instanceColor.needsUpdate=true;
   trackGroup.add(villi);
+  }
 
-  // ---- tunnels: arching ribbed rings that enclose the corridor over some stretches ----
+  // ---- tunnels: ribbed torus rings, or voxel arches stepped around a half-circle ----
   const tun=TRACKS[idx].tunnels||[];
+  if(vox){
+    const arch=[];
+    for(const seg of tun){
+      const i0=Math.floor(seg[0]*STEPS), i1=Math.floor(seg[1]*STEPS);
+      for(let i=i0;i<=i1;i+=4){
+        const s=SAMP[i%STEPS], ry=Math.atan2(s.t.x,s.t.z);
+        for(let a=0;a<=14;a++){
+          const th=Math.PI*(a/14), off=Math.cos(th)*(HW+6), hy=Math.sin(th)*(HW+4);
+          arch.push({x:s.p.x+s.n.x*off, y:s.p.y+hy+1, z:s.p.z+s.n.z*off,
+                     s:4.4, ry, c:a%2 ? 0x7b46b8 : 0x9d68e0});
+        }
+      }
+    }
+    if(arch.length) trackGroup.add(voxBatch(arch,new T.MeshPhongMaterial({flatShading:true,shininess:6})));
+  } else {
   const ringGeo=new T.TorusGeometry(HW+4,3,8,18);
   const ringMat=new T.MeshPhongMaterial({color:0xc9627e,emissive:0x3a141c,side:T.DoubleSide,
     transparent:true,opacity:0.92,shininess:30});
@@ -1643,6 +1788,7 @@ function buildTrack(idx){
       ring.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s.t);
       trackGroup.add(ring);
     }
+  }
   }
 
   // ---- inner barrier: a faint glowing membrane set DEEP inside the loop so there's an
@@ -1728,7 +1874,35 @@ function buildTrack(idx){
     }
   }
 
-  // ---- trackside scenery: a band of big translucent cells for depth ----
+  // ---- trackside scenery: translucent cells, or voxel towers + giant Salty statues ----
+  if(vox){
+    // colour-banded blocky towers, tapering as they rise, for parallax depth
+    const towers=[], PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
+    for(let k=0;k<80;k++){
+      const s=SAMP[(Math.random()*STEPS|0)];
+      const side=(Math.random()<0.5?-1:1), out=HW*(3.2+Math.random()*5.5);
+      const bx=s.p.x+s.n.x*side*out+(Math.random()*2-1)*30,
+            bz=s.p.z+s.n.z*side*out+(Math.random()*2-1)*30;
+      const tall=3+(Math.random()*7|0), w=8+Math.random()*10, c=PAL[k%PAL.length];
+      for(let y=0;y<tall;y++)
+        towers.push({x:bx, y:s.p.y-10+y*w*0.9, z:bz, s:w*(1-y*0.07), sy:w*0.85, c});
+    }
+    trackGroup.add(voxBatch(towers,new T.MeshPhongMaterial({flatShading:true,shininess:4})));
+
+    // three giant voxel Salty statues, turned to face the road, as course landmarks
+    const shell=saltyVox(), statues=[];
+    for(const [u,scale,side] of [[0.08,2.6,1],[0.45,2.2,-1],[0.78,2.4,1]]){
+      const s=SAMP[Math.floor(u*STEPS)%STEPS], out=HW*3.6;
+      const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out, by=s.p.y+16;
+      const ry=Math.atan2(s.p.x-bx, s.p.z-bz);              // yaw so he looks at the track
+      const ca=Math.cos(ry), sa=Math.sin(ry);
+      for(const v of shell){
+        const rx=v.x*ca+v.z*sa, rz=-v.x*sa+v.z*ca;          // rotate the shell about Y
+        statues.push({x:bx+rx*scale, y:by+v.y*scale, z:bz+rz*scale, s:scale*1.03, ry, c:v.c});
+      }
+    }
+    trackGroup.add(voxBatch(statues,new T.MeshPhongMaterial({flatShading:true,shininess:10})));
+  } else {
   {
     const cellMat=new T.MeshPhongMaterial({color:0xe88aa6,transparent:true,opacity:0.4,shininess:30,emissive:0x3a1622});
     const SC=140, cells=new T.InstancedMesh(new T.SphereGeometry(1,10,8),cellMat,SC); cells.frustumCulled=false;
@@ -1743,6 +1917,7 @@ function buildTrack(idx){
     }
     cells.instanceMatrix.needsUpdate=true; trackGroup.add(cells);
   }
+  }
 
   // ---- smashable trackside cell clusters: little blobs at the road shoulder you can burst through ----
   breakables=[];
@@ -1754,11 +1929,17 @@ function buildTrack(idx){
       const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out, by=s.p.y+2.2;
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
-      const m=new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 70%, 62%)`),
-        transparent:true,opacity:0.78,shininess:40,emissive:new T.Color(`hsl(${300+hue}, 60%, 18%)`)});
+      const m = vox
+        ? new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 72%, 60%)`),
+            flatShading:true,shininess:16,emissive:new T.Color(`hsl(${300+hue}, 60%, 14%)`)})
+        : new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 70%, 62%)`),
+            transparent:true,opacity:0.78,shininess:40,emissive:new T.Color(`hsl(${300+hue}, 60%, 18%)`)});
       for(let c=0;c<3;c++){ const r=2.0+Math.random()*1.6;
-        const blob=new T.Mesh(new T.SphereGeometry(r,10,8), m);
-        blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6); grp.add(blob); }
+        // smashable crates on the voxel course, cell blobs everywhere else
+        const blob=new T.Mesh(vox?new T.BoxGeometry(r*1.9,r*1.9,r*1.9):new T.SphereGeometry(r,10,8), m);
+        blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6);
+        if(vox) blob.rotation.y=Math.random()*0.6;
+        grp.add(blob); }
       trackGroup.add(grp);
       breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:300+hue});
     }
