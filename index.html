@@ -731,6 +731,14 @@ const MUSIC_STYLES={
               drums:{kick:[0,2,3,6,10,11],snare:[8,12]}, bass:[0,0,3,5],
               hihat:2, beatGroup:4, tempoMul:0.66, station:'64.0 KING FM',
               mel:[0,3,7,10,7,3,10,7], melB:[12,10,7,10,12,15,12,10] },
+  // Vector Freak: electro on a four-on-the-floor pulse — the arcade-cabinet cousin of
+  // Super Freak's funk, with a wah bass under a wide detuned saw lead.
+  wire:     { inst:'synthwave', melWave:'sawtooth', bassWave:'square', bassInst:'wahbass',
+              volMul:1.2, drumVol:1.15,
+              drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]}, bass:[0,0,7,5],
+              hihat:0, beatGroup:4, tempoMul:0.6, station:'88.8 GRID FM',
+              stab:{inst:'house', wave:'sawtooth', note:12, steps:[6,14], dur:0.14, vol:0.22},
+              mel:[0,7,10,12,10,7,5,3], melB:[12,15,19,15,12,10,7,3] },
 };
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 // ---- richer synth voice: the old playNote was one raw oscillator straight into a
@@ -1038,6 +1046,12 @@ function opEyes(mode){
 }
 function opBrows(d){ return `<path d="${d}" fill="none" ${OP_LINE} stroke-width="5"/>`; }
 function opMouth(d,w){ return `<path d="${d}" fill="none" ${OP_LINE} stroke-width="${w||3}"/>`; }
+// Neon stroke for the wireframe racer's card: a wide translucent pass under a bright thin
+// one, which is how you fake an additive glow in flat SVG with no filters.
+function opNeon(d, col, w){
+  return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${(w||2)*3.5}" opacity=".22" stroke-linecap="round" stroke-linejoin="round"/>`
+       + `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w||2}" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
 // Card art for the voxel racer: a literal pixel grid rather than cel linework, so the
 // select screen advertises what the model actually looks like. One rect per cell.
 function opPix(rows, pal, cell, ox, oy){
@@ -1256,7 +1270,17 @@ const OP_ART={
     '.KKEEEKKKKKKEEEKK.','.KKKKKKKKKKKKKKKK.','..KKKKGGGGGGKKKK..','..KKKKKKKKKKKKKK..',
     '...CCCCCCCCCCCC...','.....KKKKKK.......','...DDDDDD.........','..KKKK............',
   ], {G:'#ffd700',H:'#3a2814',K:'#845f2e',E:'#ffffff',P:'#14161c',C:'#f08ab0',D:'#6b4a24'},
-     9, 19, 38)
+     9, 19, 38),
+  // Vector Freak — pure line, no fills. Head shell, funk halo, visor, grill, wire tail.
+  wire:
+    opNeon('M40,100 A60,52 0 1,1 160,100 A60,52 0 1,1 40,100', '#ff2fb9', 2.6) +
+    opNeon('M44,86 q56,26 112,0 M44,114 q56,-26 112,0', '#ff2fb9', 1.2) +
+    opNeon('M100,48 L100,152 M62,60 L138,140 M138,60 L62,140', '#ff2fb9', 1) +
+    opNeon('M46,66 q54,-46 108,0 M56,52 q44,-38 88,0', '#19d2ff', 2.2) +
+    opNeon('M60,90 h30 v16 h-30 Z M110,90 h30 v16 h-30 Z M90,98 h20', '#19d2ff', 2.4) +
+    opNeon('M76,126 h48 v12 h-48 Z M88,126 v12 M100,126 v12 M112,126 v12', '#ffd24a', 2) +
+    opNeon('M62,160 q-18,22 -30,10 q-14,-14 -30,6', '#ff2fb9', 2.4) +
+    opNeon('M58,166 q-16,20 -28,9 M66,154 q-18,20 -30,9', '#ff2fb9', 1)
 };
 function opSvg(id){ return `<svg class="opsvg" viewBox="0 0 200 260" aria-hidden="true">${OP_ART[id]||''}</svg>`; }
 const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
@@ -1481,6 +1505,14 @@ const TRACKS=[
    critters:[0.62], pills:[0.22], dams:[0.80],
    ctrl:[[380,6,140],[410,16,-120],[280,32,-350],[30,48,-440],[-230,56,-350],
          [-400,62,-140],[-300,48,60],[-360,34,200],[-120,24,330],[120,16,420],[320,10,290]]},
+  // Vera — "the Vector Vein": drawn the way a vector arcade cabinet drew, in glowing
+  // wireframe over near-black. No lit surfaces anywhere on this course — the road is an
+  // unlit neon grid, the understructure is a lattice of light, the scenery is floating
+  // wireframe solids, and the tunnels are hoops of pure line. vector:true drives all of it.
+  {name:'Vera', vector:true, key:4, tempo:184, sky:0x05060f, tunnels:[[0.22,0.30],[0.60,0.68]],
+   critters:[0.45], pills:[0.75], dams:[0.36],
+   ctrl:[[340,8,220],[430,20,-40],[300,40,-300],[40,58,-420],[-260,50,-330],
+         [-420,34,-80],[-330,20,180],[-100,14,340],[160,10,400],[300,8,340]]},
 ];
 const STEPS=700;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
@@ -1499,11 +1531,14 @@ let jumpPads=[];     // {x,z,r} launch ramps
 let breakables=[];   // {x,z,y,r,mesh,alive,hue} smashable trackside cell clusters
 let whipReady=false, whipTarget=null;   // player tail-whip availability
 
-// static ground (built once)
-(()=>{
+// static ground (built once, but kept referenced: the vector course draws its own neon
+// grid into the void and must hide this, or the lit brown plane hazes the whole horizon
+// grey and the black-space illusion collapses)
+const groundPlane=(()=>{
   const g=new T.PlaneGeometry(2400,2400,1,1); g.rotateX(-Math.PI/2);
   const m=new T.MeshLambertMaterial({color:0x2a1a22});
   const ground=new T.Mesh(g,m); ground.position.y=-2; scene.add(ground);
+  return ground;
 })();
 
 /* ============== VOXEL DRESSING (Pixie) ============== *
@@ -1584,6 +1619,42 @@ function saltyVox(){
   return out;
 }
 
+/* ============== NEON VECTOR KIT (Vera) ============== *
+ * The third art direction, after cel-shaded tissue and voxels: glowing wireframe, the way
+ * vector arcade cabinets drew before anything could fill a polygon. Nothing here is lit —
+ * additive lines over near-black, so brightness comes purely from edges overlapping.
+ * Same batching discipline as voxBatch(): push raw segment endpoints, get ONE LineSegments,
+ * so a whole vector circuit is a handful of draw calls.
+ * ------------------------------------------------------------------------------------ */
+// Append a geometry's EDGES to a flat position list, transformed by mtx. Building on
+// EdgesGeometry means any three.js primitive becomes vector art for free.
+function wireAppend(out, geo, mtx){
+  const eg=new T.EdgesGeometry(geo), p=eg.attributes.position, v=new T.Vector3();
+  for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i); if(mtx) v.applyMatrix4(mtx);
+    out.push(v.x,v.y,v.z); }
+  eg.dispose();
+}
+// A closed ring of segments in the x/z plane (rotate via mtx for anything else).
+function wireRing(out, cx,cy,cz, r, seg, mtx){
+  const v=new T.Vector3();
+  for(let i=0;i<seg;i++){
+    const a=i/seg*Math.PI*2, b=(i+1)/seg*Math.PI*2;
+    for(const th of [a,b]){
+      v.set(cx+Math.cos(th)*r, cy, cz+Math.sin(th)*r);
+      if(mtx) v.applyMatrix4(mtx);
+      out.push(v.x,v.y,v.z);
+    }
+  }
+}
+function neonBatch(pos, color, opacity){
+  const g=new T.BufferGeometry();
+  g.setAttribute('position', new T.Float32BufferAttribute(pos,3));
+  const m=new T.LineBasicMaterial({color, transparent:true, opacity:opacity==null?0.9:opacity,
+    blending:T.AdditiveBlending, depthWrite:false});
+  const ls=new T.LineSegments(g,m); ls.frustumCulled=false;
+  return ls;
+}
+
 // Build (or rebuild) the whole track world for TRACKS[idx]
 function buildTrack(idx){
   selTrack=idx;
@@ -1602,6 +1673,8 @@ function buildTrack(idx){
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
   const vox  = !!TRACKS[idx].voxel;      // dress this course in cubes instead of tissue
+  const wire = !!TRACKS[idx].vector;     // ...or in glowing wireframe instead of either
+  groundPlane.visible = !wire;           // the vector course supplies its own ground grid
   trackLoop = loop; trackCross = cross;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
@@ -1643,8 +1716,32 @@ function buildTrack(idx){
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
   innerSign = acc>=0 ? 1 : -1;   // +normal points toward the infield when innerSign===1
 
-  // ---- understructure: fleshy tube + lining + fimbriae, or a stepped cube viaduct ----
-  if(vox){
+  // ---- understructure: fleshy tube, stepped cube viaduct, or a lattice of light ----
+  if(wire){
+    // Hanging wireframe lattice: cross-braced rungs dropping from the roadbed, plus a
+    // horizon grid far below. Reads as structure without a single filled surface.
+    const seg=[];
+    for(let i=0;i<STEPS;i+=8){
+      const s=SAMP[i], n=SAMP[(i+8)%STEPS];
+      const L=s.p.clone().addScaledVector(s.n,HW), R=s.p.clone().addScaledVector(s.n,-HW);
+      const drop=Math.min(46, s.p.y+12);
+      // vertical drop lines at both edges
+      seg.push(L.x,L.y,L.z, L.x,L.y-drop,L.z,  R.x,R.y,R.z, R.x,R.y-drop,R.z);
+      // cross-brace to the next station, forming an X down the flank
+      const nL=n.p.clone().addScaledVector(n.n,HW), nR=n.p.clone().addScaledVector(n.n,-HW);
+      seg.push(L.x,L.y-drop,L.z, nL.x,nL.y,nL.z,  R.x,R.y-drop,R.z, nR.x,nR.y,nR.z);
+      // tie-bar across the underside
+      seg.push(L.x,L.y-drop,L.z, R.x,R.y-drop,R.z);
+    }
+    trackGroup.add(neonBatch(seg, 0x1f6fd0, 0.55));
+    // ground grid, so the void below reads as depth rather than nothing
+    const grid=[], G=900, STEP=60;
+    for(let a=-G;a<=G;a+=STEP){
+      grid.push(-G,-40,a, G,-40,a);
+      grid.push(a,-40,-G, a,-40,G);
+    }
+    trackGroup.add(neonBatch(grid, 0x0e3a6a, 0.5));
+  } else if(vox){
     // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
     // course reads as something BUILT. Wider as it descends, which makes the elevation
     // changes legible from a distance instead of the road floating in the dark.
@@ -1697,7 +1794,14 @@ function buildTrack(idx){
   geo.setIndex(ridx); geo.computeVertexNormals();
   const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
   const rg=rc.getContext('2d');
-  if(vox){
+  if(wire){
+    // Unlit neon grid on near-black: magenta rails, cyan rungs, a dashed centre line.
+    rg.fillStyle='#05060f'; rg.fillRect(0,0,64,256);
+    rg.strokeStyle='#19d2ff'; rg.lineWidth=2;
+    for(let y=0;y<256;y+=16){ rg.beginPath(); rg.moveTo(0,y+0.5); rg.lineTo(64,y+0.5); rg.stroke(); }
+    rg.fillStyle='#ff2fb9'; rg.fillRect(0,0,5,256); rg.fillRect(59,0,5,256);
+    rg.fillStyle='#eaffff'; for(let y=0;y<256;y+=32) rg.fillRect(30,y,4,18);
+  } else if(vox){
     // hard-edged 8px blocks, a chunky dashed centre line and cyan rails. NearestFilter
     // below keeps the pixels crisp — bilinear filtering would smear them straight back
     // into the soft membrane look this course exists to get away from.
@@ -1713,7 +1817,11 @@ function buildTrack(idx){
   }
   const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
-  const road=new T.Mesh(geo, vox
+  // Unlit on the vector course: brightness there must come from the emissive lines
+  // themselves, not from the scene's lamps, or it stops reading as vector art.
+  const road=new T.Mesh(geo, wire
+    ? new T.MeshBasicMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
+    : vox
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d1832,
         shininess:6,specular:0x223355,side:T.DoubleSide,flatShading:true})
     : new T.MeshPhongMaterial({map:rt,color:0xffd6e2,emissive:0x401826,
@@ -1723,7 +1831,8 @@ function buildTrack(idx){
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
-    trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.6,blending:T.AdditiveBlending,depthWrite:false})));
+    trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:wire?0xff2fb9:0xff9ec4,
+      transparent:true,opacity:wire?0.95:0.6,blending:T.AdditiveBlending,depthWrite:false})));
   }
   const N=420, mp=new Float32Array(N*3);
   for(let k=0;k<N;k++){
@@ -1764,8 +1873,24 @@ function buildTrack(idx){
     post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
   }
 
-  // ---- edge border: pink villi, or stepped red/white voxel curbs (one instanced draw) ----
-  if(vox){
+  // ---- edge border: villi, voxel curbs, or neon pylons (one batched draw) ----
+  if(wire){
+    // Light pylons marching down both shoulders — a tapering wire post topped with a ring,
+    // which is what gives the vector course a readable edge at speed.
+    const seg=[];
+    for(let i=0;i<STEPS;i+=14){
+      const s=SAMP[i];
+      for(const side of [-1,1]){
+        const b=s.p.clone().addScaledVector(s.n, side*(HW+4));
+        const h=9;
+        // four uprights leaning into a point, so it reads as a 3D post not a flat line
+        for(const [dx,dz] of [[-1.6,-1.6],[1.6,-1.6],[1.6,1.6],[-1.6,1.6]])
+          seg.push(b.x+dx,b.y,b.z+dz, b.x,b.y+h,b.z);
+        wireRing(seg, b.x, b.y+h, b.z, 2.6, 8, null);
+      }
+    }
+    trackGroup.add(neonBatch(seg, 0x19d2ff, 0.85));
+  } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
     for(let i=0;i<STEPS;i+=3){
@@ -1809,7 +1934,23 @@ function buildTrack(idx){
 
   // ---- tunnels: ribbed torus rings, or voxel arches stepped around a half-circle ----
   const tun=TRACKS[idx].tunnels||[];
-  if(vox){
+  if(wire){
+    // Hoops of pure line, banked to the road and alternating colour so the tunnel
+    // stretches strobe past as you drive them.
+    const seg=[], m=new T.Matrix4(), q=new T.Quaternion(), up=new T.Vector3(0,1,0);
+    const segB=[];
+    for(const sg of tun){
+      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
+      for(let i=i0;i<=i1;i+=3){
+        const s=SAMP[i%STEPS];
+        q.setFromUnitVectors(up, s.t);                 // ring plane perpendicular to travel
+        m.compose(s.p.clone().add(new T.Vector3(0,1,0)), q, new T.Vector3(1,1,1));
+        wireRing(((i/3|0)%2 ? segB : seg), 0,0,0, HW+5, 16, m);
+      }
+    }
+    if(seg.length)  trackGroup.add(neonBatch(seg,  0xff2fb9, 0.9));
+    if(segB.length) trackGroup.add(neonBatch(segB, 0x19d2ff, 0.9));
+  } else if(vox){
     const arch=[];
     for(const seg of tun){
       const i0=Math.floor(seg[0]*STEPS), i1=Math.floor(seg[1]*STEPS);
@@ -1922,8 +2063,30 @@ function buildTrack(idx){
     }
   }
 
-  // ---- trackside scenery: translucent cells, or voxel towers + giant Salty statues ----
-  if(vox){
+  // ---- trackside scenery: translucent cells, voxel towers, or floating wire solids ----
+  if(wire){
+    // Slowly-tumbling platonic solids in wireframe — the classic vector-arcade backdrop.
+    // Split across two colour batches so the field reads as depth rather than a flat mesh.
+    const near=[], far=[], m=new T.Matrix4(), q=new T.Quaternion(),
+          e=new T.Euler(), one=new T.Vector3(1,1,1);
+    const shapes=[new T.IcosahedronGeometry(1,0), new T.OctahedronGeometry(1,0),
+                  new T.BoxGeometry(1.6,1.6,1.6), new T.TetrahedronGeometry(1.2,0)];
+    for(let k=0;k<90;k++){
+      const s=SAMP[(Math.random()*STEPS|0)];
+      const side=(Math.random()<0.5?-1:1), out=HW*(2.8+Math.random()*6);
+      const r=7+Math.random()*20;
+      e.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
+      q.setFromEuler(e);
+      m.compose(new T.Vector3(
+        s.p.x+s.n.x*side*out+(Math.random()*2-1)*40,
+        s.p.y-6+Math.random()*70,
+        s.p.z+s.n.z*side*out+(Math.random()*2-1)*40), q, one.clone().multiplyScalar(r));
+      wireAppend(k%2?near:far, shapes[k%shapes.length], m);
+    }
+    for(const g2 of shapes) g2.dispose();
+    trackGroup.add(neonBatch(near, 0x9d5cff, 0.75));
+    trackGroup.add(neonBatch(far,  0x19d2ff, 0.45));
+  } else if(vox){
     // colour-banded blocky towers, tapering as they rise, for parallax depth
     const towers=[], PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
     for(let k=0;k<80;k++){
@@ -1977,16 +2140,24 @@ function buildTrack(idx){
       const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out, by=s.p.y+2.2;
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
-      const m = vox
+      const m = wire
+        ? new T.MeshBasicMaterial({color:new T.Color(`hsl(${290+hue}, 95%, 66%)`),
+            wireframe:true,transparent:true,opacity:0.95,
+            blending:T.AdditiveBlending,depthWrite:false})
+        : vox
         ? new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 72%, 60%)`),
             flatShading:true,shininess:16,emissive:new T.Color(`hsl(${300+hue}, 60%, 14%)`)})
         : new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 70%, 62%)`),
             transparent:true,opacity:0.78,shininess:40,emissive:new T.Color(`hsl(${300+hue}, 60%, 18%)`)});
       for(let c=0;c<3;c++){ const r=2.0+Math.random()*1.6;
-        // smashable crates on the voxel course, cell blobs everywhere else
-        const blob=new T.Mesh(vox?new T.BoxGeometry(r*1.9,r*1.9,r*1.9):new T.SphereGeometry(r,10,8), m);
+        // wire solids on the vector course, crates on the voxel one, cell blobs elsewhere
+        const blob=new T.Mesh(
+          wire ? new T.OctahedronGeometry(r*1.3,0)
+          : vox ? new T.BoxGeometry(r*1.9,r*1.9,r*1.9)
+          : new T.SphereGeometry(r,10,8), m);
         blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6);
         if(vox) blob.rotation.y=Math.random()*0.6;
+        if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
       breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:300+hue});
@@ -2030,6 +2201,33 @@ const TAIL_OUTLINE_W=0.32;   // constant absolute width — tapers with the tube
 function wiggleTail(g, phase, amp){
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
+  // wireframe racer: rewrite the tail's line buffer — rings around the spine plus
+  // longitudinal spines between them, which is what makes a tube out of pure edges.
+  const wt=g.userData.wireTail;
+  if(wt){
+    const {mesh,pos,R,S,cx,cz,cr}=wt;
+    for(let i=0;i<R;i++){
+      const t=i/(R-1);
+      cx[i]=Math.sin(phase - i*0.55*(20/R))*amp*t*t;
+      cz[i]=-2 - t*20;
+      cr[i]=1.5*(1-t)*(1-t)+0.28;
+    }
+    let p=0;
+    for(let i=0;i<R;i++) for(let s=0;s<S;s++){
+      const a=s/S*Math.PI*2, b=(s+1)/S*Math.PI*2;
+      pos[p++]=cx[i]+Math.cos(a)*cr[i]; pos[p++]=3.2+Math.sin(a)*cr[i]; pos[p++]=cz[i];
+      pos[p++]=cx[i]+Math.cos(b)*cr[i]; pos[p++]=3.2+Math.sin(b)*cr[i]; pos[p++]=cz[i];
+    }
+    for(let s=0;s<S;s++){
+      const a=s/S*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+      for(let i=0;i<R-1;i++){
+        pos[p++]=cx[i]+ca*cr[i];     pos[p++]=3.2+sa*cr[i];     pos[p++]=cz[i];
+        pos[p++]=cx[i+1]+ca*cr[i+1]; pos[p++]=3.2+sa*cr[i+1];   pos[p++]=cz[i+1];
+      }
+    }
+    mesh.geometry.attributes.position.needsUpdate=true;
+    return;
+  }
   const vt=g.userData.voxTail;
   if(vt){
     const {mesh,rings,dummy}=vt;
@@ -2304,7 +2502,96 @@ function makeVoxelCell(id){
   return g;
 }
 
+/* ---- Vector Freak: the racer drawn as glowing wireframe -----------------------------
+ * Third rendition style, and the one that fights the engine hardest: a LineBasicMaterial
+ * has no .emissive, so it cannot satisfy the userData.head contract that syncObjects()
+ * uses for the boost flush. The fix is also what makes the look work — a dark, nearly
+ * opaque HULL sits just inside the wireframe. It carries the emissive, and it occludes the
+ * far-side edges so the model reads as a solid object with lit edges instead of a
+ * transparent cage of lines. Everything else follows the same contract as makeCell().
+ * ---------------------------------------------------------------------------------- */
+function makeWireCell(){
+  const g=new T.Group();
+  const MAG=0xff6fd0, CYA=0x19d2ff, GOLD=0xffd24a;
+
+  // --- hull: dark, emissive-carrying, and the occluder that gives the lines depth ---
+  // Pure black diffuse with zero specular, because under this scene's ~3.0 light intensity
+  // ANY albedo here lights up into a solid blob that swallows the wireframe. Black leaves
+  // the emissive as the only thing the hull ever shows — which is also what makes the boost
+  // flush read, since syncObjects() brightens that emissive and nothing else. The emissive
+  // then looks absurdly low as a hex only because the renderer outputs sRGB: gamma lifts
+  // these dark linear values roughly 4x on screen, so 0x14051c renders as a mid-plum.
+  const hull=new T.Mesh(new T.SphereGeometry(3.32,20,14),
+    new T.MeshPhongMaterial({color:0x000000, emissive:0x05010a, shininess:0,
+      specular:0x000000}));
+  hull.scale.set(1,0.82,1.5); hull.position.y=3.2; g.add(hull);
+  g.userData.head=hull;
+  g.userData.baseEmissive=hull.material.emissive.clone();
+
+  // --- wireframe overlay: head, funk halo of hair, collar ---
+  const headWire=[], hairWire=[];
+  const m=new T.Matrix4(), q=new T.Quaternion();
+  const ico=new T.IcosahedronGeometry(3.42,1);
+  m.compose(new T.Vector3(0,3.2,0), q, new T.Vector3(1,0.82,1.5));
+  wireAppend(headWire, ico, m);
+  const halo=new T.IcosahedronGeometry(2.5,1);
+  m.compose(new T.Vector3(0,5.5,-0.4), q, new T.Vector3(1.35,1.0,1.2));
+  wireAppend(hairWire, halo, m);                       // Super Freak's funk halo
+  const torus=new T.TorusGeometry(4.1,0.5,4,14);
+  q.setFromEuler(new T.Euler(Math.PI/2,0,0));
+  m.compose(new T.Vector3(0,1.5,0.4), q, new T.Vector3(0.85,1,1));
+  wireAppend(hairWire, torus, m);                      // collar
+  ico.dispose(); halo.dispose(); torus.dispose();
+  g.add(neonBatch(headWire, MAG, 0.95));
+  g.add(neonBatch(hairWire, CYA, 0.8));
+
+  // --- face: solid glowing shapes, so the expression animations work unchanged ---
+  const eyes=[], pupils=[];
+  const eyeMat=new T.MeshBasicMaterial({color:CYA,transparent:true,opacity:0.95,
+    blending:T.AdditiveBlending,depthWrite:false});
+  const pupMat=new T.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:1,
+    blending:T.AdditiveBlending,depthWrite:false});
+  for(const sx of [-1.5,1.5]){
+    const e=new T.Mesh(new T.BoxGeometry(1.5,0.9,0.35), eyeMat);
+    e.position.set(sx,4.2,4.5); g.add(e); eyes.push(e);
+    const p=new T.Mesh(new T.BoxGeometry(0.5,0.5,0.35), pupMat);
+    p.position.set(sx,4.2,4.75); g.add(p); pupils.push(p);
+  }
+  g.userData.eyes=eyes; g.userData.pupils=pupils;
+  // the grill, as a gold wire box — mouth scale animation drives it like any other mouth
+  const mouth=new T.Mesh(new T.BoxGeometry(2.2,0.7,0.5),
+    new T.MeshBasicMaterial({color:GOLD,wireframe:true,transparent:true,opacity:0.95,
+      blending:T.AdditiveBlending,depthWrite:false}));
+  mouth.position.set(0,2.5,4.5); g.add(mouth);
+  g.userData.mouth=mouth; g.userData.mouthBase=mouth.scale.clone();
+
+  // Deliberately dim: syncObjects fixes the halo's SIZE and opacity, so colour is the only
+  // lever — and at the default brightness this sprite washes the dark hull into a solid
+  // plum blob that swallows every edge the character is made of.
+  const glow=glowSprite(0x3a0a2e,13); glow.position.set(0,3.4,0.5); g.add(glow);
+  g.userData.glow=glow;
+  const fl1=glowSprite(0x19d2ff,0); fl1.position.set(0,3.2,-15);
+  const fl2=glowSprite(0xff2fb9,0); fl2.position.set(0,3.2,-18);
+  g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
+
+  // --- tail: a wire tube of rings + spines, rebuilt into its buffer every frame ---
+  const R=14, S=8;
+  const vertCount = R*S*2 + S*(R-1)*2;
+  const pos=new Float32Array(vertCount*3);
+  const tg=new T.BufferGeometry();
+  tg.setAttribute('position', new T.BufferAttribute(pos,3));
+  const tailMesh=new T.LineSegments(tg, new T.LineBasicMaterial({color:MAG,transparent:true,
+    opacity:0.9, blending:T.AdditiveBlending, depthWrite:false}));
+  tailMesh.frustumCulled=false; g.add(tailMesh);
+  g.userData.tailMesh=tailMesh;
+  g.userData.wireTail={mesh:tailMesh, pos, R, S,
+    cx:new Float32Array(R), cz:new Float32Array(R), cr:new Float32Array(R)};
+  wiggleTail(g, 0, 0);
+  return g;
+}
+
 function makeCell(hue, typeId){
+  if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
   if(VOX_RACERS[typeId]) return makeVoxelCell(typeId);   // replaces the model, not a reskin
   const g=new T.Group();
   let tailTextured=false;
@@ -2928,6 +3215,7 @@ const SPERM_TYPES = [
   {id:'cholo', name:'Lil Pepe', hue:0, desc:'Barrio legend. Low-rider bounce, fearless drifts.', stats:{skill:0.98, driftMult:1.3}},
   {id:'voxel', name:'8-Bit Salty', hue:172, desc:'Salty rendered at a lower resolution. Same sea legs, fewer polygons.', stats:{skill:1.0, spinResist:0.6, turn:1.05}},
   {id:'kingVox', name:'64-Bit Darius', hue:285, desc:'Darius re-rendered at four times the density. Afro, crown and grill, all in cubes.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
+  {id:'wire', name:'Vector Freak', hue:262, desc:'Super Freak redrawn in pure light. No surfaces, just edges and attitude.', stats:{skill:0.98, driftMult:1.3, turn:1.12}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Grand Prix (cup across all tracks) state
@@ -3020,6 +3308,7 @@ const SIGNATURE_ITEMS={
   sailor:   { name:'Anchor',        icon:'⚓', color:0x555a5e, emissive:0x0e1012, geo:()=>new T.TorusGeometry(1.5,0.5,8,14) },
   voxel:    { name:'Pixel Block',   icon:'🧊', color:0x7de0ff, emissive:0x14384a, geo:()=>new T.BoxGeometry(2.6,2.6,2.6) },
   kingVox:  { name:'Gold Bar',      icon:'🟨', color:0xffd700, emissive:0x4a3500, geo:()=>new T.BoxGeometry(3.2,1.5,1.7) },
+  wire:     { name:'Light Disc',    icon:'💿', color:0x19d2ff, emissive:0x0a5a7a, geo:()=>new T.TorusGeometry(1.7,0.35,8,16) },
   cholo:    { name:'Fuzzy Dice',    icon:'🎲', color:0xd8397a, emissive:0x3a0e22, geo:()=>new T.BoxGeometry(2.4,2.4,2.4) },
 };
 function giveItem(r){
@@ -3423,7 +3712,7 @@ const WHIP_TAUNTS=['WHIPPED!','SMACKED!','TAIL-SLAP!','SENT HIM!','CRACKED!'];
 const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arriba!',
   dragon:'Feel the dragon!', king:'Pay up!', chad:'Wipeout, brah!', hillbilly:'Yeehaw!',
   wall:'SELL!', korean:'Precision.', rick:'Super freaky!', french:'Sacré bleu!',
-  sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!'};
+  sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!', wire:'FEEL THE GRID!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
