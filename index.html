@@ -752,6 +752,14 @@ const MUSIC_STYLES={
               hihat:2, beatGroup:4, tempoMul:1.05, station:'80.0 PAPER FM',
               stab:{inst:'whistle', wave:'sine', note:12, steps:[10], dur:0.26, vol:0.16},
               mel:[0,2,5,7,5,2,0,-3], melB:[12,10,7,5,7,10,12,14] },
+  // Mosaic Seamus: interlocking marimba cells that phase against each other — small
+  // repeating units combining into a bigger pattern, which is the audible analogue of
+  // what the tiles do in your eye.
+  mosaic:   { inst:'marimba', melWave:'triangle', bassWave:'sine', volMul:1.05,
+              drums:{kick:[0,6,8,14],snare:[4,12]}, bass:[0,0,4,7],
+              hihat:1, beatGroup:4, tempoMul:0.72, station:'60.0 TESSERA FM',
+              stab:{inst:'koto', wave:'triangle', note:14, steps:[3,11], dur:0.14, vol:0.18},
+              mel:[0,4,7,11,7,4,2,4], melB:[11,7,4,7,11,14,11,7] },
 };
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 // ---- richer synth voice: the old playNote was one raw oscillator straight into a
@@ -1065,6 +1073,22 @@ function opNeon(d, col, w){
   return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${(w||2)*3.5}" opacity=".22" stroke-linecap="round" stroke-linejoin="round"/>`
        + `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w||2}" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
+// Card art for the mosaic racer: the SAME technique in 2D — each cell is a tile with a
+// contrasting inner mark, so the card mixes optically at card size just like the model.
+function opMosaic(rows, pal, cell, ox, oy){
+  let s='';
+  rows.forEach((row,y)=>{
+    for(let x=0;x<row.length;x++){
+      const e=pal[row[x]]; if(!e) continue;
+      const px=ox+x*cell, py=oy+y*cell, m=cell*0.30, k=(x*7+y*13)%3;
+      s+=`<rect x="${px}" y="${py}" width="${cell-1}" height="${cell-1}" fill="${e[0]}"/>`;
+      s+= k===0 ? `<circle cx="${px+cell/2}" cy="${py+cell/2}" r="${m}" fill="${e[1]}"/>`
+        : k===1 ? `<rect x="${px+cell/2-m}" y="${py+cell/2-m}" width="${m*2}" height="${m*2}" fill="${e[1]}"/>`
+        : `<path d="M${px+cell/2},${py+cell/2-m} L${px+cell/2+m},${py+cell/2} L${px+cell/2},${py+cell/2+m} L${px+cell/2-m},${py+cell/2} Z" fill="${e[1]}"/>`;
+    }
+  });
+  return s;
+}
 // Card art for the voxel racer: a literal pixel grid rather than cel linework, so the
 // select screen advertises what the model actually looks like. One rect per cell.
 function opPix(rows, pal, cell, ox, oy){
@@ -1309,6 +1333,16 @@ const OP_ART={
     <path d="M62,132 q-14,-12 -20,2 q14,4 20,-2 Z M138,132 q14,-12 20,2 q-14,4 -20,-2 Z" fill="#2e2320"/>
     <circle cx="46" cy="112" r="5" fill="#f2c230"/><circle cx="154" cy="112" r="5" fill="#f2c230"/>
   </g>`,
+  // Mosaic Seamus — every cell a tile plus a near-complementary mark, exactly as the
+  // shader does it in 3D. Read it from arm's length and the marks disappear into tone.
+  mosaic:opMosaic([
+    '.....GGGG.....','.....GGGG.....','...GGGGGGGG...','...GGGGGGGG...',
+    '....HHHHHH....','...HHHHHHHH...','..SSSSSSSSSS..','..SSBBSSBBSS..',
+    '..SSSSSSSSSS..','..SSEESSEESS..','..SSSSSSSSSS..','...SSSMMSSS...',
+    '....SSSSSS....','.....HHHH.....',
+  ], {G:['#1f7a34','#e0518f'], H:['#c2491e','#2fb7c9'], S:['#ffe4c4','#7f5ad6'],
+      B:['#8b2000','#39d0a0'], E:['#3a2a24','#f0c341'], M:['#7a2e2e','#5ad6b0']},
+     12, 28, 46),
   // Origami Wei — flat facets and score lines only. Every shape is a straight-edged
   // polygon because a folded sheet cannot produce a curve.
   paper:`<g stroke="#6d6552" stroke-width="1.6" stroke-linejoin="round">
@@ -1565,6 +1599,13 @@ const TRACKS=[
   // Paige — "the Folded Fold": a cut-paper diorama. Flat shading turns every curve into
   // creased facets, the palette is chalky card stock, and the whole set reads as something
   // scored, folded and glued rather than grown.
+  // Tessa — "the Tessellation": the voxel course's geometry, but every cube batched
+  // through the Chuck-Close shader, so the entire world is tiles that mix optically.
+  // voxel:true reuses that dressing wholesale; mosaic:true only swaps the batcher.
+  {name:'Tessa', voxel:true, mosaic:true, key:1, tempo:180, sky:0x0e2029,
+   tunnels:[[0.30,0.40]], critters:[0.58], pills:[0.26], dams:[0.72],
+   ctrl:[[360,8,200],[420,22,-60],[280,38,-320],[30,52,-410],[-250,44,-320],
+         [-400,30,-70],[-320,18,170],[-90,12,330],[150,8,380],[300,8,320]]},
   {name:'Paige', paper:true, key:6, tempo:172, sky:0x9c8f74, tunnels:[[0.24,0.32],[0.62,0.70]],
    critters:[0.4], pills:[0.8], dams:[0.55],
    ctrl:[[330,8,240],[420,18,-30],[280,34,-290],[20,50,-400],[-250,42,-320],
@@ -1633,6 +1674,109 @@ function voxBatch(list, mat, jit){
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
   return m;
 }
+/* ============== CHUCK-CLOSE MOSAIC KIT (Tessa) ============== *
+ * Ported from the voxel preview page's Chuck-Close mode. Every voxel FACE is a tile: a
+ * grout border, a central shape (circle / square / diamond / triangle) and four corner
+ * dots, drawn in per-voxel ACCENT colours over a per-voxel BASE. Neighbouring tiles get
+ * hue-rotated, near-complementary accents, so from any distance they optically MIX into
+ * the local tone rather than reading as flat plastic. That mixing is the whole style —
+ * it is Chuck Close's grid method, and it cannot be faked with a texture because the
+ * accent has to be derived per voxel from that voxel's own colour.
+ *
+ * Colour note: this is a raw ShaderMaterial, and three.js only applies the renderer's
+ * sRGB output encoding inside its BUILT-IN shaders. So what this computes is what lands
+ * on screen — matching the preview page, which never set an output encoding at all.
+ * Deliberately NOT "corrected", or it would drift away from the reference.
+ * ---------------------------------------------------------------------------------- */
+const mosaicHash=(x,y,z)=>{ const h=(x*73856093)^(y*19349663)^(z*83492791); return h>>>0; };
+const _mHSL={h:0,s:0,l:0}, _mSrc=new T.Color();
+function mosaicTile(hex, h){
+  const r1=(h&255)/255, r2=((h>>>8)&255)/255, r3=((h>>>16)&255)/255, r4=((h>>>24)&255)/255;
+  const cf=(v,a,b)=>v<a?a:v>b?b:v;
+  _mSrc.set(hex); _mSrc.getHSL(_mHSL);
+  const H=_mHSL.h, S=_mHSL.s, L=_mHSL.l;
+  return [
+    new T.Color().setHSL((H+(r1-0.5)*0.05+1)%1, cf(S+(r3-0.5)*0.18,0,1), cf(L+(r2-0.5)*0.24,0.06,0.95)),
+    new T.Color().setHSL((H+0.33+r4*0.34)%1,    cf(S*0.5+0.4,0.25,1),    cf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92)),
+    new T.Color().setHSL((H-0.12+r2*0.1+1)%1,   cf(S*0.7+0.2,0.3,1),     cf(L*0.55+0.16+(r3-0.5)*0.12,0.18,0.66)),
+  ];
+}
+const MOSAIC_VS=`
+  attribute vec3 aBase; attribute vec3 aAccent; attribute vec3 aAccent2; attribute float aShape;
+  varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
+  varying vec2 vUv; varying vec3 vN; varying float vFogDepth;
+  void main(){
+    vBase=aBase; vAccent=aAccent; vAccent2=aAccent2; vShape=aShape; vUv=uv;
+    mat3 im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
+    mat3 mm = mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
+    vN = normalize(mm * im * normal);
+    vec4 mv = modelViewMatrix * instanceMatrix * vec4(position,1.0);
+    vFogDepth = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }`;
+const MOSAIC_FS=`
+  uniform vec3 lightDir; uniform vec3 uEmissive;
+  uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar;
+  varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
+  varying vec2 vUv; varying vec3 vN; varying float vFogDepth;
+  void main(){
+    float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
+    vec2 uv=vUv; float cu=uv.x-0.5, cv=uv.y-0.5; float qx=abs(cu), qy=abs(cv); vec3 c;
+    bool grout = (qx>0.40||qy>0.40) || (qx>0.32&&qy>0.32&&length(vec2(qx-0.32,qy-0.32))>0.09);
+    if(grout){ c=vBase*0.45; }
+    else {
+      bool central;
+      if(vShape<0.5) central=length(vec2(cu,cv))<0.18;
+      else if(vShape<1.5) central=max(qx,qy)<0.16;
+      else if(vShape<2.5) central=qx+qy<0.21;
+      else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);
+      bool dm = length(uv-vec2(0.30,0.30))<0.075 || length(uv-vec2(0.70,0.30))<0.075
+             || length(uv-vec2(0.30,0.70))<0.075 || length(uv-vec2(0.70,0.70))<0.075;
+      c = central ? vAccent : (dm ? vAccent2 : vBase);
+    }
+    c = c*(0.5+0.55*ndl) + uEmissive;
+    c = mix(c, uFogColor, smoothstep(uFogNear, uFogFar, vFogDepth));
+    gl_FragColor=vec4(c, 1.0);
+  }`;
+// Same {x,y,z,s,c} record shape as voxBatch, so any voxel body can be batched either way.
+function mosaicBatch(list, emissiveHex){
+  const n=list.length, geo=VOX_GEO.clone();
+  const fog=scene.fog;
+  const mat=new T.ShaderMaterial({ vertexShader:MOSAIC_VS, fragmentShader:MOSAIC_FS, uniforms:{
+    lightDir:{value:new T.Vector3(0.5,0.9,0.6).normalize()},
+    uEmissive:{value:new T.Color(emissiveHex||0x000000)},
+    uFogColor:{value:(fog?fog.color.clone():new T.Color(0x000000))},
+    uFogNear:{value:fog?fog.near:1e6}, uFogFar:{value:fog?fog.far:1e7},
+  }});
+  // syncObjects' boost flush does head.material.emissive.copy(...).multiplyScalar(...),
+  // which MUTATES the colour in place — and uniforms hold it by reference, so exposing
+  // the uniform's Color as .emissive wires the flush straight through to the shader.
+  mat.emissive=mat.uniforms.uEmissive.value;
+  const m=new T.InstancedMesh(geo, mat, n); m.frustumCulled=false;
+  const aB=new Float32Array(n*3), aA=new Float32Array(n*3), aA2=new Float32Array(n*3), aS=new Float32Array(n);
+  const d=new T.Object3D();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.s);
+    d.rotation.set(0, v.ry||0, 0);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    // world positions are fractional, so quantise before hashing or neighbouring voxels
+    // would not get stable, distinct tiles
+    const h=mosaicHash(Math.round(v.x*4), Math.round(v.y*4), Math.round(v.z*4));
+    const t=mosaicTile(v.c, h);
+    aB[i*3]=t[0].r; aB[i*3+1]=t[0].g; aB[i*3+2]=t[0].b;
+    aA[i*3]=t[1].r; aA[i*3+1]=t[1].g; aA[i*3+2]=t[1].b;
+    aA2[i*3]=t[2].r; aA2[i*3+1]=t[2].g; aA2[i*3+2]=t[2].b;
+    aS[i]=h%4;
+  });
+  geo.setAttribute('aBase',   new T.InstancedBufferAttribute(aB,3));
+  geo.setAttribute('aAccent', new T.InstancedBufferAttribute(aA,3));
+  geo.setAttribute('aAccent2',new T.InstancedBufferAttribute(aA2,3));
+  geo.setAttribute('aShape',  new T.InstancedBufferAttribute(aS,1));
+  m.instanceMatrix.needsUpdate=true;
+  return m;
+}
+
 // A blocky Salty the Sailor, built the way the voxel preview builds him: fill a handful of
 // ellipsoids on an integer grid (last write wins, so details overwrite the skin underneath),
 // then drop every fully-buried cube and keep only the visible shell.
@@ -1732,6 +1876,10 @@ function buildTrack(idx){
   const wire = !!TRACKS[idx].vector;     // ...or in glowing wireframe instead of either
   const clay = !!TRACKS[idx].clay;       // ...or as hand-pressed plasticine on a set
   const paper= !!TRACKS[idx].paper;      // ...or as a folded cut-paper diorama
+  const mosaic=!!TRACKS[idx].mosaic;     // ...or as optically-mixing Chuck-Close tiles
+  // The voxel dressing below is shared: mosaic only swaps HOW the cubes are batched, so
+  // the material argument each call passes is deliberately ignored on that path.
+  const cubeBatch = mosaic ? (list)=>mosaicBatch(list) : voxBatch;
   groundPlane.visible = !wire;           // the vector course supplies its own ground grid
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66 : 0x2a1a22);
   trackLoop = loop; trackCross = cross;
@@ -1814,7 +1962,7 @@ function buildTrack(idx){
                     ry:Math.atan2(s.t.x,s.t.z), c:k%2?0x39508f:0x2a3a6b});
       }
     }
-    trackGroup.add(voxBatch(piers,new T.MeshPhongMaterial({flatShading:true,shininess:8})));
+    trackGroup.add(cubeBatch(piers,new T.MeshPhongMaterial({flatShading:true,shininess:8})));
   } else {
   const tubeRadius=9;
   const tubeMat=new T.MeshPhongMaterial({color:0xffb6c1,emissive:0x5a2630,shininess:40,specular:0x664444});
@@ -1989,7 +2137,7 @@ function buildTrack(idx){
                     s:3.3, sy:3.1, ry, c:((i/3|0)+b)%2 ? 0xc4152f : 0xf2f2f2});
       }
     }
-    trackGroup.add(voxBatch(curbs,new T.MeshPhongMaterial({flatShading:true,shininess:12})));
+    trackGroup.add(cubeBatch(curbs,new T.MeshPhongMaterial({flatShading:true,shininess:12})));
   } else {
   const blobMat=new T.MeshPhongMaterial({color:0xf4a6c0,shininess:18});
   const spots=[];
@@ -2051,7 +2199,7 @@ function buildTrack(idx){
         }
       }
     }
-    if(arch.length) trackGroup.add(voxBatch(arch,new T.MeshPhongMaterial({flatShading:true,shininess:6})));
+    if(arch.length) trackGroup.add(cubeBatch(arch,new T.MeshPhongMaterial({flatShading:true,shininess:6})));
   } else {
   const ringGeo=new T.TorusGeometry(HW+4,3,8,18);
   const ringMat=new T.MeshPhongMaterial({color:0xc9627e,emissive:0x3a141c,side:T.DoubleSide,
@@ -2186,7 +2334,7 @@ function buildTrack(idx){
       for(let y=0;y<tall;y++)
         towers.push({x:bx, y:s.p.y-10+y*w*0.9, z:bz, s:w*(1-y*0.07), sy:w*0.85, c});
     }
-    trackGroup.add(voxBatch(towers,new T.MeshPhongMaterial({flatShading:true,shininess:4})));
+    trackGroup.add(cubeBatch(towers,new T.MeshPhongMaterial({flatShading:true,shininess:4})));
 
     // three giant voxel Salty statues, turned to face the road, as course landmarks
     const shell=saltyVox(), statues=[];
@@ -2200,7 +2348,7 @@ function buildTrack(idx){
         statues.push({x:bx+rx*scale, y:by+v.y*scale, z:bz+rz*scale, s:scale*1.03, ry, c:v.c});
       }
     }
-    trackGroup.add(voxBatch(statues,new T.MeshPhongMaterial({flatShading:true,shininess:10})));
+    trackGroup.add(cubeBatch(statues,new T.MeshPhongMaterial({flatShading:true,shininess:10})));
   } else {
   {
     const cellMat=new T.MeshPhongMaterial({color:0xe88aa6,transparent:true,opacity:0.4,shininess:30,emissive:0x3a1622});
@@ -2754,6 +2902,31 @@ const VOX_RACERS={
       for(const sx of [-1,1]) k.ellip(sx*7.9,0,-1.19, 0.9,0.9,0.9, ice);  // diamond studs
     },
   },
+  // Mosaic Seamus — the Chuck-Close rendition. Colours are chosen for what they do when
+  // they MIX: ginger hair against pale freckled skin gives the accent pass a lot to work
+  // with, which is exactly what makes the tiles shimmer instead of sitting flat.
+  mosaic:{
+    res:3, mosaic:true, jitter:0, glow:0x9ad07a,
+    bodyEm:0x18141c, tailEm:0x141018, tailA:0xc2491e, tailB:0xffe4c4, tailStripe:8,
+    tail:{rings:24, cell:0.42},
+    eye:{x:1.5,y:4.15,z:3.95,w:1.0,h:1.15}, pupil:{z:4.25,w:0.5,h:0.66},
+    eyeCol:0xcfc3ad, pupCol:0x2a2118,
+    mouth:{y:2.45,z:4.5,w:1.7,h:0.5,color:0x7a2e2e,em:0x1a0808},
+    draw(k){
+      const skin=0xffe4c4, hair=0xc2491e, green=0x1f7a34, dark=0x1a2a18,
+            gold=0xffd24a, brow=0x8b2000, freckle=0xcc7755;
+      k.ellip(0,0,0, 8,6.5,11, skin);                        // head
+      k.ellip(0,2.14,-0.36, 8.0,6.1,9.3, hair, 2.14);        // ginger curls over the crown
+      k.ring(0,0, 0,11.5, 7.4,8.1, green, 0, 0);             // top-hat brim
+      k.ring(0,0, 0,6.6, 8.1,13.5, green, 0, 0);             // hat crown
+      k.ring(0,0, 6.0,7.0, 9.0,10.2, dark, 0, 0);            // hat band
+      k.ring(0,0, 0,1.6, 9.3,10.0, gold, 0, 0);              // buckle, front-stamped below
+      k.stampFront(0,9.6, gold);
+      for(const sx of [-1,1]) k.ellip(sx*2.62,3.57,7.4, 2.2,0.6,1.6, brow);   // brows
+      for(const [fx,fy] of [[-2,1.2],[0,0.8],[2,1.2],[-1,0.2],[1,0.2]])
+        k.stampFront(fx,fy, freckle);                        // freckles
+    },
+  },
 };
 
 function makeVoxelCell(id){
@@ -2768,15 +2941,18 @@ function makeVoxelCell(id){
   const voxMat=em=>new T.MeshToonMaterial({emissive:em, gradientMap:GRAD});
   const body=voxBody(spec.res, spec.draw).map(v=>(
     {x:v.x*cell, y:3.2+v.y*cell, z:v.z*cell, s:cell*1.04, c:v.c}));
-  const bodyMesh=voxBatch(body, voxMat(spec.bodyEm), spec.jitter);
+  const bodyMesh=spec.mosaic ? mosaicBatch(body, spec.bodyEm)
+                             : voxBatch(body, voxMat(spec.bodyEm), spec.jitter);
   g.add(bodyMesh);
   g.userData.head=bodyMesh;                               // .material carries the boost flush
   g.userData.baseEmissive=bodyMesh.material.emissive.clone();
 
   // --- face: real little meshes, so the existing expression animations just work ---
   const eyes=[], pupils=[];
-  const eyeMat=new T.MeshPhongMaterial({color:0xffffff,flatShading:true});
-  const pupMat=new T.MeshPhongMaterial({color:0x14161c,flatShading:true});
+  // Pure white eyes blow out against a tiled head and read as stuck-on goggles, so the
+  // mosaic build tones them to cream — they have to sit INSIDE the optical mix, not over it.
+  const eyeMat=new T.MeshPhongMaterial({color:spec.eyeCol||0xffffff,flatShading:true});
+  const pupMat=new T.MeshPhongMaterial({color:spec.pupCol||0x14161c,flatShading:true});
   // The head surface sits at z~3.8 under the eyes and z~4.45 under the mouth, so each
   // piece is pushed out past that — sitting flush buries the eye whites in the head and
   // leaves nothing but two dark pupil slots.
@@ -2808,7 +2984,8 @@ function makeVoxelCell(id){
   for(const r of rings) for(const o of r.offs)
     tail.push({x:o[0], y:3.2+o[1], z:-2-r.t*20, s:o[2],
                c:(Math.floor(r.t*spec.tailStripe)%2)===0 ? spec.tailA : spec.tailB});
-  const tailMesh=voxBatch(tail, voxMat(spec.tailEm), spec.jitter);
+  const tailMesh=spec.mosaic ? mosaicBatch(tail, spec.tailEm)
+                             : voxBatch(tail, voxMat(spec.tailEm), spec.jitter);
   g.add(tailMesh);
   g.userData.tailMesh=tailMesh;
   g.userData.voxTail={mesh:tailMesh, rings, dummy:new T.Object3D()};
@@ -3548,6 +3725,7 @@ const SPERM_TYPES = [
   {id:'kingVox', name:'64-Bit Darius', hue:285, desc:'Darius re-rendered at four times the density. Afro, crown and grill, all in cubes.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
   {id:'wire', name:'Vector Freak', hue:262, desc:'Super Freak redrawn in pure light. No surfaces, just edges and attitude.', stats:{skill:0.98, driftMult:1.3, turn:1.12}},
   {id:'dough', name:'Play-Doh Juan', hue:112, desc:'Juan rolled out of a fresh tub. Bright, chalky and slightly squashed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
+  {id:'mosaic', name:'Mosaic Seamus', hue:96, desc:'Seamus built from tiles that mix in your eye, not on the model. Stand back.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
   {id:'paper', name:'Origami Wei', hue:128, desc:'Wei Long, scored and folded from a single sheet. Every curve is a crease.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
@@ -3642,6 +3820,7 @@ const SIGNATURE_ITEMS={
   voxel:    { name:'Pixel Block',   icon:'🧊', color:0x7de0ff, emissive:0x14384a, geo:()=>new T.BoxGeometry(2.6,2.6,2.6) },
   kingVox:  { name:'Gold Bar',      icon:'🟨', color:0xffd700, emissive:0x4a3500, geo:()=>new T.BoxGeometry(3.2,1.5,1.7) },
   wire:     { name:'Light Disc',    icon:'💿', color:0x19d2ff, emissive:0x0a5a7a, geo:()=>new T.TorusGeometry(1.7,0.35,8,16) },
+  mosaic:   { name:'Colour Chip',   icon:'🟩', color:0x3fae4a, emissive:0x0e3a14, geo:()=>new T.BoxGeometry(2.4,2.4,0.9) },
   dough:    { name:'Dough Ball',    icon:'🟡', color:0xf2c230, emissive:0x4a3808, geo:()=>new T.SphereGeometry(2.3,9,7) },
   paper:    { name:'Paper Crane',   icon:'📄', color:0xe8e2d2, emissive:0x2a2820, geo:()=>new T.TetrahedronGeometry(2.3,0) },
   cholo:    { name:'Fuzzy Dice',    icon:'🎲', color:0xd8397a, emissive:0x3a0e22, geo:()=>new T.BoxGeometry(2.4,2.4,2.4) },
@@ -4048,7 +4227,7 @@ const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arr
   dragon:'Feel the dragon!', king:'Pay up!', chad:'Wipeout, brah!', hillbilly:'Yeehaw!',
   wall:'SELL!', korean:'Precision.', rick:'Super freaky!', french:'Sacré bleu!',
   sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!', wire:'FEEL THE GRID!',
-  dough:'FRESH OUT THE TUB!', paper:'FOLD AND STRIKE!'};
+  dough:'FRESH OUT THE TUB!', paper:'FOLD AND STRIKE!', mosaic:'STAND BACK!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
