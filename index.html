@@ -723,6 +723,14 @@ const MUSIC_STYLES={
               stab:{inst:'pluck', wave:'square', note:12, steps:[6,14], dur:0.1, vol:0.18},
               mel:[0,7,12,7,3,10,7,3], melB:[12,15,19,15,12,10,7,5], bass:[0,0,5,7],
               station:'8.0 BIT FM' },
+  // 64-Bit Darius: his trap beat kept intact, but voiced with a big detuned saw lead over
+  // the 808 instead of a raw square — the audio equivalent of the resolution bump.
+  kingVox:  { inst:'synthwave', melWave:'square', bassWave:'sine', bassInst:'808',
+              volMul:1.3, drumVol:1.4,
+              stab:{inst:'brass', wave:'square', note:7, steps:[2,10], dur:0.18, vol:0.26},
+              drums:{kick:[0,2,3,6,10,11],snare:[8,12]}, bass:[0,0,3,5],
+              hihat:2, beatGroup:4, tempoMul:0.66, station:'64.0 KING FM',
+              mel:[0,3,7,10,7,3,10,7], melB:[12,10,7,10,12,15,12,10] },
 };
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 // ---- richer synth voice: the old playNote was one raw oscillator straight into a
@@ -1238,7 +1246,17 @@ const OP_ART={
     '.SSSSSSSSSS.','.SEESSSSEES.','.SEPSSSSPES.','.SSSSSSSSSS.',
     '.SSSMMMMSSS.','..SSSSSSSS..','....NNNN....','...WWWW.....',
     '..NNNN......','..WW........',
-  ], {W:'#f6f8fa',N:'#1b3766',G:'#ffd24a',S:'#df8c9f',E:'#ffffff',P:'#14161c',M:'#3a1c22'}, 13, 22, 40)
+  ], {W:'#f6f8fa',N:'#1b3766',G:'#ffd24a',S:'#df8c9f',E:'#ffffff',P:'#14161c',M:'#3a1c22'}, 13, 22, 40),
+  // 64-Bit Darius — crown, afro, gold grill and pink collar. Drawn at twice the card
+  // resolution of Salty's, because that difference IS the character's whole pitch.
+  kingVox:opPix([
+    '.......GGGG.......','......GGGGGG......','.....GG.GG.GG.....','....GGGGGGGGGG....',
+    '...HHHHHHHHHHHH...','..HHHHHHHHHHHHHH..','.HHHHHHHHHHHHHHHH.','.HHHHHHHHHHHHHHHH.',
+    '.HHHHHHHHHHHHHHHH.','.KKKKKKKKKKKKKKKK.','.KKEEEKKKKKKEEEKK.','.KKEPEKKKKKKEPEKK.',
+    '.KKEEEKKKKKKEEEKK.','.KKKKKKKKKKKKKKKK.','..KKKKGGGGGGKKKK..','..KKKKKKKKKKKKKK..',
+    '...CCCCCCCCCCCC...','.....KKKKKK.......','...DDDDDD.........','..KKKK............',
+  ], {G:'#ffd700',H:'#3a2814',K:'#845f2e',E:'#ffffff',P:'#14161c',C:'#f08ab0',D:'#6b4a24'},
+     9, 19, 38)
 };
 function opSvg(id){ return `<svg class="opsvg" viewBox="0 0 200 260" aria-hidden="true">${OP_ART[id]||''}</svg>`; }
 const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
@@ -2014,14 +2032,16 @@ function wiggleTail(g, phase, amp){
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   const vt=g.userData.voxTail;
   if(vt){
-    const {mesh,n,dummy}=vt;
-    for(let i=0;i<n;i++){
-      const t=i/(n-1), sway=Math.sin(phase - i*0.55)*amp*t*t;
-      const s=1.5*(1-t)*(1-t)+0.34;
-      dummy.position.set(sway, 3.2, -2 - t*20);
-      dummy.scale.set(s,s,s);
-      dummy.rotation.set(0, sway*0.12, 0);
-      dummy.updateMatrix(); mesh.setMatrixAt(i,dummy.matrix);
+    const {mesh,rings,dummy}=vt;
+    let i=0;
+    for(const r of rings){
+      const sway=Math.sin(phase - r.ph)*amp*r.t*r.t, z=-2 - r.t*20;
+      for(const o of r.offs){
+        dummy.position.set(sway+o[0], 3.2+o[1], z);
+        dummy.scale.set(o[2],o[2],o[2]);
+        dummy.rotation.set(0, sway*0.12, 0);
+        dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
+      }
     }
     mesh.instanceMatrix.needsUpdate=true;
     return;
@@ -2074,65 +2094,169 @@ function tailTex(stripeA, stripeB, glyphCol){
   }
   const t=new T.Texture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.needsUpdate=true; return t;
 }
-/* ---- 8-Bit Salty: the racer model rebuilt out of cubes ------------------------------
- * This satisfies exactly the same userData contract makeCell() does, because syncObjects()
- * drives every racer the same way: head (its .material carries the boost flush), mouth +
- * mouthBase, eyes, pupils, glow and flame. Only the construction differs — the static body
- * (head, cap, band, anchor badge) collapses into ONE InstancedMesh, and the tail is a
- * second InstancedMesh whose cubes wiggleTail() re-poses every frame.
+/* ---- VOXEL RACERS ------------------------------------------------------------------
+ * A voxel racer satisfies exactly the same userData contract makeCell() does, because
+ * syncObjects() drives every racer the same way: head (its .material carries the boost
+ * flush), mouth + mouthBase, eyes, pupils, glow and flame. Only the construction differs —
+ * the static body collapses into ONE InstancedMesh, and the tail is a second InstancedMesh
+ * whose cubes wiggleTail() re-poses every frame.
  * Built in the same local frame as makeCell: head around y=3.2, facing +z, tail down -z.
+ *
+ * `res` is the resolution knob, exactly like the voxel preview's: every shape is authored
+ * once in BASE units (the res-1 grid, where the head is 8 x 6.5 x 11 voxels) and the
+ * helpers scale it onto the real integer grid. res:1 is the chunky 8-bit look; res:4
+ * quadruples the linear density for the same world-space size, so the model keeps its
+ * silhouette, camera framing and collision feel while gaining ~16x the surface detail.
  * ---------------------------------------------------------------------------------- */
-const VOX_SCALE=0.42;                       // game units per voxel
-function makeVoxelCell(){
-  const g=new T.Group();
-  // Deeper pink than the SVG/statue skin on purpose: at this size, against a white cap
-  // under the scene's ambient, #f3c9cf and #f4f4f4 blow out into one white mass.
-  const skin=0xdf8c9f, white=0xf6f8fa, navy=0x1b3766, gold=0xffd24a;
+const VOX_SCALE=0.42;                       // world units per voxel at res 1
+const VOX_HEAD={rx:8, ry:6.5, rz:11};       // base-unit head, matched to makeCell's sphere
 
-  // --- static body on an integer grid, last write wins so trim sits over the skin ---
-  // Grid radii are chosen so the finished head matches makeCell's smooth head almost
-  // exactly once scaled (8/6.5/11 voxels -> 3.36/2.73/4.62 units vs 3.4/2.79/5.1), which
-  // is what keeps the camera framing, collision feel and item pickups identical.
+// Voxelise a body at `res` and return only the visible shell (interior cubes are never
+// seen, so dropping them is what keeps even the high-res build affordable).
+function voxBody(res, draw){
   const M=new Map(), key=(x,y,z)=>x+'|'+y+'|'+z;
-  const put=(x,y,z,c)=>M.set(key(Math.round(x),Math.round(y),Math.round(z)),c);
+  const S=v=>Math.round(v*res);
+  const raw=(x,y,z,c)=>M.set(key(x,y,z),c);
+  // every helper below takes BASE units and scales internally
   const ellip=(cx,cy,cz,rx,ry,rz,c,yMin)=>{
+    cx*=res;cy*=res;cz*=res;rx*=res;ry*=res;rz*=res;
+    const ym = yMin==null ? null : yMin*res;
     for(let x=Math.floor(cx-rx);x<=Math.ceil(cx+rx);x++)
     for(let y=Math.floor(cy-ry);y<=Math.ceil(cy+ry);y++)
     for(let z=Math.floor(cz-rz);z<=Math.ceil(cz+rz);z++){
-      if(yMin!=null && y<yMin) continue;
+      if(ym!=null && y<ym) continue;
       const a=(x-cx)/rx, b=(y-cy)/ry, d=(z-cz)/rz;
-      if(a*a+b*b+d*d<=1) put(x,y,z,c);
+      if(a*a+b*b+d*d<=1) raw(x,y,z,c);
     }
   };
+  // Annulus swept over a y range — caps, crowns, bands. `shear` leans it with height,
+  // measured from `pivot`; pieces of one tilted object must share a pivot or they lean
+  // about different points and visibly come apart.
+  const ring=(cx,cz,r0,r1,y0,y1,c,shear,pivot)=>{
+    const ym = pivot==null ? (y0+y1)/2 : pivot;
+    for(let y=Math.round(y0*res); y<=Math.round(y1*res); y++){
+      const sx=(cx + (shear||0)*(y/res - ym))*res, sz=cz*res;
+      for(let x=Math.floor(sx-r1*res);x<=Math.ceil(sx+r1*res);x++)
+      for(let z=Math.floor(sz-r1*res);z<=Math.ceil(sz+r1*res);z++){
+        const d=Math.hypot(x-sx,z-sz)/res;
+        if(d>=r0 && d<=r1) raw(x,y,z,c);
+      }
+    }
+  };
+  const put=(x,y,z,c)=>raw(S(x),S(y),S(z),c);
   // recolour the frontmost existing voxel in a column, so trim always lands ON the surface
-  const stampFront=(x,y,c)=>{ for(let z=16;z>=-16;z--){ const k=key(x,y,z);
-    if(M.has(k)){ M.set(k,c); return; } } };
+  const stampFront=(x,y,c)=>{ const X=S(x),Y=S(y), B=Math.round(16*res);
+    for(let z=B; z>=-B; z--){ const k=key(X,Y,z); if(M.has(k)){ M.set(k,c); return; } } };
+  // same idea for the left/right extremes — earrings, temple trim
+  const stampSide=(y,z,c)=>{ const Y=S(y),Z=S(z), B=Math.round(12*res);
+    for(const dir of [1,-1]) for(let i=B;i>=0;i--){
+      const k=key(dir*i,Y,Z); if(M.has(k)){ M.set(k,c); break; } } };
   // Repaint the head's OUTER shell across a y-band. This has to be radial: painting a
   // fixed-radius ring lands on INTERIOR voxels (the head is far longer in z than in x),
   // and the shell pass below culls those, so the trim would never render at all.
   const bandY=(y0,y1,fn)=>{
-    for(let x=-9;x<=9;x++) for(let y=y0;y<=y1;y++) for(let z=-12;z<=12;z++){
+    const Y0=Math.round(y0*res), Y1=Math.round(y1*res);
+    const XB=Math.ceil(9*res), ZB=Math.ceil(12*res);
+    for(let x=-XB;x<=XB;x++) for(let y=Y0;y<=Y1;y++) for(let z=-ZB;z<=ZB;z++){
       const k=key(x,y,z); if(!M.has(k)) continue;
-      if((x/8)*(x/8)+(y/6.5)*(y/6.5)+(z/11)*(z/11) < 0.70) continue;
-      M.set(k, fn(x,y,z));
+      const bx=x/res/VOX_HEAD.rx, by=y/res/VOX_HEAD.ry, bz=z/res/VOX_HEAD.rz;
+      if(bx*bx+by*by+bz*bz < 0.70) continue;
+      M.set(k, fn(x/res, y/res, z/res));
     }
   };
 
-  ellip(0,0,0, 8,6.5,11, skin);                          // head
-  ellip(0,5.2,-1.0, 6.6,3.2,6.6, white, 4);              // sailor cap: a flat dome, not a ball
-  bandY(3,4, ()=>navy);                                  // navy band at the cap line
-  bandY(-6,-4, (x,y)=> (y%2===0)?navy:white);            // blue/white striped collar
-  for(const [bx,by] of [[0,3],[0,4],[-1,3],[1,3]]) stampFront(bx,by,gold);   // anchor badge
+  draw({ellip, ring, put, stampFront, stampSide, bandY});
 
-  const body=[];
-  for(const [k,c] of M){                                  // keep only the visible shell
+  const out=[];
+  for(const [k,c] of M){
     const p=k.split('|'), x=+p[0], y=+p[1], z=+p[2];
     if(M.has(key(x+1,y,z))&&M.has(key(x-1,y,z))&&M.has(key(x,y+1,z))&&
        M.has(key(x,y-1,z))&&M.has(key(x,y,z+1))&&M.has(key(x,y,z-1))) continue;
-    body.push({x:x*VOX_SCALE, y:3.2+y*VOX_SCALE, z:z*VOX_SCALE, s:VOX_SCALE*1.04, c});
+    out.push({x,y,z,c});
   }
-  const bodyMesh=voxBatch(body,
-    new T.MeshPhongMaterial({flatShading:true,shininess:14,emissive:0x33202a}), 0.35);
+  return out;
+}
+
+// Tail rings. cell==null gives the chunky one-cube-per-ring chain (the 8-bit look); a cell
+// size instead fills each ring into a disc of small cubes, so a high-res tail reads as a
+// tapering tube of voxels rather than a string of beads.
+function voxTailRings(rings, cell){
+  const out=[];
+  for(let i=0;i<rings;i++){
+    const t=i/(rings-1), r=1.5*(1-t)*(1-t)+0.34, offs=[];
+    if(!cell) offs.push([0,0,r]);
+    else{
+      const n=Math.floor(r/cell);
+      for(let a=-n;a<=n;a++) for(let b=-n;b<=n;b++)
+        if(Math.hypot(a,b)*cell<=r) offs.push([a*cell,b*cell,cell*1.06]);
+      if(!offs.length) offs.push([0,0,cell*1.06]);
+    }
+    out.push({t, ph:i*0.55*(20/rings), offs});   // ph keeps the wave length res-independent
+  }
+  return out;
+}
+
+const VOX_RACERS={
+  // 8-Bit Salty — chunky, deliberately low resolution
+  voxel:{
+    res:1, jitter:0.35, glow:0x9fd8ff,
+    bodyEm:0x33202a, tailEm:0x141c2e, tailA:0x1b3766, tailB:0xf6f8fa, tailStripe:9,
+    tail:{rings:20, cell:null},
+    eye:{x:1.6,y:4.15,z:3.9,w:1.5,h:1.7}, pupil:{z:4.25,w:0.68,h:0.9},
+    mouth:{y:2.45,z:4.5,w:1.9,h:0.6,color:0x3a1c22,em:0x160a0e},
+    draw(k){
+      // Still a shade deeper than the SVG/statue skin: the toon banding does most of the
+      // work of keeping this apart from the white cap now, but at this size #f3c9cf next
+      // to #f4f4f4 is a needlessly small gap to leave to the lighting.
+      const skin=0xdf8c9f, white=0xf6f8fa, navy=0x1b3766, gold=0xffd24a;
+      k.ellip(0,0,0, 8,6.5,11, skin);                        // head
+      k.ellip(0,5.2,-1.0, 6.6,3.2,6.6, white, 4);            // cap: a flat dome, not a ball
+      k.bandY(3,4, ()=>navy);                                // navy band at the cap line
+      k.bandY(-6,-4, (x,y)=> (y%2===0)?navy:white);          // blue/white striped collar
+      for(const [bx,by] of [[0,3],[0,4],[-1,3],[1,3]]) k.stampFront(bx,by,gold); // badge
+    },
+  },
+  // 64-Bit Darius — the same character language at 4x the linear density, which is what
+  // buys the afro, the tilted jeweled crown and the grill enough resolution to read.
+  kingVox:{
+    res:4, jitter:0.30, glow:0xffd48a,
+    bodyEm:0x2e1a0e, tailEm:0x241407, tailA:0x74522a, tailB:0x46301a, tailStripe:7,
+    tail:{rings:26, cell:0.42},
+    eye:{x:1.6,y:4.15,z:3.9,w:1.4,h:1.6}, pupil:{z:4.25,w:0.6,h:0.86},
+    mouth:{y:2.45,z:4.5,w:2.2,h:0.62,color:0xffd700,em:0x664400},   // the gold grill
+    draw(k){
+      const skin=0x74522a, hair=0x261806, gold=0xffd700, pink=0xf08ab0,
+            jewel=0xff4466, ice=0xffffff;
+      k.ellip(0,0,0, 8,6.5,11, skin);                        // head
+      k.ellip(0,5.95,0.71, 8.3,6.9,7.6, hair, -1);           // big round afro
+      k.bandY(-6,-4, ()=>pink);                              // pink collar
+      // Crown sunk into the top of the afro. Radius is matched to the afro's cross-section
+      // up there (~5 base units at y=11.5) so the band bites into the hair instead of
+      // hovering around it, and every piece shears about the same pivot so it leans as one.
+      k.ring(0.8,0.71, 3.0,4.0, 11.5,13.2, gold, 0.2, 12.3);
+      for(let s=0;s<4;s++){
+        const a=s/4*Math.PI*2;
+        k.ring(0.8+Math.sin(a)*3.5, 0.71+Math.cos(a)*3.5, 0,0.9, 13.2,14.6, gold, 0.2, 12.3);
+      }
+      k.ellip(0.8,12.3,4.4, 0.9,0.9,0.9, jewel);             // the crown's red stone
+      for(const sx of [-1,1]) k.ellip(sx*7.9,0,-1.19, 0.9,0.9,0.9, ice);  // diamond studs
+    },
+  },
+};
+
+function makeVoxelCell(id){
+  const spec=VOX_RACERS[id], g=new T.Group();
+  const cell=VOX_SCALE/spec.res;
+
+  // Toon, not Phong, for the same reason celShade() exists: the scene runs ~3.0 total light
+  // intensity, which blows any mid-tone albedo out to a pale wash. The 3-band gradient map
+  // quantises that back into flat, saturated steps — and it keeps the voxel racers shading
+  // consistently with the rest of the cast. Cubes are flat-shaded for free (per-face
+  // normals), so losing MeshToonMaterial's missing flatShading prop costs nothing.
+  const voxMat=em=>new T.MeshToonMaterial({emissive:em, gradientMap:GRAD});
+  const body=voxBody(spec.res, spec.draw).map(v=>(
+    {x:v.x*cell, y:3.2+v.y*cell, z:v.z*cell, s:cell*1.04, c:v.c}));
+  const bodyMesh=voxBatch(body, voxMat(spec.bodyEm), spec.jitter);
   g.add(bodyMesh);
   g.userData.head=bodyMesh;                               // .material carries the boost flush
   g.userData.baseEmissive=bodyMesh.material.emissive.clone();
@@ -2144,42 +2268,44 @@ function makeVoxelCell(){
   // The head surface sits at z~3.8 under the eyes and z~4.45 under the mouth, so each
   // piece is pushed out past that — sitting flush buries the eye whites in the head and
   // leaves nothing but two dark pupil slots.
-  for(const sx of [-1.6,1.6]){
-    const e=new T.Mesh(new T.BoxGeometry(1.5,1.7,0.5), eyeMat);
-    e.position.set(sx,4.15,3.9); g.add(e); eyes.push(e);
-    const p=new T.Mesh(new T.BoxGeometry(0.68,0.9,0.5), pupMat);
-    p.position.set(sx,4.1,4.25); g.add(p); pupils.push(p);
+  const E=spec.eye, P=spec.pupil, MO=spec.mouth;
+  for(const sx of [-E.x,E.x]){
+    const e=new T.Mesh(new T.BoxGeometry(E.w,E.h,0.5), eyeMat);
+    e.position.set(sx,E.y,E.z); g.add(e); eyes.push(e);
+    const p=new T.Mesh(new T.BoxGeometry(P.w,P.h,0.5), pupMat);
+    p.position.set(sx,E.y-0.05,P.z); g.add(p); pupils.push(p);
   }
   g.userData.eyes=eyes; g.userData.pupils=pupils;
-  const mouth=new T.Mesh(new T.BoxGeometry(1.9,0.6,0.45),
-    new T.MeshPhongMaterial({color:0x3a1c22,flatShading:true,emissive:0x160a0e}));
-  mouth.position.set(0,2.45,4.5); g.add(mouth);
+  // The face props stay Phong while the body is toon, on purpose: they are small enough
+  // not to wash out, and a specular hit is exactly what sells Darius's gold grill.
+  const mouth=new T.Mesh(new T.BoxGeometry(MO.w,MO.h,0.45),
+    new T.MeshPhongMaterial({color:MO.color,flatShading:true,emissive:MO.em,
+      shininess:MO.color===0xffd700?100:30}));
+  mouth.position.set(0,MO.y,MO.z); g.add(mouth);
   g.userData.mouth=mouth; g.userData.mouthBase=mouth.scale.clone();
 
   // --- halo + boost flames, same as every other racer ---
-  const glow=glowSprite(0x9fd8ff,13); glow.position.set(0,3.4,0.5); g.add(glow);
+  const glow=glowSprite(spec.glow,13); glow.position.set(0,3.4,0.5); g.add(glow);
   g.userData.glow=glow;
   const fl1=glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
   const fl2=glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
   g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
 
-  // --- striped tail: a cube chain, re-posed each frame in wiggleTail ---
-  const TN=20, tail=[];
-  for(let i=0;i<TN;i++){
-    const t=i/(TN-1);
-    tail.push({x:0, y:3.2, z:-2-t*20, s:1, c:(Math.floor(t*9)%2)===0 ? navy : white});
-  }
-  const tailMesh=voxBatch(tail,
-    new T.MeshPhongMaterial({flatShading:true,shininess:10,emissive:0x141c2e}), 0.35);
+  // --- banded tail, re-posed each frame in wiggleTail ---
+  const rings=voxTailRings(spec.tail.rings, spec.tail.cell), tail=[];
+  for(const r of rings) for(const o of r.offs)
+    tail.push({x:o[0], y:3.2+o[1], z:-2-r.t*20, s:o[2],
+               c:(Math.floor(r.t*spec.tailStripe)%2)===0 ? spec.tailA : spec.tailB});
+  const tailMesh=voxBatch(tail, voxMat(spec.tailEm), spec.jitter);
   g.add(tailMesh);
   g.userData.tailMesh=tailMesh;
-  g.userData.voxTail={mesh:tailMesh, n:TN, dummy:new T.Object3D()};
+  g.userData.voxTail={mesh:tailMesh, rings, dummy:new T.Object3D()};
   wiggleTail(g, 0, 0);                                    // pose the tail once up front
   return g;
 }
 
 function makeCell(hue, typeId){
-  if(typeId === 'voxel') return makeVoxelCell();   // fully replaces the model, not a reskin
+  if(VOX_RACERS[typeId]) return makeVoxelCell(typeId);   // replaces the model, not a reskin
   const g=new T.Group();
   let tailTextured=false;
   const col=new T.Color(`hsl(${hue}, 80%, 60%)`);
@@ -2801,6 +2927,7 @@ const SPERM_TYPES = [
   {id:'sailor', name:'Salty', hue:220, desc:'Old sea dog. Steady in the rough, hard to spin out.', stats:{skill:1.0, spinResist:0.6}},
   {id:'cholo', name:'Lil Pepe', hue:0, desc:'Barrio legend. Low-rider bounce, fearless drifts.', stats:{skill:0.98, driftMult:1.3}},
   {id:'voxel', name:'8-Bit Salty', hue:172, desc:'Salty rendered at a lower resolution. Same sea legs, fewer polygons.', stats:{skill:1.0, spinResist:0.6, turn:1.05}},
+  {id:'kingVox', name:'64-Bit Darius', hue:285, desc:'Darius re-rendered at four times the density. Afro, crown and grill, all in cubes.', stats:{skill:0.95, boostPower:1.45, driftCharge:1.25}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Grand Prix (cup across all tracks) state
@@ -2892,6 +3019,7 @@ const SIGNATURE_ITEMS={
   french:   { name:'Baguette',      icon:'🥖', color:0xd9a44a, emissive:0x3a2408, geo:()=>new T.CylinderGeometry(0.55,0.55,4.4,8) },
   sailor:   { name:'Anchor',        icon:'⚓', color:0x555a5e, emissive:0x0e1012, geo:()=>new T.TorusGeometry(1.5,0.5,8,14) },
   voxel:    { name:'Pixel Block',   icon:'🧊', color:0x7de0ff, emissive:0x14384a, geo:()=>new T.BoxGeometry(2.6,2.6,2.6) },
+  kingVox:  { name:'Gold Bar',      icon:'🟨', color:0xffd700, emissive:0x4a3500, geo:()=>new T.BoxGeometry(3.2,1.5,1.7) },
   cholo:    { name:'Fuzzy Dice',    icon:'🎲', color:0xd8397a, emissive:0x3a0e22, geo:()=>new T.BoxGeometry(2.4,2.4,2.4) },
 };
 function giveItem(r){
@@ -3295,7 +3423,7 @@ const WHIP_TAUNTS=['WHIPPED!','SMACKED!','TAIL-SLAP!','SENT HIM!','CRACKED!'];
 const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arriba!',
   dragon:'Feel the dragon!', king:'Pay up!', chad:'Wipeout, brah!', hillbilly:'Yeehaw!',
   wall:'SELL!', korean:'Precision.', rick:'Super freaky!', french:'Sacré bleu!',
-  sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE'};
+  sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
