@@ -1752,6 +1752,15 @@ const TRACKS=[
    tunnels:[[0.34,0.44]], critters:[0.6], pills:[0.2], dams:[0.74],
    ctrl:[[350,8,210],[430,20,-50],[290,36,-310],[30,50,-400],[-245,42,-320],
          [-395,28,-70],[-315,18,170],[-95,12,330],[155,8,375],[295,8,315]]},
+  // Marina — "the Deep End": laps of a 1970s natatorium. Two long straights and two
+  // rounded ends, because that IS a pool, and it gives the course a shape none of the
+  // others have. Thematically the most at-home course in the game — the whole sport here
+  // is swimming.
+  {name:'Marina', pool:true, key:-4, tempo:172, sky:0x0a0508,
+   tunnels:[[0.44,0.52]], critters:[0.28], pills:[0.66], dams:[0.86],
+   ctrl:[[300,6,420],[340,10,120],[340,12,-160],[300,14,-420],[120,16,-470],
+         [-120,16,-470],[-300,14,-420],[-340,12,-160],[-340,10,120],[-300,6,420],
+         [-120,4,470],[120,4,470]]},
   {name:'Paige', paper:true, key:6, tempo:172, sky:0x9c8f74, tunnels:[[0.24,0.32],[0.62,0.70]],
    critters:[0.4], pills:[0.8], dams:[0.55],
    ctrl:[[330,8,240],[420,18,-30],[280,34,-290],[20,50,-400],[-250,42,-320],
@@ -2174,8 +2183,16 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
-function applyTrackLighting(studio){
-  if(studio){
+function applyTrackLighting(studio, pool){
+  if(pool){
+    // Almost no ambient: the pod canopy is unlit geometry doing the "lighting", so any
+    // real fill here flattens the room and the ceiling stops reading as the light source.
+    hemi.color.setHex(0x4a1020); hemi.groundColor.setHex(0x06121a); hemi.intensity=0.45;
+    sun.color.setHex(0xffd8e0);  sun.intensity=0.35;  sun.position.set(0,160,0);
+    rim.color.setHex(0xe8503c);  rim.intensity=0.65;  rim.position.set(-70,50,-60);
+    fill.color.setHex(0x2ea6b8); fill.intensity=1.1;  fill.position.set(0,-30,0);  // water glow
+    flesh.color.setHex(0xe8608c);flesh.intensity=0.5; flesh.position.set(40,60,80);
+  } else if(studio){
     hemi.color.setHex(0x6a4a8a); hemi.groundColor.setHex(0x120a20); hemi.intensity=0.55;
     sun.color.setHex(0xffffff);  sun.intensity=0.55;  sun.position.set(30,120,60);
     rim.color.setHex(0xff2f9e);  rim.intensity=1.5;   rim.position.set(-90,30,40);
@@ -2188,6 +2205,60 @@ function applyTrackLighting(studio){
     fill.color.setHex(0xffe0b0); fill.intensity=0.30; fill.position.set(20,60,-120);
     flesh.color.setHex(0xff6f8a);flesh.intensity=0.35;flesh.position.set(-30,-10,40);
   }
+}
+
+/* ============== NATATORIUM KIT (Marina) ============== *
+ * A 1970s indoor pool: a coffered ceiling of concentric light pods over dark crimson
+ * walls, and turquoise water tiled with red and blue domes. Three things carry it:
+ *   - the POD CANOPY. Concentric discs, unlit so they read as light sources rather than
+ *     lit objects, in a receding grid that follows the track the whole way round.
+ *   - the WATER. Wet means a hard white specular, not a colour — the road gets a real
+ *     gloss and the pod colours wash across it.
+ *   - the DARK. Everything that is not a pod or the water is nearly black, which is what
+ *     makes the ceiling read as the only light in the room.
+ * ---------------------------------------------------------------------------------- */
+const POOL_POD=[0x3f6fd8,0xe8503c,0xf2a03a,0xf4f4f4,0x2f4a9e,0xe8608c];
+// Pool floor: turquoise with rows of red/blue dome tiles and a tiled border band.
+function poolTileTex(){
+  const c=document.createElement('canvas'); c.width=64; c.height=256;
+  const g=c.getContext('2d');
+  g.fillStyle='#2ea6b8'; g.fillRect(0,0,64,256);
+  // subtle grout grid, so the water reads as tiled rather than painted
+  g.strokeStyle='rgba(255,255,255,0.10)'; g.lineWidth=1;
+  for(let x=0;x<=64;x+=8){ g.beginPath(); g.moveTo(x+.5,0); g.lineTo(x+.5,256); g.stroke(); }
+  for(let y=0;y<=256;y+=8){ g.beginPath(); g.moveTo(0,y+.5); g.lineTo(64,y+.5); g.stroke(); }
+  // dome tiles: a flat-bottomed arch, the shape on the pool floor of the reference
+  const dome=(cx,cy,r,col)=>{ g.fillStyle=col; g.beginPath();
+    g.arc(cx,cy,r,Math.PI,0); g.lineTo(cx+r,cy+r*0.55); g.lineTo(cx-r,cy+r*0.55);
+    g.closePath(); g.fill(); };
+  for(let row=0;row<8;row++) for(let col=0;col<3;col++){
+    const cx=18+col*14, cy=20+row*32;
+    dome(cx,cy,6.5,(row+col)%2 ? '#e8503c' : '#2f4a9e');
+  }
+  // border band down both edges, smaller tiles
+  for(let y=6;y<256;y+=13){
+    dome(6,y,3.4,(y%26<13)?'#e8503c':'#f2f2f2');
+    dome(58,y,3.4,(y%26<13)?'#2f4a9e':'#f2f2f2');
+  }
+  const t=new T.Texture(c); t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.encoding=T.sRGBEncoding; t.needsUpdate=true; return t;
+}
+// Crimson wall tiling for the basin and the room beyond it.
+function poolWallTex(){
+  const c=document.createElement('canvas'); c.width=64; c.height=64;
+  const g=c.getContext('2d');
+  g.fillStyle='#8e1420'; g.fillRect(0,0,64,64);
+  g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1;
+  for(let k=0;k<=64;k+=16){
+    g.beginPath(); g.moveTo(k+.5,0); g.lineTo(k+.5,64); g.stroke();
+    g.beginPath(); g.moveTo(0,k+.5); g.lineTo(64,k+.5); g.stroke();
+  }
+  g.globalAlpha=0.10;
+  for(let i=0;i<260;i++){ g.fillStyle=Math.random()<0.5?'#000':'#fff';
+    g.fillRect(Math.random()*64,Math.random()*64,1,1); }
+  g.globalAlpha=1;
+  const t=new T.Texture(c); t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.repeat.set(8,3); t.encoding=T.sRGBEncoding; t.needsUpdate=true; return t;
 }
 
 // Build (or rebuild) the whole track world for TRACKS[idx]
@@ -2214,7 +2285,8 @@ function buildTrack(idx){
   const mosaic=!!TRACKS[idx].mosaic;     // ...or as optically-mixing Chuck-Close tiles
   const felt  =!!TRACKS[idx].felt;       // ...or as marbled felt strata, tufts and thread
   const bead  =!!TRACKS[idx].bead;       // ...or as glossy beadwork under a studio rig
-  applyTrackLighting(bead);
+  const pool  =!!TRACKS[idx].pool;       // ...or as a 70s natatorium under a light canopy
+  applyTrackLighting(bead, pool);
   const feltTex = felt ? feltStrataTex() : null;
   // The voxel dressing below is shared: mosaic only swaps HOW the cubes are batched, so
   // the material argument each call passes is deliberately ignored on that path.
@@ -2225,7 +2297,7 @@ function buildTrack(idx){
     : voxBatch;
   groundPlane.visible = !wire;           // the vector course supplies its own ground grid
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
-    : bead ? 0x0d0a18 : 0x2a1a22);   // near-black sweep so the bead speculars carry
+    : bead ? 0x0d0a18 : pool ? 0x140a10 : 0x2a1a22);  // dark so speculars/pods carry
   trackLoop = loop; trackCross = cross;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
@@ -2267,8 +2339,49 @@ function buildTrack(idx){
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
   innerSign = acc>=0 ? 1 : -1;   // +normal points toward the infield when innerSign===1
 
-  // ---- understructure: fleshy tube, cube viaduct, lattice of light, or felt strata ----
-  if(felt){
+  // ---- understructure: fleshy tube, viaduct, light lattice, felt strata, or pool basin ----
+  if(pool){
+    const wallTex=poolWallTex();
+    const basin=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,12,loop),
+      new T.MeshPhongMaterial({map:wallTex,color:0xffffff,shininess:14,specular:0x40202a}));
+    basin.position.y-=10; trackGroup.add(basin);
+
+    // --- the pod canopy: concentric discs in a receding grid over the whole circuit ---
+    // MeshBasicMaterial on purpose. These are LIGHTS: shading them would make them read
+    // as painted plates on a ceiling instead of as the only illumination in the room.
+    const outer=[], inner=[];
+    const dOut=new T.Object3D(), col=new T.Color();
+    const ringGeo=new T.CircleGeometry(1,20), discGeo=new T.CircleGeometry(1,18);
+    const rows=[];
+    for(let i=0;i<STEPS;i+=9){
+      const sp=SAMP[i];
+      for(let k=-2;k<=2;k++){
+        const off=k*(HW*0.62);
+        rows.push({x:sp.p.x+sp.n.x*off, y:sp.p.y+26+Math.abs(k)*1.6,
+                   z:sp.p.z+sp.n.z*off, c:POOL_POD[((i/9|0)+k+5)%POOL_POD.length]});
+      }
+    }
+    const mkDisc=(geo,list,rad,dy,cf)=>{
+      const m=new T.InstancedMesh(geo, new T.MeshBasicMaterial({side:T.DoubleSide}), list.length);
+      m.frustumCulled=false;
+      list.forEach((v,i)=>{
+        dOut.position.set(v.x, v.y+dy, v.z);
+        dOut.rotation.set(Math.PI/2,0,0);                 // face straight down
+        dOut.scale.set(rad,rad,rad);
+        dOut.updateMatrix(); m.setMatrixAt(i,dOut.matrix);
+        col.setHex(cf(v)); m.setColorAt(i,col);
+      });
+      m.instanceMatrix.needsUpdate=true; if(m.instanceColor)m.instanceColor.needsUpdate=true;
+      return m;
+    };
+    trackGroup.add(mkDisc(ringGeo, rows, 7.4, 0,    ()=>0xe8608c));   // pink outer ring
+    trackGroup.add(mkDisc(discGeo, rows, 3.9, -0.5, v=>v.c));         // the lit centre
+    // a sparse halo pass so the canopy blooms instead of reading as flat cutouts
+    for(let i=0;i<rows.length;i+=5){
+      const h=glowSprite(rows[i].c, 26); h.position.set(rows[i].x, rows[i].y-1, rows[i].z);
+      trackGroup.add(h);
+    }
+  } else if(felt){
     // The pressed-sheet state: the tube becomes a bank of marbled strata, and the same
     // texture runs everywhere so road, walls and ridges read as one poured material.
     trackGroup.add(feltSky());
@@ -2367,7 +2480,9 @@ function buildTrack(idx){
   geo.setIndex(ridx); geo.computeVertexNormals();
   const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
   const rg=rc.getContext('2d');
-  if(bead){
+  if(pool){
+    /* the pool floor is drawn by poolTileTex(); nothing to paint into rc here */
+  } else if(bead){
     // The reference's plinth is a pink/white peg checker, so the road bed matches it
     // rather than inheriting the voxel course's blue — same board, same colourway.
     for(let y=0;y<256;y+=16) for(let x=0;x<64;x+=16){
@@ -2440,11 +2555,17 @@ function buildTrack(idx){
   rg.fillStyle='rgba(255,150,190,0.55)'; rg.fillRect(30,0,4,256);
   for(let y=0;y<256;y+=32){ rg.fillStyle='rgba(255,235,242,0.4)'; rg.fillRect(29,y,6,12); }
   }
-  const rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
+  let rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
+  if(pool) rt=poolTileTex();
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
-  const road=new T.Mesh(geo, wire
+  const road=new T.Mesh(geo, pool
+    // Wet is a hard WHITE specular, not a colour. Turquoise with a soft highlight just
+    // looks like painted concrete; this is what makes the pod colours slide across it.
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x06333c,
+        shininess:150,specular:0xffffff,side:T.DoubleSide})
+    : wire
     ? new T.MeshBasicMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
     : vox
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d1832,
@@ -2508,8 +2629,25 @@ function buildTrack(idx){
     post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
   }
 
-  // ---- edge border: villi, voxel curbs, neon pylons, or wool tufts ----
-  if(felt){
+  // ---- edge border: villi, voxel curbs, neon pylons, wool tufts, or pool coping ----
+  if(pool){
+    // Pale stone coping running the whole rim, the way a pool deck edges the water.
+    const cope=[], d=new T.Object3D(), c=new T.Color();
+    for(let i=0;i<STEPS;i+=2){
+      const sp=SAMP[i], ry=Math.atan2(sp.t.x,sp.t.z);
+      for(const side of [-1,1])
+        cope.push({x:sp.p.x+sp.n.x*side*(HW+2.6), y:sp.p.y+0.8,
+                   z:sp.p.z+sp.n.z*side*(HW+2.6), ry, c:(i%8<4)?0xd8cfc4:0xbfb3a6});
+    }
+    const cm=new T.InstancedMesh(new T.BoxGeometry(5.4,1.6,4.2),
+      new T.MeshPhongMaterial({shininess:26,specular:0x555050}), cope.length);
+    cm.frustumCulled=false;
+    cope.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,v.ry,0);
+      d.scale.set(1,1,1); d.updateMatrix(); cm.setMatrixAt(i,d.matrix);
+      c.setHex(v.c); cm.setColorAt(i,c); });
+    cm.instanceMatrix.needsUpdate=true; if(cm.instanceColor)cm.instanceColor.needsUpdate=true;
+    trackGroup.add(cm);
+  } else if(felt){
     // The raw-tuft state: banks of wool clumps crowding both shoulders. This is the
     // signature element of the reference, and it doubles as the course's soft edge.
     const tufts=[];
@@ -2740,8 +2878,28 @@ function buildTrack(idx){
     }
   }
 
-  // ---- trackside scenery: cells, voxel towers, wire solids, or wool banks + yarn ----
-  if(felt){
+  // ---- trackside scenery: cells, towers, wire solids, wool banks, or the pool room ----
+  if(pool){
+    // Crimson wall slabs standing well back, mostly in shadow. Deliberately sparse: the
+    // reference's room is almost entirely darkness, and filling it would kill the effect.
+    const wallTex2=poolWallTex();
+    const wallMat=new T.MeshPhongMaterial({map:wallTex2,color:0x8a5560,shininess:8,specular:0x201014});
+    const d2=new T.Object3D();
+    const wm=new T.InstancedMesh(new T.BoxGeometry(1,1,1), wallMat, Math.ceil(STEPS/14)*2);
+    wm.frustumCulled=false;
+    let n=0;
+    for(let i=0;i<STEPS;i+=14){
+      const sp=SAMP[i];
+      for(const side of [-1,1]){
+        d2.position.set(sp.p.x+sp.n.x*side*(HW*4.2), sp.p.y+16, sp.p.z+sp.n.z*side*(HW*4.2));
+        d2.rotation.set(0, Math.atan2(sp.t.x,sp.t.z), 0);
+        d2.scale.set(6, 54, HW*1.6);
+        d2.updateMatrix(); wm.setMatrixAt(n++, d2.matrix);
+      }
+    }
+    wm.count=n; wm.instanceMatrix.needsUpdate=true;
+    trackGroup.add(wm);
+  } else if(felt){
     const clumps=[], yarn=[];
     for(let k=0;k<150;k++){
       const s2=SAMP[(k*37)%STEPS];
