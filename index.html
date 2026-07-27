@@ -771,6 +771,18 @@ const MUSIC_STYLES={
               hihat:0, beatGroup:4, tempoMul:0.7, station:'99.0 GLASS FM',
               stab:{inst:'house', wave:'square', note:12, steps:[6,14], dur:0.12, vol:0.22},
               mel:[0,3,7,10,7,3,0,-2], melB:[12,10,7,10,12,15,12,10] },
+  beadSalty:{ inst:'banjo', melWave:'square', bassWave:'square', bassInst:'wahbass',
+              volMul:1.12, drumVol:1.0,
+              drums:{kick:[0,8],snare:[4,12],openhat:[2,6,10,14]}, bass:[0,0,-2,-2],
+              hihat:2, beatGroup:4, tempoMul:0.78, station:'70.0 SEA GLASS FM',
+              stab:{inst:'house', wave:'square', note:7, steps:[6], dur:0.14, vol:0.2},
+              mel:[0,4,7,12,7,4,0,-2], melB:[12,14,16,14,12,9,7,4] },
+  beadJuan: { inst:'ukulele', melWave:'triangle', bassWave:'square', bassInst:'pluck',
+              volMul:1.1, drumVol:1.05,
+              drums:{kick:[0,3,6,10],snare:[4,12]}, bass:[0,0,5,7],
+              hihat:1, beatGroup:4, tempoMul:0.82, station:'55.0 SUN BEAD FM',
+              stab:{inst:'banjo', wave:'triangle', note:12, steps:[6,14], dur:0.14, vol:0.2},
+              mel:[0,4,7,9,7,4,2,4], melB:[12,11,9,7,9,12,16,12] },
   mosaic:   { inst:'marimba', melWave:'triangle', bassWave:'sine', volMul:1.05,
               drums:{kick:[0,6,8,14],snare:[4,12]}, bass:[0,0,4,7],
               hihat:1, beatGroup:4, tempoMul:0.72, station:'60.0 TESSERA FM',
@@ -790,9 +802,29 @@ function ensureMusicFx(){
   const dl=actx.createDelay(0.8); dl.delayTime.value=0.26;
   const fb=actx.createGain(); fb.gain.value=0.34;
   const damp=actx.createBiquadFilter(); damp.type='lowpass'; damp.frequency.value=1700;
-  const wet=actx.createGain(); wet.gain.value=0.4;
+  const wet=actx.createGain(); wet.gain.value=0.34;
   send.connect(dl); dl.connect(damp); damp.connect(fb); fb.connect(dl);
   damp.connect(wet); wet.connect(musicGain);
+
+  // A real reverb tail alongside the delay. The echo alone gave repeats but no SPACE, and
+  // a decaying noise impulse is all a convolver needs to supply one — no asset required.
+  // Stereo, with the two channels decorrelated so the tail spreads instead of collapsing.
+  try{
+    const sec=1.9, len=Math.floor(actx.sampleRate*sec);
+    const buf=actx.createBuffer(2, len, actx.sampleRate);
+    for(let ch=0; ch<2; ch++){
+      const d=buf.getChannelData(ch);
+      for(let i=0;i<len;i++){
+        const t=i/len;
+        d[i]=(Math.random()*2-1) * Math.pow(1-t, 2.6) * (1 - t*0.15*ch);
+      }
+    }
+    const conv=actx.createConvolver(); conv.buffer=buf;
+    const rvHi=actx.createBiquadFilter();          // keep the mud out of the tail
+    rvHi.type='highpass'; rvHi.frequency.value=320;
+    const rvWet=actx.createGain(); rvWet.gain.value=0.30;
+    send.connect(rvHi); rvHi.connect(conv); conv.connect(rvWet); rvWet.connect(musicGain);
+  }catch(e){ /* convolver unavailable — delay alone still carries the mix */ }
   musicFx={send};
 }
 // instrument presets — each shapes oscillator layout, envelope, and filter so the 13
@@ -949,10 +981,15 @@ function musicTick(){
     if(st.drums.kick.includes(step)) drumKick(drumVol);
     if(st.drums.snare.includes(step)) drumSnare(drumVol);
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
-    if(step%bg===0) playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22*volMul,st.bassWave,st.bassInst);
+    if(step%bg===0){ const bn=st.bass[(step/bg|0)%st.bass.length];
+      playNote(noteFreq(bn-12),0.5,0.22*volMul,st.bassWave,st.bassInst);
+      playNote(noteFreq(bn-24),0.6,0.10*volMul,'sine','808');   // sub-octave, opens the bottom
+    }
   } else {
     if(step%bg===0){ drumKick(drumVol);
-      playNote(noteFreq(st.bass[(step/bg|0)%st.bass.length]-12),0.5,0.22*volMul,st.bassWave,st.bassInst); }
+      const bn2=st.bass[(step/bg|0)%st.bass.length];
+      playNote(noteFreq(bn2-12),0.5,0.22*volMul,st.bassWave,st.bassInst);
+      playNote(noteFreq(bn2-24),0.6,0.10*volMul,'sine','808'); }
     if(step%(bg*2)===bg) drumSnare(drumVol);     // default backbeat
   }
   // optional muted "chugging" rhythm-guitar layer (funk/rock texture: percussive palm-muted
@@ -974,7 +1011,12 @@ function musicTick(){
   // vol was 0.1 — quieter than the bass (0.22) and even the kick (0.5 own-gain), so the
   // actual TUNE sat under its own rhythm section before gameplay SFX ever entered the mix.
   // Bumped so the melody reads as the lead voice instead of getting buried.
-  if(n!==null) playNote(noteFreq(n+12),0.22,0.15*volMul,st.melWave,st.inst);   // null = rest
+  if(n!==null){
+    playNote(noteFreq(n+12),0.22,0.15*volMul,st.melWave,st.inst);                 // null = rest
+    // Octave shimmer above the lead. The styles all lived inside about two octaves, which
+    // is most of why they sounded thin — this opens the top without changing any melody.
+    playNote(noteFreq(n+24),0.16,0.05*volMul,st.melWave,st.inst);
+  }
   if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.028,7500);
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
@@ -990,7 +1032,17 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // music bed sat roughly half as loud as a same-volume SFX call before it ever reached
   // masterGain. That's the "music gets overwhelmed by sound effects" complaint — universal
   // across every character, just most noticeable on whichever racer is triggering SFX often.
-  if(!musicGain){ musicGain=actx.createGain(); musicGain.gain.value=0.68; musicGain.connect(masterGain); }
+  if(!musicGain){
+    musicGain=actx.createGain(); musicGain.gain.value=0.68;
+    // Widening the range stacks more simultaneous voices, so the bus needs a limiter or
+    // the loud styles clip on the octave doublings below.
+    if(actx.createDynamicsCompressor){
+      const comp=actx.createDynamicsCompressor();
+      comp.threshold.value=-14; comp.knee.value=22; comp.ratio.value=7;
+      comp.attack.value=0.004; comp.release.value=0.22;
+      musicGain.connect(comp); comp.connect(masterGain);
+    } else musicGain.connect(masterGain);
+  }
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
   const styleId=effectiveStyleId(chosenType&&chosenType.id);
@@ -1381,6 +1433,22 @@ const OP_ART={
     '.SSSSSSSSSSSS.','.SDDDDSSDDDDS.','..SSDDDDDDSS..','...SSMMMMSS...',
     '....SSSSSS....','.....BBWW.....','...BBWW.......','..BBWW........',
   ], {B:'#c62f2f',W:'#f4f2ee',S:'#d9a06a',E:'#f4f2ee',P:'#171218',D:'#171218',M:'#6e2030'},
+     11, 34, 40),
+  // Beaded Salty — the reference render: white cap, navy band, gold badge, striped tail.
+  beadSalty:opBeads([
+    '.....WWWW.....','...WWWWWWWW...','..WWWWWWWWWW..','..NNNNGGNNNN..',
+    '..SSSSSSSSSS..','.SSSSSSSSSSSS.','.SSEEESSEEESS.','.SSEPESSEPESS.',
+    '.SSEEESSEEESS.','.SSSSSSSSSSSS.','..SSSMMMMSSS..','...SSSSSSSS...',
+    '....NNNNNN....','...WWWW.......','..NNNN........','..WW..........',
+  ], {W:'#f4f2ee',N:'#1f3a9e',G:'#f2c230',S:'#f0c8cf',E:'#ffffff',P:'#171218',M:'#5a2630'},
+     11, 34, 40),
+  // Beaded Juan — wide beaded brim over big bead eyes.
+  beadJuan:opBeads([
+    '......GG......','.....GGGG.....','..RRGGGGGGRR..','.RGRGRGRGRGRG.',
+    '....KKKKKK....','...KKKKKKKK...','..KKKKKKKKKK..','..KEEEKKEEEK..',
+    '..KEPEKKEPEK..','..KEEEKKEEEK..','..KKKKKKKKKK..','...KDDDDDDK...',
+    '....KKKKKK....','.....DDDD.....','...DDKK.......','..KKDD........',
+  ], {G:'#e0b060',R:'#d94f3c',K:'#dba876',E:'#ffffff',P:'#171218',D:'#3a2418'},
      11, 34, 40),
   // Felted Cleetus — soft blobby tufts, no straight edges anywhere, strata bands behind.
   felt:`<g>
@@ -2626,29 +2694,37 @@ function buildTrack(idx){
   // ---- jump ramps: placed just BEFORE the sharpest corners so a jump cuts the corner ----
   jumpPads=[];
   {
-    // score curvature at each sample, pick the 2 sharpest corners (well-separated)
-    const score=[];
-    for(let i=0;i<STEPS;i++){ const a=SAMP[i].t, b=SAMP[(i+18)%STEPS].t;
-      score.push({i, turn:Math.acos(Math.max(-1,Math.min(1,a.x*b.x+a.z*b.z)))}); }
-    score.sort((p,q)=>q.turn-p.turn);
-    const corners=[];
-    for(const s of score){ if(s.turn<0.5)break;
-      if(corners.every(c=>Math.min(Math.abs(c-s.i),STEPS-Math.abs(c-s.i))>90)){ corners.push(s.i); if(corners.length>=2)break; } }
-    if(corners.length===0) corners.push(Math.floor(STEPS*0.3));
-    // track-authored bonus ramp (Valentina's summit-crest launch into the descent)
-    if(TRACKS[idx].extraRamp!=null) corners.push(Math.floor(TRACKS[idx].extraRamp*STEPS)+16);
-    for(const ci of corners){
-      const i=((ci-16)%STEPS+STEPS)%STEPS; const s=SAMP[i];   // ramp a bit before the apex
-      const grp=new T.Group(); grp.position.copy(s.p);
-      // Plain rotation.y=heading (the old code) ignores the road's superelevation entirely,
-      // so on any banked approach the ramp's flat base sits level while the actual road
-      // surface under it is tilted — that's the "ramp doesn't follow the axis of the course,
-      // gets partially submerged" bug. Same fix as the car/character lean: build an explicit
-      // basis (forward = flattened tangent, up = world-up rolled around that forward by the
-      // sample's bank angle) instead of composing raw Euler y+z, which doesn't commute for
-      // any heading other than facing world +Z.
-      const fwd=new T.Vector3(s.t.x,0,s.t.z).normalize();
-      const up=_worldUp.clone().applyAxisAngle(fwd, s.bank||0);
+    // Jumps are PURPOSEFUL and sited, not sprinkled. Two problems with the old scheme:
+    // it dropped a ramp on the two sharpest corners of every course, which is (a) no
+    // reason at all to jump and (b) exactly where a 12-unit ramp CANNOT sit flush,
+    // because the road curves out from under it — that is the "not perpendicular to the
+    // track" look. Now each ramp is placed just before a hazard, so clearing it is a real
+    // line choice, and then slid onto the straightest nearby sample so it sits flush.
+    const TK=TRACKS[idx];
+    let us=(TK.jumps||[]).slice();
+    if(!us.length){
+      for(const u of (TK.dams||[])) us.push(u-0.038);      // launch over the membrane
+      for(const u of (TK.pills||[])) us.push(u-0.034);     // launch over the pill's sweep
+      if(!us.length && TK.slalom!=null) us.push(TK.slalom-0.04);
+    }
+    if(TK.extraRamp!=null) us.push(TK.extraRamp);          // authored summit-crest launch
+    const wrap=i=>trackLoop ? ((i%STEPS)+STEPS)%STEPS : Math.max(0,Math.min(STEPS-1,i));
+    const curv=i=>{ const a=SAMP[wrap(i)].t, b=SAMP[wrap(i+14)].t;
+      return Math.acos(Math.max(-1,Math.min(1,a.x*b.x+a.z*b.z))); };
+    const seen=[];
+    for(const u0 of us){
+      let best=wrap(Math.round(u0*STEPS)), bc=curv(best);
+      for(let d=-22;d<=22;d++){ const j=wrap(best+d), c=curv(j); if(c<bc){ bc=c; best=j; } }
+      // never two ramps on top of each other
+      if(seen.some(k=>Math.min(Math.abs(k-best), STEPS-Math.abs(k-best))<45)) continue;
+      seen.push(best);
+      const sp=SAMP[best];
+      const grp=new T.Group(); grp.position.copy(sp.p);
+      // Explicit basis rather than Euler y+z: forward = flattened tangent, up = world-up
+      // rolled around that forward by the sample's bank. Raw Euler does not commute for
+      // any heading but world +Z, which tilts the ramp off the road on banked approaches.
+      const fwd=new T.Vector3(sp.t.x,0,sp.t.z).normalize();
+      const up=_worldUp.clone().applyAxisAngle(fwd, sp.bank||0);
       const right=new T.Vector3().crossVectors(up,fwd).normalize();
       const trueUp=new T.Vector3().crossVectors(fwd,right).normalize();
       grp.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(right,trueUp,fwd));
@@ -2659,8 +2735,8 @@ function buildTrack(idx){
         new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
       mark.position.set(0,2.9,3.2); mark.rotation.x=-0.42-Math.PI/2+Math.PI; grp.add(mark);
       trackGroup.add(grp);
-      const halo=glowSprite(0x7dffaa,22); halo.position.copy(s.p).add(new T.Vector3(0,5,3)); trackGroup.add(halo);
-      jumpPads.push({x:s.p.x+s.t.x*3, z:s.p.z+s.t.z*3, r:12});
+      const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); trackGroup.add(halo);
+      jumpPads.push({x:sp.p.x+sp.t.x*3, z:sp.p.z+sp.t.z*3, r:12});
     }
   }
 
@@ -2691,15 +2767,20 @@ function buildTrack(idx){
   } else if(bead){
     // Oversized bead orbs, exactly the two magenta spheres flanking the reference plinth.
     // Built as real bead rings rather than scaled-up cubes, so the rows curve on them too.
+    // Bead PITCH is what costs here, not orb count: at a 1.7 pitch these came to ~50,000
+    // spheres, roughly 5M triangles, which made this the heaviest course in the game by
+    // about 3x and is far past what the phones this targets can carry. Scenery orbs read
+    // as beaded from a distance at a much coarser pitch — the fine pitch is only worth
+    // paying for on the racer, which fills the screen.
     const orbs=[], PAL=[0xe0217f,0xf25aa8,0xf2f2f2,0x1f3a9e,0xf2c230];
-    for(let k=0;k<22;k++){
-      const s2=SAMP[(k*53)%STEPS];
+    for(let k=0;k<12;k++){
+      const s2=SAMP[(k*97)%STEPS];
       const side=(k%2?-1:1), out=HW*(3.4+((k*17)%40)/8);
-      const R2=12+((k*23)%16);
+      const R2=10+((k*23)%11);
       const base=PAL[k%PAL.length], alt=PAL[(k+2)%PAL.length];
       beadEllipsoid(orbs,
         s2.p.x+s2.n.x*side*out, s2.p.y+R2*0.55+((k*11)%14), s2.p.z+s2.n.z*side*out,
-        R2,R2,R2, 1.7, (la)=> (Math.floor(la*9)%3===0) ? alt : base);
+        R2,R2,R2, 3.4, (la)=> (Math.floor(la*7)%3===0) ? alt : base);
     }
     trackGroup.add(beadBatch(orbs));
   } else if(wire){
@@ -3545,28 +3626,57 @@ function makeWireCell(){
  * userData contract as makeCell(): the face parts are GROUPS wrapping bead batches, so
  * the existing scale/rotation expression animations drive them unchanged.
  * ---------------------------------------------------------------------------------- */
-function makeBeadCell(){
+const BEAD_RACERS={
+  // Pepe: bandana over the crown, moustache on the face, hoops.
+  bead:{ skin:0xd9a06a, band:0xc62f2f, trim:0xf4f2ee, tailA:0xc62f2f, tailB:0xf4f2ee,
+         glow:0xff3aa0, mouth:0x6e2030, moustache:true, hoops:true,
+         cap(la,lo,C){ if(la>0.80) return C.band;
+           if(la>0.745) return (Math.floor(lo*22)%2) ? C.trim : C.band; return null; } },
+  // Salty: the reference render exactly — white cap, navy band, gold badge, striped tail.
+  beadSalty:{ skin:0xf0c8cf, band:0x1f3a9e, trim:0xf4f2ee, tailA:0x1f3a9e, tailB:0xf4f2ee,
+         glow:0x7fb0ff, mouth:0x5a2630, moustache:false, hoops:false, badge:0xf2c230,
+         // the reference cap covers roughly the top third of the head, not a skullcap
+         cap(la,lo,C){ if(la>0.70) return C.trim;
+           if(la>0.615) return C.band; return null; } },
+  // Juan: the second reference — wide straw brim, red/green banded, big beaded eyes.
+  beadJuan:{ skin:0xdba876, band:0x2f9e4a, trim:0xd94f3c, tailA:0x6b4a24, tailB:0xdba876,
+         glow:0xffd48a, mouth:0x3a2418, moustache:true, hoops:false, sombrero:0xe0b060,
+         cap(la,lo,C){ if(la>0.86) return C.sombrero; return null; } },
+};
+function makeBeadCell(id){
+  const SP=BEAD_RACERS[id]||BEAD_RACERS.bead;
   const g=new T.Group();
-  const skin=0xd9a06a, band=0xc62f2f, dark=0x171218, white=0xf4f2ee,
+  const skin=SP.skin, band=SP.band, dark=0x171218, white=0xf4f2ee,
         gold=0xf2c230, green=0x2f9e4a;
   const ST=0.40;                                        // bead pitch
 
   // --- head: bandana over the crown, skin below, trim row between ---
   const body=[];
   beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la,lo)=>{
-    if(la>0.80) return band;
-    if(la>0.745) return (Math.floor(lo*22)%2) ? white : band;   // beaded trim row
-    return skin;
+    const c=SP.cap(la,lo,SP); return c!=null ? c : skin;
   });
-  // moustache, laid ON the face surface rather than floated in front of it
-  for(let x=-2.3;x<=2.3;x+=ST) for(let y=2.35;y<=2.95;y+=ST){
-    const t=1-(x/3.4)*(x/3.4)-((y-3.2)/2.8)*((y-3.2)/2.8);
-    if(t<=0) continue;
-    if(Math.abs(x)<0.45 && y>2.7) continue;             // gap under the nose
-    body.push({x, y, z:5.1*Math.sqrt(t)+0.10, s:ST*0.98, c:dark});
+  if(SP.moustache){
+    // laid ON the face surface rather than floated in front of it
+    for(let x=-2.3;x<=2.3;x+=ST) for(let y=2.35;y<=2.95;y+=ST){
+      const t=1-(x/3.4)*(x/3.4)-((y-3.2)/2.8)*((y-3.2)/2.8);
+      if(t<=0) continue;
+      if(Math.abs(x)<0.45 && y>2.7) continue;           // gap under the nose
+      body.push({x, y, z:5.1*Math.sqrt(t)+0.10, s:ST*0.98, c:dark});
+    }
   }
-  // gold hoop earrings
-  for(const sx of [-1,1]) beadHoop(body, sx*3.1, 2.6, -0.4, 0.95, ST*0.9, gold);
+  if(SP.hoops) for(const sx of [-1,1]) beadHoop(body, sx*3.1, 2.6, -0.4, 0.95, ST*0.9, gold);
+  if(SP.badge){                                        // cap badge, front and centre
+    for(let y=4.30;y<=4.80;y+=ST) for(let x=-0.4;x<=0.4;x+=ST){
+      const t=1-(x/3.4)*(x/3.4)-((y-3.2)/2.8)*((y-3.2)/2.8);
+      if(t<=0) continue;
+      body.push({x, y, z:5.1*Math.sqrt(t)+0.10, s:ST*0.98, c:SP.badge});
+    }
+  }
+  if(SP.sombrero){                                     // wide brim + banded edge
+    beadHoop(body, 0, 5.55, 0, 4.2, ST, (f,L)=>
+      L>5 ? ((Math.floor(f*26)%2)?SP.trim:SP.band) : SP.sombrero, ST*7);
+    beadEllipsoid(body, 0,5.7,0, 2.2,1.5,2.2, ST, ()=>SP.sombrero, {yMin:5.7});
+  }
   const bodyMesh=beadBatch(body);
   bodyMesh.material.emissive.setHex(0x140a10);
   g.add(bodyMesh);
@@ -3586,11 +3696,11 @@ function makeBeadCell(){
   g.userData.eyes=eyes; g.userData.pupils=pupils;
   const mg=new T.Group(), mb=[];
   for(let x=-1.0;x<=1.0;x+=ST) for(let y=-0.2;y<=0.2;y+=ST)
-    mb.push({x, y, z:0, s:ST*0.98, c:0x6e2030});
+    mb.push({x, y, z:0, s:ST*0.98, c:SP.mouth});
   mg.add(beadBatch(mb)); mg.position.set(0,2.15,4.75); g.add(mg);
   g.userData.mouth=mg; g.userData.mouthBase=mg.scale.clone();
 
-  const glow=glowSprite(0xff3aa0,13); glow.position.set(0,3.4,0.5); g.add(glow);
+  const glow=glowSprite(SP.glow,13); glow.position.set(0,3.4,0.5); g.add(glow);
   g.userData.glow=glow;
   const fl1=glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
   const fl2=glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
@@ -3602,7 +3712,7 @@ function makeBeadCell(){
   for(let i=0;i<RN;i++){
     const t=i/(RN-1), r=1.7*(1-t)*(1-t)+0.26;
     const n=Math.max(4, Math.round(2*Math.PI*r/ST));
-    const c=(Math.floor(t*8)%2)===0 ? band : white;
+    const c=(Math.floor(t*8)%2)===0 ? SP.tailA : SP.tailB;
     rings.push({t, ph:i*0.55, r, n, s:ST*0.98});
     for(let j=0;j<n;j++){
       const u=j/n*Math.PI*2;
@@ -3620,7 +3730,7 @@ function makeBeadCell(){
 
 function makeCell(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
-  if(typeId === 'bead') return makeBeadCell();           // strung-bead rendition
+  if(BEAD_RACERS[typeId]) return makeBeadCell(typeId);   // strung-bead renditions
   // Clay is a surface treatment, not a different model: build Guido as normal, then
   // re-sculpt him at the end instead of cel-shading. (The motion half is in syncObjects.)
   const dough = typeId === 'dough';
@@ -4272,6 +4382,8 @@ const SPERM_TYPES = [
   {id:'dough', name:'Play-Doh Juan', hue:112, desc:'Juan rolled out of a fresh tub. Bright, chalky and slightly squashed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
   {id:'mosaic', name:'Mosaic Seamus', hue:96, desc:'Seamus built from tiles that mix in your eye, not on the model. Stand back.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
   {id:'bead', name:'Beaded Pepe', hue:350, desc:'Pepe strung bead by bead in glossy plastic. Every row follows the curve.', stats:{skill:0.98, driftMult:1.3, accel:1.1}},
+  {id:'beadSalty', name:'Beaded Salty', hue:214, desc:'Salty strung in glossy beads. White cap, navy band, striped tail.', stats:{skill:1.0, spinResist:0.6, turn:1.05}},
+  {id:'beadJuan', name:'Beaded Juan', hue:36, desc:'Juan under a beaded straw brim. Every row threaded by hand.', stats:{skill:0.97, maxV:1.18, accel:1.2}},
   {id:'felt', name:'Felted Cleetus', hue:38, desc:'Cleetus needle-felted from raw wool. Matte, shaggy and dyed in strata.', stats:{skill:0.97, maxV:1.15, spinResist:0.7}},
   {id:'paper', name:'Origami Wei', hue:128, desc:'Wei Long, scored and folded from a single sheet. Every curve is a crease.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
 ];
@@ -4368,6 +4480,8 @@ const SIGNATURE_ITEMS={
   kingVox:  { name:'Gold Bar',      icon:'🟨', color:0xffd700, emissive:0x4a3500, geo:()=>new T.BoxGeometry(3.2,1.5,1.7) },
   wire:     { name:'Light Disc',    icon:'💿', color:0x19d2ff, emissive:0x0a5a7a, geo:()=>new T.TorusGeometry(1.7,0.35,8,16) },
   bead:     { name:'Bead String',   icon:'📿', color:0xe0217f, emissive:0x3a0620, geo:()=>new T.SphereGeometry(2.1,10,8) },
+  beadSalty:{ name:'Bead Anchor',   icon:'📿', color:0x1f3a9e, emissive:0x0a1638, geo:()=>new T.TorusGeometry(1.5,0.5,8,14) },
+  beadJuan: { name:'Bead Chili',    icon:'📿', color:0xd94f3c, emissive:0x3a0e08, geo:()=>new T.ConeGeometry(1.3,3.2,8) },
   felt:     { name:'Wool Tuft',     icon:'🧶', color:0xe8408c, emissive:0x3a0e22, geo:()=>new T.IcosahedronGeometry(2.2,1) },
   mosaic:   { name:'Colour Chip',   icon:'🟩', color:0x3fae4a, emissive:0x0e3a14, geo:()=>new T.BoxGeometry(2.4,2.4,0.9) },
   dough:    { name:'Dough Ball',    icon:'🟡', color:0xf2c230, emissive:0x4a3808, geo:()=>new T.SphereGeometry(2.3,9,7) },
@@ -4579,7 +4693,11 @@ function updateRacer(r,dt){
 
   // turning (speed-scaled); drift sharpens & charges
   const vfrac=Math.min(1,Math.abs(r.spd)/MAXV);
-  let turnRate=TURN*(0.5+0.5*vfrac);
+  // Turn authority used to fall to HALF at low speed, which is backwards from how a kart
+  // reads: you expect to be able to point it when crawling, and you expect it to settle
+  // down (not twitch) at top speed. Keep most of the authority low-down and shed a little
+  // at speed instead — that reads as "it goes where I point it".
+  let turnRate=TURN*(1.02-0.24*vfrac);
   if(drift && Math.abs(r.spd)>50){
     // lock the slide to the direction you're actually steering — no random snap,
     // and don't let live steering fight the slide (that caused the squirreliness)
@@ -4600,8 +4718,11 @@ function updateRacer(r,dt){
     }
   }
   if(r._grip>0){ turnRate*=0.45; r._grip-=dt; }  // brief grip so the boost fires forward
-  // smooth the applied steering a touch (less twitchy)
-  r._st = (r._st||0) + (steer-(r._st||0))*Math.min(1, 9*dt);
+  // Asymmetric smoothing: snap TOWARD a new input quickly so the kart answers the stick,
+  // but ease back toward centre more gently so releasing doesn't jerk it straight.
+  { const want=steer, cur=(r._st||0);
+    const rate = Math.abs(want) > Math.abs(cur) ? 16 : 10;
+    r._st = cur + (want-cur)*Math.min(1, rate*dt); }
   r.head += r._st*turnRate*dt*Math.sign(r.spd||1);
 
   // visual slip + hop
@@ -4613,11 +4734,19 @@ function updateRacer(r,dt){
   r.x+=Math.sin(r.head)*r.spd*dt;
   r.z+=Math.cos(r.head)*r.spd*dt;
 
-  // subtle track magnetism — gently bleeds off lateral drift toward the centerline
+  // ---- flux pinning: the racers are quantum-locked to the track ----
+  // Not a rail — you can still place the kart anywhere across the road. It is a restoring
+  // force that grows with how far out of the groove you are, so the track feels like it is
+  // HOLDING you rather than like you are balancing on it. Scaled by speed because a
+  // pinned superconductor resists displacement harder the faster it is moving through the
+  // field, and that also stops the pull fighting you when parking.
   { const s=SAMP[r.idx];
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;
-    const pull=(onRoad?0.9:0.3)*lat*dt;
-    r.x-=s.n.x*pull; r.z-=s.n.z*pull; }
+    const grip = onRoad ? (1.5 + 1.7*vfrac) : 0.45;
+    const pull = Math.min(0.9, grip*dt) * lat;
+    r.x-=s.n.x*pull; r.z-=s.n.z*pull;
+    r._lat = lat;   // kept for the lock-glow effect and the rail test below
+  }
 
   placeOnTrack(r,dt);
 
@@ -4647,19 +4776,23 @@ function updateRacer(r,dt){
     } else if(trackLoop && !trackCross){
       // loop: hard wall is set DEEP inside (HW*2.5) so you can cut corners across the
       // infield apron (off-road = slower, so shortcuts save distance but cost speed)
-      const inner=lat*innerSign, innerLim=HW*2.5;
+      // The outer wall used to sit at HW*4 — four road-widths past the visible border —
+      // so you drifted clean through the kerbs and scenery with nothing reacting. It now
+      // sits just outside the border itself. The INFIELD limit stays generous on purpose:
+      // cutting the apron is a deliberate shortcut that costs speed by being off-road.
+      const inner=lat*innerSign, innerLim=HW*2.2;
       // position correction runs every frame (keeps the car out of the wall), but the
       // speed penalty only fires once per contact — otherwise pinning against a wall
       // multiplies spd every frame and stalls the car almost instantly
       if(inner>innerLim){ const ex=inner-innerLim; r.x-=s.n.x*innerSign*ex; r.z-=s.n.z*innerSign*ex;
         if(r._wallCD<=0){ r.spd*=0.8; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
           if(r.you){ kickShake(0.3); SFX.bump&&SFX.bump(); } } }
-      else if(inner<-(HW*4)){ const ex=-(HW*4)-inner; r.x+=s.n.x*innerSign*ex; r.z+=s.n.z*innerSign*ex;
+      else if(inner<-(HW*1.28)){ const ex=-(HW*1.28)-inner; r.x+=s.n.x*innerSign*ex; r.z+=s.n.z*innerSign*ex;
         if(r._wallCD<=0){ r.spd*=0.6; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
           if(r.you){ kickShake(0.35); SFX.bump&&SFX.bump(); } } }
     } else {
-      // figure-8 / point-to-point: soft corridor walls on both sides of the tube
-      const lim=HW*1.8;
+      // figure-8 / point-to-point: corridor walls just outside the visible border
+      const lim=HW*1.28;
       if(Math.abs(lat)>lim){ const ex=Math.abs(lat)-lim, sgn=Math.sign(lat); r.x-=s.n.x*sgn*ex; r.z-=s.n.z*sgn*ex;
         if(r._wallCD<=0){ r.spd*=0.78; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
           if(r.you){ kickShake(0.25); SFX.bump&&SFX.bump(); } } }
@@ -4777,7 +4910,8 @@ const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arr
   wall:'SELL!', korean:'Precision.', rick:'Super freaky!', french:'Sacré bleu!',
   sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!', wire:'FEEL THE GRID!',
   dough:'FRESH OUT THE TUB!', paper:'FOLD AND STRIKE!', mosaic:'STAND BACK!',
-  felt:'SPUN AND SPUN OUT!', bead:'STRUNG AND SLUNG!'};
+  felt:'SPUN AND SPUN OUT!', bead:'STRUNG AND SLUNG!',
+  beadSalty:'THREADED, YARRR!', beadJuan:'BEAD BY BEAD!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
