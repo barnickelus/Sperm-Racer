@@ -2194,7 +2194,9 @@ function beadEllipsoid(out, cx,cy,cz, rx,ry,rz, step, colFn, opt){
       const u=j/n*Math.PI*2;
       const x=cx+Math.cos(u)*rxx, z=cz+Math.sin(u)*rzz;
       if(o.zMin!=null && z<o.zMin) continue;
-      out.push({x, y, z, s:step*0.98, c:colFn(i/rings, j/n, x, y, z)});
+      const cc=colFn(i/rings, j/n, x, y, z);
+      if(cc==null) continue;          // colFn can veto, which is how one shape splits batches
+      out.push({x, y, z, s:step*0.98, c:cc});
     }
   }
 }
@@ -3276,6 +3278,32 @@ function nearest(x,z,y){
   return bi;
 }
 
+/* ============== FACE MAPPING ============== *
+ * Every face feature used to be placed at a hardcoded z, which ignores that the head is
+ * an ELLIPSOID half again as deep in z as it is wide (3.4 x 2.79 x 5.1). Measured, the
+ * result was: the 2.70-diameter eyeball protruded 0.08 — 97% buried, so it read as a flat
+ * lens-shaped patch rather than a ball; the pupil and the mouth sat entirely INSIDE the
+ * head; and the catch-light floated in open air off the surface.
+ * faceAnchor() solves for the true surface point at a given (x,y) and hands back the real
+ * ellipsoid normal, so features can be seated on the face and then stacked outward along
+ * it instead of each one guessing its own depth.
+ * ---------------------------------------------------------------------------------- */
+const HEAD_RX=3.4, HEAD_RY=3.4*0.82, HEAD_RZ=3.4*1.5, HEAD_CY=3.2;
+function faceAnchor(x, y){
+  const dx=x/HEAD_RX, dy=(y-HEAD_CY)/HEAD_RY;
+  const rem=1-dx*dx-dy*dy;
+  const z=rem>0 ? HEAD_RZ*Math.sqrt(rem) : 0.05;
+  const n=new T.Vector3(x/(HEAD_RX*HEAD_RX), (y-HEAD_CY)/(HEAD_RY*HEAD_RY),
+                        z/(HEAD_RZ*HEAD_RZ)).normalize();
+  return {p:new T.Vector3(x,y,z), n};
+}
+// Seat an object on the face at (x,y), lifted `out` along the surface normal.
+function seatOnFace(o, x, y, out){
+  const a=faceAnchor(x,y);
+  o.position.copy(a.p).addScaledVector(a.n, out||0);
+  return a;
+}
+
 /* ============== CEL-SHADE KIT (anime toon look for the racers) ============== *
  *  A 3-band gradient map turns smooth lighting into flat anime cel steps, and a
  *  back-face "inverted hull" gives every racer the bold One Piece outline.
@@ -4021,10 +4049,20 @@ function makeBeadCell(id){
   const ST=0.40;                                        // bead pitch
 
   // --- head: bandana over the crown, skin below, trim row between ---
-  const body=[];
-  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la,lo)=>{
-    const c=SP.cap(la,lo,SP); return c!=null ? c : skin;
-  });
+  // Body shades by LATITUDE in three tones, straight from the rig: darker under the
+  // belly, base tone through the middle, lighter over the crown. A single flat skin tone
+  // is most of why the beaded heads read as one undifferentiated mass.
+  const shade=(hex,f)=>{ const c=new T.Color(hex), h={h:0,s:0,l:0}; c.getHSL(h);
+    c.setHSL(h.h, h.s, Math.max(0.04,Math.min(0.95,h.l*f))); return c.getHex(); };
+  const skinDark=shade(skin,0.74), skinLight=shade(skin,1.16);
+  // Cap beads go to a SEPARATE list so the hat can sit on its own pivot and rock against
+  // the body roll — the rig's hatPivot, which is what stops the hat reading as painted on.
+  // Two passes over the SAME shape, each vetoing the other's rows — far more reliable
+  // than generating one list and trying to re-derive which rows were cap afterwards.
+  const body=[], hat=[];
+  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la,lo)=>
+    SP.cap(la,lo,SP)!=null ? null : (la<0.34 ? skinDark : (la>0.62 ? skinLight : skin)));
+  beadEllipsoid(hat, 0,0,0, 3.4,2.8,5.1, ST, (la,lo)=>SP.cap(la,lo,SP));
   if(SP.moustache){
     // laid ON the face surface rather than floated in front of it
     for(let x=-2.3;x<=2.3;x+=ST) for(let y=2.35;y<=2.95;y+=ST){
@@ -4050,6 +4088,12 @@ function makeBeadCell(id){
   const bodyMesh=beadBatch(body);
   bodyMesh.material.emissive.setHex(0x140a10);
   g.add(bodyMesh);
+  if(hat.length){
+    const hp=new T.Group(); hp.position.set(0,3.2,0);
+    const hm=beadBatch(hat); hm.material.emissive.setHex(0x140a10);
+    hp.add(hm); g.add(hp);
+    g.userData.hatPivot=hp;      // driven in syncObjects
+  }
   g.userData.head=bodyMesh;
   g.userData.baseEmissive=bodyMesh.material.emissive.clone();
 
@@ -4169,30 +4213,49 @@ function makeCell(hue, typeId){
   // === STEREOTYPE FACIAL FEATURES + ACCESSORIES ===
   // BIG CARTOON EYES + star pupils (One Piece sparkle like the refs)
   const eyeMat = new T.MeshPhongMaterial({color:0xffffff, shininess:40});
-  const eyeL = new T.Mesh(new T.SphereGeometry(1.35,12,10), eyeMat);
-  const eyeR = new T.Mesh(new T.SphereGeometry(1.35,12,10), eyeMat);
-  eyeL.position.set(-1.45, 4.15, 3.0);
-  eyeR.position.set( 1.45, 4.15, 3.0);
+  const EYE_R=1.35;
+  const eyeL = new T.Mesh(new T.SphereGeometry(EYE_R,12,10), eyeMat);
+  const eyeR = new T.Mesh(new T.SphereGeometry(EYE_R,12,10), eyeMat);
+  // Centre sits ON the surface, so half the ball is proud — the classic cartoon eye.
+  // The anchors are kept so the pupil and catch-light can ride the same normal.
+  // Slightly INTO the surface: dead-on the surface leaves the ball reading as a golf ball
+  // glued to the face rather than an eye set into one.
+  const AL=seatOnFace(eyeL, -1.38, 4.15, -0.30);
+  const AR=seatOnFace(eyeR,  1.38, 4.15, -0.30);
+  // Gaze direction, NOT the skull normal. The normal at the eye points outward and up
+  // (this head is far deeper than it is wide), so offsetting the pupil along it swings the
+  // pupil round the side of the eyeball where you cannot see it. A pupil faces where the
+  // character looks, so this leans the offset heavily toward straight ahead.
+  const gaze=A=>new T.Vector3(0,0,1).multiplyScalar(0.72)
+    .addScaledVector(A.n,0.28).normalize();
+  const GL=gaze(AL), GR=gaze(AR);
   g.add(eyeL); g.add(eyeR);
   g.userData.eyes=[eyeL,eyeR];   // for celebration winks
   const starMat = new T.MeshPhongMaterial({color:0x111111});
   const pupilL = new T.Mesh(new T.ConeGeometry(0.62, 1.0, 4), starMat);
   const pupilR = new T.Mesh(new T.ConeGeometry(0.62, 1.0, 4), starMat);
-  pupilL.position.set(-1.45, 4.2, 4.05);
-  pupilR.position.set( 1.45, 4.2, 4.05);
+  // Pupils ride the eyeball's own front, along the same face normal the eye was seated
+  // on — that is what keeps them ON the eye from every viewing angle instead of sinking
+  // into the head as soon as the head is anything but a perfect sphere.
+  pupilL.position.copy(eyeL.position).addScaledVector(GL, EYE_R*0.86);
+  pupilR.position.copy(eyeR.position).addScaledVector(GR, EYE_R*0.86);
   pupilL.rotation.x = Math.PI/2;
   pupilR.rotation.x = Math.PI/2;
   g.add(pupilL); g.add(pupilR);
   g.userData.pupils=[pupilL,pupilR];
   // little white catch-light on each eye for that cartoon sparkle
   const shineMat = new T.MeshBasicMaterial({color:0xffffff});
-  for(const ex of [-1.45,1.45]){ const sh=new T.Mesh(new T.SphereGeometry(0.26,8,6), shineMat);
-    sh.position.set(ex+0.3, 4.6, 4.2); g.add(sh); }
+  for(const [E,G] of [[eyeL,GL],[eyeR,GR]]){
+    const sh=new T.Mesh(new T.SphereGeometry(0.24,8,6), shineMat);
+    sh.position.copy(E.position).addScaledVector(G, EYE_R*0.80)
+      .add(new T.Vector3(0.30,0.34,0));                    // catch-light across the eyeball
+    g.add(sh); }
 
   // Big expressive mouth
   const mouth = new T.Mesh(new T.TorusGeometry(1.3,0.28,8,16, Math.PI*0.85), new T.MeshPhongMaterial({color:0x442222, emissive:0x220000}));
-  mouth.position.set(0, 2.65, 3.5);
-  mouth.rotation.x = -0.4;
+  const AM=seatOnFace(mouth, 0, 2.65, 0.10);
+  // tip it to lie along the face rather than at a fixed guess
+  mouth.rotation.x = -Math.asin(Math.max(-1,Math.min(1,AM.n.y)))*0.9;
   g.add(mouth);
   g.userData.mouth=mouth;
 
@@ -4215,8 +4278,8 @@ function makeCell(hue, typeId){
     const browMat = new T.MeshPhongMaterial({color:0x141414});
     const browL = new T.Mesh(new T.BoxGeometry(1.9,0.42,0.5), browMat);
     const browR = new T.Mesh(new T.BoxGeometry(1.9,0.42,0.5), browMat);
-    browL.position.set(-1.25,4.95,3.35); browL.rotation.z = -0.12;
-    browR.position.set( 1.25,4.95,3.35); browR.rotation.z =  0.12;
+    seatOnFace(browL, -1.25, 4.95, 0.1); browL.rotation.z = -0.12;
+    seatOnFace(browR, 1.25, 4.95, 0.1); browR.rotation.z =  0.12;
     g.add(browL); g.add(browR);
     // gold rope chain — a neck ring large enough (r=4.4) to clear the head + a medallion
     // (tube thickened to match the portrait's chunky cuban link)
@@ -4229,7 +4292,7 @@ function makeCell(hue, typeId){
     medal.position.set(0,-0.6,4.1); medal.rotation.x = Math.PI/2; g.add(medal);
     // gold tooth at the front of the mouth
     const tooth = new T.Mesh(new T.BoxGeometry(0.42,0.32,0.2), goldMat);
-    tooth.position.set(0.5,2.55,4.45);
+    seatOnFace(tooth, 0.5, 2.55, 0.06);
     g.add(tooth);
     // gold hoop earrings on the sides — Jersey bling that catches from behind
     for(const sx of [-1,1]){ const hoop=new T.Mesh(new T.TorusGeometry(0.55,0.13,6,14), goldMat);
@@ -4254,8 +4317,8 @@ function makeCell(hue, typeId){
     }
     const browL = new T.Mesh(new T.BoxGeometry(1.3,0.28,0.5), new T.MeshPhongMaterial({color:0x8B0000}));
     const browR = new T.Mesh(new T.BoxGeometry(1.3,0.28,0.5), new T.MeshPhongMaterial({color:0x8B0000}));
-    browL.position.set(-1.1,4.7,2.55); browL.rotation.z = -0.1;
-    browR.position.set(1.1,4.7,2.55); browR.rotation.z = 0.1;
+    seatOnFace(browL, -1.1, 4.7, 0.1); browL.rotation.z = -0.1;
+    seatOnFace(browR, 1.1, 4.7, 0.1); browR.rotation.z = 0.1;
     g.add(browL); g.add(browR);
     // ginger curly hair: a rounded base cap covering the crown, plus a handful of
     // irregular curl clusters for texture — the old version was 10 identical small
@@ -4297,7 +4360,7 @@ function makeCell(hue, typeId){
     const muMat = new T.MeshPhongMaterial({color:0x080808, emissive:0x000000});  // true black
     // central body: a downward-bowing arc (smile shape) sitting just under the nose on the face surface
     const stache = new T.Mesh(new T.TorusGeometry(1.55,0.4,10,20, Math.PI), muMat);
-    stache.position.set(0,3.35,4.05); stache.rotation.x = 1.55; g.add(stache);
+    seatOnFace(stache, 0, 3.35, 0.06); stache.rotation.x = 1.55; g.add(stache);
     // curled-up handlebar tips that grow CONTINUOUSLY from the ends of the body (connected, not detached)
     for(const sx of [-1,1]){
       const tip=new T.Mesh(new T.TorusGeometry(0.78,0.34,10,16, Math.PI*1.3), muMat);
@@ -4356,7 +4419,7 @@ function makeCell(hue, typeId){
     afro.position.set(0,5.7,0.3); afro.scale.set(1.2,1.0,1.1); g.add(afro);
     // Gold grill teeth — pushed to the mouth surface so it actually shows
     const grill = new T.Mesh(new T.BoxGeometry(2.2,0.6,0.5), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
-    grill.position.set(0, 2.45, 4.5); g.add(grill);
+    seatOnFace(grill, 0, 2.45, 0.06); g.add(grill);
     // pink collar — a ring large enough to clear the head
     const collar = new T.Mesh(new T.TorusGeometry(4.3,0.45,8,18), new T.MeshPhongMaterial({color:0xf08ab0, emissive:0x4a1c2c}));
     collar.position.set(0,1.5,0.4); collar.rotation.x = Math.PI/2; collar.scale.set(0.85,1,1); g.add(collar);
@@ -4459,9 +4522,9 @@ function makeCell(hue, typeId){
     for(const sx of [-1,1]){ const tl=new T.Mesh(new T.ConeGeometry(0.45,3.8,6), bandMat);
       tl.position.set(sx*0.7,2.7,-5.0); tl.rotation.set(Math.PI-0.12,0,sx*0.16); g.add(tl); }
     const sh=new T.Mesh(new T.BoxGeometry(3.2,1.0,0.4), new T.MeshPhongMaterial({color:0x10141a, shininess:90}));
-    sh.position.set(0,4.0,3.95); g.add(sh);                       // glasses on the face surface
+    seatOnFace(sh, 0, 4.0, 0.16); g.add(sh);                       // glasses on the face surface
     const mu=new T.Mesh(new T.TorusGeometry(1.2,0.18,8,16,Math.PI), new T.MeshPhongMaterial({color:0x2a1c12}));
-    mu.position.set(0,2.7,4.2); mu.rotation.x=1.6; g.add(mu);
+    seatOnFace(mu, 0, 2.7, 0.06); mu.rotation.x=1.6; g.add(mu);
     const cig=new T.Mesh(new T.CylinderGeometry(0.16,0.16,1.8,6), new T.MeshPhongMaterial({color:0x6e4a2c}));
     cig.position.set(1.7,2.4,4.2); cig.rotation.z=1.3; g.add(cig);
     // gold neck chain — ring large enough to clear the head
@@ -4500,7 +4563,7 @@ function makeCell(hue, typeId){
     const crown=new T.Mesh(new T.CylinderGeometry(2.6,2.8,1.8,14), new T.MeshPhongMaterial({color:0xc79a3f}));
     crown.position.set(0,6.1,0); g.add(crown);
     const tooth=new T.Mesh(new T.BoxGeometry(0.5,0.6,0.2), new T.MeshPhongMaterial({color:0xffffff}));
-    tooth.position.set(0,2.5,3.7); g.add(tooth);
+    seatOnFace(tooth, 0, 2.5, 0.06); g.add(tooth);
     // portrait-sync: XXX moonshine jug at the hip + wheat straw in the mouth
     const jug=new T.Mesh(new T.CylinderGeometry(0.9,1.1,2.0,10),
       new T.MeshPhongMaterial({color:0x9a6a38, emissive:0x2a1a08}));
@@ -4606,7 +4669,7 @@ function makeCell(hue, typeId){
     glow.material.color.setHex(0x6e4a35);
     // gold grill teeth, same treatment as Darius King's
     const grill=new T.Mesh(new T.BoxGeometry(2.2,0.6,0.5), new T.MeshPhongMaterial({color:0xffd700, shininess:100, emissive:0x664400}));
-    grill.position.set(0, 2.45, 4.5); g.add(grill);
+    seatOnFace(grill, 0, 2.45, 0.06); g.add(grill);
     const bm=new T.MeshPhongMaterial({color:0x171015});
     // Rounded hair crown that hugs the top + back of the head (not a giant angular mass)
     const crown=new T.Mesh(new T.SphereGeometry(3.55,18,14), bm);
@@ -5570,6 +5633,14 @@ function syncObjects(dt,now){
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
       r.obj.rotation.y += Math.sin(now*4.5)*0.35;
       r.obj.rotation.z += Math.sin(now*4.5+1)*0.15;
+    }
+    // Hat rocks on its own slow beat and counters the body's lean, from the rig. A hat
+    // that moves exactly with the head reads as painted on; lagging it is what sells it
+    // as a separate object sitting on top.
+    const hp=r.obj.userData.hatPivot;
+    if(hp){
+      hp.rotation.z = Math.sin(now*1.25)*0.05 - (r._bank||0)*0.22 - r.slip*0.10;
+      hp.rotation.x = Math.sin(now*0.9)*0.03;
     }
     const gl=r.obj.userData.glow;
     if(gl){ const fl=1+Math.sin(now*9+r.phase)*0.06;
