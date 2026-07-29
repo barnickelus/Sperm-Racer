@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Floating Bead Creature — Procedural 3D Study</title>
+<style>
+:root{color-scheme:dark;--glass:rgba(15,17,37,.63);--line:rgba(255,255,255,.14);--text:#fff;--muted:rgba(255,255,255,.67)}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#080b18;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{touch-action:none}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;background:radial-gradient(circle at 24% 62%,rgba(255,44,183,.26),transparent 35%),radial-gradient(circle at 78% 42%,rgba(48,106,255,.27),transparent 40%),linear-gradient(145deg,#180b23 0%,#0b1029 50%,#071426 100%)}
+.vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 48%,transparent 36%,rgba(0,0,0,.23) 75%,rgba(0,0,0,.62) 120%)}
+.top{position:fixed;left:20px;right:20px;top:18px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;pointer-events:none}.brand{pointer-events:auto;padding:12px 15px;border:1px solid var(--line);border-radius:17px;background:var(--glass);backdrop-filter:blur(18px);box-shadow:0 15px 50px rgba(0,0,0,.22)}.brand b{display:block;font-size:12px;letter-spacing:.17em}.brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:.09em;margin-top:5px}.actions{pointer-events:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.actions button,.seg button{border:1px solid var(--line);background:var(--glass);color:var(--text);border-radius:999px;padding:10px 13px;font-weight:680;font-size:11px;letter-spacing:.06em;backdrop-filter:blur(18px);cursor:pointer}.actions button:hover,.seg button:hover{background:rgba(255,255,255,.13)}.seg{display:flex;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--glass);backdrop-filter:blur(18px)}.seg button{border:0;background:transparent;padding:7px 11px}.seg button.active{background:#fff;color:#151528}
+.bottom{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);width:min(92vw,660px);display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 14px;border:1px solid var(--line);border-radius:17px;background:var(--glass);backdrop-filter:blur(18px);color:var(--muted);font-size:11px;letter-spacing:.04em;pointer-events:none}.meter{display:flex;align-items:center;gap:8px;color:#fff}.dot{width:7px;height:7px;border-radius:50%;background:#ff64d0;box-shadow:0 0 16px #ff64d0}.reference{position:fixed;right:20px;top:84px;width:min(390px,calc(100vw - 40px));padding:10px;border:1px solid var(--line);border-radius:20px;background:rgba(8,10,24,.84);backdrop-filter:blur(20px);box-shadow:0 24px 70px rgba(0,0,0,.46);opacity:0;transform:translateY(-10px) scale(.98);pointer-events:none;transition:.22s ease}.reference.show{opacity:1;transform:none;pointer-events:auto}.reference img{display:block;width:100%;border-radius:13px}.reference p{margin:9px 5px 3px;color:var(--muted);font-size:11px}.badge{position:absolute;left:16px;top:16px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.14);padding:6px 8px;border-radius:999px;font-size:9px;letter-spacing:.13em}
+@media(max-width:700px){.top{left:12px;right:12px;top:12px}.brand small{display:none}.brand{padding:10px 12px}.actions button{padding:9px 10px}.bottom{bottom:10px}.reference{right:12px;top:72px;width:calc(100vw - 24px)}}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas><div class="vignette"></div>
+<div class="top"><div class="brand"><b>FLOATING BEAD CREATURE</b><small>PROCEDURAL WEBGL RECONSTRUCTION • FIRST PASS</small></div><div class="actions"><div class="seg"><button id="game" class="active">GAME</button><button id="hero">HERO</button></div><button id="pause">PAUSE</button><button id="blink">BLINK</button><button id="ref">REFERENCE</button></div></div>
+<div class="reference" id="reference"><span class="badge">SOURCE IMAGE</span><img alt="Reference sculpture" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="><p>The platform and support pieces are intentionally omitted. The hidden side is inferred from the visible pattern.</p></div>
+<div class="bottom"><span>DRAG TO ORBIT · WHEEL OR PINCH TO ZOOM</span><span class="meter"><i class="dot"></i><span id="count">0 BEADS</span></span></div>
+<script>
+(()=>{
+'use strict';
+const canvas=document.getElementById('gl');
+const gl=canvas.getContext('webgl',{antialias:true,alpha:true,premultipliedAlpha:false})||canvas.getContext('experimental-webgl');
+if(!gl){document.body.innerHTML='<div style="padding:40px;color:white">WebGL is unavailable in this browser.</div>';return;}
+const vs=`
+attribute vec3 aPosition;
+attribute vec3 aColor;
+attribute float aSize;
+attribute float aPart;
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform float uTime;
+uniform float uPointScale;
+uniform float uPaused;
+varying vec3 vColor;
+varying float vShade;
+void main(){
+ vec3 p=aPosition;
+ float t=uTime;
+ if(aPart>4.5&&aPart<5.5){
+   float f=smoothstep(0.35,4.25,p.x);
+   p.z+=sin(t*1.65+p.x*1.45)*0.13*f;
+   p.y+=sin(t*1.12+p.x*1.08)*0.07*f;
+ }
+ if(aPart>1.5&&aPart<3.5){
+   float blink=pow(max(0.0,sin(t*0.54+0.45)),56.0);
+   float sy=1.0-0.84*blink;
+   p.y=0.19+(p.y-0.19)*sy;
+ }
+ float rz=sin(t*0.62)*0.025;
+ mat2 r=mat2(cos(rz),-sin(rz),sin(rz),cos(rz));
+ p.xy=r*p.xy;
+ p.y+=sin(t*1.14)*0.10;
+ vec4 viewPos=uView*vec4(p,1.0);
+ gl_Position=uProjection*viewPos;
+ gl_PointSize=clamp(aSize*uPointScale/max(0.4,-viewPos.z),2.0,38.0);
+ vColor=aColor;
+ vShade=clamp(1.1-(-viewPos.z)*0.018,0.72,1.0);
+}`;
+const fs=`
+precision highp float;
+varying vec3 vColor;
+varying float vShade;
+void main(){
+ vec2 q=gl_PointCoord*2.0-1.0;
+ float r2=dot(q,q);
+ if(r2>1.0) discard;
+ float z=sqrt(max(0.0,1.0-r2));
+ vec3 n=normalize(vec3(q.x,-q.y,z));
+ vec3 light=normalize(vec3(-0.42,0.72,0.72));
+ float diff=max(dot(n,light),0.0);
+ float spec=pow(max(dot(reflect(-light,n),vec3(0.0,0.0,1.0)),0.0),34.0);
+ float rim=pow(1.0-z,2.4);
+ vec3 col=vColor*(0.52+0.58*diff)*vShade;
+ col+=vec3(1.0,0.92,1.0)*spec*0.72;
+ col+=vColor*rim*0.18;
+ float edge=smoothstep(1.0,0.90,r2);
+ gl_FragColor=vec4(col,edge);
+}`;
+function shader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s}
+const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vs));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));gl.useProgram(program);
+const loc={pos:gl.getAttribLocation(program,'aPosition'),color:gl.getAttribLocation(program,'aColor'),size:gl.getAttribLocation(program,'aSize'),part:gl.getAttribLocation(program,'aPart'),proj:gl.getUniformLocation(program,'uProjection'),view:gl.getUniformLocation(program,'uView'),time:gl.getUniformLocation(program,'uTime'),scale:gl.getUniformLocation(program,'uPointScale'),paused:gl.getUniformLocation(program,'uPaused')};
+const palette={white:[.95,.90,.94],pink:[.94,.30,.66],lightPink:[.94,.61,.76],hotPink:[.96,.08,.61],blue:[.055,.13,.61],blue2:[.08,.24,.83],brown:[.10,.025,.035],yellow:[1.0,.53,.015]};
+let mode='game',buffers=null,total=0;
+function push(out,x,y,z,c,size,part){out.p.push(x,y,z);out.c.push(c[0],c[1],c[2]);out.s.push(size);out.t.push(part)}
+function shell(out,cx,cy,cz,rx,ry,rz,lat,lon,size,part,colorFn,phiMax=Math.PI,phiMin=0){
+ for(let i=0;i<=lat;i++){
+   const phi=phiMin+(phiMax-phiMin)*(i/lat), sp=Math.sin(phi),cp=Math.cos(phi);
+   const ring=Math.max(4,Math.round(lon*Math.max(.16,sp)));
+   for(let j=0;j<ring;j++){
+     const th=j/ring*Math.PI*2, nx=sp*Math.cos(th),ny=cp,nz=sp*Math.sin(th);
+     push(out,cx+rx*nx,cy+ry*ny,cz+rz*nz,colorFn(nx,ny,nz,i,j),size,part);
+   }
+ }
+}
+function build(detail){
+ const hero=detail==='hero',out={p:[],c:[],s:[],t:[]};
+ const b=hero?.072:.094;
+ shell(out,-.52,0,0,1.18,.94,.84,hero?42:29,hero?72:46,b,1,(nx,ny,nz,i)=>{
+   if(ny>.52)return palette.lightPink;
+   const band=Math.floor((ny+1.02)*7.0);
+   if(band===1)return palette.hotPink;
+   if(band===2||band===4||band===6)return palette.pink;
+   return palette.white;
+ });
+ const eyeFn=(nx,ny,nz)=> (nx<-.72 && Math.sqrt(ny*ny+nz*nz)<.58)?palette.brown:palette.white;
+ shell(out,-1.50,.20,-.36,.43,.36,.35,hero?24:17,hero?39:27,b*.92,2,eyeFn);
+ shell(out,-1.50,.20,.36,.43,.36,.35,hero?24:17,hero?39:27,b*.92,2,eyeFn);
+ const mouthN=hero?26:18;
+ for(let row=0;row<2;row++)for(let i=0;i<mouthN;i++){
+   const u=i/(mouthN-1)*2-1,z=u*.46,y=-.49+.15*Math.pow(Math.abs(u),1.65)-row*.055;
+   push(out,-1.61-row*.018,y,z,palette.brown,b*.92,3);
+ }
+ shell(out,-.58,.73,0,.75,.74,.67,hero?31:22,hero?62:40,b,4,(nx,ny)=>ny<.08?palette.blue:palette.white,Math.PI*.59,0);
+ for(let k=0;k<(hero?4:3);k++){
+   const y=.62-k*b*.78,rad=.68+(.62-y)*.08,n=hero?52:34;
+   for(let j=0;j<n;j++){const a=j/n*Math.PI*2;push(out,-.58+rad*.86*Math.cos(a),y,rad*Math.sin(a),k===0?palette.blue2:palette.blue,b,4)}
+ }
+ const oy=.80,oz=.64,ox=-.94;
+ for(let tier=0;tier<3;tier++){
+   const rows=3-tier;
+   for(let r=0;r<rows;r++)for(let j=0;j<rows-r;j++)push(out,ox-tier*.015,oy+tier*.13+r*b*.62,oz+(j-(rows-r-1)/2)*b*.72,palette.yellow,b*.9,4);
+ }
+ const seg=hero?72:46;
+ for(let i=0;i<=seg;i++){
+   const u=i/seg,x=.34+u*4.05,r=.54*Math.pow(1-u,.76)+.018,y=.20+.05*u;
+   const n=Math.max(5,Math.round((hero?58:38)*r/.54));
+   const band=Math.floor(u*11.4);
+   const color=(band%2===0)?palette.blue:palette.white;
+   for(let j=0;j<n;j++){const a=j/n*Math.PI*2;push(out,x,y+Math.cos(a)*r,Math.sin(a)*r,color,b*.88,5)}
+ }
+ for(let i=0;i<8;i++)push(out,4.42+i*.07,.25,0,i%2?palette.blue2:palette.blue,b*.65,5);
+ return out;
+}
+function upload(detail){
+ const o=build(detail); total=o.s.length; document.getElementById('count').textContent=total.toLocaleString()+' BEADS';
+ if(buffers)Object.values(buffers).forEach(b=>gl.deleteBuffer(b));buffers={};
+ function attrib(name,data,size,loc){const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,0,0);buffers[name]=b}
+ attrib('p',o.p,3,loc.pos);attrib('c',o.c,3,loc.color);attrib('s',o.s,1,loc.size);attrib('t',o.t,1,loc.part);
+}
+function perspective(out,fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);out.set([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]);return out}
+function normalize(a){const l=Math.hypot(a[0],a[1],a[2])||1;return[a[0]/l,a[1]/l,a[2]/l]}
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
+function lookAt(out,e,c,up){const z=normalize([e[0]-c[0],e[1]-c[1],e[2]-c[2]]),x=normalize(cross(up,z)),y=cross(z,x);out.set([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-(x[0]*e[0]+x[1]*e[1]+x[2]*e[2]),-(y[0]*e[0]+y[1]*e[1]+y[2]*e[2]),-(z[0]*e[0]+z[1]*e[1]+z[2]*e[2]),1]);return out}
+let yaw=2.34,pitch=.17,radius=7.3,drag=false,lastX=0,lastY=0,paused=false,time=0,last=performance.now();const target=[.55,.20,0],proj=new Float32Array(16),view=new Float32Array(16);
+function resize(){const d=Math.min(devicePixelRatio||1,2),w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);canvas.width=Math.round(w*d);canvas.height=Math.round(h*d);canvas.style.width=w+'px';canvas.style.height=h+'px';gl.viewport(0,0,canvas.width,canvas.height);perspective(proj,Math.PI/4,w/h,.1,50);gl.uniformMatrix4fv(loc.proj,false,proj);gl.uniform1f(loc.scale,canvas.height/(2*Math.tan(Math.PI/8)))}
+addEventListener('resize',resize);resize();upload(mode);
+gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(0,0,0,0);
+canvas.addEventListener('pointerdown',e=>{drag=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)});canvas.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;yaw-=dx*.006;pitch=Math.max(-.55,Math.min(.72,pitch+dy*.005))});canvas.addEventListener('pointerup',()=>drag=false);canvas.addEventListener('pointercancel',()=>drag=false);canvas.addEventListener('wheel',e=>{e.preventDefault();radius=Math.max(4.5,Math.min(11,radius+e.deltaY*.006))},{passive:false});
+let pinch=0;canvas.addEventListener('touchstart',e=>{if(e.touches.length===2)pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)},{passive:false});canvas.addEventListener('touchmove',e=>{if(e.touches.length===2){e.preventDefault();const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);radius=Math.max(4.5,Math.min(11,radius-(d-pinch)*.012));pinch=d}},{passive:false});
+function setMode(m){mode=m;upload(m);document.getElementById('game').classList.toggle('active',m==='game');document.getElementById('hero').classList.toggle('active',m==='hero')}
+document.getElementById('game').onclick=()=>setMode('game');document.getElementById('hero').onclick=()=>setMode('hero');document.getElementById('pause').onclick=e=>{paused=!paused;e.target.textContent=paused?'PLAY':'PAUSE'};document.getElementById('blink').onclick=()=>{time=(Math.PI/2-.45)/.54};document.getElementById('ref').onclick=()=>document.getElementById('reference').classList.toggle('show');
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;if(!paused)time+=dt;if(!drag&&!paused)yaw+=dt*.018;const cp=Math.cos(pitch),eye=[target[0]+radius*cp*Math.cos(yaw),target[1]+radius*Math.sin(pitch),target[2]+radius*cp*Math.sin(yaw)];lookAt(view,eye,target,[0,1,0]);gl.uniformMatrix4fv(loc.view,false,view);gl.uniform1f(loc.time,time);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.drawArrays(gl.POINTS,0,total);requestAnimationFrame(frame)}requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
