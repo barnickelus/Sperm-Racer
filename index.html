@@ -991,13 +991,25 @@ function musicTick(){
   // character's music run louder/harder than the shared baseline without touching the global
   // music-vs-SFX balance tuned earlier — both default to 1 (no change) for every other style.
   const volMul=st.volMul||1, drumVol=st.drumVol||1;
+  const song0=st.seq||st.mel;
+  /* REGISTER PROGRAM across the AABA form. Stacking more simultaneous octaves (the lead
+     doubling below) widens the spectrum but not the WRITING — every strain still sat in
+     the same register at the same loudness for the whole loop, which is what makes a
+     station wear out. This walks the form instead: the answering A lifts an octave, the
+     chorus drops back to the middle and gets a low counter-line under it plus the loudest
+     dynamic, and the last A goes back up to close. Styles with no melB have no form to
+     walk, so they resolve to 0/1 and are left exactly as they were. */
+  const strain=(st.mel&&st.mel.length)||1;
+  const sec=st.seq ? Math.floor((raw%song0.length)/strain)%4 : 0;
+  const OCT=[0,12,0,12][sec];
+  const DYN=[0.80,1.00,1.20,1.02][sec];
   if(st.drums){
     if(st.drums.kick.includes(step)) drumKick(drumVol);
     if(st.drums.snare.includes(step)) drumSnare(drumVol);
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
     if(step%bg===0){ const bn=st.bass[(step/bg|0)%st.bass.length];
-      playNote(noteFreq(bn-12),0.5,0.22*volMul,st.bassWave,st.bassInst);
-      playNote(noteFreq(bn-24),0.6,0.10*volMul,'sine','808');   // sub-octave, opens the bottom
+      playNote(noteFreq(bn-12),0.5,0.22*volMul*DYN,st.bassWave,st.bassInst);
+      playNote(noteFreq(bn-24),0.6,0.10*volMul*DYN,'sine','808');  // sub-octave, opens the bottom
     }
   } else {
     if(step%bg===0){ drumKick(drumVol);
@@ -1020,16 +1032,19 @@ function musicTick(){
   // melody indexes off the RAW counter so tunes longer than one 16-step bar play all
   // the way through. st.seq is the assembled AABA song form (verse/verse/chorus/verse)
   // built at startMusic — a single looping strain was why everything felt repetitive
-  const song=st.seq||st.mel;
-  const n=song[raw%song.length];
+  const n=song0[raw%song0.length];
   // vol was 0.1 — quieter than the bass (0.22) and even the kick (0.5 own-gain), so the
   // actual TUNE sat under its own rhythm section before gameplay SFX ever entered the mix.
   // Bumped so the melody reads as the lead voice instead of getting buried.
   if(n!==null){
-    playNote(noteFreq(n+12),0.22,0.15*volMul,st.melWave,st.inst);                 // null = rest
+    playNote(noteFreq(n+12+OCT),0.22,0.15*volMul*DYN,st.melWave,st.inst);         // null = rest
     // Octave shimmer above the lead. The styles all lived inside about two octaves, which
     // is most of why they sounded thin — this opens the top without changing any melody.
-    playNote(noteFreq(n+24),0.16,0.05*volMul,st.melWave,st.inst);
+    playNote(noteFreq(n+24+OCT),0.16,0.05*volMul*DYN,st.melWave,st.inst);
+    // chorus only: a counter-line an octave under the lead on the off-beats, which fills
+    // the register the lead just vacated instead of leaving a hole in the middle
+    if(sec===2 && step%2===1)
+      playNote(noteFreq(n),0.18,0.055*volMul,st.bassWave,st.bassInst);
   }
   if(st.hihat>0 && step%st.hihat===0) noiseBurst(0.025,0.028,7500);
   // drum fill: quick snare roll closing every 4th bar — marks the phrase turnarounds
@@ -1816,6 +1831,13 @@ const TRACKS=[
 const STEPS=700;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
 let TRACK_PULSE=[];
+// The shader skydome, if the current course has one. It has to RIDE THE CAMERA: the
+// camera's far plane is 1400, so a dome parked at the world origin falls partly
+// outside it the moment you drive away from the centre, and the clipped cap shows the
+// clear colour through as a hard-edged disc hanging in the sky. Like every other piece
+// of shared per-track state here it must be cleared on EVERY buildTrack, not just the
+// branch that sets it, or it strands a stale mesh reference on the next course.
+let skyDome=null;
 // is course-fraction u inside one of the current track's tunnels?
 function tunnelAt(u){ const tn=TRACKS[selTrack].tunnels; if(!tn)return false;
   for(const [a,b] of tn) if(u>=a&&u<=b) return true; return false; }
@@ -2139,7 +2161,12 @@ function feltBatch(geo, list){
 function feltSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
     uniforms:{ uTime:{value:0} },
-    vertexShader:`varying vec3 vP; void main(){ vP=position;
+    // vP has to be the WORLD position, not the object position. The dome sits at the
+    // world origin while the camera roams several hundred units around the circuit, so
+    // shading off the object position anchors the whole gradient — horizon included — to
+    // the origin instead of to the viewer, and the below-horizon half of the sphere then
+    // hangs in the sky as a giant dark disc that slides around as you drive.
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
       varying vec3 vP; uniform float uTime;
@@ -2152,7 +2179,7 @@ function feltSky(){
                    mix(dot(h3(i+vec3(0,1,1)),f-vec3(0,1,1)),dot(h3(i+vec3(1,1,1)),f-vec3(1,1,1)),u.x),u.y),u.z)*0.5+0.5; }
       float fbm3(vec3 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*gn(p); p*=2.07; a*=0.5; } return v; }
       void main(){
-        vec3 d=normalize(vP); float el=d.y;
+        vec3 d=normalize(vP - cameraPosition); float el=d.y;   // view direction, so the horizon stays level
         vec3 c=mix(vec3(0.230,0.090,0.220), vec3(0.925,0.180,0.240), smoothstep(-0.08,0.30,el));
         c=mix(c, vec3(0.855,0.090,0.470), smoothstep(0.22,0.92,el));
         vec3 q=vec3(d.x*2.6, d.y*11.0, d.z*2.6)+vec3(uTime*0.008,0.0,uTime*0.005);
@@ -2163,7 +2190,7 @@ function feltSky(){
         c=floor(c*13.0+0.5)/13.0;                       // the poster banding
         gl_FragColor=vec4(c,1.0);
       }`});
-  const m=new T.Mesh(new T.SphereGeometry(1500,36,24), mat);
+  const m=new T.Mesh(new T.SphereGeometry(1150,36,24), mat);   // < camera.far (1400)
   m.frustumCulled=false; return m;
 }
 
@@ -2398,12 +2425,17 @@ function paintifyScene(root, pulse){
 function paintSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
     uniforms:{},
-    vertexShader:`varying vec3 vP; void main(){ vP=position;
+    // vP has to be the WORLD position, not the object position. The dome sits at the
+    // world origin while the camera roams several hundred units around the circuit, so
+    // shading off the object position anchors the whole gradient — horizon included — to
+    // the origin instead of to the viewer, and the below-horizon half of the sphere then
+    // hangs in the sky as a giant dark disc that slides around as you drive.
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
       varying vec3 vP;
       void main(){
-        vec3 d=normalize(vP); float el=d.y;
+        vec3 d=normalize(vP - cameraPosition); float el=d.y;   // view direction, so the horizon stays level
         vec3 c=mix(vec3(0.79,0.77,0.70), vec3(0.86,0.83,0.72), smoothstep(-0.10,0.35,el));
         c=mix(c, vec3(0.72,0.70,0.62), smoothstep(0.45,1.0,el));
         // the sun: a soft disc with a wide, dirty halo, never a clean circle
@@ -2412,7 +2444,7 @@ function paintSky(){
         c=mix(c, vec3(1.0,0.99,0.96),  smoothstep(0.055,0.0,sd));
         gl_FragColor=vec4(c,1.0);
       }`});
-  const m=new T.Mesh(new T.SphereGeometry(1500,32,20), mat);
+  const m=new T.Mesh(new T.SphereGeometry(1150,32,20), mat);   // < camera.far (1400)
   m.frustumCulled=false; return m;
 }
 
@@ -2425,7 +2457,7 @@ function buildTrack(idx){
       if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());} });
   }
   trackGroup=new T.Group(); scene.add(trackGroup);
-  TRACK_PULSE=[];
+  TRACK_PULSE=[]; skyDome=null;
 
   const trackSky=TRACKS[idx].sky||SKY;       // subtle per-track ambient tint
   scene.background.set(trackSky);
@@ -2503,7 +2535,7 @@ function buildTrack(idx){
 
   // ---- understructure: tube, viaduct, lattice, strata, basin, or painted hulls ----
   if(paint){
-    trackGroup.add(paintSky());
+    skyDome=paintSky(); trackGroup.add(skyDome);
     const hull=new T.Mesh(new T.TubeGeometry(curve,STEPS,12,10,loop),
       new T.MeshLambertMaterial({map:paintCanvas(),color:0x6a6a52,flatShading:true}));
     hull.position.y-=10; trackGroup.add(hull);
@@ -2551,7 +2583,7 @@ function buildTrack(idx){
   } else if(felt){
     // The pressed-sheet state: the tube becomes a bank of marbled strata, and the same
     // texture runs everywhere so road, walls and ridges read as one poured material.
-    trackGroup.add(feltSky());
+    skyDome=feltSky(); trackGroup.add(skyDome);
     const tubeMat=feltMat(0x7d6c86, feltTex);   // tinted down so it sits under the road
     const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,11,12,loop), tubeMat);
     tube.position.y-=9; trackGroup.add(tube);
@@ -3127,28 +3159,61 @@ function buildTrack(idx){
     wm.count=n; wm.instanceMatrix.needsUpdate=true;
     trackGroup.add(wm);
   } else if(felt){
-    const clumps=[], yarn=[];
-    for(let k=0;k<150;k++){
+    /* A WEAVERS' VALLEY, not a prop scatter. The road is a woven serape, so the verge is
+       dressed with the things that would make one: upright looms with a striped blanket
+       on the frame, spools stacked at their feet, and fleece piled where it was shorn.
+       What this replaces was 90 part-torus arcs floating at head height with random
+       three-axis rotations — they read as debris because nothing placed them and nothing
+       supports them. Two rules fix that and are worth stating, because they are what the
+       cleanup actually is: every prop SITS ON SOMETHING, and every prop is ALIGNED to the
+       road rather than randomly tumbled. */
+    const clumps=[], posts=[], beams=[], cloth=[], spools=[];
+    // fleece piles: bedded down on the verge just under the roadbed instead of drifting
+    // up to 30 units above it, and squashed rather than spun on all three axes
+    for(let k=0;k<130;k++){
       const s2=SAMP[(k*37)%STEPS];
-      const side=(k%2?-1:1), out=HW*(3.8+((k*13)%40)/6);
-      const sz=5+((k*17)%17);
-      clumps.push({x:s2.p.x+s2.n.x*side*out+(((k*23)%40)-20),
-                   y:s2.p.y-4+((k*29)%34), z:s2.p.z+s2.n.z*side*out+(((k*31)%40)-20),
-                   s:sz, sy:sz*(0.6+((k*7)%40)/70), rx:((k*11)%628)/100,
-                   ry:((k*19)%628)/100, rz:((k*3)%628)/100, c:FELT_WOOL[k%FELT_WOOL.length]});
+      const side=(k%2?-1:1), out=HW*(2.9+((k*13)%46)/7);
+      const sz=5+((k*17)%16);
+      clumps.push({x:s2.p.x+s2.n.x*side*out+(((k*23)%26)-13),
+                   y:s2.p.y-7-((k*29)%7)+sz*0.34,
+                   z:s2.p.z+s2.n.z*side*out+(((k*31)%26)-13),
+                   s:sz, sy:sz*(0.52+((k*7)%30)/70), sz:sz*(0.86+((k*5)%20)/70),
+                   ry:((k*19)%628)/100, c:FELT_WOOL[k%FELT_WOOL.length]});
     }
-    // the spun-thread state: half-buried loops of yarn, the only non-tuft prop allowed
-    for(let k=0;k<90;k++){
-      const s2=SAMP[(k*61)%STEPS];
-      const side=(k%2?-1:1), out=HW*(1.5+((k*11)%34)/12);
-      const sz=3+((k*23)%22)/3;
-      yarn.push({x:s2.p.x+s2.n.x*side*out, y:s2.p.y+0.5+((k*7)%9)*0.4,
-                 z:s2.p.z+s2.n.z*side*out, s:sz, sy:sz, sz:sz*0.8,
-                 rx:Math.PI*0.5+(((k*13)%20)-10)/22, ry:((k*29)%628)/100,
-                 rz:((k*17)%628)/100, c:FELT_YARN[k%FELT_YARN.length]});
+    // looms: a pair of uprights, a head beam, and a half-woven striped blanket on the warp
+    for(let k=0;k<26;k++){
+      const i2=(k*(STEPS/26)|0)%STEPS, s2=SAMP[i2];
+      const side=(k%2?-1:1), out=HW*(2.05+((k*7)%5)*0.34);
+      const yaw=Math.atan2(s2.t.x, s2.t.z);            // square-on to the road
+      const H=31+((k*11)%16), W=21+((k*5)%13);   // sized to READ from the road, not dot the horizon
+      const bx=s2.p.x+s2.n.x*side*out, bz=s2.p.z+s2.n.z*side*out, by=s2.p.y-8;
+      for(const px of [-1,1]){
+        posts.push({x:bx+s2.t.x*px*W*0.5, y:by+H*0.5, z:bz+s2.t.z*px*W*0.5,
+                    s:2.3, sy:H, sz:2.3, ry:yaw, c:FELT_PAL[(k*3)%FELT_PAL.length]});
+      }
+      beams.push({x:bx, y:by+H, z:bz, s:W+4, sy:2.6, sz:3.2, ry:yaw, c:0x4a3a2e});
+      // the cloth itself: stacked slats, so it stripes exactly like the road it dresses
+      const rows=5, drop=H*0.52;
+      for(let r=0;r<rows;r++){
+        cloth.push({x:bx, y:by+H-2.4-drop*(r+0.5)/rows, z:bz,
+                    s:W*0.86, sy:drop/rows*0.92, sz:1.1, ry:yaw,
+                    c:FELT_PAL[(k*2+r*3)%FELT_PAL.length]});
+      }
+      // spools stacked at the foot, which is what stops the frame looking planted in nothing
+      for(let q=0;q<3;q++){
+        const t2=((k*13+q*29)%20)/20-0.5;
+        spools.push({x:bx+s2.t.x*t2*W, y:by+1.6+q*0.3, z:bz+s2.t.z*t2*W,
+                     s:2.1+((k+q)%3)*0.5, sy:3.0+((k*q)%4)*0.6, sz:2.1+((k+q)%3)*0.5,
+                     rx:Math.PI*0.5, ry:yaw, c:FELT_YARN[(k+q)%FELT_YARN.length]});
+      }
     }
+    const BOX=new T.BoxGeometry(1,1,1);
     trackGroup.add(feltBatch(FELT_PUFF, clumps));
-    trackGroup.add(feltBatch(new T.TorusGeometry(1,0.115,6,14,Math.PI*1.55), yarn));
+    trackGroup.add(feltBatch(BOX.clone(), posts));
+    trackGroup.add(feltBatch(BOX.clone(), beams));
+    trackGroup.add(feltBatch(BOX.clone(), cloth));
+    trackGroup.add(feltBatch(new T.CylinderGeometry(1,1,1,10), spools));
+    BOX.dispose();
   } else if(bead){
     // Oversized bead orbs, exactly the two magenta spheres flanking the reference plinth.
     // Built as real bead rings rather than scaled-up cubes, so the rows curve on them too.
@@ -5993,13 +6058,40 @@ function flashFx(amt,color){
 function updateCamera(dt){
   const me=racers.find(r=>r.you); if(!me)return;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
-  // cinematic slow orbit around the player during the 3-2-1 countdown
+  // Grid intro: HOLD ON THE FACE, then pull back to the driving view.
+  // The old version orbited on a WORLD-axis circle of radius 34 — because it ignored the
+  // racer's heading it spent most of the countdown behind the head, and at that distance
+  // and a 60 FOV the face was a few pixels wide either way. Characters carry the whole art
+  // direction of this game, so the grid is the one moment that should be a portrait.
   if(state==='count'){
-    const a=performance.now()*0.0006;
-    camera.position.lerp(new T.Vector3(
-      me.x+Math.sin(a)*34, me.y+16, me.z+Math.cos(a)*34), Math.min(1,3*dt));
-    camera.lookAt(me.x, me.y+3, me.z);
-    camera.fov += (60-camera.fov)*Math.min(1,4*dt);
+    me._cdT=(me._cdT||0)+dt;
+    const HOLD=1.7;                                   // of a ~2.85s countdown
+    const k=Math.min(1, Math.max(0, (me._cdT-HOLD)/1.0));
+    const ease=k*k*(3-2*k);
+    // sweep a shallow arc ACROSS the face rather than around the body: dead-ahead is
+    // me.head + PI, and +-30deg from there keeps both eyes and the mouth framed throughout
+    // +-17deg, not +-30. At 17 units out a 30deg swing throws the lens 8.5 units sideways,
+    // which is wider than the 7.5 grid lane spacing AND far enough out to bury it in the
+    // kerb tufts when the racer starts near the road edge.
+    const faceA=me.head + Math.PI + Math.sin(me._cdT*0.9)*0.30;
+    // 12.5 put the lens inside the sombrero. The head alone is ~7 across and the models
+    // are 10 deep before the tail, so a portrait wants ~17 out and a little above the eyeline.
+    const dist=T.MathUtils.lerp(17, 30, ease);
+    // BELOW the eyeline, looking slightly up. Several characters wear wide brims (and
+    // Salty a cap); a lens level with the hat gets the face blocked by its own headwear.
+    const high=T.MathUtils.lerp(4.6, 13, ease);
+    const want=new T.Vector3(
+      me.x - Math.sin(faceA)*dist, me.y + high, me.z - Math.cos(faceA)*dist);
+    // ease toward the chase position as the pull-back completes, so 'GO!' hands over
+    // to the driving camera without a cut
+    if(ease>0) want.lerp(new T.Vector3(me.x,me.y,me.z)
+      .add(fwd.clone().multiplyScalar(-30)).add(new T.Vector3(0,13,0)), ease*0.85);
+    // snap the first frame outright: lerping in from wherever the menu camera sat drags
+    // the lens straight through the grid
+    if(me._cdT<=dt*1.5) camera.position.copy(want);
+    else camera.position.lerp(want, Math.min(1, 4*dt));
+    camera.lookAt(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, ease), me.z);   // level with the face
+    camera.fov += (T.MathUtils.lerp(46, 62, ease)-camera.fov)*Math.min(1,4*dt);
     camera.updateProjectionMatrix();
     return;
   }
@@ -6010,12 +6102,16 @@ function updateCamera(dt){
     if(me._orbT===undefined) me._orbT=0; me._orbT+=dt;
     // sweep an arc ACROSS the face — never behind the head: the camera pans from
     // front-left to front-right and back (±60deg around dead-ahead), face always framed
-    const heroA=me.head + Math.PI + Math.sin(me._orbT*0.85)*1.05;
-    const dist=23 - Math.min(5, me._orbT*1.2);                    // gentle dolly-in as it pans
+    // Slower, narrower and much closer than it was. The celebration gestures — grin,
+    // wink, the open-mouthed WOO, and on rigged characters the mood table — all play on
+    // the face, so the sweep is +-43deg instead of +-60 and settles at 13 units rather
+    // than 18: at the old framing the gestures were happening off in the middle distance.
+    const heroA=me.head + Math.PI + Math.sin(me._orbT*0.52)*0.62;
+    const dist=19 - Math.min(6, me._orbT*1.4);                    // gentle dolly-in as it pans
     camera.position.lerp(new T.Vector3(
-      me.x - Math.sin(heroA)*dist, me.y + 7 + Math.sin(me._orbT*1.3)*1.5, me.z - Math.cos(heroA)*dist), Math.min(1,5*dt));
-    camera.lookAt(me.x, me.y+4, me.z);
-    camera.fov += (52-camera.fov)*Math.min(1,3*dt);               // tighter, portrait-ish
+      me.x - Math.sin(heroA)*dist, me.y + 4.0 + Math.sin(me._orbT*1.1)*1.0, me.z - Math.cos(heroA)*dist), Math.min(1,5*dt));
+    camera.lookAt(me.x, me.y+4.4, me.z);   // slightly up, so a wide brim doesn't mask the face
+    camera.fov += (43-camera.fov)*Math.min(1,3*dt);               // tighter, portrait-ish
     camera.updateProjectionMatrix();
     return;
   }
@@ -6182,6 +6278,8 @@ function frame(now){
     syncHUD();
   }
   if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); drawMap(); }
+  // keep the skydome centred on the viewer so it can never cross the far plane
+  if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
   const beat=0.5+0.5*Math.sin(tsec*1.6);
   for(const p of TRACK_PULSE){ if(p.mat){
