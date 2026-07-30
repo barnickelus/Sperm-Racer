@@ -2194,9 +2194,7 @@ function beadEllipsoid(out, cx,cy,cz, rx,ry,rz, step, colFn, opt){
       const u=j/n*Math.PI*2;
       const x=cx+Math.cos(u)*rxx, z=cz+Math.sin(u)*rzz;
       if(o.zMin!=null && z<o.zMin) continue;
-      const cc=colFn(i/rings, j/n, x, y, z);
-      if(cc==null) continue;          // colFn can veto, which is how one shape splits batches
-      out.push({x, y, z, s:step*0.98, c:cc});
+      out.push({x, y, z, s:step*0.98, c:colFn(i/rings, j/n, x, y, z)});
     }
   }
 }
@@ -4049,20 +4047,10 @@ function makeBeadCell(id){
   const ST=0.40;                                        // bead pitch
 
   // --- head: bandana over the crown, skin below, trim row between ---
-  // Body shades by LATITUDE in three tones, straight from the rig: darker under the
-  // belly, base tone through the middle, lighter over the crown. A single flat skin tone
-  // is most of why the beaded heads read as one undifferentiated mass.
-  const shade=(hex,f)=>{ const c=new T.Color(hex), h={h:0,s:0,l:0}; c.getHSL(h);
-    c.setHSL(h.h, h.s, Math.max(0.04,Math.min(0.95,h.l*f))); return c.getHex(); };
-  const skinDark=shade(skin,0.74), skinLight=shade(skin,1.16);
-  // Cap beads go to a SEPARATE list so the hat can sit on its own pivot and rock against
-  // the body roll — the rig's hatPivot, which is what stops the hat reading as painted on.
-  // Two passes over the SAME shape, each vetoing the other's rows — far more reliable
-  // than generating one list and trying to re-derive which rows were cap afterwards.
-  const body=[], hat=[];
-  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la,lo)=>
-    SP.cap(la,lo,SP)!=null ? null : (la<0.34 ? skinDark : (la>0.62 ? skinLight : skin)));
-  beadEllipsoid(hat, 0,0,0, 3.4,2.8,5.1, ST, (la,lo)=>SP.cap(la,lo,SP));
+  const body=[];
+  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la,lo)=>{
+    const c=SP.cap(la,lo,SP); return c!=null ? c : skin;
+  });
   if(SP.moustache){
     // laid ON the face surface rather than floated in front of it
     for(let x=-2.3;x<=2.3;x+=ST) for(let y=2.35;y<=2.95;y+=ST){
@@ -4088,12 +4076,6 @@ function makeBeadCell(id){
   const bodyMesh=beadBatch(body);
   bodyMesh.material.emissive.setHex(0x140a10);
   g.add(bodyMesh);
-  if(hat.length){
-    const hp=new T.Group(); hp.position.set(0,3.2,0);
-    const hm=beadBatch(hat); hm.material.emissive.setHex(0x140a10);
-    hp.add(hm); g.add(hp);
-    g.userData.hatPivot=hp;      // driven in syncObjects
-  }
   g.userData.head=bodyMesh;
   g.userData.baseEmissive=bodyMesh.material.emissive.clone();
 
@@ -5633,14 +5615,6 @@ function syncObjects(dt,now){
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
       r.obj.rotation.y += Math.sin(now*4.5)*0.35;
       r.obj.rotation.z += Math.sin(now*4.5+1)*0.15;
-    }
-    // Hat rocks on its own slow beat and counters the body's lean, from the rig. A hat
-    // that moves exactly with the head reads as painted on; lagging it is what sells it
-    // as a separate object sitting on top.
-    const hp=r.obj.userData.hatPivot;
-    if(hp){
-      hp.rotation.z = Math.sin(now*1.25)*0.05 - (r._bank||0)*0.22 - r.slip*0.10;
-      hp.rotation.x = Math.sin(now*0.9)*0.03;
     }
     const gl=r.obj.userData.glow;
     if(gl){ const fl=1+Math.sin(now*9+r.phase)*0.06;
