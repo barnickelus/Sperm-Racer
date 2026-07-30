@@ -296,6 +296,21 @@
   @keyframes itemPop{0%{transform:translateX(-50%) scale(.3) rotate(-20deg);}60%{transform:translateX(-50%) scale(1.15);}100%{transform:translateX(-50%) scale(1);}}
 
   /* ===== One Piece cel-shaded character portraits (select screen) ===== */
+  #mpcode{font:900 46px ui-monospace,monospace;letter-spacing:.22em;color:var(--signal);
+    text-shadow:0 0 22px rgba(46,210,255,.5);margin:2px 0 4px}
+  #mpstatus{color:var(--bone);opacity:.8;font:600 12px ui-monospace,monospace;min-height:16px;margin-bottom:10px}
+  #mpname{font:700 14px ui-monospace,monospace;text-align:center;color:var(--bone);
+    background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:10px;
+    padding:9px 12px;width:200px;margin-bottom:10px;outline:none}
+  #mpname:focus{border-color:var(--signal)}
+  #mplist{width:min(340px,86vw);margin:0 auto 4px}
+  .mprow{display:flex;align-items:center;gap:9px;padding:7px 11px;margin-bottom:5px;
+    border:1px solid var(--dim);border-radius:10px;background:rgba(6,28,34,.55);
+    font:700 13px ui-monospace,monospace;color:var(--bone)}
+  .mprow.me{border-color:var(--signal)}
+  .mpdot{width:11px;height:11px;border-radius:50%;flex:none}
+  .mpty{margin-left:auto;opacity:.65;font-weight:600;font-size:11px}
+  .mpme{color:var(--signal);font-size:11px;margin-left:6px}
   .opcard{position:relative;overflow:hidden;}
   .opcard::before{content:"";position:absolute;inset:0;z-index:0;
     background:radial-gradient(78% 62% at 50% 38%, #ffd79a 0%, #d8884a 44%,
@@ -404,6 +419,7 @@
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Single race</button>
+  <button class="go alt" id="mpbtn" style="margin-top:10px;border-color:#9be74e;color:#9be74e">Multiplayer — race a friend</button>
   <button class="go alt" id="circuitbtn" style="margin-top:10px;border-color:#ff9ec4;color:#ff9ec4">🥚 Circuit Cup — fertilize every egg</button>
 </div>
 
@@ -428,6 +444,25 @@
       opacity:0;transition:opacity .2s;">▼ more ▼</div>
   </div>
   <button class="go" id="racebtn" disabled style="opacity:0.5;margin-top:14px;flex:0 0 auto;">Lock in & Race</button>
+</div>
+
+<!-- MULTIPLAYER LOBBY -->
+<div class="screen hidden" id="mp">
+  <div class="tag">race war · online</div>
+  <h1>MULTIPLAYER<small>— room code —</small></h1>
+  <div id="mpcode">----</div>
+  <div id="mpstatus">not connected</div>
+  <input id="mpname" maxlength="12" placeholder="your name" autocomplete="off">
+  <div id="mplist"></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px">
+    <button class="go alt" id="mphost">Host a race</button>
+    <button class="go alt" id="mpjoin">Join with code</button>
+  </div>
+  <button class="go alt" id="mppick" style="margin-top:10px">Choose your racer</button>
+  <button class="go alt" id="mpfill" style="margin-top:10px;display:none">Fill empty slots with AI: ON</button>
+  <button class="go alt" id="mptrans" style="margin-top:10px">Connection: —</button>
+  <button class="go" id="mpgo" style="margin-top:10px;display:none">Start race</button>
+  <button class="go alt" id="mpback" style="margin-top:10px">Back</button>
 </div>
 
 <div class="screen hidden" id="cd"><div id="count">3</div></div>
@@ -5373,6 +5408,8 @@ function useItem(r){
 function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
 
 function updateRacer(r,dt){
+  // A remote human's kart is authored on their machine; here it is pure playback.
+  if(r.remote){ netApplySnap(r,dt); return; }
   if(r.finished){                      // everyone coasts to a stop after finishing —
     r.spd*=Math.pow(0.1,dt);           // the player used to keep driving, which meant the
     r.x+=Math.sin(r.head)*r.spd*dt;    // victory camera was chasing a moving target and
@@ -6261,13 +6298,18 @@ function frame(now){
   { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
   if(state==='race'){
     raceTime=(now-tStart)/1000;
+    netTick(dt);
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
     // once YOU'RE done, don't leave the winner floating in dead air while AI stragglers
     // dribble home — give it a few seconds of orbit-cam glory, then call the race,
     // projecting unfinished AI times from their remaining distance (order preserved)
     const meF=racers.find(r=>r.you);
+    // In multiplayer the wrap-up timer would cut the race short for everyone the moment the
+    // local player crossed the line, so remote humans get to actually finish.
+    const waitForHumans = NET.on && racers.some(r=>r.remote && !r.finished);
     if(racers.every(r=>r.finished)) endRace();
+    else if(waitForHumans){ /* hold: a human is still driving */ }
     else if(meF && meF.finished){
       meF._wrapT=(meF._wrapT===undefined?4.5:meF._wrapT)-dt;   // long enough for the hero shot to land
       if(meF._wrapT<=0){
@@ -6307,6 +6349,397 @@ function frame(now){
   renderer.render(scene,camera);
   requestAnimationFrame(frame);
 }
+
+/* ============== MULTIPLAYER ==============================================================
+ * Peer-to-peer racing, built against a TRANSPORT INTERFACE rather than against a specific
+ * network stack, because the plan is to start on free P2P and move to a hosted relay later
+ * without touching any of the game code below this block.
+ *
+ * A transport is any object with this shape:
+ *     { id, label, mesh, open(room,isHost,selfId,handlers) -> Promise<bool>, send(msg), close() }
+ *   mesh:true   every peer hears every message (BroadcastChannel) — nobody relays
+ *   mesh:false  star topology: clients talk only to the host, and the host re-broadcasts.
+ *               This is the WebRTC and future-relay shape, and it is also the topology a
+ *               server-authoritative build wants, so nothing has to be rearranged later.
+ *
+ * Switch with ?net=local|peer|relay, or the button in the lobby. To move to a relay, fill in
+ * NET_RELAY_URL and pick 'relay' — no other change anywhere.
+ *
+ * Ownership model, deliberately simple for a friends-and-room-codes game: every peer
+ * simulates ITS OWN kart and broadcasts the result; everyone else renders that kart from
+ * snapshots. No authority and no rollback, so it is trivially cheatable — fine here, and
+ * the star topology means an authoritative host can be dropped in later without a rewrite.
+ * ======================================================================================= */
+const NET_RELAY_URL = '';                 // e.g. 'wss://your-worker.example.workers.dev/room/'
+const NET_PEER_LIB  = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+
+const NET = {
+  on:false,            // true once a networked race is actually running
+  lobby:false,         // true while sitting in the lobby
+  host:false,
+  room:'', self:'', name:'',
+  fillAI:true,         // host's choice: pad the grid with AI or run humans-only
+  players:new Map(),   // id -> {id,name,typeId,last,snap,gone}
+  lineup:null,         // frozen at race start
+  t:null,              // active transport
+  _acc:0, SEND_HZ:15, _hb:null, _sweep:0,
+  status(m){ const el=document.getElementById('mpstatus'); if(el) el.textContent=m; },
+};
+function netId(){ return Math.random().toString(36).slice(2,8); }
+function netRoomCode(){
+  const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';    // no I/O/0/1 — these get read aloud
+  let s=''; for(let i=0;i<4;i++) s+=A[Math.random()*A.length|0]; return s;
+}
+
+/* ---- transport: same browser, multiple tabs -------------------------------------------
+ * Not a toy. It is the only transport that can be driven end-to-end in an automated test,
+ * it needs no third party, and it is genuinely useful for checking a build on one machine. */
+function localTransport(){
+  let ch=null;
+  return { id:'local', label:'Same browser (tabs)', mesh:true,
+    async open(room, isHost, selfId, h){
+      ch=new BroadcastChannel('sr-'+room);
+      ch.onmessage=e=>{ const m=e.data; if(m && m.from!==selfId) h.data(m); };
+      return true;
+    },
+    send(m){ if(ch) ch.postMessage(m); },
+    close(){ if(ch){ ch.close(); ch=null; } } };
+}
+
+/* ---- transport: WebRTC peer-to-peer via a public broker -------------------------------
+ * The broker is used ONLY to introduce peers; once the data channel is up the traffic is
+ * direct. The library is fetched lazily and only when this transport is chosen, so the game
+ * still loads and plays with no network at all. */
+function peerTransport(){
+  let peer=null, conns=[], isHost=false, H=null;
+  const wire=(c)=>{
+    conns.push(c);
+    c.on('data', d=>{
+      H.data(d);
+      // star topology: the host is the only route between clients, so it repeats
+      if(isHost) for(const o of conns) if(o!==c && o.open) o.send(d);
+    });
+    c.on('close', ()=>{ conns=conns.filter(x=>x!==c); H.drop(c.peer); });
+    c.on('error', ()=>{ conns=conns.filter(x=>x!==c); });
+  };
+  return { id:'peer', label:'Online (peer-to-peer)', mesh:false,
+    async open(room, host, selfId, h){
+      H=h; isHost=host;
+      if(!window.Peer){
+        const ok=await new Promise(res=>{
+          const s=document.createElement('script');
+          s.src=NET_PEER_LIB; s.onload=()=>res(true); s.onerror=()=>res(false);
+          document.head.appendChild(s);
+        });
+        if(!ok || !window.Peer){ NET.status('Could not load the peer library — check your connection.'); return false; }
+      }
+      const ROOM='sperm-racer-'+room;
+      return await new Promise(res=>{
+        let settled=false;
+        const done=v=>{ if(!settled){ settled=true; res(v); } };
+        peer = host ? new Peer(ROOM) : new Peer();
+        peer.on('open', ()=>{
+          if(host){ peer.on('connection', c=>c.on('open', ()=>{ wire(c); h.join(c.peer); })); done(true); }
+          else {
+            const c=peer.connect(ROOM, {reliable:false});
+            c.on('open', ()=>{ wire(c); done(true); });
+            c.on('error', ()=>done(false));
+            setTimeout(()=>{ if(!settled){ NET.status('No room with that code (or the host is unreachable).'); done(false); } }, 12000);
+          }
+        });
+        peer.on('error', e=>{
+          NET.status(String(e && e.type==='unavailable-id'
+            ? 'That room code is already in use — try hosting again.'
+            : 'Connection problem: '+(e&&e.type||e)));
+          done(false);
+        });
+        setTimeout(()=>{ if(!settled){ NET.status('Timed out reaching the broker.'); done(false); } }, 15000);
+      });
+    },
+    send(m){ for(const c of conns) if(c.open) c.send(m); },
+    close(){ conns.forEach(c=>{try{c.close();}catch(e){}}); conns=[];
+             if(peer){ try{peer.destroy();}catch(e){} peer=null; } } };
+}
+
+/* ---- transport: hosted WebSocket relay (the upgrade path) ------------------------------
+ * Deliberately written now, while the shape is fresh, so switching later is a config change
+ * rather than an integration. The server contract is as thin as it can be: whatever JSON a
+ * client sends to /room/<CODE> is echoed to every OTHER client in that room. */
+function relayTransport(){
+  let ws=null;
+  return { id:'relay', label:'Hosted relay', mesh:true,
+    async open(room, isHost, selfId, h){
+      if(!NET_RELAY_URL){ NET.status('No relay URL is configured in this build.'); return false; }
+      return await new Promise(res=>{
+        try { ws=new WebSocket(NET_RELAY_URL.replace(/\/$/,'')+'/'+room); }
+        catch(e){ NET.status('Bad relay URL.'); return res(false); }
+        const to=setTimeout(()=>{ NET.status('Relay did not answer.'); res(false); }, 12000);
+        ws.onopen=()=>{ clearTimeout(to); res(true); };
+        ws.onerror=()=>{ clearTimeout(to); NET.status('Could not reach the relay.'); res(false); };
+        ws.onmessage=e=>{ try{ const m=JSON.parse(e.data); if(m.from!==selfId) h.data(m); }catch(err){} };
+      });
+    },
+    send(m){ if(ws && ws.readyState===1) ws.send(JSON.stringify(m)); },
+    close(){ if(ws){ try{ws.close();}catch(e){} ws=null; } } };
+}
+
+const NET_TRANSPORTS={local:localTransport(), peer:peerTransport(), relay:relayTransport()};
+let netPick=(new URLSearchParams(location.search).get('net')||'peer');
+if(!NET_TRANSPORTS[netPick]) netPick='peer';
+
+function netSend(msg){ if(NET.t){ msg.from=NET.self; NET.t.send(msg); } }
+
+function netHandlers(){
+  return {
+    data:(m)=>netRecv(m),
+    join:(pid)=>{ if(NET.host) netBroadcastRoster(); },
+    drop:(pid)=>{ netDropPeer(pid); },
+  };
+}
+
+async function netStart(host, room){
+  netLeave(true);
+  NET.t=NET_TRANSPORTS[netPick];
+  NET.host=host; NET.room=room; NET.self=netId();
+  NET.name=(document.getElementById('mpname')||{}).value || (host?'Host':'Racer');
+  NET.status(host?'Opening room '+room+'…':'Joining '+room+'…');
+  const ok=await NET.t.open(room, host, NET.self, netHandlers());
+  if(!ok){ NET.t=null; return false; }
+  NET.lobby=true;
+  NET.players.clear();
+  NET.players.set(NET.self, {id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido', last:performance.now(), self:true});
+  netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'});
+  if(NET.host) netBroadcastRoster();
+  NET.status(host ? 'Room '+room+' is open. Share the code.' : 'Connected to '+room+'.');
+  // Heartbeat, and the liveness sweep with it. Both have to run OUTSIDE the race loop:
+  // a client sends nothing at all between joining the lobby and the lights going out, so
+  // when this check lived in the per-frame race tick the countdown and track build alone
+  // blew past the timeout and the host retired a player who had not even driven yet.
+  clearInterval(NET._hb);
+  NET._sweep=performance.now();
+  NET._hb=setInterval(()=>{
+    if(!NET.t) return;
+    netSend({t:'hb'});
+    const now=performance.now(), gap=now-NET._sweep;
+    NET._sweep=now;
+    // If OUR thread was stalled — buildTrack is synchronous and takes seconds, and a
+    // backgrounded tab throttles everything — then every peer looks silent through no
+    // fault of theirs. Worse, when the stall ends this timer can run BEFORE the queued
+    // messages are delivered, so it would retire a peer whose heartbeats are already
+    // sitting in the queue. Forgive the stall and restart everyone's window.
+    if(gap>2500){ for(const q of NET.players.values()) q.last=now; return; }
+    // 15s, not 6. A clean exit is reported instantly by 'bye' (see the pagehide handler),
+    // so this timeout only has to catch crashes and yanked cables — and it has to survive a
+    // phone thermal-throttling or a browser starving a heavy WebGL tab, both of which can
+    // stall a peer for several seconds without it having gone anywhere.
+    for(const q of [...NET.players.values()])
+      if(q.id!==NET.self && now-q.last>15000) netDropPeer(q.id);
+  }, 1000);
+  netRenderLobby();
+  return true;
+}
+
+// Closing the tab, navigating away or backgrounding on mobile: say goodbye while we still
+// can, so the other players see the kart hand over immediately instead of after the timeout.
+addEventListener('pagehide', ()=>{ if(NET.t) netSend({t:'bye', id:NET.self}); });
+addEventListener('beforeunload', ()=>{ if(NET.t) netSend({t:'bye', id:NET.self}); });
+
+function netLeave(quiet){
+  clearInterval(NET._hb); NET._hb=null;
+  if(NET.t){ if(!quiet) netSend({t:'bye', id:NET.self}); NET.t.close(); }
+  NET.t=null; NET.on=false; NET.lobby=false; NET.host=false;
+  NET.players.clear(); NET.lineup=null;
+}
+
+function netBroadcastRoster(){
+  netSend({t:'roster', fillAI:NET.fillAI, track:selTrack,
+    players:[...NET.players.values()].filter(p=>!p.gone).map(p=>({id:p.id,name:p.name,typeId:p.typeId}))});
+}
+
+function netDropPeer(pid){
+  const p=NET.players.get(pid); if(!p) return;
+  p.gone=true; NET.players.delete(pid);
+  // mid-race: hand the abandoned kart to the AI, or retire it, per the host's lobby setting
+  const r=racers.find(x=>x.netId===pid);
+  if(r){ if(NET.fillAI){ r.remote=false; r.name=r.name+' (AI)'; }
+         else { r.finished=true; r.finishT=raceTime; } }
+  if(NET.host) netBroadcastRoster();
+  netRenderLobby();
+}
+
+function netRecv(m){
+  if(!m || !m.t) return;
+  const p=NET.players.get(m.from);
+  if(p) p.last=performance.now();
+  switch(m.t){
+    case 'hello':
+      if(!NET.players.has(m.id))
+        NET.players.set(m.id, {id:m.id, name:m.name, typeId:m.typeId, last:performance.now()});
+      // answer so the newcomer learns about us too (mesh transports have no join event)
+      if(NET.host){ netBroadcastRoster(); }
+      else netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'});
+      netRenderLobby();
+      break;
+    case 'roster':
+      if(NET.host) break;                     // the host IS the source of truth
+      NET.fillAI=m.fillAI;
+      for(const q of m.players)
+        if(!NET.players.has(q.id))
+          NET.players.set(q.id, {id:q.id, name:q.name, typeId:q.typeId, last:performance.now()});
+        else Object.assign(NET.players.get(q.id), {name:q.name, typeId:q.typeId});
+      for(const id of [...NET.players.keys()])
+        if(id!==NET.self && !m.players.some(q=>q.id===id)) NET.players.delete(id);
+      if(m.track!==undefined && m.track!==selTrack){ selTrack=m.track; }
+      netRenderLobby();
+      break;
+    case 'pick':
+      if(NET.players.has(m.id)) NET.players.get(m.id).typeId=m.typeId;
+      if(NET.host) netBroadcastRoster();
+      netRenderLobby();
+      break;
+    case 'start':
+      if(NET.host) break;
+      selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup;
+      netBeginRace();
+      break;
+    case 's': {                               // a kart snapshot
+      const q=NET.players.get(m.from); if(q) q.snap=m;
+      const r=racers.find(x=>x.netId===m.from);
+      if(r && r.remote){ r._snap=m; r._snapT=performance.now(); }
+      break;
+    }
+    case 'hb': break;              // liveness only; the timestamp above is the payload
+    case 'bye': netDropPeer(m.id); break;
+  }
+}
+
+/* ---- lobby UI ---- */
+function netRenderLobby(){
+  const list=document.getElementById('mplist'); if(!list) return;
+  const ps=[...NET.players.values()];
+  list.innerHTML = ps.length ? ps.map(p=>{
+    const ty=SPERM_TYPES.find(t=>t.id===p.typeId);
+    return `<div class="mprow${p.id===NET.self?' me':''}">`+
+           `<span class="mpdot" style="background:hsl(${ty?ty.hue:0} 80% 62%)"></span>`+
+           `<b>${p.name||'racer'}</b><span class="mpty">${ty?ty.name:'—'}</span>`+
+           `${p.id===NET.self?'<span class="mpme">you</span>':''}</div>`;
+  }).join('') : '<div class="mprow"><i>waiting for players…</i></div>';
+  const code=document.getElementById('mpcode'); if(code) code.textContent=NET.room||'----';
+  const go=document.getElementById('mpgo');
+  if(go){ go.style.display=NET.host?'block':'none';
+          go.textContent='Start race ('+ps.length+' human'+(ps.length===1?'':'s')+')'; }
+  const fb=document.getElementById('mpfill');
+  if(fb){ fb.style.display=NET.host?'block':'none';
+          fb.textContent='Fill empty slots with AI: '+(NET.fillAI?'ON':'OFF');
+          fb.classList.toggle('on', NET.fillAI); }
+  const tb=document.getElementById('mptrans');
+  if(tb) tb.textContent='Connection: '+NET_TRANSPORTS[netPick].label;
+}
+
+/* ---- starting a networked race ---- */
+function netHostStart(){
+  if(!NET.host) return;
+  const ps=[...NET.players.values()].filter(p=>!p.gone);
+  NET.lineup=ps.map(p=>({id:p.id, typeId:p.typeId, name:p.name}));
+  netSend({t:'start', track:selTrack, fillAI:NET.fillAI, lineup:NET.lineup});
+  netBeginRace();
+}
+function netBeginRace(){
+  NET.on=true; NET.lobby=false;
+  // the grid sits silent through the countdown and track build; don't count that as absence
+  const t0=performance.now();
+  for(const p of NET.players.values()) p.last=t0;
+  document.getElementById('mp').classList.add('hidden');
+  document.getElementById('select').classList.add('hidden');
+  document.getElementById('start').classList.add('hidden');
+  // countdown() already does initAudio + buildTrack + buildRacers. Doing it here too built
+  // the whole circuit twice and doubled a multi-second synchronous stall right at the start.
+  countdown();
+}
+
+/* ---- per-frame: publish my kart, and drop peers that have gone quiet ---- */
+function netTick(dt){
+  if(!NET.on || !NET.t) return;
+  NET._acc+=dt;
+  if(NET._acc >= 1/NET.SEND_HZ){
+    NET._acc=0;
+    const me=racers.find(r=>r.you);
+    if(me) netSend({t:'s', x:+me.x.toFixed(2), y:+me.y.toFixed(2), z:+me.z.toFixed(2),
+      h:+me.head.toFixed(3), sp:+me.spd.toFixed(1), sl:+(me.slip||0).toFixed(3),
+      bk:+(me._bank||0).toFixed(3), lap:me.lap, tot:+me.total.toFixed(3), prog:+me.prog.toFixed(4),
+      bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0});
+  }
+}
+
+/* Remote karts are not simulated — they are played back from snapshots. Extrapolating along
+ * the last known heading covers the gap between packets (at 15Hz that is up to 67ms, and
+ * more when a packet is lost), then the position eases onto the true one so a correction
+ * reads as a small slide rather than a teleport. */
+function netApplySnap(r, dt){
+  const s=r._snap; if(!s) return;
+  const age=Math.min(0.5, (performance.now()-(r._snapT||0))/1000);
+  const px=s.x+Math.sin(s.h)*s.sp*age, pz=s.z+Math.cos(s.h)*s.sp*age;
+  const k=Math.min(1, 10*dt);
+  r.x+=(px-r.x)*k; r.z+=(pz-r.z)*k; r.y+=(s.y-r.y)*k;
+  let dh=s.h-r.head; while(dh>Math.PI)dh-=6.2832; while(dh<-Math.PI)dh+=6.2832;
+  r.head+=dh*k;
+  r.spd=s.sp; r.slip=s.sl; r._bank=s.bk;
+  r.lap=s.lap; r.total=s.tot; r.prog=s.prog;
+  r.boostT=s.bo?0.6:0; r.drift=s.dr;
+  if(s.fin && !r.finished){ r.finished=true; r.finishT=raceTime; }
+}
+
+/* ---- lobby wiring ---- */
+(function setupMP(){
+  const $$=id=>document.getElementById(id);
+  const show=()=>{ $$('start').classList.add('hidden'); $$('mp').classList.remove('hidden');
+                   netRenderLobby(); };
+  const back=()=>{ netLeave(); $$('mp').classList.add('hidden'); $$('start').classList.remove('hidden'); };
+  $$('mpbtn').onclick=show;
+  $$('mpback').onclick=back;
+  $$('mphost').onclick=async()=>{
+    const code=netRoomCode();
+    $$('mpcode').textContent=code;
+    await netStart(true, code);      // netStart reports its own failure reason
+  };
+  $$('mpjoin').onclick=async()=>{
+    const code=(prompt('Room code from your host:')||'').trim().toUpperCase();
+    if(!code) return;
+    $$('mpcode').textContent=code;
+    await netStart(false, code);
+  };
+  $$('mpfill').onclick=()=>{ NET.fillAI=!NET.fillAI; if(NET.host) netBroadcastRoster(); netRenderLobby(); };
+  $$('mptrans').onclick=()=>{
+    const ids=Object.keys(NET_TRANSPORTS);
+    netPick=ids[(ids.indexOf(netPick)+1)%ids.length];
+    netLeave(); NET.status('Connection set to '+NET_TRANSPORTS[netPick].label+' — host or join again.');
+    netRenderLobby();
+  };
+  $$('mpgo').onclick=()=>netHostStart();
+  // the character grid is shared with single player; a flag sends Lock-in back to the lobby
+  $$('mppick').onclick=()=>{
+    NET.picking=true;
+    $$('mp').classList.add('hidden');
+    $$('select').classList.remove('hidden');
+    setupSelect();
+  };
+  $$('mpname').oninput=()=>{
+    NET.name=$$('mpname').value||'Racer';
+    const me=NET.players.get(NET.self); if(me){ me.name=NET.name;
+      if(NET.host) netBroadcastRoster(); else netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'}); }
+    netRenderLobby();
+  };
+  // picking a character in the lobby tells everyone else
+  window.netAnnouncePick=()=>{
+    if(!NET.lobby && !NET.on) return;
+    const me=NET.players.get(NET.self);
+    if(me) me.typeId=(chosenType&&chosenType.id)||'guido';
+    netSend({t:'pick', id:NET.self, typeId:(chosenType&&chosenType.id)||'guido'});
+    if(NET.host) netBroadcastRoster();
+    netRenderLobby();
+  };
+  netRenderLobby();
+})();
 
 /* ============== FLOW ============== */
 function countdown(){
@@ -6428,6 +6861,7 @@ function setupSelect(){
       selectedEl = card;
       $('racebtn').disabled = false;
       $('racebtn').style.opacity = '1';
+      if(window.netAnnouncePick) netAnnouncePick();
     };
     // default select first (Guido) — and enable Lock-in immediately
     if(idx === 0){
@@ -6443,6 +6877,13 @@ function setupSelect(){
   updateScrollHint();
 
   $('racebtn').onclick = () => {
+    if(NET.picking){                       // came from the lobby — go back to it
+      NET.picking=false;
+      $('select').classList.add('hidden');
+      $('mp').classList.remove('hidden');
+      if(window.netAnnouncePick) netAnnouncePick();
+      return;
+    }
     initAudio();
     $('select').classList.add('hidden');
     if(pendingGP){ pendingGP=false; startGP(); } else countdown();
@@ -6615,8 +7056,23 @@ buildRacers = function(){
   // more of a "race war" than the original 4, without going so wide it costs frame
   // budget or crowds the starting grid off the road).
   // During a Grand Prix the same lineup carries across every circuit.
-  let lineup;
-  if(gpActive && gpLineup){ lineup=gpLineup; }
+  let lineup, netSlots=null;
+  if(NET.on && NET.lineup){
+    // Humans first, in the host's order, with the LOCAL player pulled to slot 0 because a
+    // pile of code downstream (camera, HUD, engine audio, item roulette) keys off racers[0]
+    // being you. Padding with AI is the host's lobby choice, not a default.
+    const mine=NET.lineup.filter(p=>p.id===NET.self);
+    const rest=NET.lineup.filter(p=>p.id!==NET.self);
+    netSlots=[...mine, ...rest];
+    lineup=netSlots.map(p=>SPERM_TYPES.find(t=>t.id===p.typeId)||SPERM_TYPES[0]);
+    if(NET.fillAI){
+      const taken=new Set(lineup.map(t=>t.id));
+      const pool=SPERM_TYPES.filter(t=>!taken.has(t.id));
+      for(let i=pool.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
+      while(lineup.length<6 && pool.length){ lineup.push(pool.shift()); netSlots.push(null); }
+    }
+  }
+  else if(gpActive && gpLineup){ lineup=gpLineup; }
   else {
     const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id);
     for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
@@ -6624,7 +7080,8 @@ buildRacers = function(){
   }
 
   racers=lineup.map((t,k)=>{
-    const you=(k===0);
+    const np = netSlots ? netSlots[k] : null;
+    const you = netSlots ? (np && np.id===NET.self) : (k===0);
     const s=SAMP[2];
     const lane=(k-(lineup.length-1)/2)*7.5;   // centered grid, spacing tightened from 9 to fit 6 within HW=22
     const obj=makeCell(t.hue, t.id);        // full character model for everyone (you + opponents)
@@ -6639,7 +7096,9 @@ buildRacers = function(){
     const shadow=new T.Mesh(new T.PlaneGeometry(9,9),
       new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0.7}));
     shadow.rotation.x=-Math.PI/2; scene.add(shadow);
-    return {you, id:t.id, name:t.name, hue:t.hue, obj, shadow,
+    return {you, id:t.id, name:(np&&np.name)||t.name, hue:t.hue, obj, shadow,
+      netId: np ? np.id : null,
+      remote: !!(np && np.id!==NET.self),
       x:pos.x, z:pos.z, y:pos.y,
       head:Math.atan2(s.t.x,s.t.z),
       spd:0, idx:2, prog:s.u, lap:0, total:0,
@@ -6647,7 +7106,8 @@ buildRacers = function(){
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
       finished:false, finishT:0, place:k+1, phase:Math.random()*9, _li:k,
       skill: you ? ((t.stats&&t.stats.skill)||1) : (DIFF[difficulty]-0.03+Math.random()*0.06),
-      ...(you ? (t.stats||{}) : {})           // chosen sperm's stats for the player
+      // every human drives with their own character's stats, not just the local one
+      ...((you || (np && np.id!==NET.self)) ? (t.stats||{}) : {})
     };
   });
 };
@@ -6925,6 +7385,22 @@ state='menu';
 buildTrack(selTrack);        // build the default circuit
 buildRacers();               // show grid behind menu
 requestAnimationFrame(frame);
+
+/* Read-only multiplayer diagnostics, deliberately kept in the shipped build. The WebRTC
+   path can only really fail on someone else's network — a broker outage, a NAT that will
+   not traverse, a peer that went quiet — and none of that is reproducible here. Open the
+   console and read srNet.status to see exactly what the connection thinks is happening.
+   Nothing here mutates game state; it is a window, not a lever. */
+window.srNet={
+  get status(){ return {transport:netPick, transports:Object.keys(NET_TRANSPORTS),
+    room:NET.room||null, host:NET.host, self:NET.self||null, connected:!!NET.t,
+    lobby:NET.lobby, racing:NET.on, fillAI:NET.fillAI,
+    players:[...NET.players.values()].map(p=>({id:p.id, name:p.name, typeId:p.typeId,
+      quietMs:Math.round(performance.now()-p.last)}))}; },
+  get race(){ return {state, laps:LAPS, karts:racers.map(r=>({name:r.name, you:!!r.you,
+    remote:!!r.remote, netId:r.netId||null, lap:r.lap,
+    x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1)}))}; },
+};
 })();
 </script>
 </body>
