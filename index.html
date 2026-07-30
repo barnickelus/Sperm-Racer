@@ -791,6 +791,12 @@ const MUSIC_STYLES={
               hihat:1, beatGroup:4, tempoMul:0.82, station:'55.0 SUN BEAD FM',
               stab:{inst:'banjo', wave:'triangle', note:12, steps:[6,14], dur:0.14, vol:0.2},
               mel:[0,4,7,9,7,4,2,4], melB:[12,11,9,7,9,12,16,12] },
+  beadBandido:{ inst:'accordion', melWave:'triangle', bassWave:'square', bassInst:'pluck',
+              volMul:1.1, drumVol:1.08,
+              drums:{kick:[0,6,8,14],snare:[4,12]}, bass:[0,7,0,5],
+              hihat:2, beatGroup:4, tempoMul:0.74, station:'44.5 BANDIDO GOLD',
+              stab:{inst:'ukulele', wave:'triangle', note:12, steps:[2,10], dur:0.13, vol:0.2},
+              mel:[0,4,7,12,9,7,4,2], melB:[7,9,12,16,12,9,7,4] },
   mosaic:   { inst:'marimba', melWave:'triangle', bassWave:'sine', volMul:1.05,
               drums:{kick:[0,6,8,14],snare:[4,12]}, bass:[0,0,4,7],
               hihat:1, beatGroup:4, tempoMul:0.72, station:'60.0 TESSERA FM',
@@ -1457,6 +1463,16 @@ const OP_ART={
     '..KEPEKKEPEK..','..KEEEKKEEEK..','..KKKKKKKKKK..','...KDDDDDDK...',
     '....KKKKKK....','.....DDDD.....','...DDKK.......','..KKDD........',
   ], {G:'#e0b060',R:'#d94f3c',K:'#dba876',E:'#ffffff',P:'#171218',D:'#3a2418'},
+     11, 34, 40),
+  // Beaded Bandido — the same measured palette the model uses, at card scale: wide brim
+  // with the serape band, huge cream eyes, and the black handlebar curling up past them.
+  beadBandido:opBeads([
+    '.....TTTT.....','....TTTTTT....','...TTTTTTTT...','RRRRRRRRRRRRRR',
+    'RYGYGYGYGYGYGR','.TTTTTTTTTTTT.','..LLLLLLLLLL..','..LEEELLEEEL..',
+    '..LEPELLEPEL..','..LEEELLEEEL..','..LLLLLLLLLL..','.KKLLLLLLLLKK.',
+    'KKKKKLLLLKKKKK','.KKKKKKKKKKKK.','...LLLLLLLL...','....DDDDDD....',
+  ], {T:'#8d502a',L:'#ab6136',R:'#5c1a10',Y:'#a5781d',G:'#3d5922',
+      E:'#cdbdae',P:'#221d1c',K:'#221d1c',D:'#3a1c0e'},
      11, 34, 40),
   // Plein-Air Pierre — broad muted strokes, hard seams only where the panels meet, and
   // the lower edge left unresolved the way an alla prima study is.
@@ -4124,8 +4140,293 @@ function makeBeadCell(id){
   return g;
 }
 
+/* ---- Beaded Bandido: the Creature Lab sombrero actor, brought into the game ---------
+ * Ported from creatures/sombrero-beaded-actor.html rather than reskinned from an existing
+ * racer, because three things about that build do not survive a reskin:
+ *
+ *  1. COLOUR. The shared beadBatch() writes palette hexes straight into instanceColor,
+ *     which r128 treats as ALREADY linear and then gamma-encodes on output — a roughly 4x
+ *     lift on dark values, which is exactly what turns a near-black moustache silver. The
+ *     three approved beaded racers were authored against that behaviour and are left
+ *     untouched; this one decodes its own palette up front instead. The hexes below are
+ *     the measured reference values (hue 22-28, S 42-60, reds down at L 19) and bndCol()
+ *     does the conversion, folding in the track-light budget so the albedo does not have
+ *     to be re-guessed per circuit.
+ *  2. GLOSS. beadMat() ships a white specular at shininess 120. On a 0.40-unit bead a
+ *     highlight that broad covers much of its visible area and bleaches the albedo — the
+ *     reference render measured S 24 / L 60 out of an S 47 / L 43 palette. Each batch here
+ *     gets its own tighter, dimmer, warm-tinted specular after the fact.
+ *  3. The MOUSTACHE is parametric, re-solved every frame off a spine that rides the head's
+ *     own ellipsoid, so airflow and mood physically bend it instead of just rotating it.
+ * ------------------------------------------------------------------------------------ */
+const BND_EXPO = 0.48;        // track lights run ~2x the studio rig this was measured under
+function bndCol(hex){
+  return new T.Color(hex).convertSRGBToLinear().multiplyScalar(BND_EXPO).getHex();
+}
+const BND = {
+  // ladder stretched at both ends against the studio values: the track rigs carry a lot
+  // of ambient, and a constant lift compresses a mid-heavy ramp into one flat sand tone
+  tanLight : bndCol(0xba6b3b), tan     : bndCol(0x8d502a),
+  tanMid   : bndCol(0x673b1d), tanDeep : bndCol(0x2b1409),
+  eyeWhite : bndCol(0xd8c3ac), eyeDim  : bndCol(0xa8927c),
+  black    : bndCol(0x221d1c), blackHi : bndCol(0x38302e),
+  red      : bndCol(0x440d08), redDeep : bndCol(0x2e0805),
+  yellow   : bndCol(0xa5781d), green   : bndCol(0x3d5922),
+};
+// gloss profiles — dark parts need a dimmer specular or they read as silver
+function bndGloss(mesh, spec, shine){
+  mesh.material.specular.setHex(spec);
+  mesh.material.shininess = shine;
+  return mesh;
+}
+// An elliptical disc of concentric bead rings. The game's beadHoop is circular, but the
+// racer head is half again as deep as it is wide, so a round brim leaves the muzzle
+// sticking out fore and aft of its own hat.
+function bndDisc(out, cy, rx0, rz0, rx1, rz1, step, colFn, lift){
+  const rings = Math.max(1, Math.round((rx1-rx0)/step));
+  for(let k=0;k<=rings;k++){
+    const f = k/rings, rx = rx0+(rx1-rx0)*f, rz = rz0+(rz1-rz0)*f;
+    const n = Math.max(8, Math.round(Math.PI*(rx+rz)/step));
+    for(let j=0;j<n;j++){
+      const u = j/n*Math.PI*2, c = colFn(f, j, n);
+      if(c==null) continue;
+      out.push({x:Math.cos(u)*rx, y:cy+(lift?lift(f):0), z:Math.sin(u)*rz, s:step*0.98, c});
+    }
+  }
+}
+
+// Moustache spine. Rides the head's own (slightly inflated) ellipsoid so the sweep wraps
+// the cheek instead of floating off it; past the silhouette that term dies and the tip
+// flies free, which is what gives the handlebar its curl.
+const BND_STN = 26;
+// Scaled against the racer head, not carried over from the reference. The head here is
+// 6.8 wide but only 5.6 tall, so the studio proportions put the hooks at eye level and
+// hung the belly halfway down the body — one black mass instead of a handlebar.
+function bndStacheThick(t){ return (1 - Math.pow(t,3.1))*0.46 + 0.090; }
+function bndStachePoint(sx, t, s, out){
+  const stream = s.stream + s.leanStream*sx;
+  const x = sx*(0.26 + t*3.90*s.spread);
+  const y = 2.20 - Math.sin(Math.pow(t,0.85)*Math.PI*0.88)*0.70*s.dip
+                 + Math.pow(t,2.9)*1.55*s.hook;
+  // Floor the surface term instead of letting it fall to zero. Past the silhouette the
+  // bare solve collapses z to the group origin, which teleports the tips back to the
+  // MIDDLE of a muzzle 10 units deep — from the front they then project straight over
+  // the eyes. The floor keeps them out near the cheek where a handlebar actually ends.
+  const rem = 1 - (x/3.55)*(x/3.55) - ((y-3.2)/2.95)*((y-3.2)/2.95);
+  const zs  = 5.15*Math.sqrt(Math.max(0.30, rem));
+  out.set(x, y, zs + 0.30 - stream*Math.pow(t,2)*1.9);
+}
+const _bndV = new T.Vector3();
+function bndPoseStache(rig){
+  const {mesh, beads, shape, dummy} = rig;
+  for(let k=0;k<beads.length;k++){
+    const b = beads[k];
+    bndStachePoint(b.sx, b.t, shape, _bndV);
+    const th = bndStacheThick(b.t)*b.lump;
+    dummy.position.set(_bndV.x, _bndV.y + Math.sin(b.a)*th, _bndV.z + Math.cos(b.a)*th*0.92);
+    dummy.scale.setScalar(0.40*0.98);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(k, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+/* Mood targets. Same table the Creature Lab actor uses; because the moustache is
+   parametric these genuinely re-bend it rather than tilting a baked mesh. Lid closure is
+   deliberately absent — syncObjects already owns eye scale.y for the wink and blink, and
+   two writers on one channel just fight. Tilt, pupil dilation, hat and body carry it. */
+const BND_MOODS = {
+  neutral  : {dip:1.00, hook:1.00, spread:1.00, tilt: 0.00, pupil:1.00, hat: 0.00, pitch: 0.00},
+  happy    : {dip:0.50, hook:1.75, spread:1.08, tilt:-0.16, pupil:1.14, hat:-0.09, pitch:-0.05},
+  surprised: {dip:1.30, hook:0.30, spread:0.84, tilt: 0.00, pupil:0.50, hat: 0.22, pitch:-0.13},
+  angry    : {dip:1.45, hook:0.28, spread:1.06, tilt: 0.46, pupil:0.78, hat:-0.16, pitch: 0.11},
+  sad      : {dip:1.70, hook:-0.50,spread:0.86, tilt:-0.36, pupil:1.18, hat: 0.14, pitch: 0.16},
+};
+const BND_KEYS = Object.keys(BND_MOODS.neutral);
+
+function makeBandidoCell(){
+  const g = new T.Group();
+  const ST = 0.40;
+
+  // --- head ---
+  const body = [];
+  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la)=>
+    la < 0.24 ? BND.tanDeep : la < 0.46 ? BND.tanMid : (la > 0.74 ? BND.tanLight : BND.tan));
+  const bodyMesh = bndGloss(beadBatch(body), 0x554b41, 200);
+  bodyMesh.material.emissive.setHex(0x0d0805);
+  g.add(bodyMesh);
+  g.userData.head = bodyMesh;
+  g.userData.baseEmissive = bodyMesh.material.emissive.clone();
+
+  // --- sombrero: its own group, so it can lag the body ---
+  const hat = new T.Group(); hat.position.y = 5.45; g.add(hat);
+  {
+    const list = [];
+    const CX = 2.40, CZ = 3.45, CH = 3.10;          // elliptical crown, matching the muzzle
+    const rows = Math.round(CH/ST);
+    for(let k=0;k<=rows;k++){
+      const t = k/rows, f = Math.pow(1-t*t*0.92, 0.46);
+      const rx = CX*f, rz = CZ*f, y = t*CH;
+      const n = Math.max(5, Math.round(Math.PI*(rx+rz)/ST));
+      for(let j=0;j<n;j++){
+        const u = j/n*Math.PI*2;
+        list.push({x:Math.cos(u)*rx, y, z:Math.sin(u)*rz, s:ST*0.98,
+                   c: t>0.78 ? BND.tanLight : (t<0.18 ? BND.tanMid : BND.tan)});
+      }
+    }
+    bndDisc(list, 0, CX*0.92, CZ*0.92, 5.90, 7.40, ST, (f, j, n)=>{
+      if(f > 0.90) return BND.red;                             // rolled red edge
+      if(f > 0.62){                                            // serape zigzag band
+        const band = (f-0.62)/0.28;
+        const zig  = Math.abs(((j/n)*26 % 2) - 1);
+        if(Math.abs(zig - band) < 0.22) return BND.yellow;
+        if(Math.abs(zig - (1-band)) < 0.20) return BND.green;
+        return (j % 7 < 3) ? BND.redDeep : BND.red;
+      }
+      return f < 0.20 ? BND.tanMid : BND.tan;
+    }, (f)=> -0.20 + Math.pow(f,3)*0.62);                      // dished, flicking up at the rim
+    hat.add(bndGloss(beadBatch(list), 0x554b41, 200));
+  }
+
+  // --- face: bead clusters inside Groups so the existing expression animation drives them ---
+  const eyes = [], pupils = [];
+  // Sized against the brim, not against the reference: at the actor's proportions the
+  // eyeballs topped out at y 5.5 and punched straight through a brim sitting at 5.25,
+  // reading as one pale mass welded across the face.
+  for(const sx of [-1.58, 1.58]){
+    const eg = new T.Group(), eb = [];
+    beadEllipsoid(eb, 0,0,0, 1.20,1.28,1.05, 0.34, (la)=> la<0.30 ? BND.eyeDim : BND.eyeWhite);
+    eg.add(bndGloss(beadBatch(eb), 0x8e8880, 260));
+    eg.position.set(sx, 3.78, 4.35); g.add(eg); eyes.push(eg);
+    const pg = new T.Group(), pb = [];
+    beadEllipsoid(pb, 0,0,0, 0.74,0.80,0.62, 0.30, ()=> BND.black);
+    pg.add(bndGloss(beadBatch(pb), 0x9a9490, 340));
+    pg.position.set(sx, 3.74, 5.22); g.add(pg); pupils.push(pg);
+  }
+  g.userData.eyes = eyes; g.userData.pupils = pupils;
+
+  // mouth sits under the moustache — mostly hidden, but syncObjects animates it and the
+  // contract wants it present
+  const mg = new T.Group(), mb = [];
+  for(let x=-0.8;x<=0.8;x+=ST) for(let y=-0.2;y<=0.2;y+=ST)
+    mb.push({x, y, z:0, s:ST*0.98, c:BND.redDeep});
+  mg.add(bndGloss(beadBatch(mb), 0x241f1d, 95));
+  mg.position.set(0, 1.62, 4.55); g.add(mg);
+  g.userData.mouth = mg; g.userData.mouthBase = mg.scale.clone();
+
+  // --- moustache: parametric, re-posed each frame ---
+  const stache = new T.Group(); g.add(stache);
+  const sBeads = [], sList = [];
+  for(const sx of [-1, 1]){
+    for(let i=0;i<=BND_STN;i++){
+      const t = i/BND_STN, th = bndStacheThick(t);
+      const around = Math.max(6, Math.round(2*Math.PI*th/(ST*0.86)));
+      for(let j=0;j<around;j++){
+        const a = j/around*Math.PI*2;
+        // lumps kept well under half a bead of radial travel, or they tear holes in the shell
+        const lump = 1 + (0.07*Math.sin(a*3 + t*19) + 0.035*Math.sin(a*5 - t*11))*(1-t*0.5);
+        sBeads.push({sx, t, a, lump});
+        sList.push({x:0, y:0, z:0, s:ST*0.98, c: Math.sin(a) > 0.74 ? BND.blackHi : BND.black});
+      }
+    }
+  }
+  const stacheMesh = bndGloss(beadBatch(sList), 0x241f1d, 95);
+  stache.add(stacheMesh);
+
+  const glow = glowSprite(0xffb066, 13); glow.position.set(0,3.4,0.5); g.add(glow);
+  g.userData.glow = glow;
+  const fl1 = glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
+  const fl2 = glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
+  g.add(fl1); g.add(fl2); g.userData.flame = [fl1, fl2];
+
+  // --- tail: same ring contract every beaded racer uses, so wiggleTail drives it ---
+  const rings = [], tail = [], RN = 20;
+  for(let i=0;i<RN;i++){
+    const t = i/(RN-1), r = 1.7*(1-t)*(1-t)+0.26;
+    const n = Math.max(4, Math.round(2*Math.PI*r/ST));
+    const band = Math.floor(Math.pow(t,0.85)*9) % 2 === 0;
+    const c = band ? BND.tanDeep : (t>0.5 ? BND.tanLight : BND.tan);
+    rings.push({t, ph:i*0.55, r, n, s:ST*0.98});
+    for(let j=0;j<n;j++){
+      const u = j/n*Math.PI*2;
+      tail.push({x:Math.cos(u)*r, y:3.2+Math.sin(u)*r, z:-2-t*20, s:ST*0.98, c});
+    }
+  }
+  const tailMesh = bndGloss(beadBatch(tail), 0x554b41, 200);
+  tailMesh.material.emissive.setHex(0x0d0805);
+  g.add(tailMesh);
+  g.userData.tailMesh = tailMesh;
+  g.userData.beadTail = {mesh:tailMesh, rings, dummy:new T.Object3D()};
+
+  // rig state read by updateBandido() from syncObjects
+  g.userData.bandido = {
+    hat, stache, mesh:stacheMesh, beads:sBeads, dummy:new T.Object3D(),
+    shape:{dip:1, hook:1, spread:1, stream:0, leanStream:0},
+    mood: Object.assign({}, BND_MOODS.neutral),
+    hatLean:0, hatPitch:0, spd:0, kick:0, accelSlow:0,
+  };
+  bndPoseStache(g.userData.bandido);
+  wiggleTail(g, 0, 0);
+  return g;
+}
+
+/* Per-frame rig, called from syncObjects. Everything is driven off state the racer
+   already carries, so nothing new has to be simulated: speed sets the airflow, _bank and
+   slip set the lean, and the race events pick the mood. */
+function updateBandido(o, r, dt){
+  const rig = o.userData.bandido; if(!rig) return;
+  const mix = (a,b,rate)=> a + (b-a)*(1 - Math.exp(-rate*dt));
+
+  const flow = Math.min(1, Math.abs(r.spd)/MAXV);
+  const lean = Math.max(-1, Math.min(1, (r.slip||0)*1.6 + (r._bank||0)*0.9));
+  // KICK, not acceleration. Acceleration stays high for as long as speed is climbing, so
+  // pitching off it directly parks the hat at a permanent lean down the whole straight.
+  const acc = (flow - rig.spd)/Math.max(dt,1e-4);
+  rig.spd = flow;
+  rig.accelSlow = mix(rig.accelSlow, acc, 1.1);
+  rig.kick = Math.max(-1, Math.min(1, (acc - rig.accelSlow)*0.6));
+
+  const want = r.celebT>0 ? 'happy'
+             : r.spinT>0  ? 'surprised'
+             : r.boostT>0 ? 'happy'
+             : r.drift===1? 'angry'
+             : (r.finished && r.place>3) ? 'sad'
+             : 'neutral';
+  const tgt = BND_MOODS[want], m = rig.mood;
+  for(const k of BND_KEYS) m[k] = mix(m[k], tgt[k], 6.5);
+
+  // hat springs BEHIND the body, which is what stops it reading as glued on
+  const bodyRoll = -lean*0.34;
+  rig.hatLean  = mix(rig.hatLean, bodyRoll, 7.5);
+  rig.hatPitch = mix(rig.hatPitch, Math.max(-0.19, Math.min(0.19, -rig.kick*0.62)), 6);
+  const hat = rig.hat;
+  hat.rotation.z = (bodyRoll - rig.hatLean)*1.9;
+  hat.rotation.x = m.hat + rig.hatPitch + flow*0.10;
+  hat.rotation.y = -lean*0.12;
+  hat.position.y = 5.45 + Math.abs(hat.rotation.z)*0.30;
+  hat.position.z = -flow*0.28;
+
+  // moustache: re-solved, not just rotated
+  const sh = rig.shape;
+  const flut = Math.sin((r.phase||0)*(1.6 + flow*2.4))*0.06*(0.25 + flow);
+  sh.dip        = m.dip*(1 - flow*0.28) + flut;
+  sh.hook       = m.hook*(1 + flow*0.45);
+  sh.spread     = m.spread*(1 + flow*0.10);
+  sh.stream     = flow*1.15 + Math.max(0, rig.kick)*0.30;
+  sh.leanStream = lean*0.55;
+  bndPoseStache(rig);
+  rig.stache.rotation.z = -lean*0.10;
+
+  // eyes: tilt and pupil dilation only. scale.y belongs to the wink/blink code above.
+  const ey = o.userData.eyes, pu = o.userData.pupils;
+  if(ey){ ey[0].rotation.z = -m.tilt; ey[1].rotation.z = m.tilt; }
+  if(pu){ const p = m.pupil*(1 - flow*0.10);
+          pu[0].scale.set(p,p,1); pu[1].scale.set(p,p,1); }
+}
+
 function makeCell(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
+  if(typeId === 'beadBandido') return makeBandidoCell(); // the Creature Lab sombrero actor
   if(BEAD_RACERS[typeId]) return makeBeadCell(typeId);   // strung-bead renditions
   // Clay is a surface treatment, not a different model: build Guido as normal, then
   // re-sculpt him at the end instead of cel-shading. (The motion half is in syncObjects.)
@@ -4809,6 +5110,7 @@ const SPERM_TYPES = [
   {id:'paint', name:'Plein-Air Pierre', hue:52, desc:'Pierre painted alla prima in oils. Muted, matte, and half of him lost to the mist.', stats:{skill:1.0, turn:1.14, spinResist:0.7}},
   {id:'felt', name:'Felted Cleetus', hue:38, desc:'Cleetus needle-felted from raw wool. Matte, shaggy and dyed in strata.', stats:{skill:0.97, maxV:1.15, spinResist:0.7}},
   {id:'paper', name:'Origami Wei', hue:128, desc:'Wei Long, scored and folded from a single sheet. Every curve is a crease.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
+  {id:'beadBandido', name:'Beaded Bandido', hue:22, desc:'Strung in glossy beads under a hand-threaded sombrero. The moustache streams in the wind and he wears his mood on his face.', stats:{skill:1.0, driftMult:1.2, turn:1.12, spinResist:0.7}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Grand Prix (cup across all tracks) state
@@ -5610,6 +5912,9 @@ function syncObjects(dt,now){
       ey[1].scale.y += ((wink?0.12:1)-ey[1].scale.y)*Math.min(1,14*dt);
       ey[0].scale.y += (((r.celebT>0&&ph>=2.6&&ph<3.8)?1.18:1)-ey[0].scale.y)*Math.min(1,10*dt); // eyes widen on the WOO
     }
+    // characters that carry their own rig (springs, airflow, mood) drive it here. Guarded
+    // on userData, so it costs nothing for every other racer on the grid.
+    if(r.obj.userData.bandido) updateBandido(r.obj, r, dt);
     // celebration body language: happy bounce + side-to-side victory sway
     if(r.celebT>0){ r.celebT-=dt;
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
