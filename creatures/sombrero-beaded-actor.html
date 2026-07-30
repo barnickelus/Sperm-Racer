@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#07101d">
+<title>Beaded Sombrero Actor — game-compatible rig</title>
+<style>
+  :root{--bg:#050b16;--panel:rgba(10,20,34,.86);--line:#25384f;--text:#eef5ff;--muted:#9fb0c6;--cyan:#2ed2ff}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);
+    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  #view{position:fixed;inset:0;touch-action:none}
+  canvas{display:block;width:100%;height:100%}
+  #hud{position:fixed;left:12px;top:12px;z-index:3;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:9px 12px;font:600 12px ui-monospace,monospace;letter-spacing:.05em;
+    color:var(--muted);backdrop-filter:blur(10px)}
+  #hud b{color:var(--cyan)}
+  #bar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:3;display:flex;gap:8px;
+    flex-wrap:wrap;justify-content:center;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:9px;backdrop-filter:blur(10px);max-width:calc(100vw - 24px)}
+  button{font:700 12px ui-monospace,monospace;letter-spacing:.06em;color:var(--text);
+    background:#16273c;border:1px solid var(--line);border-radius:10px;min-height:42px;padding:0 14px;cursor:pointer}
+  button.on{background:var(--cyan);color:#00131d;border-color:transparent}
+  #hint{position:fixed;right:12px;top:12px;z-index:3;color:var(--muted);font:600 11px ui-monospace,monospace;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 11px;text-align:right;line-height:1.7}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="hud">BEADED SOMBRERO — <b id="cnt">…</b> beads</div>
+<div id="hint">drag to orbit<br>scroll / pinch to zoom</div>
+<div id="bar">
+  <button id="bSpin" class="on">Auto-spin</button>
+  <button id="bWave">Tail: cruise</button>
+  <button id="bBlink">Blink</button>
+  <button id="bRig">Show rig</button>
+</div>
+
+<!-- The repo's OWN three.min.js, the exact build the game loads. Self-hosted rather
+     than CDN so this page works offline and can never drift from the game's version. -->
+<script src="../three.min.js"></script>
+<script>
+"use strict";
+/* ===========================================================================
+   BEADED SOMBRERO ACTOR
+   Built to drop straight into Sperm Racer: three r128, global THREE, no module
+   loader and no OrbitControls — exactly what the game itself uses, so this
+   model code can be lifted into makeBeadCell() without touching a dependency.
+
+   Everything is strung as real bead RINGS that follow each form, because the
+   rows curving around a shape are what say "beadwork" — a lattice of spheres
+   on a grid just reads as a bumpy voxel model. Same technique as the game's
+   existing beaded racers.
+   =========================================================================== */
+
+const T = THREE;
+const view = document.getElementById('view');
+
+const renderer = new T.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1, 2));
+renderer.outputEncoding = T.sRGBEncoding;
+renderer.setClearColor(0x050b16, 1);
+view.appendChild(renderer.domElement);
+
+const scene = new T.Scene();
+scene.fog = new T.Fog(0x050b16, 14, 34);
+const camera = new T.PerspectiveCamera(38, 1, 0.1, 200);
+
+/* Studio rig: warm key from the left, cool fill from the right, and a tight
+   spec highlight is what makes each bead read as a glossy little sphere. */
+scene.add(new T.HemisphereLight(0x9fc0ff, 0x1a1408, 0.55));
+const key = new T.DirectionalLight(0xfff0dc, 1.55); key.position.set(-6, 8, 7); scene.add(key);
+const fill = new T.DirectionalLight(0x7fa8ff, 0.55); fill.position.set(7, 2, -5); scene.add(fill);
+const rim  = new T.DirectionalLight(0xffb070, 0.65); rim.position.set(3, -3, -7); scene.add(rim);
+
+/* ---------- bead kit ---------- */
+const BEAD = new T.SphereGeometry(0.5, 9, 7);
+const beadMat = () => new T.MeshPhongMaterial({shininess:95, specular:0xffffff});
+let beadTotal = 0;
+
+// One InstancedMesh from a list of {x,y,z,s,c}. Returns the mesh so animated
+// parts can keep the list and re-pose their matrices per frame.
+function beadBatch(list){
+  const m = new T.InstancedMesh(BEAD, beadMat(), list.length);
+  m.frustumCulled = false;
+  const d = new T.Object3D(), c = new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x, v.y, v.z);
+    d.scale.setScalar(v.s);
+    d.updateMatrix(); m.setMatrixAt(i, d.matrix);
+    c.setHex(v.c); m.setColorAt(i, c);
+  });
+  m.instanceMatrix.needsUpdate = true;
+  if(m.instanceColor) m.instanceColor.needsUpdate = true;
+  beadTotal += list.length;
+  return m;
+}
+// Beads over an ellipsoid in latitude rings, re-spaced per ring so the rows stay
+// even as they shrink toward the poles. colFn may return null to skip a bead.
+function beadEllipsoid(out, cx,cy,cz, rx,ry,rz, step, colFn, opt){
+  const o = opt||{}, rings = Math.max(3, Math.round(Math.PI*ry/step));
+  for(let i=0;i<=rings;i++){
+    const v = -Math.PI/2 + Math.PI*i/rings, sv = Math.sin(v), cv = Math.cos(v);
+    const y = cy + sv*ry;
+    if(o.yMin!=null && y < o.yMin) continue;
+    if(o.yMax!=null && y > o.yMax) continue;
+    const rxx = rx*cv, rzz = rz*cv;
+    const n = Math.max(1, Math.round(Math.PI*(rxx+rzz)/step));
+    for(let j=0;j<n;j++){
+      const u = j/n*Math.PI*2;
+      const c = colFn(i/rings, j/n, u);
+      if(c==null) continue;
+      out.push({x: cx+Math.cos(u)*rxx, y, z: cz+Math.sin(u)*rzz, s: step*0.98, c});
+    }
+  }
+}
+// Flat concentric rings in the x/z plane — the brim, and the hat bands.
+function beadDisc(out, cy, r0, r1, step, colFn, lift){
+  const rings = Math.max(1, Math.round((r1-r0)/step));
+  for(let k=0;k<=rings;k++){
+    const r = r0 + (r1-r0)*(k/rings);
+    const n = Math.max(6, Math.round(2*Math.PI*r/step));
+    for(let j=0;j<n;j++){
+      const u = j/n*Math.PI*2;
+      const c = colFn(k/rings, j, n, r);
+      if(c==null) continue;
+      out.push({x:Math.cos(u)*r, y: cy + (lift?lift(k/rings):0), z:Math.sin(u)*r, s:step*0.98, c});
+    }
+  }
+}
+
+/* ---------- palette, read off the reference renders ---------- */
+const P = {
+  tanLight : 0xe8c08a,
+  tan      : 0xd2a163,
+  tanDeep  : 0xa8763f,
+  cream    : 0xf2ece0,
+  black    : 0x1a1410,
+  red      : 0xc8321f,
+  yellow   : 0xe8b21f,
+  green    : 0x2f6b2a,
+  darkRed  : 0x7d1f14,
+};
+
+const root = new T.Group(); scene.add(root);
+const bob  = new T.Group(); root.add(bob);      // idle float
+const body = new T.Group(); bob.add(body);      // sway
+
+const ST = 0.055;      // bead pitch — the whole look lives or dies on this
+const R  = 1.0;        // body radius
+
+/* ---------- body ---------- */
+{
+  const list = [];
+  beadEllipsoid(list, 0,0,0, R, R*0.96, R, ST, (la)=>
+    la < 0.30 ? P.tanDeep : (la > 0.68 ? P.tanLight : P.tan));
+  body.add(beadBatch(list));
+}
+
+/* ---------- sombrero: crown + brim + red rim + serape band ----------
+   Proportions taken from the live readout on the reference: crown width and
+   height a touch under half the body, brim far wider than the body itself. */
+const hat = new T.Group(); hat.position.y = R*0.62; body.add(hat);
+{
+  const list = [];
+  const CROWN_R = R*0.56, CROWN_H = R*0.78;
+  // crown: a rounded cone, rings tightening toward the top
+  const rows = Math.round(CROWN_H/ST);
+  for(let k=0;k<=rows;k++){
+    const t = k/rows;
+    const r = CROWN_R * Math.pow(1-t*t*0.92, 0.46);  // domed, not a straight cone
+    const y = t*CROWN_H;
+    const n = Math.max(4, Math.round(2*Math.PI*r/ST));
+    for(let j=0;j<n;j++){
+      const u = j/n*Math.PI*2;
+      list.push({x:Math.cos(u)*r, y, z:Math.sin(u)*r, s:ST*0.98,
+                 c: t>0.82 ? P.tanLight : P.tan});
+    }
+  }
+  // brim: concentric rings, dished slightly and turning up at the very edge
+  const B0 = CROWN_R*0.92, B1 = R*1.62;
+  beadDisc(list, 0, B0, B1, ST, (t, j, n)=>{
+    if(t > 0.955) return P.red;                     // rolled red edge, double row
+    if(t > 0.90)  return P.red;
+    // serape band: a zigzag of yellow / green / red over dark, the pattern the
+    // reference runs right round the brim
+    if(t > 0.62 && t < 0.90){
+      const band = (t-0.62)/0.28;
+      const zig  = Math.abs(((j/n)*26 % 2) - 1);     // 0..1 sawtooth round the brim
+      if(Math.abs(zig - band) < 0.22) return P.yellow;
+      if(Math.abs(zig - (1-band)) < 0.20) return P.green;
+      return (j % 7 < 3) ? P.darkRed : P.red;
+    }
+    return t < 0.20 ? P.tanDeep : P.tan;             // plain woven field
+  }, (t)=> -0.05 + Math.pow(t,3)*0.16);              // dish, then flick up at the rim
+  hat.add(beadBatch(list));
+}
+
+/* ---------- eyes: white bead spheres with black pupils, on dark sockets ---------- */
+const eyes = [];
+for(const sx of [-1, 1]){
+  const g = new T.Group();
+  g.position.set(sx*R*0.40, R*0.10, R*0.80);
+  const list = [];
+  // Gaze axis, slightly toed-in and level. A pupil is an angular CAP about this
+  // axis — measuring a proper dot product is what keeps it a clean round disc.
+  const gx = -sx*0.16, gy = -0.02, gz = 0.99;
+  const gl = Math.hypot(gx,gy,gz);
+  beadEllipsoid(list, 0,0,0, R*0.34, R*0.34, R*0.30, ST*0.92, (la,lo,u)=>{
+    const lat = (la-0.5)*Math.PI, cl = Math.cos(lat);
+    const dx = Math.cos(u)*cl, dy = Math.sin(lat), dz = Math.sin(u)*cl;
+    const dot = (dx*gx + dy*gy + dz*gz)/gl;
+    return dot > 0.88 ? P.black : P.cream;
+  });
+  g.add(beadBatch(list));
+  body.add(g); eyes.push(g);
+}
+// dark socket rings behind each eye, so they read as set in rather than stuck on
+{
+  const list = [];
+  for(const sx of [-1,1])
+    beadEllipsoid(list, sx*R*0.40, R*0.10, R*0.64, R*0.40, R*0.40, R*0.16, ST,
+      (la)=> (la>0.16 && la<0.84) ? P.black : null);
+  body.add(beadBatch(list));
+}
+
+/* ---------- moustache: a swept handlebar that curls up at both ends ---------- */
+const stache = new T.Group(); stache.position.set(0, -R*0.46, R*0.62); body.add(stache);
+{
+  const list = [];
+  for(const sx of [-1, 1]){
+    const N = 54;
+    for(let i=0;i<=N;i++){
+      const t = i/N;
+      // out from the centre, dipping through the middle, then a hard upward hook at
+      // the very tip — the handlebar curl is the reference's strongest silhouette cue
+      const x = sx * (t*R*1.02);
+      const y = -Math.sin(t*Math.PI*0.72)*R*0.26 + Math.pow(t,4.2)*R*0.86;
+      const z = Math.cos(t*1.35)*R*0.24 - t*R*0.10;
+      const thick = (1 - Math.pow(t,2.6))*R*0.21 + R*0.030;
+      // each point is a little ring of beads, which is what gives it volume
+      const around = Math.max(4, Math.round(2*Math.PI*thick/ST));
+      for(let j=0;j<around;j++){
+        const a = j/around*Math.PI*2;
+        list.push({x: x + Math.cos(a)*thick*0.55,
+                   y: y + Math.sin(a)*thick,
+                   z: z + Math.cos(a)*thick*0.75,
+                   s: ST*0.98, c: (j%5===0) ? 0x2c231c : P.black});
+      }
+    }
+  }
+  stache.add(beadBatch(list));
+}
+
+/* ---------- tail: banded cone, re-posed every frame for the swim wave ---------- */
+const tail = new T.Group(); tail.position.set(0, -R*0.05, -R*0.86); body.add(tail);
+const tailRings = [];
+let tailMesh = null;
+{
+  const list = [], SEG = 60, LEN = R*3.9;
+  for(let i=0;i<=SEG;i++){
+    const t = i/SEG;
+    const r = R*0.62 * Math.pow(1-t, 0.82) + 0.012;
+    const z = -t*LEN;
+    const n = Math.max(3, Math.round(2*Math.PI*r/ST));
+    // bands: black and tan, widening toward the tip exactly as the reference does
+    const band = Math.floor(Math.pow(t,0.85)*11) % 2 === 0;
+    const col  = band ? P.black : (t>0.5 ? P.tanLight : P.tan);
+    tailRings.push({t, z, r, n, i0:list.length, count:n});
+    for(let j=0;j<n;j++){
+      const a = j/n*Math.PI*2;
+      list.push({x:Math.cos(a)*r, y:Math.sin(a)*r, z, s:ST*0.98, c:col});
+    }
+  }
+  tailMesh = beadBatch(list);
+  tail.add(tailMesh);
+}
+
+/* ---------- rig markers (hidden by default) ---------- */
+const rigMarks = [];
+for(const [p, col] of [[hat.position,0x2ed2ff],[stache.position,0x9be74e],[tail.position,0xff5a8a]]){
+  const m = new T.Mesh(new T.SphereGeometry(0.06,10,8),
+    new T.MeshBasicMaterial({color:col, depthTest:false}));
+  m.position.copy(p); m.visible = false; body.add(m); rigMarks.push(m);
+}
+
+document.getElementById('cnt').textContent = beadTotal.toLocaleString();
+
+/* ===========================================================================
+   ANIMATION — deliberately simple, and all of it drivable from the game's own
+   per-racer state (speed, lean, boost) if this is dropped in as a character.
+   =========================================================================== */
+const st = {spin:true, cruise:true, blink:0, t:0};
+const dummy = new T.Object3D();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  st.t += dt;
+  const t = st.t;
+  const speed = st.cruise ? 3.1 : 6.4;          // "cruise" vs "sprint" tail beat
+  const amp   = st.cruise ? 1.0 : 1.7;
+
+  bob.position.y   = Math.sin(t*1.5)*0.045;      // idle float
+  body.rotation.z  = Math.sin(t*0.85)*0.035;     // slow sway
+  body.rotation.x  = Math.sin(t*0.62)*0.022;
+
+  // the hat lags the body and rocks on its own beat, which is what keeps it
+  // reading as a separate object resting on the head rather than glued to it
+  hat.rotation.z = Math.sin(t*1.15)*0.055 - body.rotation.z*0.55;
+  hat.rotation.x = Math.sin(t*0.9)*0.032;
+
+  // moustache trails the sway a beat behind
+  stache.rotation.z = Math.sin(t*1.15 - 0.5)*0.075;
+  stache.position.y = -R*0.30 + Math.sin(t*2.1)*0.012;
+
+  // tail: a travelling wave down the length, amplitude growing toward the tip
+  for(const ring of tailRings){
+    const sway = Math.sin(t*speed - ring.t*5.2) * amp * (0.05 + 0.62*Math.pow(ring.t,1.7));
+    const lift = Math.cos(t*speed - ring.t*5.2) * amp * 0.10 * Math.pow(ring.t,1.9);
+    for(let j=0;j<ring.n;j++){
+      const a = j/ring.n*Math.PI*2;
+      dummy.position.set(Math.cos(a)*ring.r + sway, Math.sin(a)*ring.r + lift, ring.z);
+      dummy.scale.setScalar(ST*0.98);
+      dummy.updateMatrix();
+      tailMesh.setMatrixAt(ring.i0 + j, dummy.matrix);
+    }
+  }
+  tailMesh.instanceMatrix.needsUpdate = true;
+
+  // blink — squash the whole eye group, which works because each eye is a group
+  let k = 1;
+  if(st.blink > 0){
+    st.blink += dt/0.17;
+    k = Math.max(0.10, 1 - Math.sin(Math.min(1,st.blink)*Math.PI)*0.94);
+    if(st.blink >= 1) st.blink = 0;
+  }
+  for(const e of eyes) e.scale.y += (k - e.scale.y)*Math.min(1, 22*dt);
+
+  if(st.spin) yaw += dt*0.32;
+  updateCamera();
+  renderer.render(scene, camera);
+}
+
+/* ---------- camera: manual orbit, so there is no OrbitControls dependency ---------- */
+let yaw = -0.55, pitch = 0.12, dist = 7.4;
+function updateCamera(){
+  camera.position.set(
+    Math.sin(yaw)*Math.cos(pitch)*dist,
+    Math.sin(pitch)*dist + 0.15,
+    Math.cos(yaw)*Math.cos(pitch)*dist);
+  camera.lookAt(0, 0.05, 0);
+}
+let drag = false, lx = 0, ly = 0;
+const el = renderer.domElement;
+el.addEventListener('pointerdown', e=>{ drag = true; lx = e.clientX; ly = e.clientY;
+  el.setPointerCapture(e.pointerId); });
+el.addEventListener('pointermove', e=>{
+  if(!drag) return;
+  yaw   -= (e.clientX - lx)*0.0065;
+  pitch  = Math.max(-1.1, Math.min(1.1, pitch + (e.clientY - ly)*0.0055));
+  lx = e.clientX; ly = e.clientY;
+});
+el.addEventListener('pointerup', ()=> drag = false);
+el.addEventListener('wheel', e=>{
+  dist = Math.max(3.6, Math.min(16, dist + e.deltaY*0.0055)); e.preventDefault();
+}, {passive:false});
+// pinch
+let pd = 0;
+el.addEventListener('touchmove', e=>{
+  if(e.touches.length !== 2) return;
+  const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                       e.touches[0].clientY-e.touches[1].clientY);
+  if(pd) dist = Math.max(3.6, Math.min(16, dist + (pd-d)*0.012));
+  pd = d; e.preventDefault();
+}, {passive:false});
+el.addEventListener('touchend', ()=> pd = 0);
+
+/* ---------- controls ---------- */
+const bSpin = document.getElementById('bSpin');
+bSpin.onclick = ()=>{ st.spin = !st.spin; bSpin.classList.toggle('on', st.spin); };
+const bWave = document.getElementById('bWave');
+bWave.onclick = ()=>{ st.cruise = !st.cruise;
+  bWave.textContent = 'Tail: ' + (st.cruise ? 'cruise' : 'sprint');
+  bWave.classList.toggle('on', !st.cruise); };
+document.getElementById('bBlink').onclick = ()=> st.blink = 0.001;
+const bRig = document.getElementById('bRig');
+bRig.onclick = ()=>{ const v = !rigMarks[0].visible;
+  rigMarks.forEach(m=> m.visible = v);
+  bRig.classList.toggle('on', v); };
+
+function resize(){
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/Math.max(h,1);
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+const clock = new T.Clock();
+updateCamera();
+animate();
+</script>
+</body>
+</html>
