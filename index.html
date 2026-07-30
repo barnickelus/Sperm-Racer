@@ -1175,9 +1175,20 @@ function musicTick(){
   if(Math.floor(raw/steps)%4===3 && step>=steps-2) drumSnare();
 }
 // resolves a base character id to its currently-tuned station (home, or one of its alts)
+/* Stations are keyed on the CHARACTER — that is how each racer carries their own music.
+   A course that wants its own soundtrack therefore has nowhere to hang it, and a
+   MUSIC_STYLES entry named after a track flag is simply unreachable: nothing ever looks it
+   up, so it is dead code and the station can never display. A track's `music` id is
+   instead offered as an EXTRA station on the dial while you are on that course, so the
+   course gets its own theme without overwriting whoever is driving. */
+function altsFor(id){
+  const base=ALT_MAP[id]||[];
+  const tk=TRACKS[selTrack] && TRACKS[selTrack].music;
+  return (tk && MUSIC_STYLES[tk]) ? base.concat(tk) : base;
+}
 function effectiveStyleId(id){
-  const alts=ALT_MAP[id], idx=altIndex[id]||0;
-  return (alts && idx>0 && alts[idx-1]) ? alts[idx-1] : id;
+  const alts=altsFor(id), idx=altIndex[id]||0;
+  return (alts.length && idx>0 && alts[idx-1]) ? alts[idx-1] : id;
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
@@ -1981,9 +1992,11 @@ const TRACKS=[
   // magenta/blue studio lighting against a near-black backdrop.
   // Iris — "the Extrusion": everything here is piped out of a nozzle and coiled. Matte,
   // flat-lit and the most saturated set in the game. Vertical and gateway-driven: a long
-  // nave straight to read the towers against, a helix wrapping one giant tower, a short
+  // straight to read the arches down, a long climb past the one giant tower, a short
   // rainbow tunnel at the summit, a launch off the crest, then a banked carousel.
-  {name:'Iris', coil:true, key:9, tempo:166, sky:0xd9d2c6,
+  // (The climb is a single pass, not a true helix — measured minimum self-distance is 185
+  // units, so the road never actually wraps the tower. Named accordingly.)
+  {name:'Iris', coil:true, music:'coil', key:9, tempo:166, sky:0xd9d2c6, extraRamp:0.50,
    tunnels:[[0.44,0.54]], critters:[0.34], pills:[0.72], dams:[0.88],
    ctrl:[[-400,10,380],[-410,12,60],[-380,18,-260],[-230,32,-430],[60,46,-470],
          [330,58,-330],[420,52,-60],[350,36,220],[140,22,400],[-160,12,470]]},
@@ -2918,8 +2931,8 @@ function buildTrack(idx){
       for(let i=0;i<STEPS;i+=6){
         const s2=SAMP[i];
         pts.push(new T.Vector3(
-          s2.p.x+s2.n.x*side*(HW+2.8), s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
-          s2.p.z+s2.n.z*side*(HW+2.8)));
+          s2.p.x+s2.n.x*side*(HW*1.36), s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
+          s2.p.z+s2.n.z*side*(HW*1.36)));
       }
       const rope=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,loop), pts.length, 1.6, 6, loop),
         new T.MeshPhongMaterial({color:COIL_PAL[side>0?0:6], map:coilTex(),
@@ -3255,8 +3268,8 @@ function buildTrack(idx){
       for(const side of [-1,1]){
         const r=3.5+((i*13)%26)/10;
         // pushed clear of the guardrail ropes at HW+2.8, which were eating them entirely
-        vol.push({x:s2.p.x+s2.n.x*side*(HW+7.5), y:s2.p.y+0.6+r*0.5,
-                  z:s2.p.z+s2.n.z*side*(HW+7.5), s:r, sy:r, sz:(side>0?r:-r)*0.55,
+        vol.push({x:s2.p.x+s2.n.x*side*(HW*1.62), y:s2.p.y+0.6+r*0.5,
+                  z:s2.p.z+s2.n.z*side*(HW*1.62), s:r, sy:r, sz:(side>0?r:-r)*0.55,
                   ry, c:COIL_PAL[((i/6|0)+(side>0?0:3))%10]});
       }
     }
@@ -3568,12 +3581,17 @@ function buildTrack(idx){
     //    pinning it to 0.24 along the road, so each rib was a paper cut-out AND the six
     //    fused into one solid arched mass. Ribs with air between them are what keeps this
     //    a gantry over a road rather than a portal.
-    const ARCH_TUBE=2.4, ARCH_STEP=7.5;
+    // The legs of a half-torus sit at +-R on the ground, so R has to CLEAR the drivable
+    // corridor or the gantry is a phantom you drive through. That corridor is HW*2.2 = 48.4
+    // on the infield (the apron shortcut) and HW*1.28 = 28.2 outside, so the innermost arch
+    // starts outside 48.4. It makes the rainbow monumental, which is also truer to the
+    // reference than a tight little croquet hoop.
+    const ARCH_TUBE=2.6, ARCH_STEP=8, ARCH_R0=HW*2.35;
     let at=Math.round(STEPS*0.015);
     for(const gap of [90,76,64,54,45,38,32]){
       const s2=SAMP[at%STEPS];
       for(let r=0;r<6;r++){
-        const ag=new T.TorusGeometry(HW+5+r*ARCH_STEP, ARCH_TUBE, 6, 20, Math.PI);
+        const ag=new T.TorusGeometry(ARCH_R0+r*ARCH_STEP, ARCH_TUBE, 6, 20, Math.PI);
         claySculpt(ag, 0.05);                      // hand-rolled wobble, not a CAD torus
         const am=new T.Mesh(ag, new T.MeshPhongMaterial({color:COIL_ARCH[r], map:coilTex(),
           shininess:0, specular:0x000000}));
@@ -7069,9 +7087,9 @@ function syncHUD(){
   // ~148mph boosted) instead of showing the raw sim units.
   $('radioSpeed').textContent=Math.round(sp*0.7);
   $('radioPanel').classList.toggle('boosting', me.boostT>0);
-  const alts=ALT_MAP[chosenType&&chosenType.id];
+  const alts=altsFor(chosenType&&chosenType.id);
   $('radioStation').textContent=(curStyle&&curStyle.station)||'— NO SIGNAL —';
-  drawDial(chosenType?(altIndex[chosenType.id]||0):0, 1+(alts?alts.length:0));
+  drawDial(chosenType?(altIndex[chosenType.id]||0):0, 1+alts.length);
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
@@ -8178,7 +8196,7 @@ setupFullscreen();
 // Two physical knobs instead of one forward-only toggle, so it's actually adjustable
 // both directions right on the unit rather than needing several taps to "wrap around".
 function seekStation(dir){
-  const id=chosenType&&chosenType.id; const alts=ALT_MAP[id]; if(!alts||!alts.length)return;
+  const id=chosenType&&chosenType.id; const alts=altsFor(id); if(!alts.length)return;
   const n=alts.length+1;
   altIndex[id]=(((altIndex[id]||0)+dir)%n+n)%n;   // wraps both directions: home <-> alt1 <-> alt2 <-> ...
   noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
