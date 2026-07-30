@@ -826,6 +826,12 @@ const MUSIC_STYLES={
               hihat:1, beatGroup:4, tempoMul:0.82, station:'55.0 SUN BEAD FM',
               stab:{inst:'banjo', wave:'triangle', note:12, steps:[6,14], dur:0.14, vol:0.2},
               mel:[0,4,7,9,7,4,2,4], melB:[12,11,9,7,9,12,16,12] },
+  beadBosun:{ inst:'whistle', melWave:'triangle', bassWave:'sine', bassInst:'pluck',
+              volMul:1.06, drumVol:1.0,
+              drums:{kick:[0,7,8,15],snare:[4,12]}, bass:[0,5,7,5],
+              hihat:2, beatGroup:4, tempoMul:0.80, station:'62.4 HARBOUR LIGHT',
+              stab:{inst:'pluck', wave:'triangle', note:16, steps:[6,14], dur:0.13, vol:0.19},
+              mel:[0,5,7,12,9,7,5,4], melB:[12,9,7,5,7,9,12,14] },
   beadBandido:{ inst:'accordion', melWave:'triangle', bassWave:'square', bassInst:'pluck',
               volMul:1.1, drumVol:1.08,
               drums:{kick:[0,6,8,14],snare:[4,12]}, bass:[0,7,0,5],
@@ -1026,6 +1032,7 @@ function musicTick(){
   // character's music run louder/harder than the shared baseline without touching the global
   // music-vs-SFX balance tuned earlier — both default to 1 (no change) for every other style.
   const volMul=st.volMul||1, drumVol=st.drumVol||1;
+  // the groove itself has to move, or a longer melody just plays over the same loop
   const song0=st.seq||st.mel;
   /* REGISTER PROGRAM across the AABA form. Stacking more simultaneous octaves (the lead
      doubling below) widens the spectrum but not the WRITING — every strain still sat in
@@ -1035,12 +1042,18 @@ function musicTick(){
      dynamic, and the last A goes back up to close. Styles with no melB have no form to
      walk, so they resolve to 0/1 and are left exactly as they were. */
   const strain=(st.mel&&st.mel.length)||1;
-  const sec=st.seq ? Math.floor((raw%song0.length)/strain)%4 : 0;
-  const OCT=[0,12,0,12][sec];
-  const DYN=[0.80,1.00,1.20,1.02][sec];
+  const secs=st.secs||1;
+  const sec=st.seq ? Math.floor((raw%song0.length)/strain)%secs : 0;
+  //            A     A'    B     A''   (up4) (up4B) (inv) (home)
+  const OCT=[   0,   12,    0,   12,    0,    12,     0,    12][sec]||0;
+  const DYN=[0.80, 1.00, 1.20, 1.02, 0.92, 1.14,  0.86,  1.10][sec]||1;
+  // one strain where the lead drops out entirely and the rhythm section carries it. A gap
+  // is the cheapest way to make the re-entry land, and it breaks the wall of constant lead.
+  const REST = sec===6 && (Math.floor(raw/strain)%(secs*2))>=secs;
   if(st.drums){
-    if(st.drums.kick.includes(step)) drumKick(drumVol);
-    if(st.drums.snare.includes(step)) drumSnare(drumVol);
+    const half = sec===4 || sec===5;          // half-time feel through the transposed half
+    if(st.drums.kick.includes(step) && (!half || step%(bg*2)===0)) drumKick(drumVol*(half?1.15:1));
+    if(st.drums.snare.includes(step)) drumSnare(drumVol*(sec===2||sec===7?1.12:1));
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
     if(step%bg===0){ const bn=st.bass[(step/bg|0)%st.bass.length];
       playNote(noteFreq(bn-12),0.5,0.22*volMul*DYN,st.bassWave,st.bassInst);
@@ -1071,7 +1084,7 @@ function musicTick(){
   // vol was 0.1 — quieter than the bass (0.22) and even the kick (0.5 own-gain), so the
   // actual TUNE sat under its own rhythm section before gameplay SFX ever entered the mix.
   // Bumped so the melody reads as the lead voice instead of getting buried.
-  if(n!==null){
+  if(n!==null && !REST){
     playNote(noteFreq(n+12+OCT),0.22,0.15*volMul*DYN,st.melWave,st.inst);         // null = rest
     // Octave shimmer above the lead. The styles all lived inside about two octaves, which
     // is most of why they sounded thin — this opens the top without changing any melody.
@@ -1112,7 +1125,25 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   const styleId=effectiveStyleId(chosenType&&chosenType.id);
   curStyle=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;   // per-character style (some have a selectable alt "station")
   // assemble the AABA song form: verse twice, contrasting B strain (chorus), verse again
-  curStyle.seq = curStyle.melB ? [...curStyle.mel, ...curStyle.mel, ...curStyle.melB, ...curStyle.mel] : curStyle.mel;
+  /* SONG FORM. A four-strain AABA is still one short loop, and at this tempo it comes
+     round every ~20 seconds for a whole three-lap race — which is the repetitiveness.
+     This doubles the form to eight strains and, more importantly, gives it somewhere to
+     GO: the second half restates the same material a fourth up, answers it with an
+     inversion, then comes home. All of it is derived from the two strains each station
+     already carries, so no tune had to be rewritten and every station benefits.
+     Nulls are rests and must survive every transform. */
+  {
+    const M=curStyle.mel, B=curStyle.melB;
+    const up=(a,n)=>a.map(v=>v===null?null:v+n);
+    const inv=(a)=>{ const base=a.find(v=>v!==null)||0;
+                     return a.map(v=>v===null?null:base*2-v); };   // mirror about the first note
+    curStyle.seq = B ? [
+      ...M, ...M, ...B, ...M,                 // the original AABA
+      ...up(M,5), ...up(B,5),                 // the same material a fourth up
+      ...inv(B), ...M,                        // an inverted answer, then home
+    ] : M;
+    curStyle.secs = B ? 8 : 1;
+  }
   musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
 let hbTimer=null;
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
@@ -1514,6 +1545,16 @@ const OP_ART={
     '....KKKKKK....','.....DDDD.....','...DDKK.......','..KKDD........',
   ], {G:'#e0b060',R:'#d94f3c',K:'#dba876',E:'#ffffff',P:'#171218',D:'#3a2418'},
      11, 34, 40),
+  // Bosun Pearl — pink bead body, white cap with the blue band, brass anchor, and the
+  // threaded mouth strand that is the whole point of the rig.
+  beadBosun:opBeads([
+    '.....WWWW.....','....WWWWWW....','...WBBBBBBW...','..WWWWWWWWWW..',
+    '.WWWWWWWWWWWW.','.....AAAA.....','..LLLLLLLLLL..','.LLLLLLLLLLLL.',
+    '.LEEELLLLEEEL.','.LEBELLLLEBEL.','.LEEELLLLEEEL.','.PPPPPPPPPPPP.',
+    '..PPBBBBBBPP..','..PPPPPPPPPP..','...PPPPPPPP...','....DDDDDD....',
+  ], {W:'#fbf7f9',B:'#2442ae',A:'#f2ab24',L:'#f18cc5',P:'#e968b2',
+      E:'#fbf7f9',D:'#c94394'},
+     11, 34, 40),
   // Beaded Bandido — the same measured palette the model uses, at card scale: wide brim
   // with the serape band, huge cream eyes, and the black handlebar curling up past them.
   beadBandido:opBeads([
@@ -1873,6 +1914,41 @@ let TRACK_PULSE=[];
 // of shared per-track state here it must be cleared on EVERY buildTrack, not just the
 // branch that sets it, or it strands a stale mesh reference on the next course.
 let skyDome=null;
+/* LONGER, BUSIER CIRCUITS.
+   Every course is a handful of spline control points, so rather than redraw fifteen of
+   them by hand this widens each circuit and drops an extra control point between every
+   existing pair — offset to the side and displaced in height. The result is a longer lap
+   AND more direction changes and elevation, from the same authored shapes.
+
+   Two courses are treated carefully. A figure-8 only works if its crossover still lines
+   up, so those get the scale but not the inserted corners. Point-to-point courses are
+   already several times a normal lap, so they widen much less.
+
+   The offset is a fraction of the segment length, which is what keeps it safe: a fixed
+   offset would fold the short segments back on themselves and make a corner undrivable. */
+(function lengthenTracks(){
+  for(const t of TRACKS){
+    const loop = t.loop!==false;
+    const src = t.ctrl, n = src.length;
+    const SC = loop ? 1.15 : 1.06;
+    const out = [];
+    for(let i=0;i<n;i++){
+      const a=src[i];
+      out.push([a[0]*SC, a[1], a[2]*SC]);
+      if(!loop && i===n-1) break;
+      if(t.cross) continue;                       // crossover alignment must survive
+      const b=src[(i+1)%n];
+      const ax=a[0]*SC, az=a[2]*SC, bx=b[0]*SC, bz=b[2]*SC;
+      const dx=bx-ax, dz=bz-az, len=Math.hypot(dx,dz)||1;
+      const sgn=(i%2)?1:-1, off=len*0.15*sgn;
+      out.push([ (ax+bx)/2 - dz/len*off,
+                 Math.max(4, (a[1]+b[1])/2 + sgn*Math.min(15, len*0.055)),
+                 (az+bz)/2 + dx/len*off ]);
+    }
+    t.ctrl = out;
+  }
+})();
+
 // is course-fraction u inside one of the current track's tunnels?
 function tunnelAt(u){ const tn=TRACKS[selTrack].tunnels; if(!tn)return false;
   for(const [a,b] of tn) if(u>=a&&u<=b) return true; return false; }
@@ -4260,8 +4336,8 @@ function makeBeadCell(id){
  *     own ellipsoid, so airflow and mood physically bend it instead of just rotating it.
  * ------------------------------------------------------------------------------------ */
 const BND_EXPO = 0.48;        // track lights run ~2x the studio rig this was measured under
-function bndCol(hex){
-  return new T.Color(hex).convertSRGBToLinear().multiplyScalar(BND_EXPO).getHex();
+function bndCol(hex, mul){
+  return new T.Color(hex).convertSRGBToLinear().multiplyScalar(BND_EXPO*(mul||1)).getHex();
 }
 const BND = {
   // ladder stretched at both ends against the studio values: the track rigs carry a lot
@@ -4524,9 +4600,191 @@ function updateBandido(o, r, dt){
           pu[0].scale.set(p,p,1); pu[1].scale.set(p,p,1); }
 }
 
+/* ---- Bosun Pearl: creature-lab iteration 3 ("Sailor Bead Creature — Rig v2") ----------
+ * Brought over from creatures/iterations #3. The signature of that rig is not the cap, it
+ * is the MOUTH: a strand of beads threaded along a curve whose shape is the expression.
+ * So the mouth here is parametric and re-solved every frame, exactly like the Bandido's
+ * moustache, and the curve is chosen from what is happening in the race.
+ *
+ * The reference model faces -X with its tail on +X. The racers here face +Z, so every
+ * coordinate is remapped rather than the group being rotated — a rotated group would fight
+ * the banking and glance code that syncObjects applies to the racer root.
+ *
+ * Colour goes through bndCol() so the palette means what it says: the shared beadBatch
+ * writes hexes straight into instanceColor, which r128 treats as already-linear.
+ * ------------------------------------------------------------------------------------ */
+const BSN = {
+  pink     : bndCol(0xe968b2), pinkLight: bndCol(0xf18cc5), pinkDark: bndCol(0xc94394),
+  // BND_EXPO was budgeted for the Bandido's tans; a mostly-white hat at that exposure
+  // just picks up whatever the course lights are and reads mint on the pink circuits
+  white    : bndCol(0xfbf7f9, 1.85), whiteDim : bndCol(0xd8d2d6, 1.85),
+  blue     : bndCol(0x2442ae), blueDeep : bndCol(0x16276b),
+  brown    : bndCol(0x35171b), yellow   : bndCol(0xf2ab24),
+  eyeWhite : bndCol(0xfaf6f8, 1.7),
+};
+
+// Mouth strand. t runs -1..1 across the mouth; each shape returns a height and a depth so
+// the strand curves in FRONT of the face rather than being pasted flat onto it.
+const BSN_MOUTH = {
+  neutral   : (t)=> -0.10 - 0.30*(1-t*t),
+  happy     : (t)=> -0.10 - 1.15*(1-t*t),
+  sad       : (t)=> -0.10 + 0.85*(1-t*t),
+  suspicious: (t)=> -0.10 - 0.62*(1-t*t) + 0.55*t,     // one side cocked
+  open      : (t)=> -0.10 - 0.30*(1-t*t),              // handled by the width term below
+};
+const BSN_OPEN_W = {neutral:0, happy:0, sad:0, suspicious:0, open:1};
+const BSN_N = 11;
+
+function makeBosunCell(){
+  const g=new T.Group();
+  const ST=0.40;
+
+  // --- body: the pink bead ladder, darkest underneath ---
+  const body=[];
+  beadEllipsoid(body, 0,3.2,0, 3.4,2.8,5.1, ST, (la)=>
+    la<0.34 ? BSN.pinkDark : (la>0.70 ? BSN.pinkLight : BSN.pink));
+  const bodyMesh=bndGloss(beadBatch(body), 0x6a5560, 210);
+  bodyMesh.material.emissive.setHex(0x140810);
+  g.add(bodyMesh);
+  g.userData.head=bodyMesh;
+  g.userData.baseEmissive=bodyMesh.material.emissive.clone();
+
+  // --- sailor cap: white crown, blue band, rolled brim, anchor badge ---
+  const cap=new T.Group(); cap.position.set(0, 5.62, -0.55); g.add(cap);
+  {
+    const list=[];
+    // crown: a short barrel that tucks in at the top, not a dome — that flat-topped
+    // silhouette is what makes it read as a sailor cap instead of a beanie
+    // Sized to SIT ON the head. At the reference's proportions relative to this much
+    // longer muzzle the cap became a mushroom that shaded her own eyes.
+    const CH=1.95, R0=2.05, R1=1.72;
+    for(let k=0, rows=Math.round(CH/ST); k<=rows; k++){
+      const f=k/rows, r=T.MathUtils.lerp(R0,R1,Math.pow(f,0.7))*(f>0.86?Math.sqrt(1-Math.pow((f-0.86)/0.14,2))*0.55+0.45:1);
+      const rz=r*1.16, y=f*CH;
+      const n=Math.max(6, Math.round(Math.PI*(r+rz)/ST));
+      for(let j=0;j<n;j++){
+        const u=j/n*Math.PI*2;
+        list.push({x:Math.cos(u)*r, y, z:Math.sin(u)*rz, s:ST*0.98,
+                   c: f<0.16 ? BSN.blue : (f>0.80?BSN.white:BSN.whiteDim)});
+      }
+    }
+    // blue band around the base
+    for(let b=0;b<2;b++){
+      const r=2.12, rz=r*1.16, y=-0.10+b*ST*0.9;
+      const n=Math.round(Math.PI*(r+rz)/ST);
+      for(let j=0;j<n;j++){ const u=j/n*Math.PI*2;
+        list.push({x:Math.cos(u)*r, y, z:Math.sin(u)*rz, s:ST*0.98, c: b?BSN.blue:BSN.blueDeep}); }
+    }
+    // rolled brim, flicking up at the edge the way the reference's torus does
+    for(let ring=0; ring<3; ring++){
+      const r=2.20+ring*0.26, rz=r*1.14, y=-0.46+Math.pow(ring/2,2)*0.40;
+      const n=Math.round(Math.PI*(r+rz)/ST);
+      for(let j=0;j<n;j++){ const u=j/n*Math.PI*2;
+        list.push({x:Math.cos(u)*r, y, z:Math.sin(u)*rz, s:ST*0.98, c:BSN.white}); }
+    }
+    cap.add(bndGloss(beadBatch(list), 0x8e8890, 240));
+
+    // anchor badge, front and centre — stem, crossbar, ring and flukes
+    const badge=[];
+    const put=(x,y,z)=>badge.push({x, y, z, s:ST*0.94, c:BSN.yellow});
+    const BZ=2.62, BY=0.10;
+    for(let i=-3;i<=3;i++) put(0, BY+i*ST*0.85, BZ);                       // stem
+    for(let i=-2;i<=2;i++) put(i*ST*0.9, BY+2.0*ST*0.85, BZ);              // crossbar
+    for(let i=0;i<8;i++){ const a=i/8*Math.PI*2;                            // ring
+      put(Math.cos(a)*0.42, BY+3.1*ST*0.85+Math.sin(a)*0.42, BZ); }
+    for(let i=0;i<9;i++){ const a=Math.PI+ i/8*Math.PI;                     // flukes
+      put(Math.cos(a)*0.95, BY-2.4*ST*0.85+Math.sin(a)*0.95*0.6, BZ); }
+    cap.add(bndGloss(beadBatch(badge), 0xbfa050, 300));
+  }
+
+  // --- eyes: big white beads with brown pupils, each in its own group ---
+  const eyes=[], pupils=[];
+  for(const sx of [-1.62, 1.62]){
+    const eg=new T.Group(), eb=[];
+    beadEllipsoid(eb, 0,0,0, 1.26,1.32,1.06, 0.34, ()=>BSN.eyeWhite);
+    eg.add(bndGloss(beadBatch(eb), 0x9a9298, 270));
+    eg.position.set(sx, 3.80, 4.28); g.add(eg); eyes.push(eg);
+    const pg=new T.Group(), pb=[];
+    beadEllipsoid(pb, 0,0,0, 0.66,0.72,0.56, 0.30, ()=>BSN.brown);
+    pg.add(bndGloss(beadBatch(pb), 0x8a8280, 330));
+    pg.position.set(sx, 3.76, 5.14); g.add(pg); pupils.push(pg);
+  }
+  g.userData.eyes=eyes; g.userData.pupils=pupils;
+
+  // --- mouth: the bead strand. A Group so the existing scale animation still applies. ---
+  const mouth=new T.Group(); mouth.position.set(0, 1.86, 4.30); g.add(mouth);
+  const mList=[];
+  for(let i=0;i<BSN_N;i++) mList.push({x:0,y:0,z:0,s:ST*0.86,c:BSN.brown});
+  const mouthMesh=bndGloss(beadBatch(mList), 0x2e2620, 120);
+  mouth.add(mouthMesh);
+  g.userData.mouth=mouth; g.userData.mouthBase=mouth.scale.clone();
+
+  const glow=glowSprite(0xff9ad4,13); glow.position.set(0,3.4,0.5); g.add(glow);
+  g.userData.glow=glow;
+  const fl1=glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
+  const fl2=glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
+  g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
+
+  // --- tail: the shared ring contract, so wiggleTail drives it ---
+  const rings=[], tail=[], RN=20;
+  for(let i=0;i<RN;i++){
+    const t=i/(RN-1), r=1.7*(1-t)*(1-t)+0.26;
+    const n=Math.max(4, Math.round(2*Math.PI*r/ST));
+    const c=(Math.floor(t*7)%2)===0 ? BSN.pinkDark : (t>0.55?BSN.pinkLight:BSN.pink);
+    rings.push({t, ph:i*0.55, r, n, s:ST*0.98});
+    for(let j=0;j<n;j++){ const u=j/n*Math.PI*2;
+      tail.push({x:Math.cos(u)*r, y:3.2+Math.sin(u)*r, z:-2-t*20, s:ST*0.98, c}); }
+  }
+  const tailMesh=bndGloss(beadBatch(tail), 0x6a5560, 210);
+  tailMesh.material.emissive.setHex(0x140810);
+  g.add(tailMesh);
+  g.userData.tailMesh=tailMesh;
+  g.userData.beadTail={mesh:tailMesh, rings, dummy:new T.Object3D()};
+
+  g.userData.bosun={mouthMesh, dummy:new T.Object3D(), shape:'neutral',
+                    cur:new Array(BSN_N).fill(0).map(()=>({y:0,w:0})), open:0, blend:0};
+  updateBosun(g, {spd:0}, 0.016);
+  wiggleTail(g,0,0);
+  return g;
+}
+
+/* Per-frame mouth solve. The expression comes from the race, not from a timer, so the
+   character is reacting to something the player can see happening. */
+function updateBosun(o, r, dt){
+  const rig=o.userData.bosun; if(!rig) return;
+  const want = r.spinT>0      ? 'open'          // shocked O
+             : r.celebT>0     ? 'happy'
+             : r.boostT>0     ? 'happy'
+             : r.drift===1    ? 'suspicious'    // one side cocked, concentrating
+             : (r.finished && r.place>3) ? 'sad'
+             : 'neutral';
+  rig.shape=want;
+  const fn=BSN_MOUTH[want], ow=BSN_OPEN_W[want];
+  const k=Math.min(1, 8*dt);
+  rig.open += (ow-rig.open)*k;
+  const d=rig.dummy;
+  for(let i=0;i<BSN_N;i++){
+    const t=(i/(BSN_N-1))*2-1;
+    // closed: a strand across the face. open: the same beads swing out into a ring, which
+    // is how the reference does its 'open' shape too.
+    const ringA=Math.PI*2*i/BSN_N;
+    const cy=fn(t), cw=t*1.30;
+    const oy=Math.cos(ringA)*0.62, ow2=Math.sin(ringA)*0.86;
+    const y=T.MathUtils.lerp(cy, oy, rig.open);
+    const w=T.MathUtils.lerp(cw, ow2, rig.open);
+    const c=rig.cur[i];
+    c.y+=(y-c.y)*k; c.w+=(w-c.w)*k;
+    d.position.set(c.w, c.y, 0.10-Math.abs(c.w)*0.10);   // wraps forward around the muzzle
+    d.scale.setScalar(0.40*0.86);
+    d.updateMatrix(); rig.mouthMesh.setMatrixAt(i, d.matrix);
+  }
+  rig.mouthMesh.instanceMatrix.needsUpdate=true;
+}
+
 function makeCell(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
   if(typeId === 'beadBandido') return makeBandidoCell(); // the Creature Lab sombrero actor
+  if(typeId === 'beadBosun') return makeBosunCell();     // creature-lab iteration 3
   if(BEAD_RACERS[typeId]) return makeBeadCell(typeId);   // strung-bead renditions
   // Clay is a surface treatment, not a different model: build Guido as normal, then
   // re-sculpt him at the end instead of cel-shading. (The motion half is in syncObjects.)
@@ -5210,6 +5468,7 @@ const SPERM_TYPES = [
   {id:'paint', name:'Plein-Air Pierre', hue:52, desc:'Pierre painted alla prima in oils. Muted, matte, and half of him lost to the mist.', stats:{skill:1.0, turn:1.14, spinResist:0.7}},
   {id:'felt', name:'Felted Cleetus', hue:38, desc:'Cleetus needle-felted from raw wool. Matte, shaggy and dyed in strata.', stats:{skill:0.97, maxV:1.15, spinResist:0.7}},
   {id:'paper', name:'Origami Wei', hue:128, desc:'Wei Long, scored and folded from a single sheet. Every curve is a crease.', stats:{skill:1.06, spinResist:0.55, turn:1.22}},
+  {id:'beadBosun', name:'Bosun Pearl', hue:322, desc:'Pink beadwork under a white sailor cap and a brass anchor. Her mouth is a threaded strand that redraws itself with her mood.', stats:{skill:1.0, spinResist:0.62, turn:1.15, brake:0.8}},
   {id:'beadBandido', name:'Beaded Bandido', hue:22, desc:'Strung in glossy beads under a hand-threaded sombrero. The moustache streams in the wind and he wears his mood on his face.', stats:{skill:1.0, driftMult:1.2, turn:1.12, spinResist:0.7}},
 ];
 let chosenType = SPERM_TYPES[0]; // default Guido energy
@@ -5414,6 +5673,13 @@ function updateRacer(r,dt){
     r.spd*=Math.pow(0.1,dt);           // the player used to keep driving, which meant the
     r.x+=Math.sin(r.head)*r.spd*dt;    // victory camera was chasing a moving target and
     r.z+=Math.cos(r.head)*r.spd*dt;    // never actually got around to the face
+    // ...but it also returned before the road-following code, so the winner kept whatever
+    // height it crossed the line at while sliding on. On any course that climbs or drops
+    // past the finish that means sinking through the road during the entire celebration.
+    const sF=SAMP[r.idx];
+    const latF=(r.x-sF.p.x)*sF.n.x + (r.z-sF.p.z)*sF.n.z;
+    r.surfY = sF.p.y + Math.sin(sF.bank||0)*latF;
+    r.y += ((r.surfY+HOVER_H) - r.y)*Math.min(1, 5*dt);
     return;
   }
   let steer=0, gas=false, brake=false, reverse=false, drift=false, fire=false;
@@ -5953,7 +6219,7 @@ function syncObjects(dt,now){
     // into r._bank), then derive an orthonormal right/up so the model banks relative to its
     // own direction of travel, matching the road surface underneath it.
     const headAngle=r.head + r.slip + r._glance;
-    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85;
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
     _oRight.crossVectors(_oUp, _oFwd).normalize();
@@ -6017,6 +6283,7 @@ function syncObjects(dt,now){
     // characters that carry their own rig (springs, airflow, mood) drive it here. Guarded
     // on userData, so it costs nothing for every other racer on the grid.
     if(r.obj.userData.bandido) updateBandido(r.obj, r, dt);
+    if(r.obj.userData.bosun) updateBosun(r.obj, r, dt);
     // celebration body language: happy bounce + side-to-side victory sway
     if(r.celebT>0){ r.celebT-=dt;
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
@@ -6102,9 +6369,14 @@ function updateCamera(dt){
   // direction of this game, so the grid is the one moment that should be a portrait.
   if(state==='count'){
     me._cdT=(me._cdT||0)+dt;
-    const HOLD=1.7;                                   // of a ~2.85s countdown
-    const k=Math.min(1, Math.max(0, (me._cdT-HOLD)/1.0));
+    // Two moves inside the three seconds: hold a portrait while the grid sizes each other
+    // up, widen so the rivals they are looking AT are in frame, then settle into the
+    // driving position before the lights go out.
+    const HOLD=1.25, WIDEN=0.95;
+    const k=Math.min(1, Math.max(0, (me._cdT-HOLD)/WIDEN));
     const ease=k*k*(3-2*k);
+    const k2=Math.min(1, Math.max(0, (me._cdT-(HOLD+WIDEN))/0.8));
+    const settle=k2*k2*(3-2*k2);
     // sweep a shallow arc ACROSS the face rather than around the body: dead-ahead is
     // me.head + PI, and +-30deg from there keeps both eyes and the mouth framed throughout
     // +-17deg, not +-30. At 17 units out a 30deg swing throws the lens 8.5 units sideways,
@@ -6113,21 +6385,21 @@ function updateCamera(dt){
     const faceA=me.head + Math.PI + Math.sin(me._cdT*0.9)*0.30;
     // 12.5 put the lens inside the sombrero. The head alone is ~7 across and the models
     // are 10 deep before the tail, so a portrait wants ~17 out and a little above the eyeline.
-    const dist=T.MathUtils.lerp(17, 30, ease);
+    const dist=T.MathUtils.lerp(17, 27, ease);
     // BELOW the eyeline, looking slightly up. Several characters wear wide brims (and
     // Salty a cap); a lens level with the hat gets the face blocked by its own headwear.
-    const high=T.MathUtils.lerp(4.6, 13, ease);
+    const high=T.MathUtils.lerp(4.6, 9.5, ease);
     const want=new T.Vector3(
       me.x - Math.sin(faceA)*dist, me.y + high, me.z - Math.cos(faceA)*dist);
     // ease toward the chase position as the pull-back completes, so 'GO!' hands over
     // to the driving camera without a cut
-    if(ease>0) want.lerp(new T.Vector3(me.x,me.y,me.z)
-      .add(fwd.clone().multiplyScalar(-30)).add(new T.Vector3(0,13,0)), ease*0.85);
+    if(settle>0) want.lerp(new T.Vector3(me.x,me.y,me.z)
+      .add(fwd.clone().multiplyScalar(-30)).add(new T.Vector3(0,13,0)), settle*0.9);
     // snap the first frame outright: lerping in from wherever the menu camera sat drags
     // the lens straight through the grid
     if(me._cdT<=dt*1.5) camera.position.copy(want);
     else camera.position.lerp(want, Math.min(1, 4*dt));
-    camera.lookAt(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, ease), me.z);   // level with the face
+    camera.lookAt(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, settle), me.z);  // level with the face
     camera.fov += (T.MathUtils.lerp(46, 62, ease)-camera.fov)*Math.min(1,4*dt);
     camera.updateProjectionMatrix();
     return;
@@ -6145,10 +6417,28 @@ function updateCamera(dt){
     // than 18: at the old framing the gestures were happening off in the middle distance.
     const heroA=me.head + Math.PI + Math.sin(me._orbT*0.52)*0.62;
     const dist=19 - Math.min(6, me._orbT*1.4);                    // gentle dolly-in as it pans
+    // Rise through the celebration rather than holding one height — and never let the lens
+    // drop through the road. The orbit swings well outside the tarmac, so on a banked or
+    // climbing section a fixed me.y+4 put the camera underneath the surface and the shot
+    // filled up with ground.
+    const floorY=(me.surfY!==undefined?me.surfY:me.y)+3.2;
+    const camY=Math.max(floorY, me.y + 4.0 + Math.min(3.2, me._orbT*0.9) + Math.sin(me._orbT*1.1)*0.9);
     camera.position.lerp(new T.Vector3(
-      me.x - Math.sin(heroA)*dist, me.y + 4.0 + Math.sin(me._orbT*1.1)*1.0, me.z - Math.cos(heroA)*dist), Math.min(1,5*dt));
+      me.x - Math.sin(heroA)*dist, camY, me.z - Math.cos(heroA)*dist), Math.min(1,5*dt));
     camera.lookAt(me.x, me.y+4.4, me.z);   // slightly up, so a wide brim doesn't mask the face
     camera.fov += (43-camera.fov)*Math.min(1,3*dt);               // tighter, portrait-ish
+    // keep the party going instead of one pop at the line: ribbons off the winner, timed
+    // to the orbit so they read as thrown rather than sprayed
+    me._orbFx=(me._orbFx||0)-dt;
+    if(me._orbFx<=0){
+      me._orbFx=0.22;
+      const PAL=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
+      const c=PAL[(me._orbT*4|0)%PAL.length];
+      const a=me._orbT*2.3, rr=5+Math.sin(me._orbT*3)*2;
+      emit(me.x+Math.cos(a)*rr, me.y+7.5, me.z+Math.sin(a)*rr,
+        {color:c, life:1.5, vx:Math.cos(a)*13, vy:20+Math.random()*12, vz:Math.sin(a)*13,
+         s0:4.5, s1:0, grav:34, op:0.95});
+    }
     camera.updateProjectionMatrix();
     return;
   }
@@ -6319,6 +6609,7 @@ function frame(now){
     }
     syncHUD();
   }
+  if(state==='count') countdownGlance(dt, now);
   if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); drawMap(); }
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
@@ -6741,16 +7032,46 @@ function netApplySnap(r, dt){
   netRenderLobby();
 })();
 
+let cdT0=0;
+/* On the grid the racers SIZE EACH OTHER UP. syncObjects already turns a head toward a
+   rival who is pulling alongside, but that is proximity-driven and on the start line
+   everyone is equally close, so it averages out to staring straight ahead. This picks a
+   deliberate target, holds the look, then switches — the difference between a crowd
+   facing forward and a grid full of racers checking out the competition.
+   Deterministic per racer (no rng) so it reads as intent rather than twitch. */
+function countdownGlance(dt, now){
+  const el=(now-cdT0)/1000;
+  for(let i=0;i<racers.length;i++){
+    const r=racers[i];
+    // a new mark roughly every 0.85s, offset per racer so they are not in lockstep
+    const beat=Math.floor(el/0.85 + i*0.37);
+    const others=racers.filter(o=>o!==r);
+    if(!others.length) continue;
+    const target=others[(beat*3 + i*2) % others.length];
+    let diff=Math.atan2(target.x-r.x, target.z-r.z)-r.head;
+    while(diff>Math.PI)diff-=6.2832; while(diff<-Math.PI)diff+=6.2832;
+    // hold most of the beat on the mark, then snap across to the next one
+    const phase=(el/0.85 + i*0.37)%1;
+    const settle=Math.min(1, phase/0.28);
+    const want=Math.max(-1.15, Math.min(1.15, diff))*settle*0.92;
+    r._glance=(r._glance||0)+(want-(r._glance||0))*Math.min(1, 7*dt);
+    // a little chin-lift on the beat, so it reads as swagger rather than a lazy susan
+    r._cdLean=(r._cdLean||0)+((Math.sin(el*4.2+i)*0.05)-(r._cdLean||0))*Math.min(1,6*dt);
+  }
+}
+
 /* ============== FLOW ============== */
 function countdown(){
   buildRacers();
   document.body.classList.remove('final-lap');   // clear any pulse left over from a previous race
   $('start').classList.add('hidden'); $('finish').classList.add('hidden');
   $('cd').classList.remove('hidden'); $('count').textContent='3';
-  state='count'; let n=3;
+  // A flat three seconds: 3 / 2 / 1 / GO at 750ms each. It used to run 2.85s on an
+  // uneven 750/750/600 split, which is not what a lights-out sequence should feel like.
+  state='count'; cdT0=performance.now(); let n=3;
   const tick=()=>{ n--;
     if(n>0){$('count').textContent=n;setTimeout(tick,750);}
-    else if(n===0){$('count').textContent='GO!';setTimeout(tick,600);}
+    else if(n===0){$('count').textContent='GO!';setTimeout(tick,750);}
     else{$('cd').classList.add('hidden');state='race';tStart=performance.now();last=performance.now();}
   };
   setTimeout(tick,750);
