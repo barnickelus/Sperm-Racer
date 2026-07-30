@@ -858,6 +858,20 @@ const MUSIC_STYLES={
      Pa rather than a walking line, which is what an Indian classical bass actually does,
      and the drums are teental — the 16-beat cycle, with the heavy 'dha' strokes on 1, 5
      and 13 and the hollow 'tin' on 9. beatGroup 4 gives exactly that 16-step bar. */
+  /* Iris — a fairground BAND-ORGAN GALOP. A barrel organ is a machine that extrudes
+     music: a pinned cylinder turning at a fixed rate, pushing a continuous stream through
+     a fixed rank of pipes, forever, on a brightly painted machine. Same manufacturing
+     metaphor as a clay extruder, and the galop is the real carousel tempo (fast 2/4) so it
+     stays a racing track rather than a waltz. The melody is the two shapes the set is
+     built from: the verse is four ascending COILS each restarting a step higher, and the
+     B strain is one symmetrical ARCH up and back down. */
+  coil:     { inst:'organ', melWave:'triangle', bassWave:'sawtooth', bassInst:'brass',
+              volMul:1.08, drumVol:1.0,
+              drums:{kick:[0,8],snare:[4,12],openhat:[14]}, bass:[0,7,5,7],
+              hihat:2, beatGroup:4, tempoMul:0.64, station:'36.0 SPIRAL FM',
+              stab:{inst:'bell', wave:'sine', note:19, steps:[6,14], dur:0.5, vol:0.15},
+              mel: [0,4,7,4, 2,5,9,5, 4,7,12,7, 5,9,12,9],
+              melB:[7,9,11,12,14,16,17,19, 17,16,14,12,11,9,7,null] },
   desi:     { inst:'pluck', melWave:'triangle', bassWave:'sine', bassInst:'strings',
               volMul:1.06, drumVol:1.02,
               drums:{kick:[0,4,12],snare:[8]}, bass:[0,0,7,0],
@@ -1965,6 +1979,14 @@ const TRACKS=[
   // voxel dressing for its structure (the reference's base IS square pegs, not beads) but
   // swaps in high-gloss plastic, adds bead-sphere scenery, and switches the whole rig to
   // magenta/blue studio lighting against a near-black backdrop.
+  // Iris — "the Extrusion": everything here is piped out of a nozzle and coiled. Matte,
+  // flat-lit and the most saturated set in the game. Vertical and gateway-driven: a long
+  // nave straight to read the towers against, a helix wrapping one giant tower, a short
+  // rainbow tunnel at the summit, a launch off the crest, then a banked carousel.
+  {name:'Iris', coil:true, key:9, tempo:166, sky:0xd9d2c6,
+   tunnels:[[0.44,0.54]], critters:[0.34], pills:[0.72], dams:[0.88],
+   ctrl:[[-400,10,380],[-410,12,60],[-380,18,-260],[-230,32,-430],[60,46,-470],
+         [330,58,-330],[420,52,-60],[350,36,220],[140,22,400],[-160,12,470]]},
   {name:'Perla', voxel:true, bead:true, key:2, tempo:186, sky:0x0a0714,
    tunnels:[[0.34,0.44]], critters:[0.6], pills:[0.2], dams:[0.74],
    ctrl:[[350,8,210],[430,20,-50],[290,36,-310],[30,50,-400],[-245,42,-320],
@@ -2292,6 +2314,80 @@ function neonBatch(pos, color, opacity){
  *
  * One palette for everything, lifted from the reference.
  * ---------------------------------------------------------------------------------- */
+/* ============== EXTRUDED-CLAY KIT (Iris) ============== *
+ * Matte plasticine piped out of a nozzle: coil towers, concentric rainbow arches, spiral
+ * volutes, colour-wheel wedges. Two things make it work and both are easy to get wrong:
+ *
+ *  1. SATURATION SURVIVES ONLY IF THE LIGHTING LETS IT. The existing plasticine profile
+ *     crushes lightness (lMul 0.48, lMax 0.34) because the default rig sums to ~2.95
+ *     intensity. Author this palette at true value and it goes to mud under that rig, so
+ *     this course gets its own flat ~1.65 lightbox rig instead (applyTrackLighting).
+ *  2. MATTE MEANS specular BLACK, not just shininess 0. Phong keeps a broad specular lobe
+ *     at shininess 0; it is the specular colour that actually kills the sheen.
+ * ---------------------------------------------------------------------------------- */
+const COIL_PAL=[0xE0157E,0xFF4FA3,0xF0531C,0xFFB80E,0x8FCB1A,0x0E8F7A,
+                0x1BA5D8,0x1B2C8C,0x6A2BB5,0xC81E2E,0xF2E6CE,0x4A2A1C];
+// innermost -> outermost ring of an arch, chosen so no two adjacent bands muddy
+const COIL_ARCH=[0xE0157E,0xF0531C,0xFFB80E,0x8FCB1A,0x1BA5D8,0x6A2BB5];
+let COIL_TEX=null;
+function coilTex(){
+  if(COIL_TEX) return COIL_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=256;
+  const x=c.getContext('2d');
+  x.fillStyle='#ffffff'; x.fillRect(0,0,256,256);
+  // fine granular tooth — clay is never glassy
+  x.globalAlpha=0.05;
+  for(let i=0;i<2600;i++){ x.fillStyle=(i%2)?'#000':'#fff';
+    x.fillRect(Math.random()*256, Math.random()*256, 1.6, 1.6); }
+  // piped coil ridges: the seam left by the nozzle, which is the whole material story
+  x.globalAlpha=0.07; x.strokeStyle='#000'; x.lineWidth=3;
+  for(let i=0;i<10;i++){ const y=i*26+6;
+    x.beginPath(); x.moveTo(0,y);
+    x.bezierCurveTo(85,y-6, 170,y+6, 256,y); x.stroke(); }
+  // pressed pits, each with a light rim so it reads as pushed IN
+  x.globalAlpha=0.10;
+  for(let i=0;i<130;i++){
+    const px=Math.random()*256, py=Math.random()*256, r=1.4+Math.random()*1.6;
+    x.fillStyle='#fff'; x.beginPath(); x.arc(px-0.6,py-0.6,r+0.9,0,6.283); x.fill();
+    x.fillStyle='#000'; x.beginPath(); x.arc(px,py,r,0,6.283); x.fill();
+  }
+  x.globalAlpha=1;
+  COIL_TEX=new T.CanvasTexture(c);
+  COIL_TEX.wrapS=COIL_TEX.wrapT=T.RepeatWrapping; COIL_TEX.repeat.set(3,3);
+  return COIL_TEX;
+}
+// One shared texture at repeat(3,3) handed to props scaled 27-90x collapses to flat
+// colour — the grain and the pits are there in the canvas and invisible on screen. Big
+// forms need their own repeat, so they get their own texture view of the same canvas.
+function coilTexAt(rx, ry){
+  const t=coilTex().clone(); t.needsUpdate=true;
+  t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(rx, ry);
+  return t;
+}
+// Matte to the point of being unlit-looking, and self-emissive so the shaded side of a
+// prop stays CHROMATIC instead of going grey — the references have almost no value falloff.
+function coilMat(){
+  // The emissive is not decoration: with only a 0.55 hemi for fill, an unlit face falls to
+  // the ground colour and goes brown. A little self-colour keeps shaded sides CHROMATIC,
+  // which is the thing the reference has and ordinary shading does not.
+  const m=new T.MeshPhongMaterial({color:0xffffff, map:coilTex(),
+    shininess:0, specular:0x000000, flatShading:false});
+  m.emissive=new T.Color(0x000000); m.emissiveIntensity=1;
+  return m;
+}
+function coilBatch(geo, list){
+  const m=new T.InstancedMesh(geo, coilMat(), list.length); m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(v.c); m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
 const FELT_PAL=[0xe8e4d9,0xa9b8a0,0x5a6b84,0x1b2350,0x2438a8,0xc4207e,0xe8408c,
                 0xc11b2e,0xe23a2a,0xe86a22,0xe8b22a,0x1f6b70,0x3a1440,0x170a24];
 const FELT_WOOL=[0xe8408c,0xc4207e,0xc11b2e,0xe23a2a,0x8f9c72,0xa9b8a0,0xe8e4d9,0x5a6b84];
@@ -2472,8 +2568,17 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
-function applyTrackLighting(studio, pool){
-  if(pool){
+function applyTrackLighting(studio, pool, coil){
+  if(coil){
+    // A lightbox photographing a sculpture: flat, shadowless, total ~1.65. Anything near
+    // the default rig's ~2.95 forces the palette to be authored dark to survive, which is
+    // exactly the compromise the existing plasticine profile had to make.
+    hemi.color.setHex(0xf4ece0); hemi.groundColor.setHex(0x3a2418); hemi.intensity=0.55;
+    sun.color.setHex(0xffffff);  sun.intensity=0.55;  sun.position.set(40,150,60);
+    rim.color.setHex(0xffc0a0);  rim.intensity=0.30;  rim.position.set(-70,60,-60);
+    fill.color.setHex(0xa8d0ff); fill.intensity=0.25; fill.position.set(60,40,-40);
+    flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+  } else if(pool){
     // Almost no ambient: the pod canopy is unlit geometry doing the "lighting", so any
     // real fill here flattens the room and the ceiling stops reading as the light source.
     hemi.color.setHex(0x4a1020); hemi.groundColor.setHex(0x06121a); hemi.intensity=0.45;
@@ -2678,24 +2783,27 @@ function buildTrack(idx){
   scene.background.set(trackSky);
   scene.fog.color.set(trackSky);
   // Always assigned, never only-on-one-branch: fog range is shared state, and the oil
-  // course needs a very short one to dissolve its distances the way the reference does.
-  // Reads the flag off the record directly — this runs above the const declarations, so
-  // referencing `paint` here is a temporal-dead-zone throw.
-  scene.fog.near = TRACKS[idx].paint ? 25 : 120;
-  scene.fog.far  = TRACKS[idx].paint ? 330 : 560;
+  // course needs a very short one to dissolve its distances the way the reference does,
+  // while Iris is photographed rather than lit and wants its distances to STAY visible so
+  // the set reads as objects on a bright seamless backdrop.
+  // Reads the flags off the record directly — this runs above the const declarations, so
+  // referencing `paint` or `coil` here would be a temporal-dead-zone throw.
+  scene.fog.near = TRACKS[idx].paint ? 25 : (TRACKS[idx].coil ? 260 : 120);
+  scene.fog.far  = TRACKS[idx].paint ? 330 : (TRACKS[idx].coil ? 1150 : 560);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
   const vox  = !!TRACKS[idx].voxel;      // dress this course in cubes instead of tissue
   const wire = !!TRACKS[idx].vector;     // ...or in glowing wireframe instead of either
   const clay = !!TRACKS[idx].clay;       // ...or as hand-pressed plasticine on a set
+  const coil = !!TRACKS[idx].coil;       // ...or as saturated clay piped from a nozzle
   const paper= !!TRACKS[idx].paper;      // ...or as a folded cut-paper diorama
   const mosaic=!!TRACKS[idx].mosaic;     // ...or as optically-mixing Chuck-Close tiles
   const felt  =!!TRACKS[idx].felt;       // ...or as marbled felt strata, tufts and thread
   const bead  =!!TRACKS[idx].bead;       // ...or as glossy beadwork under a studio rig
   const pool  =!!TRACKS[idx].pool;       // ...or as a 70s natatorium under a light canopy
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
-  applyTrackLighting(bead, pool);
+  applyTrackLighting(bead, pool, coil);
   const feltTex = felt ? feltStrataTex() : null;
   // The voxel dressing below is shared: mosaic only swaps HOW the cubes are batched, so
   // the material argument each call passes is deliberately ignored on that path.
@@ -2706,7 +2814,9 @@ function buildTrack(idx){
     : voxBatch;
   groundPlane.visible = !wire;           // the vector course supplies its own ground grid
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
-    : bead ? 0x0d0a18 : pool ? 0x140a10 : 0x2a1a22);  // dark so speculars/pods carry
+    : bead ? 0x0d0a18 : pool ? 0x140a10
+    // just under the sky, so the horizon reads as a cyclorama sweep rather than a cut
+    : TRACKS[idx].coil ? 0xcfc3b2 : 0x2a1a22);  // dark so speculars/pods carry
   trackLoop = loop; trackCross = cross;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
@@ -2794,6 +2904,27 @@ function buildTrack(idx){
     for(let i=0;i<rows.length;i+=5){
       const h=glowSprite(rows[i].c, 26); h.position.set(rows[i].x, rows[i].y-1, rows[i].z);
       trackGroup.add(h);
+    }
+  } else if(coil){
+    // The roadbed as one continuous extrusion, with two ropes plaited along the verge —
+    // the piped guardrail is what stops the fast descent reading as an empty shelf.
+    const under=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,10,loop),
+      new T.MeshPhongMaterial({color:0x4A2A1C, map:coilTex(), shininess:0, specular:0x000000}));
+    // -9 put the tube's crown at p.y+4 against a road at p.y+0.05 — it punched through
+    // the middle 42% of the road and hid the entire banded surface.
+    under.position.y-=18; trackGroup.add(under);
+    for(const side of [-1,1]) for(let lane=0; lane<2; lane++){
+      const pts=[];
+      for(let i=0;i<STEPS;i+=6){
+        const s2=SAMP[i];
+        pts.push(new T.Vector3(
+          s2.p.x+s2.n.x*side*(HW+2.8), s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
+          s2.p.z+s2.n.z*side*(HW+2.8)));
+      }
+      const rope=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,loop), pts.length, 1.6, 6, loop),
+        new T.MeshPhongMaterial({color:COIL_PAL[side>0?0:6], map:coilTex(),
+          shininess:0, specular:0x000000}));
+      trackGroup.add(rope);
     }
   } else if(felt){
     // The pressed-sheet state: the tube becomes a bank of marbled strata, and the same
@@ -2952,6 +3083,21 @@ function buildTrack(idx){
     rg.globalAlpha=0.10; rg.fillStyle='#4a3a20';
     for(let i=0;i<160;i++) rg.fillRect(Math.random()*64,Math.random()*256,1,1);  // fibre
     rg.globalAlpha=1;
+  } else if(coil){
+    // The stacked-band language on the surface you actually look at most. Bands run
+    // ACROSS the road with a cream hairline between them so no two hues muddy, and a
+    // pitted rope kerb runs down both edges.
+    // canvas is 64x256, painted with `rg` like every other branch here
+    rg.fillStyle='#4A2A1C'; rg.fillRect(0,0,64,256);
+    const CPAL=['#E0157E','#F0531C','#FFB80E','#8FCB1A','#1BA5D8','#6A2BB5','#0E8F7A','#C81E2E'];
+    for(let y=0;y<256;y+=13){
+      rg.fillStyle=CPAL[(y/13|0)%CPAL.length]; rg.fillRect(0,y,64,12);
+      rg.fillStyle='#F2E6CE'; rg.fillRect(0,y+12,64,1);
+    }
+    rg.fillStyle='#4A2A1C'; rg.fillRect(0,0,7,256); rg.fillRect(57,0,7,256);   // rope kerbs
+    rg.globalAlpha=0.26; rg.fillStyle='#000';
+    for(let y=0;y<256;y+=6){ rg.fillRect(0,y,7,2); rg.fillRect(57,y,7,2); }    // coil seam
+    rg.globalAlpha=1;
   } else if(clay){
     // Rolled-out clay slab: warm terracotta, a hand-pressed centre line and darker
     // thumbed edges. The mottling comes from CLAY_TEX once clayifyScene runs.
@@ -2990,7 +3136,11 @@ function buildTrack(idx){
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
-  const road=new T.Mesh(geo, paint
+  const road=new T.Mesh(geo, coil
+    // matte, opaque, untinted: the banded texture IS the surface here
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:0,specular:0x000000,
+        side:T.DoubleSide})
+    : paint
     ? new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
     : pool
     // Wet is a hard WHITE specular, not a colour. Turquoise with a soft highlight just
@@ -3096,6 +3246,21 @@ function buildTrack(idx){
       c.setHex(v.c); cm.setColorAt(i,c); });
     cm.instanceMatrix.needsUpdate=true; if(cm.instanceColor)cm.instanceColor.needsUpdate=true;
     trackGroup.add(cm);
+  } else if(coil){
+    // Spiral volutes — the curled scroll-clouds off the reference — standing face-on to
+    // the road, chirality alternating so the verge reads as hand-rolled rather than stamped.
+    const vol=[];
+    for(let i=0;i<STEPS;i+=6){
+      const s2=SAMP[i], ry=Math.atan2(s2.t.x,s2.t.z)+Math.PI/2;
+      for(const side of [-1,1]){
+        const r=3.5+((i*13)%26)/10;
+        // pushed clear of the guardrail ropes at HW+2.8, which were eating them entirely
+        vol.push({x:s2.p.x+s2.n.x*side*(HW+7.5), y:s2.p.y+0.6+r*0.5,
+                  z:s2.p.z+s2.n.z*side*(HW+7.5), s:r, sy:r, sz:(side>0?r:-r)*0.55,
+                  ry, c:COIL_PAL[((i/6|0)+(side>0?0:3))%10]});
+      }
+    }
+    trackGroup.add(coilBatch(new T.TorusGeometry(1,0.18,5,22,4.7), vol));
   } else if(felt){
     // The raw-tuft state: banks of wool clumps crowding both shoulders. This is the
     // signature element of the reference, and it doubles as the course's soft edge.
@@ -3177,7 +3342,23 @@ function buildTrack(idx){
 
   // ---- tunnels: ribbed torus rings, or voxel arches stepped around a half-circle ----
   const tun=TRACKS[idx].tunnels||[];
-  if(felt){
+  if(coil){
+    // a rainbow throat rather than one fleshy ring: three nested arches cycling the ramp
+    for(const sg of tun){
+      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
+      for(let i=i0;i<=i1;i+=3){
+        const s2=SAMP[i%STEPS];
+        for(let r=0;r<3;r++){
+          const cr=new T.Mesh(new T.TorusGeometry(HW+5+r*6, 2.6, 6, 20),
+            new T.MeshPhongMaterial({color:COIL_ARCH[(i+r)%COIL_ARCH.length], map:coilTex(),
+              shininess:0, specular:0x000000}));
+          cr.position.copy(s2.p);
+          cr.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s2.t);
+          trackGroup.add(cr);
+        }
+      }
+    }
+  } else if(felt){
     const ringGeo=new T.TorusGeometry(HW+4,3.4,7,16);
     const ringMat=feltMat(0xffffff, feltTex);
     for(const sg of tun){
@@ -3373,6 +3554,116 @@ function buildTrack(idx){
     }
     wm.count=n; wm.instanceMatrix.needsUpdate=true;
     trackGroup.add(wm);
+  } else if(coil){
+    /* THE SIGNATURE SET. Three families, ordered by how well each reads at 100mph:
+       arch gantries over the road, coil towers flanking it, and colour-wheel wedge
+       plinths under everything so nothing floats.
+       Deliberately NOT a facade: the arches span the road the way the start gantry does,
+       they are never grouped into a wall with a doorway under them, and the towers are
+       freestanding and unevenly spaced rather than a symmetrical pair round a centre. */
+    const towers=[], finials=[], wedges=[], bursts=[];
+    // 1. arch gantries down the nave straight, at accelerating spacing.
+    //    Built as individual tori with a CONSTANT tube, the way the tunnel rings already
+    //    are — instancing a unit torus scaled the section with the radius in-plane while
+    //    pinning it to 0.24 along the road, so each rib was a paper cut-out AND the six
+    //    fused into one solid arched mass. Ribs with air between them are what keeps this
+    //    a gantry over a road rather than a portal.
+    const ARCH_TUBE=2.4, ARCH_STEP=7.5;
+    let at=Math.round(STEPS*0.015);
+    for(const gap of [90,76,64,54,45,38,32]){
+      const s2=SAMP[at%STEPS];
+      for(let r=0;r<6;r++){
+        const ag=new T.TorusGeometry(HW+5+r*ARCH_STEP, ARCH_TUBE, 6, 20, Math.PI);
+        claySculpt(ag, 0.05);                      // hand-rolled wobble, not a CAD torus
+        const am=new T.Mesh(ag, new T.MeshPhongMaterial({color:COIL_ARCH[r], map:coilTex(),
+          shininess:0, specular:0x000000}));
+        am.position.set(s2.p.x, s2.p.y-1, s2.p.z);
+        am.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s2.t);
+        trackGroup.add(am);
+      }
+      at+=gap;
+    }
+    // 2. coil towers — a stack of piped rings, each rotated on so the coil reads as
+    //    continuous rather than as a pile of doughnuts, banded hard up the palette
+    const putTower=(bx,by,bz,scale,rings)=>{
+      // Ring pitch has to SHRINK with the ring, or the coil opens into separate beads as
+      // it tapers. Track the running height rather than assuming a constant 2.6 step, and
+      // seat the finial on the last ring actually placed instead of on a predicted one.
+      let ty=by, last=by, lastSc=9*scale;
+      for(let k=0;k<rings;k++){
+        const sc=(9-k*0.34)*scale;
+        if(sc<=0.4) break;
+        towers.push({x:bx, y:ty, z:bz, s:sc, sy:1.5*scale, sz:sc,
+                     rx:Math.PI/2, ry:k*0.42, c:COIL_PAL[k%10]});
+        last=ty; lastSc=sc;
+        ty += Math.max(1.0, 0.30*sc);            // pitch follows the tube, so no gaps
+      }
+      finials.push({x:bx, y:last+0.30*lastSc, z:bz, s:1.4*scale, c:COIL_PAL[3]});
+    };
+    // jittered off the exact ninths, and one side skipped per station — an even rank of
+    // towers on both sides at regular intervals reads as tiling from any distance
+    for(let k=0;k<9;k++){
+      const i2=(Math.round(k*STEPS/9) + ((k*37)%23) - 11 + STEPS)%STEPS, s2=SAMP[i2];
+      for(const side of [-1,1]){
+        if((k+(side>0?0:1))%4===3) continue;
+        const out=HW*(2.6+((k*7+(side>0?0:2))%5)*0.34);
+        putTower(s2.p.x+s2.n.x*side*out, s2.p.y-4, s2.p.z+s2.n.z*side*out,
+                 1, 16+((k*5)%7));
+      }
+    }
+    // the one giant, on the infield of the helix — the road corkscrews around it
+    { const s2=SAMP[Math.round(STEPS*0.33)%STEPS];
+      putTower(s2.p.x+s2.n.x*HW*3.4, s2.p.y-14, s2.p.z+s2.n.z*HW*3.4, 2.4, 21); }
+    // 3. colour-wheel wedge plinths: twelve 30-degree segments, one per palette entry
+    const putWheel=(cx,cy,cz,R)=>{
+      // %10: entries 10 and 11 are the cream separator and the brown shadow, and putting
+      // them in the wheel gave every disc a white slice and a mud slice
+      for(let w=0;w<12;w++)
+        wedges.push({x:cx, y:cy, z:cz, s:R, sy:5, sz:R, ry:w*Math.PI/6, c:COIL_PAL[w%10]});
+    };
+    for(let k=0;k<9;k++){
+      const i2=(Math.round(k*STEPS/9) + ((k*37)%23) - 11 + STEPS)%STEPS, s2=SAMP[i2];
+      // skip the two nearest the start line: a 30-unit wheel there interpenetrated the
+      // 90-unit apron half a unit below it, two discs of different origins through each other
+      if(i2 < 70 || i2 > STEPS-70) continue;
+      for(const side of [-1,1])
+        putWheel(s2.p.x+s2.n.x*side*HW*2.9, s2.p.y-6.5, s2.p.z+s2.n.z*side*HW*2.9,
+                 26+((k*11)%9));
+    }
+    putWheel(SAMP[0].p.x, SAMP[0].p.y-7, SAMP[0].p.z, 90);          // start/finish apron
+    for(let k=0;k<3;k++){
+      const s2=SAMP[Math.round(STEPS*(0.84+k*0.05))%STEPS];
+      putWheel(s2.p.x+s2.n.x*HW*5, s2.p.y-8, s2.p.z+s2.n.z*HW*5, 38);
+    }
+    // 4. sunburst backdrop discs, standing well back as parallax graphics.
+    //    Nothing is ever placed in FRONT of one — a disc with a figure before it stops
+    //    being a colour wheel and starts being a halo, which this set stays clear of.
+    // The rule has to be ENFORCED, not asserted. Bursts previously sat at +26 with radius
+    // 17 while the towers on the same side at the same stations spanned -4 to +40: total
+    // overlap in bearing and height, which composes a figure in front of a radiating disc.
+    // They now sit well above the tower band, and on stations that share no root with the
+    // tower spacing (k*STEPS/9) so they cannot line up again.
+    for(let k=0;k<4;k++){
+      const s2=SAMP[Math.round(STEPS*(0.115+k*0.237))%STEPS];
+      const side=k%2?1:-1, ry=Math.atan2(s2.t.x,s2.t.z)+Math.PI/2;
+      const cx=s2.p.x+s2.n.x*side*HW*5.5, cz=s2.p.z+s2.n.z*side*HW*5.5, cy=s2.p.y+62;
+      for(let a=0;a<24;a++){
+        const th=a/24*Math.PI*2;
+        bursts.push({x:cx+Math.cos(th)*17*Math.cos(ry), y:cy+Math.sin(th)*17,
+                     z:cz+Math.cos(th)*17*Math.sin(ry),
+                     s:2.6, sy:7, sz:2.6, ry, rz:th+Math.PI/2, c:COIL_PAL[2]});
+      }
+      // a real segmented disc, not a flattened pyramid: twelve wedges cycling the palette
+      for(let w=0;w<12;w++)
+        wedges.push({x:cx, y:cy, z:cz, s:13, sy:1.6, sz:13,
+                     rx:Math.PI/2, ry:w*Math.PI/6, rz:ry, c:COIL_PAL[w%10]});
+    }
+    { const tm=coilBatch(new T.TorusGeometry(1,0.22,6,14), towers);
+      tm.material.map=coilTexAt(9,3); trackGroup.add(tm); }
+    trackGroup.add(coilBatch(new T.SphereGeometry(1,8,6), finials));
+    { const wm=coilBatch(new T.CylinderGeometry(1,1,1,6,1,false,0,Math.PI/6), wedges);
+      wm.material.map=coilTexAt(14,14); trackGroup.add(wm); }
+    trackGroup.add(coilBatch(new T.ConeGeometry(1,1,4), bursts));
   } else if(felt){
     /* A WEAVERS' VALLEY, not a prop scatter. The road is a woven serape, so the verge is
        dressed with the things that would make one: upright looms with a striped blanket
