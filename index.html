@@ -244,6 +244,11 @@
     font-size:10px;letter-spacing:.04em;text-transform:uppercase;}
   #leader .lrow{display:flex;align-items:center;gap:6px;color:var(--ink);padding:1.5px 0;}
   #leader .lrow.you{color:var(--bone);font-weight:700;}
+  /* another person in the race, called out in the standings the same way you are */
+  #leader .lrow.human{color:var(--bone);}
+  #leader .lrow .lhum{margin-left:auto;color:var(--signal);font-size:9px;
+    animation:humpulse 1.6s ease-in-out infinite;}
+  @keyframes humpulse{0%,100%{opacity:.45}50%{opacity:1}}
   #leader .lp{width:12px;text-align:right;color:var(--signal);font-variant-numeric:tabular-nums;}
   #leader .ld{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
   #mapwrap .ml{position:absolute;top:-7px;left:12px;font-size:8.5px;letter-spacing:.3em;
@@ -296,7 +301,7 @@
   @keyframes itemPop{0%{transform:translateX(-50%) scale(.3) rotate(-20deg);}60%{transform:translateX(-50%) scale(1.15);}100%{transform:translateX(-50%) scale(1);}}
 
   /* ===== One Piece cel-shaded character portraits (select screen) ===== */
-  #mpcode{font:900 46px ui-monospace,monospace;letter-spacing:.22em;color:var(--signal);
+  #mpcode{cursor:pointer;font:900 46px ui-monospace,monospace;letter-spacing:.22em;color:var(--signal);
     text-shadow:0 0 22px rgba(46,210,255,.5);margin:2px 0 4px}
   #mpstatus{color:var(--bone);opacity:.8;font:600 12px ui-monospace,monospace;min-height:16px;margin-bottom:10px}
   #mpname{font:700 14px ui-monospace,monospace;text-align:center;color:var(--bone);
@@ -417,6 +422,7 @@
   <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
+  <button class="go alt on" id="hapticbtn" style="margin-top:10px">Vibration: ON</button>
   <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
   <button class="go" id="startbtn">Single race</button>
   <button class="go alt" id="mpbtn" style="margin-top:10px;border-color:#9be74e;color:#9be74e">Multiplayer — race a friend</button>
@@ -450,7 +456,7 @@
 <div class="screen hidden" id="mp">
   <div class="tag">race war · online</div>
   <h1>MULTIPLAYER<small>— room code —</small></h1>
-  <div id="mpcode">----</div>
+  <div id="mpcode" title="tap to copy an invite link">----</div>
   <div id="mpstatus">not connected</div>
   <input id="mpname" maxlength="12" placeholder="your name" autocomplete="off">
   <div id="mplist"></div>
@@ -458,6 +464,7 @@
     <button class="go alt" id="mphost">Host a race</button>
     <button class="go alt" id="mpjoin">Join with code</button>
   </div>
+  <button class="go alt" id="mpshare" style="margin-top:10px;display:none">Share invite link</button>
   <button class="go alt" id="mppick" style="margin-top:10px">Choose your racer</button>
   <button class="go alt" id="mpfill" style="margin-top:10px;display:none">Fill empty slots with AI: ON</button>
   <button class="go alt" id="mptrans" style="margin-top:10px">Connection: —</button>
@@ -589,6 +596,87 @@ const SFX={
   lap(){ beep(700,0.08,'sine',0.18); },
   bump(){ noiseBurst(0.18,0.12,900); beep(180,0.1,'triangle',0.16); },
   finalLap(){ beep(660,0.12,'triangle',0.26); setTimeout(()=>beep(990,0.18,'triangle',0.28),110); },
+};
+
+
+/* ---- ROAD RAGE: shouted vocalisations, and haptics -------------------------------------
+ * The brief is freeway arguing — someone leaning out of a window, not dialogue. So these
+ * are FORMANTS, not words: a glottal buzz pushed through two band-passes parked on the
+ * first two vowel formants, with a pitch contour on top. That is the minimum that reads as
+ * a human voice rather than as a synth tone, and because there are no words it never
+ * becomes a catchphrase you get sick of on lap three.
+ *
+ * The restraint is in the RATE LIMIT, not the sound. A shout every time two karts touched
+ * would be unbearable within a lap: each racer gets its own cooldown, there is a global
+ * floor between any two shouts, and only events that carry meaning are allowed to trigger
+ * one. Quiet by default and pointed when it fires.
+ * ------------------------------------------------------------------------------------- */
+const VOWELS={           // F1/F2 pairs — the two resonances that make a vowel legible
+  ah:[730,1090], eh:[530,1840], oh:[570,840], ay:[660,1720], ee:[270,2290], oo:[300,870],
+};
+const SHOUTS=[           // {vowel, syllables, contour} — shapes of yelling, not phrases
+  {v:'ah', n:1, up:false},  {v:'eh', n:2, up:true},   {v:'oh', n:1, up:false},
+  {v:'ay', n:2, up:false},  {v:'ah', n:3, up:true},   {v:'oo', n:1, up:true},
+  {v:'ee', n:2, up:false},  {v:'eh', n:1, up:false},
+];
+let _lastShout=0;                       // global floor, so a pile-up is not a riot
+function shout(seed, kind, vol){
+  if(!actx) return;
+  const now=performance.now();
+  if(now-_lastShout < 420) return;      // never two voices on top of each other
+  _lastShout=now;
+  const S=SHOUTS[Math.abs(seed|0)%SHOUTS.length];
+  const F=VOWELS[S.v];
+  // one voice per racer: the seed shifts the whole formant set, so each character sounds
+  // like a different person without needing separate samples
+  const shift=0.78+((Math.abs(seed|0)*37)%45)/100;
+  const base=(kind==='angry'?128:kind==='hurt'?176:150)*shift;
+  const t0=actx.currentTime;
+  const gate=actx.createGain(); gate.gain.value=0; gate.connect(masterGain);
+  // two formant band-passes in parallel is what turns a buzz into a vowel
+  for(let f=0;f<2;f++){
+    const bp=actx.createBiquadFilter();
+    bp.type='bandpass'; bp.frequency.value=F[f]*shift; bp.Q.value=f?7:9;
+    const bg=actx.createGain(); bg.gain.value=f?0.5:1.0;
+    bp.connect(bg); bg.connect(gate);
+    const o=actx.createOscillator();
+    o.type='sawtooth';                  // buzzy source = vocal folds
+    o.frequency.setValueAtTime(base, t0);
+    // a shout rises then breaks; a grumble falls away
+    if(S.up){ o.frequency.linearRampToValueAtTime(base*1.5, t0+0.10*S.n);
+              o.frequency.linearRampToValueAtTime(base*1.1, t0+0.17*S.n); }
+    else    { o.frequency.linearRampToValueAtTime(base*1.28, t0+0.05);
+              o.frequency.exponentialRampToValueAtTime(base*0.72, t0+0.16*S.n); }
+    o.connect(bp); o.start(t0); o.stop(t0+0.20*S.n+0.10);
+  }
+  // syllables: the envelope does the articulation, which is what sells it as speech
+  const V=(vol==null?0.30:vol)*(kind==='angry'?1.0:0.82);
+  for(let k=0;k<S.n;k++){
+    const a=t0+k*0.135;
+    gate.gain.setValueAtTime(0.0001, a);
+    gate.gain.exponentialRampToValueAtTime(V, a+0.022);
+    gate.gain.exponentialRampToValueAtTime(0.0001, a+0.115);
+  }
+  // a breath of noise on the front so the attack is not a pure tone
+  noiseBurst(0.05, 0.05, 1200);
+}
+
+/* Haptics. navigator.vibrate is Android/Chrome only and silently absent on iOS, so this
+   never assumes it exists. Patterns are short: a phone buzzing for half a second on every
+   kerb strike is worse than no haptics at all. */
+let hapticsOn=true;
+function buzz(pattern){
+  if(!hapticsOn) return;
+  if(typeof navigator==='undefined' || !navigator.vibrate) return;
+  try{ navigator.vibrate(pattern); }catch(e){}
+}
+const HAPTIC={
+  bump:  20,                 // trading paint
+  wall:  [12,26,12],         // scraping a barrier — stutter, not a thud
+  hit:   [45,35,70],         // taken out by an item or a spin
+  boost: [10,40,10],
+  land:  30,
+  finish:[60,50,60,50,140],
 };
 
 /* ---- looping background music (procedural, no files) ----
@@ -1871,7 +1959,7 @@ function burst(x,y,z,color,n,spread,life,size){
 }
 
 /* camera shake */
-let camShake=0, hitStopT=0, finishPunchT=0;
+let camShake=0, hitStopT=0, finishPunchT=0, _lastBumpFx=0, _lastWallFx=0;
 function kickShake(a){ camShake=Math.min(2.2, camShake+a); }
 
 /* HUD fx element refs */
@@ -4968,6 +5056,45 @@ function makeBandidoCell(){
   return g;
 }
 
+/* A HUMAN NEEDS TO BE OBVIOUS. Five AI and one other person all look identical from
+   behind, which is the single biggest thing wrong with the multiplayer read: you cannot
+   tell who you are actually racing. Every networked human gets a floating nameplate that
+   always faces the camera and a ring on the ground under them, so they are identifiable at
+   a glance and at distance, without cluttering a single-player race where there are none. */
+function nameSprite(text, hue){
+  const c=document.createElement('canvas'); c.width=256; c.height=64;
+  const x=c.getContext('2d');
+  x.font='bold 34px ui-monospace,monospace'; x.textAlign='center'; x.textBaseline='middle';
+  const w=Math.min(248, x.measureText(text).width+34);
+  x.fillStyle='rgba(6,20,28,0.72)';
+  // hand-rolled rounded rect: canvas roundRect() is Safari 16+, and this runs on iPads
+  const bx=(256-w)/2, by=8, bh=46, br=12;
+  x.beginPath();
+  x.moveTo(bx+br,by); x.lineTo(bx+w-br,by); x.quadraticCurveTo(bx+w,by,bx+w,by+br);
+  x.lineTo(bx+w,by+bh-br); x.quadraticCurveTo(bx+w,by+bh,bx+w-br,by+bh);
+  x.lineTo(bx+br,by+bh); x.quadraticCurveTo(bx,by+bh,bx,by+bh-br);
+  x.lineTo(bx,by+br); x.quadraticCurveTo(bx,by,bx+br,by); x.closePath();
+  x.fill();
+  x.strokeStyle=`hsl(${hue} 85% 62%)`; x.lineWidth=3; x.stroke();
+  x.fillStyle='#eafff8'; x.fillText(text, 128, 32);
+  const t=new T.CanvasTexture(c); t.needsUpdate=true;
+  const sp=new T.Sprite(new T.SpriteMaterial({map:t, transparent:true, depthTest:false}));
+  sp.scale.set(13, 3.25, 1);
+  return sp;
+}
+function addHumanMarker(r){
+  const plate=nameSprite(r.name||'racer', r.hue||0);
+  plate.position.set(0, 12.5, 0);
+  plate.renderOrder=999;
+  r.obj.add(plate); r._plate=plate;
+  // a ring on the ground reads at any distance and through a pack, which a floating
+  // label alone does not
+  const ring=new T.Mesh(new T.RingGeometry(5.2, 7.0, 26),
+    new T.MeshBasicMaterial({color:new T.Color(`hsl(${r.hue||0}, 85%, 62%)`),
+      transparent:true, opacity:0.85, side:T.DoubleSide, depthWrite:false}));
+  ring.rotation.x=-Math.PI/2; scene.add(ring); r._ring=ring;
+}
+
 /* Per-frame rig, called from syncObjects. Everything is driven off state the racer
    already carries, so nothing new has to be simulated: speed sets the airflow, _bank and
    slip set the lean, and the race events pick the mood. */
@@ -6416,16 +6543,16 @@ function updateRacer(r,dt){
       // multiplies spd every frame and stalls the car almost instantly
       if(inner>innerLim){ const ex=inner-innerLim; r.x-=s.n.x*innerSign*ex; r.z-=s.n.z*innerSign*ex;
         if(r._wallCD<=0){ r.spd*=0.8; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
-          if(r.you){ kickShake(0.3); SFX.bump&&SFX.bump(); } } }
+          if(r.you){ kickShake(0.3); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); } } }
       else if(inner<-(HW*1.28)){ const ex=-(HW*1.28)-inner; r.x+=s.n.x*innerSign*ex; r.z+=s.n.z*innerSign*ex;
         if(r._wallCD<=0){ r.spd*=0.6; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
-          if(r.you){ kickShake(0.35); SFX.bump&&SFX.bump(); } } }
+          if(r.you){ kickShake(0.35); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); } } }
     } else {
       // figure-8 / point-to-point: corridor walls just outside the visible border
       const lim=HW*1.28;
       if(Math.abs(lat)>lim){ const ex=Math.abs(lat)-lim, sgn=Math.sign(lat); r.x-=s.n.x*sgn*ex; r.z-=s.n.z*sgn*ex;
         if(r._wallCD<=0){ r.spd*=0.78; r._wallCD=0.35; burst(r.x,r.y+1,r.z,0xcfd8d6,6,22,0.3,3);
-          if(r.you){ kickShake(0.25); SFX.bump&&SFX.bump(); } } }
+          if(r.you){ kickShake(0.25); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); } } }
     }
   }
   r._bank += (bankWant-r._bank)*Math.min(1,6*dt);   // smooth the berm roll in/out
@@ -6474,7 +6601,7 @@ function updateRacer(r,dt){
                                                 // pop up to the hover height a few frames later
     if(r.vy<0 && r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0;
       r.boostT=Math.max(r.boostT,0.7);            // landing boost rewards the jump
-      burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); } }
+      burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); buzz(HAPTIC.land); } }
   }
 }
 
@@ -6534,7 +6661,7 @@ function placeOnTrack(r,dt){
       hitStopT=0.12;                             // freeze-frame beat before everything else lands
       finishPunchT=1.2;                          // camera zoom-punch, bigger than a boost kick
       r.celebT=6;                                // celebration pose: grin, bounce, spinning star eyes
-      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine();
+      showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine(); buzz(HAPTIC.finish);
       flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
       playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
@@ -6605,6 +6732,19 @@ function collide(){
           if(big.you||sml.you){ kickShake(0.5); SFX.bump&&SFX.bump(); } }
       } else {
         a.x-=ux*push; a.z-=uz*push; b.x+=ux*push; b.z+=uz*push;
+        // Trading paint. Whoever got shoved is the one who shouts, and only if it was a
+        // real hit rather than the constant micro-separation of two karts running side by
+        // side — that distinction is the whole difference between "traffic" and "a riot".
+        const closing=Math.abs(a.spd-b.spd);
+        const shoved = a.spd>=b.spd ? b : a;
+        const nowB=performance.now();
+        if(closing>26 && (nowB-(shoved._yell||0))>2600){
+          shoved._yell=nowB;
+          shout(racers.indexOf(shoved)*7+1, 'angry', (a.you||b.you)?0.30:0.16);
+        }
+        if((a.you||b.you) && closing>18 && (nowB-(_lastBumpFx||0))>260){
+          _lastBumpFx=nowB; buzz(HAPTIC.bump);
+        }
       }
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
@@ -6834,6 +6974,21 @@ function syncObjects(dt,now){
       ey[1].scale.y += ((wink?0.12:1)-ey[1].scale.y)*Math.min(1,14*dt);
       ey[0].scale.y += (((r.celebT>0&&ph>=2.6&&ph<3.8)?1.18:1)-ey[0].scale.y)*Math.min(1,10*dt); // eyes widen on the WOO
     }
+    // human markers: nameplate holds a fixed screen-ish size by scaling with distance, and
+    // the ground ring breathes so it reads as a live player rather than a decal
+    if(r._plate){
+      const d=camera.position.distanceTo(r.obj.position);
+      const k=Math.max(0.55, Math.min(2.4, d/46));
+      r._plate.scale.set(13*k, 3.25*k, 1);
+      r._plate.position.y = 12.5 + (r.megaT>0?8:0);
+      r._plate.material.opacity = d>420 ? 0 : 1;
+    }
+    if(r._ring){
+      const pulse=1+Math.sin(now*3.4+(r._li||0))*0.07;
+      r._ring.position.set(r.x, (r.surfY!==undefined?r.surfY:r.y)+0.3, r.z);
+      r._ring.scale.setScalar(pulse);
+      r._ring.material.opacity=(r.spinT>0?0.35:0.85);
+    }
     // characters that carry their own rig (springs, airflow, mood) drive it here. Guarded
     // on userData, so it costs nothing for every other racer on the grid.
     if(r.obj.userData.bandido) updateBandido(r.obj, r, dt);
@@ -6889,8 +7044,9 @@ function syncObjects(dt,now){
 
     // ---- event detection (player only): boost start / spinout ----
     if(r.you){
-      if(boosting && !r._pBoost){ kickShake(0.5); flashFx(0.5,'#ffd27a'); SFX.boost(); }
+      if(boosting && !r._pBoost){ kickShake(0.5); flashFx(0.5,'#ffd27a'); SFX.boost(); buzz(HAPTIC.boost); }
       if(r.spinT>0 && !r._pSpin){ kickShake(1.4); flashFx(0.7,'#ff5d8f'); SFX.hit();
+        buzz(HAPTIC.hit); shout(3, 'hurt', 0.34);
         burst(r.x,r.y+4,r.z,0xff5d8f,18,60,0.7,5); }
       r._pBoost=boosting; r._pSpin=r.spinT>0;
       if(state==='race') updateEngine(sp, boosting);
@@ -7049,6 +7205,15 @@ function drawMap(){
   for(const r of racers){
     if(r.you){ mx.shadowColor='#fff'; mx.shadowBlur=8; mx.beginPath();
       mx.arc(X(r.x),Z(r.z),4.5,0,7); mx.fillStyle='#fff'; mx.fill(); mx.shadowBlur=0; }
+    else if(r.human && r.remote){
+      // another PERSON: bigger, ringed and haloed, so a glance at the map tells you where
+      // the human is rather than which of six identical AI dots to care about
+      mx.beginPath(); mx.arc(X(r.x),Z(r.z),4.5,0,7);
+      mx.fillStyle=`hsl(${r.hue} 85% 64%)`; mx.shadowColor=`hsl(${r.hue} 90% 60%)`;
+      mx.shadowBlur=8; mx.fill(); mx.shadowBlur=0;
+      mx.beginPath(); mx.arc(X(r.x),Z(r.z),7,0,7);
+      mx.strokeStyle=`hsl(${r.hue} 90% 70%)`; mx.lineWidth=1.6; mx.stroke();
+    }
     else { mx.beginPath(); mx.arc(X(r.x),Z(r.z),3,0,7);
       mx.fillStyle=`hsl(${r.hue} 80% 62%)`; mx.fill(); }
   }
@@ -7061,7 +7226,9 @@ function syncLeader(){
   const sig=order.map(r=>r._li+(r.finished?'f':'')).join('|');
   if(sig===lb._sig) return; lb._sig=sig;     // only rebuild when standings change
   lb.innerHTML=order.map((r,i)=>
-    `<div class="lrow${r.you?' you':''}"><span class="lp">${i+1}</span><span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}</div>`).join('');
+    `<div class="lrow${r.you?' you':''}${r.remote?' human':''}"><span class="lp">${i+1}</span>`+
+    `<span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}`+
+    `${r.remote?'<span class="lhum">●</span>':''}</div>`).join('');
 }
 function syncHUD(){
   const me=racers.find(r=>r.you);
@@ -7545,14 +7712,36 @@ function netApplySnap(r, dt){
   $$('mphost').onclick=async()=>{
     const code=netRoomCode();
     $$('mpcode').textContent=code;
-    await netStart(true, code);      // netStart reports its own failure reason
+    if(await netStart(true, code)) $$('mpshare').style.display='block';
+  };
+  // Reading a four-letter code down a phone is fine; sending a link is better. The code
+  // tap copies a join URL, and ?room=CODE auto-fills so the other player never types it.
+  $$('mpcode').onclick=()=>{
+    if(!NET.room) return;
+    const url=location.origin+location.pathname+'?room='+NET.room;
+    const done=()=>{ NET.status('Invite link copied — send it to your friend.'); };
+    if(navigator.clipboard&&navigator.clipboard.writeText)
+      navigator.clipboard.writeText(url).then(done, ()=>NET.status(url));
+    else NET.status(url);
+  };
+  $$('mpshare').onclick=()=>{
+    const url=location.origin+location.pathname+'?room='+NET.room;
+    if(navigator.share) navigator.share({title:'Sperm Racer', text:'Race me — room '+NET.room, url}).catch(()=>{});
+    else $$('mpcode').onclick();
   };
   $$('mpjoin').onclick=async()=>{
-    const code=(prompt('Room code from your host:')||'').trim().toUpperCase();
+    const pre=(new URLSearchParams(location.search).get('room')||'').toUpperCase();
+    const code=(prompt('Room code from your host:', pre)||'').trim().toUpperCase();
     if(!code) return;
     $$('mpcode').textContent=code;
     await netStart(false, code);
   };
+  // arrived on an invite link: open the lobby with the code already in hand
+  {
+    const q=(new URLSearchParams(location.search).get('room')||'').trim().toUpperCase();
+    if(q){ show(); $$('mpcode').textContent=q;
+           NET.status('Invited to room '+q+' — press Join to connect.'); }
+  }
   $$('mpfill').onclick=()=>{ NET.fillAI=!NET.fillAI; if(NET.host) netBroadcastRoster(); netRenderLobby(); };
   $$('mptrans').onclick=()=>{
     const ids=Object.keys(NET_TRANSPORTS);
@@ -7872,6 +8061,9 @@ function makeDam(width){
 // Modify buildRacers to use chosenType for "You"
 const _origBuildRacers = buildRacers;
 buildRacers = function(){
+  // rings live on the scene, not on the racer group, so they have to be removed by hand or
+  // they accumulate one set per race
+  for(const r of racers){ if(r._ring) scene.remove(r._ring); }
   for(const r of racers){ if(r.obj)scene.remove(r.obj); if(r.shadow)scene.remove(r.shadow); }
   for(const it of items) scene.remove(it.mesh);
   for(const h of hazards) scene.remove(h.mesh);
@@ -7954,6 +8146,7 @@ buildRacers = function(){
     lineup=[chosenType, others[0], others[1], others[2], others[3], others[4]];
   }
 
+  const _mk=[];
   racers=lineup.map((t,k)=>{
     const np = netSlots ? netSlots[k] : null;
     const you = netSlots ? (np && np.id===NET.self) : (k===0);
@@ -7974,6 +8167,7 @@ buildRacers = function(){
     return {you, id:t.id, name:(np&&np.name)||t.name, hue:t.hue, obj, shadow,
       netId: np ? np.id : null,
       remote: !!(np && np.id!==NET.self),
+      human: !!np,
       x:pos.x, z:pos.z, y:pos.y,
       head:Math.atan2(s.t.x,s.t.z),
       spd:0, idx:2, prog:s.u, lap:0, total:0,
@@ -7985,6 +8179,12 @@ buildRacers = function(){
       ...((you || (np && np.id!==NET.self)) ? (t.stats||{}) : {})
     };
   });
+  // Mark the humans AFTER the array exists, so the marker can read the final name and hue.
+  // Only in a networked race: in single player everyone but you is AI and a nameplate over
+  // your own kart would just sit in the middle of the screen.
+  // OTHER humans only. A nameplate over your own kart just parks a label in the middle of
+  // the chase camera, and you already know where you are — the point is spotting them.
+  if(NET.on) for(const r of racers) if(r.human && !r.you) addHumanMarker(r);
 };
 
 // iPad/touch: HOLD AND SLIDE ANYWHERE to steer (floating joystick).
@@ -8188,6 +8388,17 @@ setupTilt();
 setupSlider();
 setupSliderToggle();
 setupFullscreen();
+(function setupHaptics(){
+  const b=$('hapticbtn'); if(!b) return;
+  // Absent on iOS entirely, so say so rather than offering a switch that does nothing.
+  if(typeof navigator==='undefined' || !navigator.vibrate){
+    hapticsOn=false; b.textContent='Vibration: n/a'; b.classList.remove('on');
+    b.disabled=true; b.style.opacity='0.45'; return;
+  }
+  b.onclick=()=>{ hapticsOn=!hapticsOn; b.classList.toggle('on',hapticsOn);
+    b.textContent='Vibration: '+(hapticsOn?'ON':'OFF');
+    if(hapticsOn) buzz(20); };                       // confirm by feel
+})();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
     if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
