@@ -2738,8 +2738,28 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
-function applyTrackLighting(studio, pool, coil){
-  if(coil){
+function applyTrackLighting(studio, pool, coil, paint){
+  if(paint){
+    // PLEIN AIR. The single worst thing about Sienna was that it never had a rig of its
+    // own and inherited the default BIOLOGICAL one — a cyan hemisphere (0x9fe8df) over a
+    // teal ground bounce. Multiply an olive canvas by cyan and you get bottle green;
+    // multiply the plum ground plane by it and you get lilac. Three hue families that
+    // have nothing to say to each other, which is what "lowest saturation, lowest
+    // contrast" actually measured. It was never a desaturation problem, it was a
+    // disagreement problem.
+    //
+    // A painter working outdoors has exactly two light sources and they are opposites:
+    // a WARM low sun, and a COOL sky filling every shadow. Everything else follows from
+    // that one fact — warm lights, cool shadows, and a narrow palette because the light
+    // itself is narrow. The sun vector matches the disc painted into paintSky() so the
+    // shading agrees with where the sun visibly is; a scene lit from one place and
+    // painted from another reads as a mistake even when nobody can name it.
+    hemi.color.setHex(0xe6ddc4); hemi.groundColor.setHex(0x6a6048); hemi.intensity=0.82;
+    sun.color.setHex(0xfff0cc);  sun.intensity=0.82; sun.position.set(44, 68, -184);
+    rim.color.setHex(0x9fb0c4);  rim.intensity=0.42; rim.position.set(-120, 50, 90);
+    fill.color.setHex(0xd8c8a4); fill.intensity=0.20; fill.position.set(60, -40, 40);
+    flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+  } else if(coil){
     // A lightbox photographing a sculpture: flat, shadowless, total ~1.65. Anything near
     // the default rig's ~2.95 forces the palette to be authored dark to survive, which is
     // exactly the compromise the existing plasticine profile had to make.
@@ -2866,14 +2886,23 @@ function paintTex(base, strokes){
 let PAINT_TEX=null;
 function paintCanvas(){ if(!PAINT_TEX) PAINT_TEX=paintTex('#8a8258',
   ['#4a4a26','#c4b48c','#a9a596','#6b6a3a','#8a99a8','#b0442a']); return PAINT_TEX; }
-// A sail: two taut facets meeting at a spine, which is what gives the reference its
-// light/dark split down every canvas. A flat quad would read as cardboard.
+/* A sail: two taut facets meeting at a spine, which is what gives the reference its
+ * light/dark split down every canvas. A flat quad would read as cardboard.
+ * The OUTLINE was a plain triangle and that turned out to be the whole problem with this
+ * course's scenery. Broad, a triangle reads as a conifer; narrow, it reads as a spire; and
+ * there is no width in between where it reads as canvas, because a triangle apex is simply
+ * not a shape sails have. Real working sail — lug, gaff, sprit — is a quadrilateral with a
+ * peaked head, a shoulder, and a broad foot. Give it the shoulder and the peak and it
+ * reads as a sail at any proportion. */
 const PAINT_SAIL=(()=>{
   const g=new T.BufferGeometry();
-  g.setAttribute('position', new T.Float32BufferAttribute([
-     0, 1, 0,  -0.75,-1, 0.18,   0,-1, 0.42,      // left facet
-     0, 1, 0,   0,-1, 0.42,     0.75,-1, 0.18,    // right facet
-  ],3));
+  const L=[ 0,1.0,0.06,  -0.44,0.70,0.11,  -1.0,-0.84,0.20,  -0.70,-1.0,0.24,  0,-1.0,0.42 ];
+  const p=[];
+  const tri=(a,b,c,mir)=>{ for(const k of [a,b,c]){
+    p.push(mir?-L[k*3]:L[k*3], L[k*3+1], L[k*3+2]); } };
+  tri(0,1,4,false); tri(1,2,4,false); tri(2,3,4,false);   // left facet
+  tri(0,4,1,true);  tri(1,4,2,true);  tri(2,4,3,true);    // right facet, wound back
+  g.setAttribute('position', new T.Float32BufferAttribute(p,3));
   g.computeVertexNormals(); return g;
 })();
 function paintMatFrom(old, hsl){
@@ -2886,9 +2915,15 @@ function paintMatFrom(old, hsl){
   col.lerp(tgt, 0.55); col.getHSL(hsl);
   col.setHSL(hsl.h, Math.min(0.34,hsl.s*0.55), Math.max(0.14,Math.min(0.66,hsl.l*0.82+0.06)));
   const faint = old.transparent && old.opacity<0.6;
+  // depthWrite/depthTest have to come across. The see-through layers in this game — the
+  // infield membrane, the halos — are authored depthWrite:false, and dropping that on
+  // conversion turned a 10%-opacity wall into something that wrote depth for everything
+  // behind it. Invisible in a still, and the reason a raycast sweep reported the apron
+  // barrier as solid scenery.
   return new T.MeshLambertMaterial({ color:col, map:old.map||paintCanvas(), flatShading:true,
     emissive: old.emissive ? old.emissive.clone().multiplyScalar(0.12) : new T.Color(0x000000),
-    side:old.side, transparent:faint, opacity:faint?old.opacity:1 });
+    side:old.side, transparent:faint, opacity:faint?old.opacity:1,
+    depthWrite:old.depthWrite, depthTest:old.depthTest });
 }
 // Repaint a racer. Unlike clay and felt this KEEPS the outline shell, recoloured to the
 // seam brown — those hard dark edges between panels are half the reference's structure.
@@ -2905,16 +2940,40 @@ function paintifyScene(root, pulse){
   const convert=old=>{
     if(remap.has(old)) return remap.get(old);
     if(old.blending && old.blending!==T.NormalBlending){ remap.set(old,old); return old; }
+    // Opt-out. This pass exists to drag the game's fleshy pinks and greens into a plein-air
+    // range, and for the shared props (gantry, ramps, racers) that is exactly right. The
+    // harbour dressing below is authored IN that range already, with a deliberate value
+    // ladder and one saturated sienna accent; running it through the same collapse would
+    // flatten the ladder and kill the accent, which is the only hierarchy the course has.
+    if(old.userData && old.userData.noPaint){ remap.set(old,old); return old; }
     const m=paintMatFrom(old, hsl); remap.set(old,m); return m;
   };
   root.traverse(o=>{ if(!o.isMesh || !o.material) return;
     o.material = Array.isArray(o.material) ? o.material.map(convert) : convert(o.material); });
   if(pulse) for(const p of pulse) if(p.mat && remap.has(p.mat)) p.mat=remap.get(p.mat);
 }
-// Pale luminous sky with a soft sun burning through haze — the top third of the reference.
+/* Pale luminous sky with a soft sun burning through haze — and, crucially, A HORIZON.
+ *
+ * The old dome was a vertical gradient plus a sun disc, and the review was right that the
+ * course had nothing to place the eye against: the gradient was DARKEST at the bottom,
+ * which is the opposite of what happens outdoors. Air scatters, so the sky is at its
+ * lightest and least saturated where it meets the land and deepens as you look up. Get
+ * that one relationship backwards and no amount of fog will make a scene read as open air.
+ *
+ * The far shore is painted INTO the dome rather than built as geometry, and that is not a
+ * shortcut — it is the correct construction. The dome rides the camera, so a silhouette
+ * drawn on it never parallaxes, which is exactly the behaviour of something genuinely
+ * miles away. Real geometry at a finite radius would swim as you drove, and geometry past
+ * the fog would be erased. Three layers, each paler and higher than the one in front, is
+ * the standard recession a landscape painter uses to state distance without detail:
+ *   - far hills, barely a value change off the sky
+ *   - the town shore, darker, lower
+ *   - the far fleet: a thin picket of masts along the shore, which is the detail worth
+ *     looking at and the thing that says HARBOUR rather than "coastline".
+ */
 function paintSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{},
+    uniforms:{ uT:{value:0} },
     // vP has to be the WORLD position, not the object position. The dome sits at the
     // world origin while the camera roams several hundred units around the circuit, so
     // shading off the object position anchors the whole gradient — horizon included — to
@@ -2923,19 +2982,206 @@ function paintSky(){
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP;
+      varying vec3 vP; uniform float uT;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
+      float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),
+                   mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+      float fbm(vec2 p){ float v=0.0,a=0.5;
+        for(int i=0;i<4;i++){ v+=a*vn(p); p*=2.11; a*=0.5; } return v; }
       void main(){
         vec3 d=normalize(vP - cameraPosition); float el=d.y;   // view direction, so the horizon stays level
-        vec3 c=mix(vec3(0.79,0.77,0.70), vec3(0.86,0.83,0.72), smoothstep(-0.10,0.35,el));
-        c=mix(c, vec3(0.72,0.70,0.62), smoothstep(0.45,1.0,el));
+        float az=atan(d.z, d.x);
+        // Lightest at the horizon, deepening upward. This is the whole read.
+        vec3 c=mix(vec3(0.945,0.918,0.836), vec3(0.706,0.716,0.694), smoothstep(0.0,0.58,el));
+        c=mix(c, vec3(0.640,0.660,0.652), smoothstep(0.50,1.0,el));
+        // Below the horizon the dome falls toward the water haze so it can never fight
+        // the fogged ground plane along the seam.
+        c=mix(c, vec3(0.842,0.812,0.726), smoothstep(0.0,-0.16,el));
+        // High cloud: warm lit tops, cool grey bellies, deliberately LOW contrast — this
+        // is an overcast-bright day, not a dramatic one. Drifts on uT.
+        float cl=fbm(vec2(az*1.9 + uT*0.0055, el*5.2 + 3.1));
+        float cm=smoothstep(0.46,0.78,cl)*smoothstep(0.02,0.30,el);
+        c=mix(c, vec3(0.868,0.848,0.792), cm*0.55);
+        c=mix(c, vec3(0.612,0.622,0.618), smoothstep(0.62,0.86,cl)*smoothstep(0.10,0.42,el)*0.30);
         // the sun: a soft disc with a wide, dirty halo, never a clean circle
-        float sd=distance(d, normalize(vec3(0.22,0.34,-0.92)));
-        c=mix(c, vec3(0.97,0.96,0.90), smoothstep(0.30,0.0,sd)*0.55);
-        c=mix(c, vec3(1.0,0.99,0.96),  smoothstep(0.055,0.0,sd));
+        float sd=distance(d, normalize(vec3(0.22,0.30,-0.92)));
+        c=mix(c, vec3(0.980,0.962,0.884), smoothstep(0.44,0.0,sd)*0.42);
+        c=mix(c, vec3(1.000,0.992,0.940), smoothstep(0.055,0.0,sd)*(0.72+0.10*sin(uT*0.27)));
+        // --- far hills: one value step off the sky, nothing more ---
+        float hh=0.0315 + 0.0225*sin(az*2.3+0.7) + 0.0125*sin(az*5.1+2.2) + 0.0060*sin(az*11.0+4.0);
+        float hill=smoothstep(hh+0.0045, hh-0.0045, el)*smoothstep(-0.004,0.004,el);
+        c=mix(c, vec3(0.734,0.728,0.688), hill*0.74);
+        // --- the town shore: darker, lower, warmer. This band IS the horizon: the water
+        //     in front of it fogs out to very nearly the sky value, so without something
+        //     dark drawn along the seam there is no line for the eye to sit on at all. ---
+        float sh=0.0145 + 0.0090*sin(az*3.7+1.9) + 0.0050*sin(az*9.3+0.4) + 0.0024*sin(az*19.0);
+        float shore=smoothstep(sh+0.0028, sh-0.0028, el)*smoothstep(-0.004,0.004,el);
+        c=mix(c, vec3(0.452,0.420,0.348), shore*0.86);
+        // --- the far fleet: a thin picket of masts standing off the shore line. Fine
+        //     detail at the horizon is what makes a horizon worth looking at; without it
+        //     a silhouette band is just a stripe.
+        float slot=az*46.0, si=floor(slot), sf=fract(slot);
+        float r1=h21(vec2(si,3.0)), r2=h21(vec2(si,9.0));
+        float mh=(r1<0.46) ? (0.008+0.040*r2) : 0.0;
+        float mast=smoothstep(0.10,0.055,abs(sf-0.5))
+                 * smoothstep(sh+mh, sh+mh-0.004, el) * smoothstep(sh-0.006, sh, el);
+        c=mix(c, vec3(0.402,0.386,0.336), mast*0.55);
         gl_FragColor=vec4(c,1.0);
       }`});
-  const m=new T.Mesh(new T.SphereGeometry(1150,32,20), mat);   // < camera.far (1400)
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat);   // < camera.far (1400)
   m.frustumCulled=false; return m;
+}
+
+/* ---------------- THE HARBOUR: Sienna's dressing kit ----------------------------------
+ * The course is called the Slack Water and it is a harbour, so the world is built as one:
+ * a flat sheet of water with a raised causeway cut across it. Everything follows from
+ * that single decision. Boats stand on the water, not in the air. The causeway is a
+ * structure with an under-side, so the road has a dark edge. And because the water sits
+ * ~20 units below the deck, the vertical axis — the one the review found completely
+ * unused — comes free: masts rise past you at eye level in the low sections and stand
+ * below you on the high ones.
+ *
+ * THE VALUE LADDER, lightest to darkest. This is the thing that was missing, not detail:
+ *   sky at the horizon > road deck > water > far sails > near sails > hulls, masts, fascia
+ * and exactly one saturated note in the whole scene — burnt sienna, the pigment the
+ * course is named for — reserved for the outside topmark of a corner. A single accent in
+ * a narrow palette is worth more than fifty; put it where the player must look and it
+ * does the job of a signpost without being one.
+ * ------------------------------------------------------------------------------------ */
+const HARB={
+  hull:   [0x3a3226,0x473c2c,0x2e2820,0x554635,0x413a30],
+  cabin:  [0x6b6250,0x7a7160,0x5a5344],
+  mast:   0x3d3428,
+  pile:   0x504636,
+  // Three sail bands. A crowd of sails is only interesting if some of them are LOST —
+  // near the sky value, edges gone — and a few are FOUND, dark and hard against it. One
+  // uniform mid-tone is what makes a fleet read as scenery instead of as a subject.
+  sailLo: [0x5e5946,0x6f6a54,0x504c3c],
+  sailMi: [0x9a9682,0xa8a48e,0x8d8975],
+  sailHi: [0xcac5ae,0xd6d1ba,0xbdb8a2],
+  weed:   [0x5c5a3e,0x6d6a48,0x4d4c34],
+  refl:   0x6e6a56,
+  glint:  0xc8c2a6,
+  sienna: 0xa8532a,      // the accent. Used ONCE per corner, nowhere else.
+  cool:   0x8d99a2,
+  sky:    0xd6cfb8
+};
+// Broken colour that does NOT darken. paintCanvas() is a mid-value ground (#8a8258), fine
+// as a surface colour but ruinous as a multiplier: everything instanced through it comes
+// out at half value and the ladder above collapses. This is the same tooth and the same
+// scumble, pitched near white, so it breaks the colour and leaves the value alone.
+let PAINT_TOOTH=null;
+function paintTooth(){ if(!PAINT_TOOTH) PAINT_TOOTH=paintTex('#e2ddcd',
+  ['#cbc5af','#f0ebda','#cccbbf','#e4d8b8','#c2c7c5','#dcc4a8']); return PAINT_TOOTH; }
+function harbMat(hex, opt){
+  const o=opt||{};
+  const m=new T.MeshLambertMaterial({color:hex, flatShading:true,
+    map:(o.map===false ? null : paintTooth()),
+    side:T.DoubleSide,                       // hand-built hulls: never fight winding order
+    transparent:o.opacity!=null, opacity:o.opacity!=null?o.opacity:1,
+    depthWrite:o.depthWrite!==false});
+  m.userData.noPaint=true; return m;
+}
+function harbBatch(geo, mat, list){
+  const m=new T.InstancedMesh(geo, mat, list.length); m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(v.c==null?0xffffff:v.c); m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor)m.instanceColor.needsUpdate=true;
+  return m;
+}
+// A seeded stream. The review's "verge tiles visibly" and "fixed spacing reads as tiling"
+// were both caused by modulo cadences — (i*13)%22 repeats every few props no matter how
+// arbitrary the constants look. An LCG gives irregularity that stays deterministic across
+// rebuilds, which is what you actually want: the same harbour every time, but no rhythm.
+function harbRnd(seed){ let s=seed>>>0;
+  return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+/* A BRUSH MARK, as a texture. Everything that lies flat in the water — reflections, sky
+ * patches, weed — was first built as plain quads and it was a disaster: a rectangle lying
+ * on water reads as a dropped sheet of card, and five hundred of them read as litter. A
+ * mark on water has no straight edges anywhere. This is a loaded-brush stroke with a
+ * scrubbed body and a radial falloff forced over the top, so the quad's own boundary can
+ * never appear no matter how the instance is stretched. */
+let HARB_SMEAR=null;
+function harbSmearTex(){
+  if(HARB_SMEAR) return HARB_SMEAR;
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const g=c.getContext('2d');
+  for(let i=0;i<26;i++){
+    g.fillStyle='rgba(255,255,255,'+(0.06+Math.random()*0.11).toFixed(3)+')';
+    g.beginPath();
+    g.ellipse(32+(Math.random()*2-1)*9, 32+(Math.random()*2-1)*12,
+              4+Math.random()*13, 7+Math.random()*22, (Math.random()*2-1)*0.28, 0, 6.2832);
+    g.fill();
+  }
+  g.globalCompositeOperation='destination-out';      // scrub it back, broken not solid
+  for(let i=0;i<70;i++){
+    g.fillStyle='rgba(0,0,0,'+(0.08+Math.random()*0.22).toFixed(3)+')';
+    g.fillRect(Math.random()*64, Math.random()*64, 2+Math.random()*10, 1+Math.random()*4);
+  }
+  g.globalCompositeOperation='destination-in';       // and guarantee the edges are gone
+  const rd=g.createRadialGradient(32,32,3,32,32,31);
+  rd.addColorStop(0,'rgba(255,255,255,1)');
+  rd.addColorStop(0.55,'rgba(255,255,255,0.80)');
+  rd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=rd; g.fillRect(0,0,64,64);
+  const t=new T.Texture(c); t.encoding=T.sRGBEncoding; t.needsUpdate=true;
+  HARB_SMEAR=t; return t;
+}
+function harbSmearMat(op){
+  const m=new T.MeshLambertMaterial({color:0xffffff, map:harbSmearTex(), flatShading:true,
+    transparent:true, opacity:op, depthWrite:false, side:T.DoubleSide});
+  m.userData.noPaint=true; return m;
+}
+// A punt hull. Wide flat deck, keel line beneath, pointed bow, flat transom — the shape
+// that reads as a moored working boat from four hundred units away, which is all it has
+// to do. Unit space: half-beam 1, keel at y=0, deck at y=1, transom z=-1, bow z=+1.2.
+function harbHullGeo(){
+  const v=[-1,1,-1, 1,1,-1, 1,1,0.55, -1,1,0.55, 0,1,1.2, 0,0,-0.82, 0,0,0.92];
+  const f=[0,1,2, 0,2,3, 3,2,4, 0,3,5, 3,6,5, 3,4,6, 1,5,2, 2,5,6, 2,6,4, 0,5,1];
+  const g=new T.BufferGeometry();
+  g.setAttribute('position', new T.Float32BufferAttribute(v,3));
+  g.setIndex(f); g.computeVertexNormals(); return g;
+}
+// A flat lozenge lying in the water. Reflections, sky patches, weed rafts — anything that
+// is a mark on the surface rather than an object standing on it.
+function harbFlatGeo(){
+  const g=new T.PlaneGeometry(1,1,1,1); g.rotateX(-Math.PI/2); return g;
+}
+/* THE GUARD. Offsetting from a sample only proves clearance from THAT sample, and this
+ * circuit folds back on itself hard — the loop is about 420 units across, so "three hundred
+ * units out into the infield" is very often "thirty units off the road" on the other side of
+ * the lap. That is how a warehouse ended up parked on the racing line and a moored boat
+ * ended up in the corridor. Find the genuinely NEAREST sample, take the side from it (the
+ * limits are 48.4 infield, 28.2 outside), and reject anything whose own extent breaks it.
+ * Reads SAMP/innerSign, so it is only valid after buildTrack has laid the centreline. */
+function harbClearOK(x,z,extent){
+  let best=1e18, bi=0;
+  for(let i=0;i<STEPS;i+=2){
+    const s=SAMP[i], dx=x-s.p.x, dz=z-s.p.z, d2=dx*dx+dz*dz;
+    if(d2<best){ best=d2; bi=i; }
+  }
+  const s=SAMP[bi], lat=(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z;
+  return Math.sqrt(best) >= (lat*innerSign>0 ? 50 : 30)+extent+2;
+}
+function harbTrackDist(x,z){ let m=1e18;
+  for(let i=0;i<STEPS;i+=3){ const p=SAMP[i].p, dx=x-p.x, dz=z-p.z, d=dx*dx+dz*dz;
+    if(d<m) m=d; }
+  return Math.sqrt(m); }
+// A gull: two shallow facets meeting at the body. At this size it is one dark tick in the
+// sky, which is exactly as much bird as the scene wants.
+function harbGullGeo(){
+  const g=new T.BufferGeometry();
+  g.setAttribute('position', new T.Float32BufferAttribute([
+    0,0,0, -1,0.34,-0.30, -0.55,0.10,0.34,
+    0,0,0,  0.55,0.10,0.34, 1,0.34,-0.30 ],3));
+  g.computeVertexNormals(); return g;
 }
 
 // Build (or rebuild) the whole track world for TRACKS[idx]
@@ -2958,8 +3204,18 @@ function buildTrack(idx){
   // the set reads as objects on a bright seamless backdrop.
   // Reads the flags off the record directly — this runs above the const declarations, so
   // referencing `paint` or `coil` here would be a temporal-dead-zone throw.
-  scene.fog.near = TRACKS[idx].paint ? 25 : (TRACKS[idx].coil ? 260 : 120);
-  scene.fog.far  = TRACKS[idx].paint ? 330 : (TRACKS[idx].coil ? 1150 : 560);
+  // 25/330 was too short by half. Heavy fog IS the technique here, but a wall of it is
+  // not aerial perspective — aerial perspective is a GRADIENT, and at 330 there was no
+  // room for one: things were sharp, then gone. Widening to 34/560 keeps the dissolve
+  // (Sienna is still the fastest fade of any course) while leaving a middle distance for
+  // the fleet to recede through, which is where the depth in a harbour painting lives.
+  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : 120);
+  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : 560);
+  // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
+  // the HORIZON rather than the sky overall, or the water fades to a value the sky never
+  // reaches and the seam between them reads as a cut. Set unconditionally above, then
+  // overridden here — every other course still gets its own from trackSky.
+  if(TRACKS[idx].paint) scene.fog.color.setHex(0xdcd5bd);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -2973,7 +3229,11 @@ function buildTrack(idx){
   const bead  =!!TRACKS[idx].bead;       // ...or as glossy beadwork under a studio rig
   const pool  =!!TRACKS[idx].pool;       // ...or as a 70s natatorium under a light canopy
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
-  applyTrackLighting(bead, pool, coil);
+  applyTrackLighting(bead, pool, coil, paint);
+  // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
+  // works off the authored values rather than off whatever it left behind last frame.
+  // Cleared for every other course by the TRACK_PULSE reset at the top of this function.
+  if(paint) TRACK_PULSE.paintAir={sun:sun.intensity, hemi:hemi.intensity, rim:rim.intensity};
   const feltTex = felt ? feltStrataTex() : null;
   // The voxel dressing below is shared: mosaic only swaps HOW the cubes are batched, so
   // the material argument each call passes is deliberately ignored on that path.
@@ -2985,6 +3245,11 @@ function buildTrack(idx){
   groundPlane.visible = !wire;           // the vector course supplies its own ground grid
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
+    // On the oil course the ground plane IS the harbour: one flat sheet of slack water
+    // that the causeway runs across and every boat stands on. Warm grey-ochre, pitched a
+    // clear step below the road deck and a clear step below the sky, so it takes the
+    // middle rung of the value ladder instead of doing what it used to and reading lilac.
+    : paint ? 0x8a8470
     // just under the sky, so the horizon reads as a cyclorama sweep rather than a cut
     : TRACKS[idx].coil ? 0xcfc3b2 : 0x2a1a22);  // dark so speculars/pods carry
   trackLoop = loop; trackCross = cross;
@@ -3031,9 +3296,66 @@ function buildTrack(idx){
   // ---- understructure: tube, viaduct, lattice, strata, basin, or painted hulls ----
   if(paint){
     skyDome=paintSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.paintSky=skyDome.material;
+    // The causeway spine. Darkened hard from 0x6a6a52: this is the deepest note in the
+    // scene and it sits directly under the lightest large plane, which is the one place a
+    // painting can put its maximum value contrast and have it mean something structural.
     const hull=new T.Mesh(new T.TubeGeometry(curve,STEPS,12,10,loop),
-      new T.MeshLambertMaterial({map:paintCanvas(),color:0x6a6a52,flatShading:true}));
+      new T.MeshLambertMaterial({map:paintCanvas(),color:0x3c3629,flatShading:true}));
     hull.position.y-=20; trackGroup.add(hull);      // r=12: crown was +2, hid 13.3 of the 44-unit road
+
+    /* PILINGS. Everything sits on something, and that has to include the road: a deck
+       floating over open water with nothing holding it up is the same bug as a floating
+       sail, only bigger. These drop from under the deck to the waterline in bents of two,
+       and they are the near-field rhythm the course had none of — at 140 units/s a picket
+       passing below the shoulder is what makes the speed legible.
+       SAFE BY CONSTRUCTION: they reach laterally to HW+1.5 = 23.5, tucked inside the
+       fascia's own overhang, and their tops are 3.4 BELOW the deck surface. The corridor
+       limits (48.4 infield, 28.2 outside) are lateral clearances at deck height; a car is
+       held at deck height by the surface it is driving on, so nothing here is reachable.
+       Spacing is drawn from the LCG (4..11 samples), never a fixed step. */
+    const PR=harbRnd(0x9E3779B1), pil=[], bent=[];
+    for(let i=0;i<STEPS; i+=4+((PR()*8)|0)){
+      const sp=SAMP[i%STEPS], ry=Math.atan2(sp.t.x,sp.t.z);
+      const drop=sp.p.y-(-2);                       // deck height above the waterline
+      if(drop<5) continue;                          // low sections: the deck meets the water
+      const h=drop+2.6, lean=(PR()-0.5)*0.10;
+      for(const side of [-1,1]){
+        const out=HW+0.6+PR()*0.9;
+        pil.push({x:sp.p.x+sp.n.x*side*out, y:sp.p.y-3.4-h*0.5,
+                  z:sp.p.z+sp.n.z*side*out, s:0.9+PR()*0.5, sy:h, sz:0.9+PR()*0.5,
+                  rz:lean*side, ry, c:HARB.pile});
+      }
+      // a cross-brace tying the two legs, on maybe half the bents — irregular, the way a
+      // repaired jetty is, and it stops the legs reading as a comb. Pinned just under the
+      // deck rather than floating at a random depth: seen end-on from off the causeway a
+      // free-hanging brace read as a small box hanging in the air by itself.
+      if(PR()<0.5) bent.push({x:sp.p.x, y:sp.p.y-5.4, z:sp.p.z,
+                              s:0.9, sy:0.9, sz:(HW+1.4)*2, ry, c:0x3a3226});
+    }
+    trackGroup.add(harbBatch(new T.CylinderGeometry(1,1.25,1,6), harbMat(0xffffff), pil));
+    if(bent.length) trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), bent));
+
+    /* FASCIA. A dark skirt hung just under the deck edge on both sides. This is the single
+       highest-value-per-line change on the course: the review's headline complaint was
+       that road and not-road were indistinguishable, and a hard dark line where a light
+       plane ends is how every painter has ever solved that. It also gives the deck a
+       thickness, so it stops being a decal on the landscape. Reaches HW+1.6 laterally and
+       hangs from the deck plane downward — under the overhang, never in the corridor. */
+    for(const side of [1,-1]){
+      const fp=[], fi=[];
+      for(let i=0;i<=LAST;i++){
+        const s=SAMP[i%STEPS];
+        const a=s.p.clone().addScaledVector(s.bn, side*(HW+0.2));
+        const b=s.p.clone().addScaledVector(s.bn, side*(HW+1.6));
+        fp.push(a.x,a.y+0.10,a.z, b.x,b.y-4.2,b.z);
+      }
+      for(let i=0;i<LAST;i++){ const a=i*2,b=a+1,c2=a+2,d2=a+3; fi.push(a,b,c2, b,d2,c2); }
+      const fg=new T.BufferGeometry();
+      fg.setAttribute('position',new T.Float32BufferAttribute(fp,3));
+      fg.setIndex(fi); fg.computeVertexNormals();
+      trackGroup.add(new T.Mesh(fg, harbMat(0x2a251c)));
+    }
   } else if(pool){
     const wallTex=poolWallTex();
     const basin=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,12,loop),
@@ -3202,20 +3524,62 @@ function buildTrack(idx){
   const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
   const rg=rc.getContext('2d');
   if(paint){
-    // Broad wet-into-wet bands with a dragged, broken centre line — a painted road, not a
-    // drawn one, so nothing here has a clean edge except the very centre stripe.
-    const P=['#8a8258','#6b6a3a','#a9a596','#c4b48c','#7a7a4e'];
-    for(let y=0;y<256;y+=4){
-      rg.fillStyle=P[(Math.floor(y/4)+Math.floor(Math.sin(y*0.08)*2))%P.length];
-      rg.fillRect(0,y,64,4);
+    /* THE DECK. The old surface failed for a reason that has nothing to do with taste:
+       the shared UVs run v from 0 to 40 over the lap, and 40 repeats of a 256px sheet
+       whose bands were 4px put a colour change every ~1.2 world units. That is finer than
+       the screen can resolve at 140 units/s, so the road was not a surface at all, it was
+       a moiré field — and the "dragged centre line" became five hundred and sixty dashes,
+       i.e. noise. Nothing painted on top of that could have read.
+       Fixed two ways: rt.repeat.y is pulled to 0.2 below (eight repeats a lap, ~1.7 world
+       units per texel along the road), and every mark here is drawn LONG in v so it
+       survives the stretch. Long-in-v is also correct: this is water-light on a wet deck,
+       and reflected light on a horizontal surface always smears toward the viewer. */
+    rg.fillStyle='#7d7660'; rg.fillRect(0,0,64,256);
+    // dragged streaks: warm lights against cool half-tones, wet-into-wet, no clean edges
+    const WARM=['#9a9279','#a89f80','#8b836a','#b0a888','#928a70'];
+    const COOL=['#7f8379','#8a8e83','#767a73','#8e9189'];
+    rg.globalAlpha=0.34;
+    for(let i=0;i<300;i++){
+      const pal=(i%3) ? WARM : COOL;
+      rg.fillStyle=pal[(Math.random()*pal.length)|0];
+      const w=2+Math.random()*7, h=26+Math.random()*130;
+      rg.fillRect(Math.random()*64-w*0.5, Math.random()*256-h*0.5, w, h);
     }
-    rg.globalAlpha=0.22;
-    for(let i=0;i<180;i++){
-      rg.fillStyle=P[(Math.random()*P.length)|0];
-      rg.fillRect(Math.random()*64, Math.random()*256, 6+Math.random()*16, 2+Math.random()*3);
+    // shoulders: the deck darkens toward its edges. Drawn as broken strokes rather than a
+    // clean band so the edge is lost in places and found in others, which is the whole
+    // lost-and-found idea applied where it does the most work.
+    rg.globalAlpha=0.26;
+    for(let i=0;i<170;i++){
+      rg.fillStyle=(i%4) ? '#4b4638' : '#332f26';
+      const side=(i%2)?-2:50, w=4+Math.random()*13, h=18+Math.random()*90;
+      rg.fillRect(side+Math.random()*12-4, Math.random()*256-h*0.5, w, h);
     }
-    rg.globalAlpha=0.55; rg.fillStyle='#d8cfae';
-    for(let y=0;y<256;y+=18) rg.fillRect(29+Math.sin(y*0.2)*2, y, 5, 9+Math.random()*4);
+    // The centre line, and it has real work to do: it is the lightest note on the deck, so
+    // it doubles as the thing that tells you where you are in the corridor at a distance
+    // where the deck itself is one flat dark value. Six dashes per repeat — roughly a
+    // 36-unit dash every 70 units on the ground, which is a rhythm you can actually read.
+    for(let y=0;y<256;y+=42){
+      const x=30+Math.sin(y*0.09)*1.6;
+      rg.globalAlpha=0.78; rg.fillStyle='#ece3c4'; rg.fillRect(x-0.8, y+3, 6.0, 25);
+      rg.globalAlpha=0.22; rg.fillRect(x-2.4, y+6+Math.random()*8, 9.5, 10);
+    }
+    // Cross-deck scuffs where the causeway's slabs butt. Four per repeat, jittered, and
+    // broken into three pieces each so none of them is a drawn line. They exist for one
+    // reason: a surface with only lengthwise marks on it has no rhythm to pass you, and
+    // rhythm passing you is how speed is read. The dashes down the centre tell you where
+    // the corridor is; these tell you how fast you are crossing it.
+    rg.globalAlpha=0.30;
+    for(let k=0;k<4;k++){
+      const y=14+k*62+Math.random()*22;
+      rg.fillStyle=(k%2)?'#464032':'#3a3529';
+      let x=2+Math.random()*6;
+      while(x<62){ const w=6+Math.random()*20;
+        rg.fillRect(x, y+Math.random()*2, Math.min(w,62-x), 2+Math.random()*2);
+        x+=w+2+Math.random()*8; }
+    }
+    // canvas tooth, so even the road is a painted surface and not a printed one
+    rg.globalAlpha=0.10; rg.fillStyle='#241f16';
+    for(let i=0;i<520;i++) rg.fillRect(Math.random()*64, Math.random()*256, 1+Math.random()*2, 1);
     rg.globalAlpha=1;
   } else if(pool){
     /* the pool floor is drawn by poolTileTex(); nothing to paint into rc here */
@@ -3323,6 +3687,10 @@ function buildTrack(idx){
   }
   let rt=new T.Texture(rc); rt.wrapS=rt.wrapT=T.RepeatWrapping; rt.encoding=T.sRGBEncoding; rt.needsUpdate=true;
   if(pool) rt=poolTileTex();
+  // The shared UVs give every course 40 repeats down the lap. On the oil course that put
+  // the texture below the resolving limit at racing speed and turned the deck into moiré;
+  // 0.2 brings it to eight, which is what makes the surface a surface. See the branch above.
+  if(paint) rt.repeat.set(1, 0.2);
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
@@ -3331,7 +3699,14 @@ function buildTrack(idx){
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:0,specular:0x000000,
         side:T.DoubleSide})
     : paint
-    ? new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
+    // AUTHORED, not converted. Left to paintifyScene this came out at roughly half the
+    // value it was drawn at (white lerps to PAINT_PAL[0], the darkest olive in the ramp),
+    // which is how the most important surface on the course ended up the muddiest thing
+    // in the frame. The deck is a wet stone causeway: a clear step DARKER than the water
+    // it crosses, so the corridor reads as a dark ribbon on a light field from any
+    // distance, which is the one thing the review said it could not do.
+    ? Object.assign(new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide}),
+        {userData:{noPaint:true}})
     : pool
     // Wet is a hard WHITE specular, not a colour. Turquoise with a soft highlight just
     // looks like painted concrete; this is what makes the pod colours slide across it.
@@ -3359,8 +3734,13 @@ function buildTrack(idx){
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
-    trackGroup.add(new T.Line(eg,new T.LineBasicMaterial({color:wire?0xff2fb9:0xff9ec4,
-      transparent:true,opacity:wire?0.95:0.6,blending:T.AdditiveBlending,depthWrite:false})));
+    // Additive pink is a glow line, and a glow line on a daylit course adds white to an
+    // already-pale sky and vanishes. The oil course wants the opposite: a dark drawn line
+    // where the deck ends, the seam brown the racers' outlines already use.
+    trackGroup.add(new T.Line(eg, paint
+      ? new T.LineBasicMaterial({color:PAINT_SEAM,transparent:true,opacity:0.75,depthWrite:false})
+      : new T.LineBasicMaterial({color:wire?0xff2fb9:0xff9ec4,
+        transparent:true,opacity:wire?0.95:0.6,blending:T.AdditiveBlending,depthWrite:false})));
   }
   const N=420, mp=new Float32Array(N*3);
   for(let k=0;k<N;k++){
@@ -3370,9 +3750,14 @@ function buildTrack(idx){
     mp[k*3+2]=s.p.z+s.n.z*off+(Math.random()*2-1)*8;
   }
   const mg=new T.BufferGeometry(); mg.setAttribute('position',new T.BufferAttribute(mp,3));
-  const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,color:0xffc6dd,size:3.2,sizeAttenuation:true,
-    transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false}));
-  trackGroup.add(motes); TRACK_PULSE.motes=motes;
+  // Additive pink sparks are a bioluminescence cue and they are actively wrong outdoors:
+  // added to a near-white sky they read as dirt on the lens. On the oil course they become
+  // warm dust in low sun instead — larger, far fainter, and only visible where they cross
+  // something dark, which is exactly how motes behave in air.
+  const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,
+    color:paint?0xf0e4c4:0xffc6dd, size:paint?4.6:3.2, sizeAttenuation:true,
+    transparent:true, opacity:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
+  trackGroup.add(motes); TRACK_PULSE.motes=motes; TRACK_PULSE.motesDim=paint?0.16:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -3403,22 +3788,120 @@ function buildTrack(idx){
 
   // ---- edge border: villi, curbs, pylons, tufts, coping, or mooring posts ----
   if(paint){
-    const posts=[], d=new T.Object3D(), c=new T.Color();
-    for(let i=0;i<STEPS;i+=6){
-      const sp=SAMP[i];
-      for(const side of [-1,1])
-        posts.push({x:sp.p.x+sp.n.x*side*(HW+2.2), y:sp.p.y+2.4,
-                    z:sp.p.z+sp.n.z*side*(HW+2.2), h:3.4+((i*13)%22)/5,
-                    c:PAINT_PAL[(i/6|0)%4]});
+    /* The old verge was posts every 6 samples at HW+2.2, all the same height give or take
+       a four-value modulo. Two things wrong with it and only one was the tiling: at 24.2
+       lateral it also sat INSIDE the 28.2 outside corridor, so the player drove through
+       the entire thing, twice a lap, every lap. It is gone.
+       What replaces it is the harbour's own furniture, standing in the water clear of the
+       corridor: mooring dolphins for texture, and CORNER MARKS to do the job no element on
+       this course was doing — telling you a bend is coming. */
+    const VR=harbRnd(0x5EA51DE), c=new T.Color(), SKYC=new T.Color(HARB.sky);
+    // 48.4 infield (the apron shortcut) / 28.2 outside (the wall). Everything below sits
+    // outside whichever of the two applies to its side, with margin.
+    const clear=(side)=> (side*innerSign>0) ? 52 : 32;
+    const aerial=(out)=>Math.min(1, out/320)*0.55;   // aerial perspective, on top of fog
+
+    // --- mooring dolphins: clumps of leaning piles lashed under a cap ---
+    const dol=[], cap=[];
+    for(let i=0;i<STEPS; i+=6+((VR()*14)|0)){
+      if(VR()<0.26) continue;                        // irregular cadence, not a rhythm
+      const sp=SAMP[i%STEPS], side=VR()<0.5?-1:1;
+      const out=clear(side)+2+VR()*52, aer=aerial(out);
+      const bx=sp.p.x+sp.n.x*side*out, bz=sp.p.z+sp.n.z*side*out;
+      if(!harbClearOK(bx,bz,4)) continue;            // the loop doubles back; see harbClearOK
+      const n=2+((VR()*4)|0), h=6+VR()*17, a0=VR()*6.283;
+      for(let k=0;k<n;k++){
+        const a=a0+k/n*6.283, r=1.3+VR()*1.7;
+        c.setHex(HARB.pile).lerp(SKYC,aer);
+        dol.push({x:bx+Math.cos(a)*r, y:-3.4+h*0.5, z:bz+Math.sin(a)*r,
+                  s:0.7+VR()*0.5, sy:h, sz:0.7+VR()*0.5,
+                  rx:Math.sin(a)*0.11, rz:-Math.cos(a)*0.11, c:c.getHex()});
+      }
+      // A lashing band, not a tabletop. At the size this started it read as a raft with
+      // legs — a cap only has to be wide enough to say the piles are tied together.
+      c.setHex(0x2c2619).lerp(SKYC,aer*0.7);
+      cap.push({x:bx, y:-3.4+h-0.5, z:bz, s:1.5+VR()*0.9, sy:0.7, sz:1.5+VR()*0.9,
+                ry:VR()*3.14, c:c.getHex()});
     }
-    const pm=new T.InstancedMesh(new T.CylinderGeometry(0.8,1.0,1,6),
-      new T.MeshLambertMaterial({map:paintCanvas(),flatShading:true}), posts.length);
-    pm.frustumCulled=false;
-    posts.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,0,0);
-      d.scale.set(1,v.h,1); d.updateMatrix(); pm.setMatrixAt(i,d.matrix);
-      c.setHex(v.c); pm.setColorAt(i,c); });
-    pm.instanceMatrix.needsUpdate=true; if(pm.instanceColor)pm.instanceColor.needsUpdate=true;
-    trackGroup.add(pm);
+    trackGroup.add(harbBatch(new T.CylinderGeometry(1,1.2,1,6), harbMat(0xffffff), dol));
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), cap));
+
+    /* --- CORNER MARKS: where art and playability meet ------------------------------
+       Every element on this course was a wide low triangle, so nothing rose against the
+       sky and nothing announced a bend. A harbour already owns the right answer, and it
+       is the oldest signalling system there is: a tall pole with a shaped topmark, warm
+       on the side you must not go, cool on the side you should aim at.
+         OUTSIDE the turn: tall, and the ONLY saturated colour in the scene — burnt
+           sienna, the pigment the course is named for. One accent, sited exactly where
+           the player has to look. That is the whole focal hierarchy.
+         INSIDE, at the apex: short, cool grey-blue, a can instead of a cone. An apex
+           reference, not a warning.
+       Severity drives height and count, so a hairpin telegraphs harder than a kink, and
+       the marks are spaced tightening toward the apex so the rhythm itself reads as
+       "arriving". Corner side comes from the sample's own banking: bank>0 turns toward
+       -n, so the outside of the turn is sign(bank) along n. */
+    const poles=[], cones=[], cans=[], collars=[];
+    const wrapI=k=>((k%STEPS)+STEPS)%STEPS;
+    const BK=0.115;
+    // Gather every banked run first, then keep only the SIX HARDEST. An absolute
+    // threshold is the wrong tool: this circuit banks somewhere for most of its length, so
+    // any threshold low enough to catch the hairpins tagged half the lap and the marks
+    // stopped meaning "corner" — they became scenery, which is the one thing a signal must
+    // never become. Ranking is self-calibrating and gives the same six every rebuild.
+    const runs=[], seen=new Array(STEPS).fill(false);
+    for(let i0=0;i0<STEPS;i0++){
+      if(seen[i0] || Math.abs(SAMP[i0].bank)<BK) continue;
+      let j=i0, peak=0, pk=i0;
+      while(j<i0+STEPS && Math.abs(SAMP[wrapI(j)].bank)>=BK){
+        const b=Math.abs(SAMP[wrapI(j)].bank);
+        if(b>peak){ peak=b; pk=j; }
+        seen[wrapI(j)]=true; j++;
+      }
+      if(j-i0>=18) runs.push({i0, pk, peak, len:j-i0});
+    }
+    runs.sort((a,b)=>b.peak-a.peak);
+    for(const rn of runs.slice(0,5)){
+      const dir=Math.sign(SAMP[wrapI(rn.pk)].bank)||1;  // +1: outside is the +n side
+      const sev=Math.min(1,(rn.peak-BK)/0.20);
+      const n=3;
+      const start=rn.i0-Math.round(30+sev*28), end=rn.pk+6;
+      for(let k=0;k<n;k++){
+        const f=k/(n-1), ff=f*f*0.62+f*0.38;         // marks tighten toward the apex
+        const s2=SAMP[wrapI(Math.round(start+(end-start)*ff))];
+        // Slim and tall, not squat. A wide low cone on a thin pole is a parasol — the
+        // brim catches the sky underneath and the silhouette reads as a mushroom. A cone
+        // three times as tall as it is wide reads as a beacon from any angle.
+        // Sized DOWN hard from the first pass: at a 30-unit clearance a pole rising 30
+        // above the deck with a nine-unit cone on it was the loudest object in every
+        // frame, and a signal that shouts over the whole picture has stopped being a
+        // signal. It only has to out-read the fleet, not the composition.
+        const cs=1.6+sev*0.7;
+        const side=dir, out=clear(side)+cs+7+VR()*6;
+        const bx=s2.p.x+s2.n.x*side*out, bz=s2.p.z+s2.n.z*side*out;
+        // height is measured from the WATER, so it always stands on something, and it
+        // clears the deck by an amount that grows with how hard the corner is
+        const top=s2.p.y+5+sev*11+VR()*4, h=top-(-2.6);
+        poles.push({x:bx,y:-2.6+h*0.5,z:bz,s:0.8,sy:h,sz:0.8,c:0x352e23});
+        collars.push({x:bx,y:top-0.9,z:bz,s:cs*0.9,sy:0.8,sz:cs*0.9,ry:VR()*3.1,c:0x2e2819});
+        cones.push({x:bx,y:top+cs*1.65,z:bz,s:cs,sy:cs*3.2,sz:cs,ry:VR()*3.1,c:HARB.sienna});
+      }
+      // the apex mark, opposite side, quiet — a reference, not a warning
+      for(const dk of [-7, 7]){
+        const s2=SAMP[wrapI(rn.pk+dk)], side=-dir, out=clear(side)+3+VR()*4;
+        const bx=s2.p.x+s2.n.x*side*out, bz=s2.p.z+s2.n.z*side*out;
+        const top=s2.p.y+4.0+VR()*3.0, h=top-(-2.6);
+        poles.push({x:bx,y:-2.6+h*0.5,z:bz,s:0.65,sy:h,sz:0.65,c:0x3d3529});
+        cans.push({x:bx,y:top+1.5,z:bz,s:2.1,sy:3.0,sz:2.1,ry:VR()*3.1,c:HARB.cool});
+      }
+    }
+    if(poles.length){
+      trackGroup.add(harbBatch(new T.CylinderGeometry(1,1.25,1,7), harbMat(0xffffff), poles));
+      trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), collars));
+      // Topmarks keep the canvas tooth so they are painted objects like everything else,
+      // but they are the one place the palette is allowed to stay saturated.
+      trackGroup.add(harbBatch(new T.ConeGeometry(1,1,7), harbMat(0xffffff), cones));
+      trackGroup.add(harbBatch(new T.CylinderGeometry(1,1,1,9), harbMat(0xffffff), cans));
+    }
   } else if(pool){
     // Pale stone coping running the whole rim, the way a pool deck edges the water.
     const cope=[], d=new T.Object3D(), c=new T.Color();
@@ -3621,9 +4104,16 @@ function buildTrack(idx){
     for(let i=0;i<STEPS;i++){ const a=i*2,b=a+1,c=a+2,d=a+3; wi.push(a,b,c, b,d,c); }
     const wg=new T.BufferGeometry();
     wg.setAttribute('position',new T.Float32BufferAttribute(wp,3)); wg.setIndex(wi); wg.computeVertexNormals();
-    trackGroup.add(new T.Mesh(wg,new T.MeshBasicMaterial({color:0xff6f96,transparent:true,opacity:0.13,side:T.DoubleSide,depthWrite:false})));
+    // The apron limit still has to be legible — it is a wall you bounce off — but an
+    // ADDITIVE pink rail on a daylit course is a stray white contour drawn across open
+    // water, with no object under it and no explanation. Same information, stated in the
+    // scene's own language: a dark warp rope over a faint warm wash.
+    trackGroup.add(new T.Mesh(wg,new T.MeshBasicMaterial({color:paint?0xb8ae90:0xff6f96,
+      transparent:true,opacity:paint?0.10:0.13,side:T.DoubleSide,depthWrite:false})));
     const rgo=new T.BufferGeometry(); rgo.setAttribute('position',new T.Float32BufferAttribute(rp,3));
-    trackGroup.add(new T.Line(rgo,new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false})));
+    trackGroup.add(new T.Line(rgo, paint
+      ? new T.LineBasicMaterial({color:0x4a4132,transparent:true,opacity:0.55,depthWrite:false})
+      : new T.LineBasicMaterial({color:0xff9ec4,transparent:true,opacity:0.5,blending:T.AdditiveBlending,depthWrite:false})));
   }
 
   // ---- finish egg (ovum) at the end of a point-to-point course ----
@@ -3701,30 +4191,299 @@ function buildTrack(idx){
 
   // ---- trackside scenery: cells, towers, wire solids, wool, pool room, or moored sails ----
   if(paint){
-    // The subject of the painting: taut angular sails crowding both banks, big near the
-    // track and dissolving into the fog behind. Two facets each, so every one carries the
-    // light/dark split down its spine.
-    const d=new T.Object3D(), c=new T.Color();
-    const N=170;
-    const sm=new T.InstancedMesh(PAINT_SAIL,
-      new T.MeshLambertMaterial({map:paintCanvas(),flatShading:true,side:T.DoubleSide}), N);
-    sm.frustumCulled=false;
-    for(let k=0;k<N;k++){
-      const sp=SAMP[(k*37)%STEPS];
-      const side=(k%2?-1:1), out=HW*(1.9+((k*13)%52)/9);
-      const h=16+((k*29)%34);
-      d.position.set(sp.p.x+sp.n.x*side*out+(((k*23)%30)-15),
-                     sp.p.y+h*0.72,
-                     sp.p.z+sp.n.z*side*out+(((k*31)%30)-15));
-      d.rotation.set((((k*7)%14)-7)/60, ((k*53)%628)/100, (((k*11)%16)-8)/40);
-      // Broad and low, not tall and narrow: at the old proportions these read as conifers
-      // rather than as the wide angular canvases the reference is built from.
-      d.scale.set(16+((k*17)%22), h*0.62, 14+((k*19)%18));
-      d.updateMatrix(); sm.setMatrixAt(k,d.matrix);
-      c.setHex(PAINT_PAL[k%6]); sm.setColorAt(k,c);
+    /* THE FLEET. What was here before was 170 free-floating sails placed at
+       sp.p.y + h*0.72 with a half-height of h*0.62 — so every one of them hung between 8
+       and 40 units above the water on nothing at all, which is the plainest kind of bug
+       an art pass can leave behind. They are now boats: a hull in the water, a mast off
+       the deck, canvas on the mast. Build it in that order and the float cannot recur,
+       because each part is placed relative to the part beneath it.
+       The whole fleet is ~2,150 instances in nine draw calls, plus twelve near boats built
+       as real Groups so they can rock. */
+    const R=harbRnd(0x51E77A), c=new T.Color(), SKYC=new T.Color(HARB.sky);
+    const WL=-2;                                      // waterline: the ground plane's y
+    const clear=(side)=> (side*innerSign>0) ? 52 : 32;
+    const aerial=(out)=>Math.min(1, out/340)*0.62;
+    const pick=(arr)=>arr[(R()*arr.length)|0];
+    const clearOK=harbClearOK, trackDist=harbTrackDist;
+    const HULLG=harbHullGeo(), FLATG=harbFlatGeo();
+
+    const hulls=[], cabins=[], masts=[], booms=[], sails=[], refl=[], glints=[], weeds=[];
+    const heroes=[];
+
+    /* Placement. Two families, because a harbour is not evenly seeded: boats CROWD — they
+       raft up against the moorings and the water between the rafts is empty. Choosing a
+       cluster centre and then scattering around it is what produces that, and it is also
+       what gives the eye somewhere to travel. An even sprinkle at any density reads as
+       texture; clusters read as a subject. */
+    const clusters=[];
+    // STRATIFIED, not random. Uniform random placement of 40 clusters over 700 samples
+    // leaves gaps of a hundred-plus samples as a matter of course, and a gap on a loop
+    // this size is four hundred units of nothing at all — which is exactly what half the
+    // frames were showing. One cluster per slot with a jitter inside the slot keeps the
+    // irregularity and removes the holes. Sides alternate with a third of the draws
+    // flipped, so both banks are populated without the fleet reading as an avenue.
+    const NC=44;
+    for(let k=0;k<NC;k++){
+      const i=Math.round((k+0.15+R()*0.7)/NC*STEPS)%STEPS;
+      const side=((k%2)?1:-1)*(R()<0.33?-1:1);
+      clusters.push({i, side, out:clear(side)+6+Math.pow(R(),1.5)*230, r:22+R()*54,
+                     n:3+((R()*7)|0)});
     }
-    sm.instanceMatrix.needsUpdate=true; if(sm.instanceColor)sm.instanceColor.needsUpdate=true;
-    trackGroup.add(sm);
+    for(const cl of clusters){
+      for(let b=0;b<cl.n;b++){
+        const sp=SAMP[(cl.i+((R()*2-1)*26|0)+STEPS)%STEPS];
+        // The near boats are the big ones, and roughly every eighth is a HERO — half again
+        // as large as its neighbours. A crowd of one size is a pattern; a crowd with a few
+        // dominant members is a composition.
+        const hero=(R()<0.13);
+        const rawOut=Math.max(clear(cl.side)+4, cl.out+(R()*2-1)*cl.r);
+        const aer=aerial(rawOut);
+        const L=(hero?1.75:1)*(12+R()*22)*(1.35-aer*0.5);
+        // A boat is placed by its CENTRE but it is a long object at a random heading, so
+        // the clearance has to be measured from its worst case, not its origin. Without
+        // this a fifty-unit hull moored at the 32-unit line swung its bow ten units past
+        // the centreline and the player drove straight through it.
+        const out=Math.max(clear(cl.side)+L*0.62, rawOut);
+        // Scatter ALONG the track freely and OUTWARD only. Free 2D jitter would undo the
+        // clearance above on roughly half the draws, which is exactly the kind of quiet
+        // arithmetic error that puts a hull through the road.
+        const jl=(R()*2-1)*cl.r*0.55, jo=R()*cl.r*0.9;
+        const bx=sp.p.x+sp.n.x*cl.side*(out+jo)+sp.t.x*jl;
+        const bz=sp.p.z+sp.n.z*cl.side*(out+jo)+sp.t.z*jl;
+        if(!clearOK(bx,bz,L*0.62)) continue;          // the loop folds back; see above
+        const beam=L*(0.12+R()*0.05), hgt=L*(0.15+R()*0.09);
+        const ry=R()*6.283, listA=(R()*2-1)*0.055;    // moored boats never sit level
+
+        // Hulls take LESS aerial lift than anything else. They are the bottom rung of the
+        // value ladder and the fog is already pulling them up; lifting them a second time
+        // by distance left the whole fleet floating in one pale mid-tone with no darks
+        // anywhere, which is the failure this course started with.
+        c.setHex(pick(HARB.hull)).lerp(SKYC,aer*0.55);
+        hulls.push({x:bx, y:WL-hgt*0.42, z:bz, s:beam, sy:hgt, sz:L*0.5,
+                    ry, rz:listA, c:c.getHex()});
+        const deck=WL+hgt*0.58;
+        // a sienna waterline stripe on a few working boats — the accent, used at a
+        // whisper out here so the corner marks stay the loudest thing in the scene
+        if(R()<0.16){
+          c.setHex(HARB.sienna).lerp(SKYC, 0.30+aer*0.5);
+          hulls.push({x:bx, y:WL-hgt*0.06, z:bz, s:beam*1.03, sy:hgt*0.20, sz:L*0.5*1.01,
+                      ry, rz:listA, c:c.getHex()});
+        }
+        if(R()<0.42){                                  // wheelhouse
+          c.setHex(pick(HARB.cabin)).lerp(SKYC,aer);
+          const cl2=L*(0.16+R()*0.10);
+          cabins.push({x:bx-Math.sin(ry)*L*0.14, y:deck+cl2*0.45, z:bz-Math.cos(ry)*L*0.14,
+                       s:beam*1.5, sy:cl2, sz:cl2*1.5, ry, rz:listA, c:c.getHex()});
+        }
+
+        // MASTS. The vertical axis the course never used. A mast is roughly the boat's
+        // own length again, which puts the near ones' tops well above the deck you are
+        // driving on and across the horizon behind them.
+        const nm=1+(R()<0.34?1:0)+(R()<0.10?1:0);
+        for(let m=0;m<nm;m++){
+          const mz=(m-(nm-1)*0.5)*L*0.30;
+          const mx=bx+Math.sin(ry)*mz, mzz=bz+Math.cos(ry)*mz;
+          const mh=L*(1.05+R()*0.75);
+          c.setHex(HARB.mast).lerp(SKYC,aer*0.60);
+          masts.push({x:mx, y:deck+mh*0.5, z:mzz, s:0.42+L*0.014, sy:mh,
+                      sz:0.42+L*0.014, rz:listA, c:c.getHex()});
+          // Canvas is optional and often absent — a forest of BARE masts is more of a
+          // harbour than a regatta is, and it is the bare ones that give the picket its
+          // rhythm. When there is a sail it hangs off the mast, not off nothing.
+          if(R()<0.62){
+            // Taller than wide. At the old ratio the canvas was as broad as it was high and
+            // every sail read as a tent — which is the same failure the branch this
+            // replaces had, in a different direction.
+            const sh=mh*(0.52+R()*0.34), sw=sh*(0.25+R()*0.13);
+            // Lost and found: the band a sail is drawn from is biased by distance, so the
+            // far fleet dissolves into the sky value while a few near ones stay dark and
+            // hard. Some near sails are deliberately drawn light anyway — a lost edge in
+            // the FOREGROUND is what separates a painting from a diorama.
+            const band=(R()*0.55+aer) > 0.62 ? HARB.sailHi
+                     : (R()*0.75+aer) > 0.40 ? HARB.sailMi : HARB.sailLo;
+            c.setHex(pick(band)).lerp(SKYC,aer*0.8);
+            sails.push({x:mx, y:deck+sh*0.52+mh*0.10, z:mzz,
+                        s:sw, sy:sh*0.5, sz:sw*0.6,
+                        rx:(R()*2-1)*0.05, ry:ry+(R()*2-1)*0.30, rz:listA+(R()*2-1)*0.06,
+                        c:c.getHex()});
+            c.setHex(HARB.mast).lerp(SKYC,aer*0.85);
+            booms.push({x:mx, y:deck+mh*0.10, z:mzz, s:0.34, sy:0.34, sz:sw*1.5,
+                        ry:ry+(R()*2-1)*0.30, rz:listA, c:c.getHex()});
+          }
+        }
+        // REFLECTION. Not decoration: a dark smear under every hull is what welds a boat
+        // to the water. Without one they read as cut-outs standing on a floor, which is
+        // exactly what the old sails did even when they were not floating.
+        c.setHex(HARB.refl).lerp(SKYC, 0.20+aer*0.6);
+        refl.push({x:bx, y:WL+0.06, z:bz, s:beam*2.3, sy:1, sz:L*(1.5+R()*1.4),
+                   ry, c:c.getHex()});
+        if(hero && heroes.length<12) heroes.push({x:bx,y:WL,z:bz,L,beam,hgt,ry,aer});
+      }
+    }
+
+    /* The water itself. A single flat Lambert plane is a dead surface; slack water is
+       never one value. These are broken patches of reflected sky lying ON it — some
+       lighter than the water, some darker — and they do three things at once: they add
+       ~700 instances of the density the course was short of, they give the water a
+       texture that recedes, and they are the thing that gets animated. */
+    for(let k=0;k<560;k++){
+      const sp=SAMP[(R()*STEPS)|0], side=R()<0.5?-1:1;
+      const out=clear(side)+8+R()*430;
+      const px=sp.p.x+sp.n.x*side*out+sp.t.x*(R()*2-1)*90;
+      const pz=sp.p.z+sp.n.z*side*out+sp.t.z*(R()*2-1)*90;
+      const aer=aerial(out);
+      const lit=R()<0.46;
+      // The dark half of the water marks carries most of the weight: pale patches on pale
+      // water are invisible, and the near foreground was reading as an empty sheet because
+      // every mark in it was within a few percent of the ground colour.
+      c.setHex(lit?HARB.glint:0x5e5945).lerp(SKYC, 0.06+aer*0.50);
+      glints.push({x:px, y:WL+0.03+R()*0.05, z:pz,
+                   s:8+R()*26, sy:1, sz:26+R()*96, ry:R()*6.283, c:c.getHex()});
+    }
+    // Weed rafts and mud in the shallows. Also flat marks rather than objects: a raft of
+    // weed has no height worth modelling, and lying it in the surface instead of standing
+    // it on top is the difference between a stain and a table.
+    for(let k=0;k<420;k++){
+      const sp=SAMP[(R()*STEPS)|0], side=R()<0.5?-1:1;
+      const out=clear(side)+10+Math.pow(R(),0.7)*340;
+      const aer=aerial(out);
+      c.setHex(pick(HARB.weed)).lerp(SKYC, aer*0.70);
+      weeds.push({x:sp.p.x+sp.n.x*side*out+sp.t.x*(R()*2-1)*60, y:WL+0.10+R()*0.06,
+                  z:sp.p.z+sp.n.z*side*out+sp.t.z*(R()*2-1)*60,
+                  s:9+R()*26, sy:1, sz:12+R()*46, ry:R()*6.283, c:c.getHex()});
+    }
+
+    /* THE FAR SHORE. Everything above happens between the deck and ~250 units out; past
+       that there was nothing but haze, which is why the course had no depth even after it
+       had density. A landscape reads as deep when it has THREE distances, not two, and the
+       third one is the cheapest of all to build because at 340–620 units the fog has
+       already reduced it to flat pale shapes — no detail survives, so none is modelled.
+       What the shapes have to get right is only their proportion and their silhouette:
+       long low sheds, a run of gables, and three tall things — a warehouse chimney, a
+       church tower, a standing crane — because a horizon with one vertical accent on it
+       is where the eye goes and stays. That is the "reason to travel" the review wanted,
+       and it costs 190 instances in two draws. */
+    const sheds=[], spires=[];
+    // Placed by rejection, not by construction: the far shore has to be far from the WHOLE
+    // circuit, which no single offset can guarantee on a loop that doubles back.
+    const farSpot=(minD)=>{
+      for(let a=0;a<26;a++){
+        const sp=SAMP[(R()*STEPS)|0], side=R()<0.5?-1:1;
+        const out=340+Math.pow(R(),0.8)*300;
+        const x=sp.p.x+sp.n.x*side*out+sp.t.x*(R()*2-1)*150;
+        const z=sp.p.z+sp.n.z*side*out+sp.t.z*(R()*2-1)*150;
+        if(trackDist(x,z)>=minD) return {x,z};
+      }
+      return null;
+    };
+    for(let k=0;k<190;k++){
+      const sp2=farSpot(250); if(!sp2) continue;
+      const aer=0.58+R()*0.24;                       // uniformly far, uniformly dissolved
+      const w=26+R()*90, dh=9+R()*24, dz=16+R()*46, ry=R()*6.283;
+      c.setHex(pick([0x8a8370,0x7d7768,0x948d78,0x6f6a5c])).lerp(SKYC,aer);
+      sheds.push({x:sp2.x, y:-2+dh*0.5, z:sp2.z, s:w, sy:dh, sz:dz, ry, c:c.getHex()});
+      // a pitched roof on about half of them: a run of flat boxes is a wall, a run of
+      // gables is a town, and the difference is one extra instance
+      if(R()<0.5){
+        c.setHex(pick([0x6e6858,0x7c7566])).lerp(SKYC,aer);
+        spires.push({x:sp2.x, y:-2+dh+dh*0.22, z:sp2.z,
+                     s:w*0.56, sy:dh*0.46, sz:dz*0.60, ry, c:c.getHex()});
+      }
+    }
+    for(let k=0;k<3;k++){                            // the three tall things
+      const sp2=farSpot(330); if(!sp2) continue;
+      const hh=60+R()*46, ry=R()*3.1, rr=8+R()*7;
+      c.setHex(0x77705e).lerp(SKYC,0.56);
+      sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr, sy:hh, sz:rr, ry, c:c.getHex()});
+      c.setHex(0x6a6352).lerp(SKYC,0.52);
+      spires.push({x:sp2.x, y:-2+hh+11, z:sp2.z, s:rr*1.25, sy:24, sz:rr*1.25, ry, c:c.getHex()});
+    }
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), sheds));
+    trackGroup.add(harbBatch(new T.ConeGeometry(1,1,4), harbMat(0xffffff), spires));
+
+    const sailMat=harbMat(0xffffff,{});
+    trackGroup.add(harbBatch(HULLG, harbMat(0xffffff), hulls));
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), cabins));
+    trackGroup.add(harbBatch(new T.CylinderGeometry(1,1.35,1,5), harbMat(0xffffff), masts));
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), booms));
+    trackGroup.add(harbBatch(PAINT_SAIL.clone(), sailMat, sails));
+    // Reflections, sky patches and weed all lie IN the water plane: no depth write (they
+    // would z-fight the ground), soft-edged brush marks rather than quads, and low enough
+    // opacity that they modulate the water instead of covering it.
+    const reflMat=harbSmearMat(0.60);
+    const glintMat=harbSmearMat(0.30);
+    trackGroup.add(harbBatch(FLATG, reflMat, refl));
+    trackGroup.add(harbBatch(FLATG.clone(), glintMat, glints));
+    trackGroup.add(harbBatch(FLATG.clone(), harbSmearMat(0.50), weeds));
+
+    /* LOW HAZE AT THE WATERLINE. The one genuinely lost edge available cheaply. Everything
+       that stands in this harbour meets the water at a hard line — hulls, piles, the
+       causeway's own footings — and a hard line at the foot of every object is the single
+       most reliable tell that a scene is assembled rather than observed. Pale broken smears
+       lying in the surface, densest along the causeway and around the moorings, dissolve
+       those feet without touching anything above them. Nearly the sky value, so they only
+       do work where something dark is standing in them. */
+    const haze=[];
+    for(let k=0;k<300;k++){
+      const sp=SAMP[(R()*STEPS)|0], side=R()<0.5?-1:1;
+      const out=(R()<0.55) ? clear(side)-14+R()*40 : clear(side)+30+R()*260;
+      c.setHex(0xdad3bb).lerp(SKYC, R()*0.4);
+      haze.push({x:sp.p.x+sp.n.x*side*out+sp.t.x*(R()*2-1)*70, y:WL+0.16,
+                 z:sp.p.z+sp.n.z*side*out+sp.t.z*(R()*2-1)*70,
+                 s:22+R()*54, sy:1, sz:36+R()*130, ry:R()*6.283, c:c.getHex()});
+    }
+    const hazeMat=harbSmearMat(0.34);
+    trackGroup.add(harbBatch(FLATG.clone(), hazeMat, haze));
+
+    /* TWELVE NEAR BOATS AS REAL GROUPS, so they can move. Instanced boats cannot rock
+       without rewriting two thousand matrices a frame; twelve Groups cost twelve matrix
+       updates and they are the twelve you are closest to, which is the only place the
+       motion would be noticed anyway. This is the harbour's one piece of motion and it
+       has to stay under the threshold: ±0.9 degrees on a seven-second swell, each boat on
+       its own phase and period so the fleet never moves together. */
+    const heroGrp=[];
+    for(const h of heroes){
+      const g=new T.Group(); g.position.set(h.x,h.y,h.z); g.rotation.y=h.ry;
+      const hl=new T.Mesh(HULLG.clone(), harbMat(new T.Color().setHex(pick(HARB.hull))
+        .lerp(SKYC,h.aer).getHex()));
+      hl.scale.set(h.beam*1.12, h.hgt*1.1, h.L*0.55); hl.position.y=-h.hgt*0.46;
+      g.add(hl);
+      const mh=h.L*1.35, deck=h.hgt*0.62;
+      const mm=new T.Mesh(new T.CylinderGeometry(0.5,1.5,mh,6),
+        harbMat(new T.Color().setHex(HARB.mast).lerp(SKYC,h.aer*0.8).getHex()));
+      mm.position.y=deck+mh*0.5; g.add(mm);
+      const sh=mh*0.60, sw=sh*0.52;
+      const ss=new T.Mesh(PAINT_SAIL.clone(),
+        harbMat(new T.Color().setHex(pick(HARB.sailMi)).lerp(SKYC,h.aer*0.7).getHex()));
+      ss.scale.set(sw, sh*0.5, sw*0.6); ss.position.set(0, deck+sh*0.55+mh*0.10, 0);
+      g.add(ss);
+      trackGroup.add(g);
+      heroGrp.push({g, base:h.ry, amp:0.010+Math.random()*0.007,
+                    per:5.5+Math.random()*4.5, ph:Math.random()*6.283});
+    }
+    TRACK_PULSE.harbBoats=heroGrp;
+    TRACK_PULSE.harbWater=[reflMat, glintMat, hazeMat];
+    TRACK_PULSE.harbWaterBase=[0.60, 0.30, 0.34];
+
+    /* GULLS. Thirty-four ticks of dark wheeling very slowly over the moorings, high and
+       small. Deliberately the only fast-ish thing in the scene and still far under the
+       strobe line: they take about forty seconds to come round. A landscape with nothing
+       alive in it reads as a diorama no matter how well it is painted. */
+    const gl=[];
+    for(let k=0;k<34;k++){
+      const sp=SAMP[(R()*STEPS)|0], side=R()<0.5?-1:1;
+      gl.push({cx:sp.p.x+sp.n.x*side*(clear(side)+R()*260),
+               cz:sp.p.z+sp.n.z*side*(clear(side)+R()*260),
+               y:sp.p.y+22+R()*46, r:14+R()*40,
+               w:(R()<0.5?-1:1)*(0.10+R()*0.14), ph:R()*6.283, s:2.2+R()*2.6});
+    }
+    const gm=harbBatch(harbGullGeo(), harbMat(0x4a4234,{map:false}),
+      gl.map(v=>({x:v.cx,y:v.y,z:v.cz,s:v.s,c:0xffffff})));
+    trackGroup.add(gm);
+    TRACK_PULSE.harbGulls={mesh:gm, list:gl, d:new T.Object3D()};
+    // The sails as a whole are the thing the light plays over: one shared material means
+    // one emissive channel for the whole fleet, driven off the ambient beat in frame().
+    TRACK_PULSE.push({mat:sailMat, base:0x14110a, amp:0.55});
   } else if(pool){
     // Crimson wall slabs standing well back, mostly in shadow. Deliberately sparse: the
     // reference's room is almost entirely darkness, and filling it would kill the effect.
@@ -7470,8 +8229,57 @@ function frame(now){
   for(const p of TRACK_PULSE){ if(p.mat){
     const b=new T.Color(p.base); b.multiplyScalar(0.7+beat*p.amp);
     p.mat.emissive.copy(b); } }
-  if(TRACK_PULSE.motes){ TRACK_PULSE.motes.material.opacity=0.32+beat*0.3;
+  if(TRACK_PULSE.motes){
+    const md=TRACK_PULSE.motesDim||0;
+    TRACK_PULSE.motes.material.opacity=(0.32+beat*0.3)*(md?md:1);
     TRACK_PULSE.motes.rotation.y=tsec*0.01; }
+  /* ---- the harbour breathing (Sienna) --------------------------------------------
+     Four things move and not one of them is meant to be noticed on purpose. Slack water
+     is the stillest subject in painting; the whole point is that it is not QUITE still.
+     Everything here is on a long, irrational period so nothing ever lines up, and no
+     amplitude is large enough to catch the eye on its own. */
+  if(TRACK_PULSE.paintSky) TRACK_PULSE.paintSky.uniforms.uT.value=tsec;
+  if(TRACK_PULSE.harbBoats){
+    // Twelve near boats rolling on a swell, each on its own phase and period. About a
+    // degree, so a mast tip forty units up travels well under a unit.
+    for(const b of TRACK_PULSE.harbBoats){
+      b.g.rotation.z=Math.sin(tsec*(6.283/b.per)+b.ph)*b.amp
+                    +Math.sin(tsec*(6.283/(b.per*1.71))+b.ph*2.1)*b.amp*0.35;
+    }
+  }
+  if(TRACK_PULSE.harbWater){
+    // The water's reflected sky coming and going. Two terms with an irrational ratio so
+    // it never repeats into a pulse you can count.
+    const w=Math.sin(tsec*0.24)*0.6+Math.sin(tsec*0.091+1.7)*0.4;
+    const B=TRACK_PULSE.harbWaterBase;
+    TRACK_PULSE.harbWater[0].opacity=B[0]*(1+w*0.16);
+    TRACK_PULSE.harbWater[1].opacity=B[1]*(1+w*0.30);
+    TRACK_PULSE.harbWater[2].opacity=B[2]*(1-w*0.22);   // haze thickens as the glitter fades
+  }
+  if(TRACK_PULSE.harbGulls){
+    // Forty seconds to come round. Slow enough that you register them as alive without
+    // ever watching one.
+    const G=TRACK_PULSE.harbGulls, d=G.d, c2=new T.Color();
+    for(let k=0;k<G.list.length;k++){
+      const v=G.list[k], a=v.ph+tsec*v.w*0.34;
+      d.position.set(v.cx+Math.cos(a)*v.r, v.y+Math.sin(a*1.7)*3.2, v.cz+Math.sin(a)*v.r);
+      d.rotation.set(0, -a+(v.w>0?0:Math.PI), Math.sin(a*2.3)*0.22);   // bank into the turn
+      d.scale.setScalar(v.s); d.updateMatrix(); G.mesh.setMatrixAt(k,d.matrix);
+    }
+    G.mesh.instanceMatrix.needsUpdate=true;
+  }
+  if(TRACK_PULSE.paintAir){
+    // Cloud passing over the sun. The oldest plein-air event there is, and the only one
+    // that changes every surface in the scene at once — which is exactly why it has to be
+    // gentle: +-7% on the key and a countering lift on the sky fill, so the scene cools
+    // and warms rather than dimming and brightening. Restores from stored bases, so
+    // switching courses cannot strand a modulated rig on the next one.
+    const A=TRACK_PULSE.paintAir;
+    const k=Math.sin(tsec*0.117)*0.6+Math.sin(tsec*0.263+2.2)*0.4;
+    sun.intensity=A.sun*(1+k*0.07);
+    hemi.intensity=A.hemi*(1-k*0.035);
+    rim.intensity=A.rim*(1-k*0.10);
+  }
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
