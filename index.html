@@ -1298,7 +1298,33 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
   const styleId=effectiveStyleId(chosenType&&chosenType.id);
-  curStyle=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;   // per-character style (some have a selectable alt "station")
+  /* COURSE SONG, CHARACTER ARRANGEMENT.
+     A course can carry its own tune (`song:{mel,melB,bass}`). When it does, every racer
+     plays THAT tune — but through their own arrangement, so the same melody arrives as
+     techno for Guido and as a one-drop for Winston. The split is the obvious one once you
+     name it:
+       the COURSE owns the composition — mel, melB, and the bass line, which is the harmony
+       the CHARACTER owns the arrangement — instrument, waveforms, drum pattern, hi-hat
+         density, bar grouping, tempo feel, the accent stab, and the mix levels
+     Genre lives almost entirely in the rhythm section and the timbre, which is exactly
+     what stays with the character, so one melody genuinely re-genres without being
+     rewritten. Courses with no `song` are untouched and keep the character's own tune.
+
+     The clone matters: curStyle used to be the shared MUSIC_STYLES object and the seq
+     assembly below WROTE BACK into it. Harmless while seq was a pure function of the
+     style, but with a course song mixed in it would permanently overwrite that character's
+     tune for the rest of the session, on every course. */
+  {
+    const base=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;
+    const song=TRACKS[selTrack] && TRACKS[selTrack].song;
+    curStyle=Object.assign({}, base);
+    if(song){
+      curStyle.mel  = song.mel;
+      curStyle.melB = song.melB;
+      if(song.bass) curStyle.bass = song.bass;
+      curStyle.songName = song.name || null;
+    }
+  }
   // assemble the AABA song form: verse twice, contrasting B strain (chorus), verse again
   /* SONG FORM. A four-strain AABA is still one short loop, and at this tempo it comes
      round every ~20 seconds for a whole three-lap race — which is the repetitiveness.
@@ -2000,8 +2026,20 @@ function drawDial(stationIdx,stationCount){
 /* ============== TRACK ============== */
 const HW=22;                                       // road half-width
 const TRACKS=[
-  // Ophelia — smooth wide oval
+  /* Ophelia — smooth wide oval, and the course that carries the shared song.
+     "Ophelia's Run" is written STRICTLY in the minor pentatonic (0,3,5,7,10 and octaves).
+     That is the whole trick and it is deliberate: minor pentatonic is common ground between
+     techno, reggae, funk, blues, banjo tunes and a band organ, so the same notes land as
+     idiomatic in every arrangement instead of fighting one of them. It also has no third
+     that has to agree with a chord and no leading tone that begs to resolve, which is what
+     lets each character's bass and drums do whatever their genre does underneath it.
+     Rhythmically it is sparse — long notes and rests, not a stream of eighths — because a
+     dense melody leaves a one-drop nowhere to breathe and buries a four-on-the-floor. */
   {name:'Ophelia',  key:0, tempo:220, sky:0x3a2632, tunnels:[[0.30,0.40]],
+   song:{ name:"Ophelia's Run",
+          mel: [0,null,3,5,   7,null,7,5,   3,null,5,7,   5,null,3,null],
+          melB:[12,null,10,7, 10,null,12,15, 15,null,12,10, 7,null,5,null],
+          bass:[0,3,5,7] },
    critters:[0.55], pills:[0.18],
    ctrl:[[380,6,0],[270,22,-300],[0,42,-400],[-270,30,-300],[-380,12,0],[-270,22,300],[0,36,400],[270,26,300]]},
   // Seraphina — big flowing kidney
@@ -8518,6 +8556,15 @@ window.srNet={
     lobby:NET.lobby, racing:NET.on, fillAI:NET.fillAI,
     players:[...NET.players.values()].map(p=>({id:p.id, name:p.name, typeId:p.typeId,
       quietMs:Math.round(performance.now()-p.last)}))}; },
+  // What is actually playing: which tune, and whose arrangement of it. Read-only, and the
+  // only practical way to check a course song is re-genring rather than overwriting.
+  get music(){ if(!curStyle) return {playing:false};
+    return {playing:!!musicTimer, station:curStyle.station||null,
+      song:curStyle.songName||'(character tune)',
+      arrangement:{inst:curStyle.inst, melWave:curStyle.melWave, bassInst:curStyle.bassInst||null,
+        drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
+        tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null},
+      mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
   get race(){ return {state, laps:LAPS, karts:racers.map(r=>({name:r.name, you:!!r.you,
     remote:!!r.remote, netId:r.netId||null, lap:r.lap,
     x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1)}))}; },
