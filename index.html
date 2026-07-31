@@ -2964,12 +2964,12 @@ function buildTrack(idx){
     skyDome=paintSky(); trackGroup.add(skyDome);
     const hull=new T.Mesh(new T.TubeGeometry(curve,STEPS,12,10,loop),
       new T.MeshLambertMaterial({map:paintCanvas(),color:0x6a6a52,flatShading:true}));
-    hull.position.y-=10; trackGroup.add(hull);
+    hull.position.y-=20; trackGroup.add(hull);      // r=12: crown was +2, hid 13.3 of the 44-unit road
   } else if(pool){
     const wallTex=poolWallTex();
     const basin=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,12,loop),
       new T.MeshPhongMaterial({map:wallTex,color:0xffffff,shininess:14,specular:0x40202a}));
-    basin.position.y-=10; trackGroup.add(basin);
+    basin.position.y-=22; trackGroup.add(basin);    // r=13: crown was +3, hid 16.6 — 38% of the road
 
     // --- the pod canopy: concentric discs in a receding grid over the whole circuit ---
     // MeshBasicMaterial on purpose. These are LIGHTS: shading them would make them read
@@ -3033,7 +3033,7 @@ function buildTrack(idx){
     skyDome=feltSky(); trackGroup.add(skyDome);
     const tubeMat=feltMat(0x7d6c86, feltTex);   // tinted down so it sits under the road
     const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,11,12,loop), tubeMat);
-    tube.position.y-=9; trackGroup.add(tube);
+    tube.position.y-=19; trackGroup.add(tube);      // r=11: crown was +2, hid 12.6
     // banded ridges rising outside the course — the amphitheatre wall of the reference
     const ridge=[];
     for(let i=0;i<STEPS;i+=9){
@@ -3092,7 +3092,7 @@ function buildTrack(idx){
   const tubeRadius=9;
   const tubeMat=new T.MeshPhongMaterial({color:0xffb6c1,emissive:0x5a2630,shininess:40,specular:0x664444});
   const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius,14,loop),tubeMat);
-  tube.position.y-=9; trackGroup.add(tube);
+  tube.position.y-=9; trackGroup.add(tube);   // r=tubeRadius, the fleshy courses' own body
   TRACK_PULSE.push({mat:tubeMat,base:0x5a2630,amp:0.5});
   const innerMat=new T.MeshPhongMaterial({color:0xe88a9e,emissive:0x3a1418});
   const innerTube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius*0.7,12,loop),innerMat);
@@ -3218,6 +3218,20 @@ function buildTrack(idx){
     for(let y=0;y<256;y+=16){ rg.beginPath(); rg.moveTo(0,y+0.5); rg.lineTo(64,y+0.5); rg.stroke(); }
     rg.fillStyle='#ff2fb9'; rg.fillRect(0,0,5,256); rg.fillRect(59,0,5,256);
     rg.fillStyle='#eaffff'; for(let y=0;y<256;y+=32) rg.fillRect(30,y,4,18);
+  } else if(mosaic){
+    // Tessa's whole premise is that the world is made of optically-mixing tiles, and the
+    // road — the surface you look at most — was inheriting the voxel course's plain blue
+    // checker because this branch keyed on `vox` and Tessa sets BOTH flags. Each cell is a
+    // tile with a contrasting inner mark, the same trick the scenery batcher uses, so the
+    // surface mixes in the eye at speed instead of reading as flat colour.
+    const MT=['#2b4a7a','#1f6f86','#3a6f4a','#7a3f6a','#8a5a2a','#5a3f8a'];
+    for(let y=0;y<256;y+=8) for(let x=0;x<64;x+=8){
+      const i=(((x/8)|0)*7+((y/8)|0)*3)%MT.length;
+      rg.fillStyle=MT[i]; rg.fillRect(x,y,8,8);
+      rg.fillStyle=MT[(i+3)%MT.length]; rg.fillRect(x+2,y+2,4,4);
+    }
+    rg.fillStyle='#e8d24a'; rg.fillRect(0,0,8,256); rg.fillRect(56,0,8,256);
+    rg.fillStyle='#f2f2f2'; for(let y=0;y<256;y+=32) rg.fillRect(28,y,8,16);
   } else if(vox){
     // hard-edged 8px blocks, a chunky dashed centre line and cyan rails. NearestFilter
     // below keeps the pixels crisp — bilinear filtering would smear them straight back
@@ -3899,14 +3913,35 @@ function buildTrack(idx){
     const cellMat=new T.MeshPhongMaterial({color:0xe88aa6,transparent:true,opacity:0.4,shininess:30,emissive:0x3a1622});
     const SC=140, cells=new T.InstancedMesh(new T.SphereGeometry(1,10,8),cellMat,SC); cells.frustumCulled=false;
     const dm=new T.Object3D();
-    for(let k=0;k<SC;k++){
+    /* These are placed relative to ONE random sample, which is fine on an open oval and
+       wrong everywhere the course folds back on itself: on a switchback or a crossover the
+       sphere lands on the NEXT leg of the road. They are translucent and up to 30 across,
+       so when that happens the camera drives inside one and the whole screen washes to
+       flat pink for a second — a total loss of vision at racing speed. Every candidate is
+       now tested against the WHOLE spline, not just the sample it was hung off. */
+    let placed=0;
+    for(let k=0, guard=0; placed<SC && guard<SC*14; guard++){
       const s=SAMP[(Math.random()*STEPS|0)];
       const side=(Math.random()<0.5?-1:1), out=HW*(3.5+Math.random()*5);
-      dm.position.set(s.p.x+s.n.x*side*out+(Math.random()*2-1)*30, s.p.y-10+Math.random()*60, s.p.z+s.n.z*side*out+(Math.random()*2-1)*30);
-      const r=8+Math.random()*22; dm.scale.set(r,r*(0.8+Math.random()*0.5),r);
+      const px=s.p.x+s.n.x*side*out+(Math.random()*2-1)*30;
+      const pz=s.p.z+s.n.z*side*out+(Math.random()*2-1)*30;
+      const py=s.p.y-10+Math.random()*60;
+      const r=8+Math.random()*22;
+      // clear of every leg of the road by the sphere's own radius plus the corridor
+      let clear=true;
+      for(let i=0;i<STEPS;i+=4){
+        const q=SAMP[i].p;
+        if(Math.abs(q.y-py) > r+34) continue;              // cheap vertical reject first
+        const dx=q.x-px, dz=q.z-pz;
+        if(dx*dx+dz*dz < (r+HW*1.5)*(r+HW*1.5)){ clear=false; break; }
+      }
+      if(!clear) continue;
+      dm.position.set(px, py, pz);
+      dm.scale.set(r,r*(0.8+Math.random()*0.5),r);
       dm.rotation.set(Math.random()*6,Math.random()*6,Math.random()*6);
-      dm.updateMatrix(); cells.setMatrixAt(k,dm.matrix);
+      dm.updateMatrix(); cells.setMatrixAt(placed++, dm.matrix);
     }
+    cells.count=placed;      // a rejected candidate must not leave an identity matrix at 0,0,0
     cells.instanceMatrix.needsUpdate=true; trackGroup.add(cells);
   }
   }
