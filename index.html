@@ -3054,11 +3054,17 @@ function buildTrack(idx){
     under.position.y-=18; trackGroup.add(under);
     for(const side of [-1,1]) for(let lane=0; lane<2; lane++){
       const pts=[];
+      // A loop course's two walls sit at different distances: HW*1.28 outside, but HW*2.2
+      // on the infield because cutting the apron is a deliberate shortcut. A guardrail at
+      // one fixed distance is therefore correct on one side and 18 units inside the wall
+      // on the other — which is why this course's signature piping was the most driven-
+      // through scenery in the game. Put each rope at its OWN side's wall.
+      const railOut = (side*innerSign>0) ? HW*2.26 : HW*1.36;
       for(let i=0;i<STEPS;i+=6){
         const s2=SAMP[i];
         pts.push(new T.Vector3(
-          s2.p.x+s2.n.x*side*(HW*1.36), s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
-          s2.p.z+s2.n.z*side*(HW*1.36)));
+          s2.p.x+s2.n.x*side*railOut, s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
+          s2.p.z+s2.n.z*side*railOut));
       }
       const rope=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,loop), pts.length, 1.6, 6, loop),
         new T.MeshPhongMaterial({color:COIL_PAL[side>0?0:6], map:coilTex(),
@@ -3408,8 +3414,9 @@ function buildTrack(idx){
       for(const side of [-1,1]){
         const r=3.5+((i*13)%26)/10;
         // pushed clear of the guardrail ropes at HW+2.8, which were eating them entirely
-        vol.push({x:s2.p.x+s2.n.x*side*(HW*1.62), y:s2.p.y+0.6+r*0.5,
-                  z:s2.p.z+s2.n.z*side*(HW*1.62), s:r, sy:r, sz:(side>0?r:-r)*0.55,
+        const volOut = (side*innerSign>0) ? HW*2.46 : HW*1.62;
+        vol.push({x:s2.p.x+s2.n.x*side*volOut, y:s2.p.y+0.6+r*0.5,
+                  z:s2.p.z+s2.n.z*side*volOut, s:r, sy:r, sz:(side>0?r:-r)*0.55,
                   ry, c:COIL_PAL[((i/6|0)+(side>0?0:3))%10]});
       }
     }
@@ -6610,7 +6617,11 @@ function updateRacer(r,dt){
       // so you drifted clean through the kerbs and scenery with nothing reacting. It now
       // sits just outside the border itself. The INFIELD limit stays generous on purpose:
       // cutting the apron is a deliberate shortcut that costs speed by being off-road.
-      const inner=lat*innerSign, innerLim=HW*2.2;
+      // Inside a tunnel the apron shortcut has to close: the rings only span the road, so
+      // a 48.4 infield corridor lets you drive straight out through the tunnel wall. Berm
+      // courses are exempt — their tunnel wall is rideable by design.
+      const inTun = tunnelAt(r.prog) && !TRACKS[selTrack].berm;
+      const inner=lat*innerSign, innerLim=inTun ? HW*1.28 : HW*2.2;
       // position correction runs every frame (keeps the car out of the wall), but the
       // speed penalty only fires once per contact — otherwise pinning against a wall
       // multiplies spd every frame and stalls the car almost instantly
@@ -6669,9 +6680,25 @@ function updateRacer(r,dt){
   // airborne physics: rise, fall under gravity, land back on the track (lighter gravity = more hang time)
   if(r.air){
     r.vy -= 95*dt; r.y += r.vy*dt;
-    const groundY=SAMP[r.idx].p.y + HOVER_H;   // land at hover height, not bare ground —
-                                                // otherwise it'd touch down low then visibly
-                                                // pop up to the hover height a few frames later
+    /* Land at hover height, not bare ground — otherwise it touches down low and then
+       visibly pops up to the hover height a few frames later.
+       The height has to be the height of the road WHERE THE KART ACTUALLY IS. This used
+       the bare centreline sample, ignoring both the along-segment gradient and the
+       banking, so a kart landing off-centre on a banked corner kept falling: at lat 34.5
+       with bank 0.36 the real surface is sin(0.36)*34.5 = 9.9 units higher than the
+       centreline, and the model ends up that far INSIDE the tarmac until the next
+       grounded frame's floor clamp yanks it out. Measured at -9.75 on Perla.
+       This is the same expression placeOnTrack already solves; the landing test simply
+       never got updated when that one was. */
+    const _sl=SAMP[r.idx];
+    const _i1=trackLoop?((r.idx+1)%STEPS):Math.min(r.idx+1,STEPS-1), _s2=SAMP[_i1];
+    const _a=_sl.p, _b=_s2.p;
+    const _vx=_b.x-_a.x, _vz=_b.z-_a.z;
+    let _tf=((r.x-_a.x)*_vx+(r.z-_a.z)*_vz)/((_vx*_vx+_vz*_vz)||1);
+    _tf=Math.max(0,Math.min(1,_tf));
+    const _lat=(r.x-_sl.p.x)*_sl.n.x + (r.z-_sl.p.z)*_sl.n.z;
+    const _bank=(_sl.bank||0) + ((_s2.bank||0)-(_sl.bank||0))*_tf;
+    const groundY=_a.y + (_b.y-_a.y)*_tf + Math.sin(_bank)*_lat + HOVER_H;
     if(r.vy<0 && r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0;
       r.boostT=Math.max(r.boostT,0.7);            // landing boost rewards the jump
       burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); buzz(HAPTIC.land); } }
