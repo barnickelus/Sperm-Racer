@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05202a">
+<title>Sperm Racer — Drive Demo</title>
+<style>
+  :root{ --signal:#6df2d0; --bone:#eafff8; --ink:#8fb7b0; --dim:#2b6e66; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;
+    -webkit-user-select:none;-webkit-touch-callout:none;}
+  *:focus{outline:none;}
+  ::selection{background:transparent;}
+  html,body{margin:0;height:100%;background:#05202a;overflow:hidden;touch-action:none;
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--bone);overscroll-behavior:none;}
+  #app{position:fixed;inset:0;}
+  #app canvas{display:block;width:100%!important;height:100%!important;touch-action:none;}
+
+  /* ===== HUD ===== */
+  #ui{position:fixed;inset:0;pointer-events:none;z-index:3;}
+  .glass{background:linear-gradient(160deg,rgba(8,34,42,.55),rgba(5,22,28,.35));
+    border:1px solid rgba(109,242,208,.22);border-radius:12px;
+    box-shadow:0 6px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(234,255,248,.06);
+    backdrop-filter:blur(6px);}
+  .hud{position:absolute;text-transform:uppercase;letter-spacing:.14em;}
+
+  #tag{top:env(safe-area-inset-top,12px);left:0;right:0;text-align:center;
+    font-size:12px;letter-spacing:.3em;opacity:.85;pointer-events:none;}
+  #tag b{color:var(--signal);}
+
+  #speedo{top:env(safe-area-inset-top,12px);left:14px;padding:8px 14px;text-align:left;}
+  #speedo .lbl{font-size:10px;color:var(--ink);letter-spacing:.2em;}
+  #speedo b{display:block;font-size:34px;line-height:1;color:var(--bone);
+    font-variant-numeric:tabular-nums;text-shadow:0 0 16px rgba(109,242,208,.4);
+    transition:color .15s,text-shadow .15s;}
+  #speedo.boost b{color:#ffd48a;text-shadow:0 0 20px rgba(255,178,74,.8);}
+
+  #boostmeter{top:env(safe-area-inset-top,12px);right:14px;padding:8px 14px;text-align:right;width:150px;}
+  #boostmeter .lbl{font-size:10px;color:var(--ink);letter-spacing:.2em;}
+  #bmTrack{margin-top:6px;height:8px;border-radius:5px;background:rgba(0,0,0,.35);
+    border:1px solid rgba(109,242,208,.25);overflow:hidden;}
+  #bmFill{height:100%;width:0%;background:linear-gradient(90deg,#2b6e66,var(--signal));
+    box-shadow:0 0 10px rgba(109,242,208,.6);transition:width .08s linear;}
+  #bmFill.full{background:linear-gradient(90deg,#ffb44a,#ffe6ab);box-shadow:0 0 14px rgba(255,180,74,.85);}
+
+  #split{top:74px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.2em;
+    color:var(--signal);opacity:0;transition:opacity .3s ease;pointer-events:none;}
+  #split.show{opacity:1;}
+
+  #status{bottom:calc(env(safe-area-inset-bottom,14px) + 120px);left:0;right:0;
+    text-align:center;font-size:13px;letter-spacing:.25em;color:var(--ink);pointer-events:none;}
+
+  #hint{bottom:calc(env(safe-area-inset-bottom,14px) + 96px);left:0;right:0;text-align:center;
+    font-size:11px;letter-spacing:.06em;opacity:.55;pointer-events:none;}
+
+  #finish{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;background:radial-gradient(circle at 50% 42%,rgba(6,30,38,.8),rgba(3,16,21,.96));
+    pointer-events:auto;z-index:10;text-align:center;padding:24px;}
+  #finish.show{display:flex;}
+  #finish .tag{color:var(--signal);letter-spacing:.4em;font-size:11px;text-transform:uppercase;}
+  #finish h1{margin:0;font-size:clamp(34px,10vw,64px);letter-spacing:.04em;font-weight:700;
+    text-shadow:0 0 30px rgba(109,242,208,.35);}
+  #finish p{color:var(--ink);font-size:13px;letter-spacing:.05em;margin:0;}
+  #finish button{margin-top:8px;pointer-events:auto;cursor:pointer;font-family:inherit;background:var(--signal);
+    color:#04201b;border:none;padding:14px 38px;border-radius:30px;font-size:13px;letter-spacing:.2em;
+    text-transform:uppercase;font-weight:700;}
+
+  /* ===== atmosphere overlays ===== */
+  #fx{position:fixed;inset:0;pointer-events:none;z-index:2;}
+  #vignette{position:absolute;inset:0;
+    box-shadow:inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5);
+    transition:box-shadow .25s ease;}
+  #speedlines{position:absolute;inset:-20%;opacity:0;transition:opacity .12s linear;
+    background:
+      radial-gradient(circle at 50% 50%, transparent 38%, rgba(109,242,208,.0) 38%, rgba(109,242,208,.10) 70%, transparent 71%),
+      repeating-conic-gradient(from 0deg at 50% 50%, rgba(234,255,248,.14) 0deg 1.2deg, transparent 1.2deg 7deg);
+    -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent 40%, #000 78%);
+            mask-image:radial-gradient(circle at 50% 50%, transparent 40%, #000 78%);
+    animation:spin 8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #boostflash{position:absolute;inset:0;background:radial-gradient(circle at 50% 60%,rgba(255,210,120,.0),transparent 60%);
+    opacity:0;transition:opacity .35s ease;}
+  #boostflash.on{opacity:1;background:radial-gradient(circle at 50% 60%,rgba(255,210,120,.45),transparent 62%);}
+
+  /* ===== touch controls ===== */
+  .pad{position:absolute;bottom:calc(env(safe-area-inset-bottom,16px) + 10px);pointer-events:auto;display:none;}
+  body.touch .pad{display:block;}
+  #joyZone{left:18px;width:130px;height:130px;border-radius:50%;
+    border:2px solid var(--dim);background:rgba(13,48,56,.4);}
+  #joyKnob{position:absolute;left:50%;top:50%;width:56px;height:56px;border-radius:50%;
+    background:rgba(109,242,208,.28);border:2px solid var(--signal);
+    box-shadow:0 0 15px rgba(109,242,208,.35);transform:translate(-50%,-50%);}
+  #boostbtn{right:22px;width:96px;height:96px;border-radius:50%;
+    border:2px solid var(--signal);color:var(--signal);background:rgba(13,48,56,.55);
+    backdrop-filter:blur(3px);font-family:inherit;letter-spacing:.1em;text-transform:uppercase;
+    font-size:14px;font-weight:700;box-shadow:0 0 15px rgba(109,242,208,.2);
+    display:flex;align-items:center;justify-content:center;}
+  #boostbtn:active,#boostbtn.active{background:rgba(255,180,74,.35);border-color:#ffb44a;color:#ffb44a;transform:scale(.95);}
+
+  @media (max-width:400px){
+    #boostmeter{width:120px;}
+    #joyZone{width:110px;height:110px;}
+    #boostbtn{width:82px;height:82px;font-size:12px;}
+  }
+</style>
+</head>
+<body>
+<div id="app"><canvas id="c"></canvas></div>
+
+<div id="fx">
+  <div id="speedlines"></div>
+  <div id="boostflash"></div>
+  <div id="vignette"></div>
+</div>
+
+<div id="ui">
+  <div id="tag" class="hud">Sperm Racer — <b>Drive Demo</b></div>
+  <div id="speedo" class="hud glass">
+    <div class="lbl">Speed</div>
+    <b id="speedVal">0</b>
+  </div>
+  <div id="boostmeter" class="hud glass">
+    <div class="lbl">Boost</div>
+    <div id="bmTrack"><div id="bmFill"></div></div>
+  </div>
+  <div id="split" class="hud">Checkpoint!</div>
+  <div id="status" class="hud">Swim to the start line</div>
+  <div id="hint" class="hud">Arrows/WASD steer &amp; throttle · Space/Shift boost · drag joystick + tap BOOST on touch</div>
+</div>
+
+<div class="pad" id="joyZone"><div id="joyKnob"></div></div>
+<button class="pad" id="boostbtn">Boost</button>
+
+<div id="finish">
+  <div class="tag">Finish</div>
+  <h1 id="finishTitle">Course Complete!</h1>
+  <p id="finishTime">Time: 0.0s</p>
+  <button id="againBtn">Swim Again</button>
+</div>
+
+<script src="three.min.js"></script>
+<script src="voxel-model.js"></script>
+<script>
+(function(){
+'use strict';
+const T = THREE;
+
+// ================= renderer / scene / camera =================
+const canvas = document.getElementById('c');
+const renderer = new T.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+renderer.outputEncoding = T.sRGBEncoding;
+
+const scene = new T.Scene();
+scene.background = new T.Color(0x05202a);
+scene.fog = new T.Fog(0x05202a, 90, 420);
+
+const cam = new T.PerspectiveCamera(58, 1, 0.1, 3000);
+const BASE_FOV = 58, BOOST_FOV = 72;
+
+function resize(){
+  const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+  renderer.setSize(w, h, false);
+  cam.aspect = w / h;
+  cam.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+// ================= lighting =================
+scene.add(new T.AmbientLight(0xbfd8e0, 0.65));
+const key = new T.DirectionalLight(0xffffff, 0.95); key.position.set(50, 90, 60); scene.add(key);
+const fill = new T.DirectionalLight(0xff9ec4, 0.32); fill.position.set(-40, 20, -30); scene.add(fill);
+const rim = new T.DirectionalLight(0x6df2d0, 0.25); rim.position.set(0, 30, -80); scene.add(rim);
+
+// ================= course: a long gently-curving swim lane =================
+// Centerline built from a Catmull-Rom curve through a handful of control points
+// (a few lazy S-curves), tunnel-ish: floor + low side walls + lane markers.
+const CTRL = [
+  [0, 0], [8, -60], [-10, -140], [22, -230], [6, -320],
+  [-18, -410], [14, -500], [0, -580]
+];
+const ctrlPts = CTRL.map(p => new T.Vector3(p[0], 0, p[1]));
+const laneCurve = new T.CatmullRomCurve3(ctrlPts, false, 'catmullrom', 0.4);
+const LANE_SAMPLES = 500;
+const lanePts = []; // {x,z,tx,tz} sampled centerline + tangent
+for (let i = 0; i <= LANE_SAMPLES; i++){
+  const t = i / LANE_SAMPLES;
+  const p = laneCurve.getPoint(t);
+  const tan = laneCurve.getTangent(t);
+  lanePts.push({ x: p.x, z: p.z, tx: tan.x, tz: tan.z, u: t });
+}
+const LANE_LEN = (function(){ let L=0; for(let i=1;i<lanePts.length;i++){ const a=lanePts[i-1], b=lanePts[i]; L+=Math.hypot(b.x-a.x,b.z-a.z);} return L; })();
+const LANE_HW = 15; // half-width of swimmable lane
+
+function nearestLane(x, z){
+  // coarse-to-fine nearest point search along the sampled centerline
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < lanePts.length; i += 4){
+    const p = lanePts[i], d = (p.x-x)*(p.x-x) + (p.z-z)*(p.z-z);
+    if (d < bd){ bd = d; bi = i; }
+  }
+  const lo = Math.max(0, bi-4), hi = Math.min(lanePts.length-1, bi+4);
+  for (let i = lo; i <= hi; i++){
+    const p = lanePts[i], d = (p.x-x)*(p.x-x) + (p.z-z)*(p.z-z);
+    if (d < bd){ bd = d; bi = i; }
+  }
+  return { i: bi, dist: Math.sqrt(bd), pt: lanePts[bi] };
+}
+
+// build the lane floor + walls + markers as static voxel-cube instanced meshes
+// (kept lightweight & separate from the character's InstancedMesh)
+const laneGroup = new T.Group();
+scene.add(laneGroup);
+
+function makeBoxField(list, size){
+  // list: [{x,y,z,r,g,b}], build one InstancedMesh of unit cubes scaled to `size`
+  const n = list.length;
+  const geo = new T.BoxGeometry(1,1,1);
+  const mat = new T.MeshStandardMaterial({ vertexColors: true, roughness:0.85, metalness:0.05 });
+  const mesh = new T.InstancedMesh(geo, mat, n);
+  const dummy = new T.Object3D();
+  const color = new T.Color();
+  for (let i = 0; i < n; i++){
+    const v = list[i];
+    dummy.position.set(v.x, v.y, v.z);
+    dummy.scale.set(size, size, size);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    color.setRGB(v.r/255, v.g/255, v.b/255);
+    mesh.setColorAt(i, color);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  return mesh;
+}
+
+(function buildCourse(){
+  const floorVox = [], wallVox = [], markVox = [];
+  const track1 = [233,152,180], track2 = [214,126,160], wallCol = [122,56,82], wallHi=[150,72,98];
+  const step = 6; // sample spacing along the lane for floor tiles
+  for (let i = 0; i < lanePts.length; i += 2){
+    const p = lanePts[i];
+    const nx = -p.tz, nz = p.tx; // normal (perp to tangent), tangent already ~unit
+    // floor strip across the lane width, chunky checker tiles
+    for (let w = -LANE_HW; w <= LANE_HW; w += step){
+      const x = p.x + nx*w, z = p.z + nz*w;
+      const c = (((Math.round(x/step) + Math.round(z/step)) & 1)) ? track1 : track2;
+      floorVox.push({ x, y: -1, z, r:c[0], g:c[1], b:c[2] });
+    }
+    // low side walls (every 4th sample to keep instance count sane)
+    if (i % 8 === 0){
+      for (const side of [-1, 1]){
+        const x = p.x + nx*(LANE_HW+2)*side, z = p.z + nz*(LANE_HW+2)*side;
+        for (let y = 0; y <= 2; y++){
+          wallVox.push({ x, y, z, r:wallCol[0], g:wallCol[1], b:wallCol[2] });
+        }
+      }
+    }
+    // center lane marker dashes
+    if (i % 12 === 0){
+      markVox.push({ x:p.x, y:-0.4, z:p.z, r:wallHi[0], g:wallHi[1], b:wallHi[2] });
+    }
+  }
+  laneGroup.add(makeBoxField(floorVox, 5.2));
+  laneGroup.add(makeBoxField(wallVox, 2.2));
+  laneGroup.add(makeBoxField(markVox, 1.6));
+})();
+
+// start / finish gates (simple arches made of boxes)
+function buildGate(u, color, label){
+  const idx = Math.round(u * LANE_SAMPLES);
+  const p = lanePts[Math.min(LANE_SAMPLES, Math.max(0, idx))];
+  const nx = -p.tz, nz = p.tx;
+  const grp = new T.Group();
+  const postMat = new T.MeshStandardMaterial({ color, roughness:0.5, metalness:0.2, emissive:color, emissiveIntensity:0.25 });
+  const postGeo = new T.BoxGeometry(1.6, 14, 1.6);
+  for (const side of [-1, 1]){
+    const post = new T.Mesh(postGeo, postMat);
+    post.position.set(p.x + nx*LANE_HW*0.92*side, 6, p.z + nz*LANE_HW*0.92*side);
+    grp.add(post);
+  }
+  const barGeo = new T.BoxGeometry(LANE_HW*1.84, 1.4, 1.4);
+  const bar = new T.Mesh(barGeo, postMat);
+  bar.position.set(p.x, 13, p.z);
+  bar.lookAt(p.x + nx, 13, p.z + nz);
+  grp.add(bar);
+  scene.add(grp);
+  return { pt: p, u };
+}
+const startGate = buildGate(0.01, 0x6df2d0);
+const finishGate = buildGate(0.985, 0xff5d8f);
+
+// boost-ring checkpoints: glowing torus gates floating mid-lane at a few points
+const RING_US = [0.22, 0.45, 0.68];
+const rings = RING_US.map(u => {
+  const idx = Math.round(u * LANE_SAMPLES);
+  const p = lanePts[idx];
+  const nx = -p.tz, nz = p.tx;
+  const ring = new T.Mesh(
+    new T.TorusGeometry(7, 0.9, 12, 28),
+    new T.MeshStandardMaterial({ color:0xffb44a, emissive:0xffb44a, emissiveIntensity:0.6, roughness:0.3, metalness:0.4 })
+  );
+  ring.position.set(p.x, 4.5, p.z);
+  ring.lookAt(p.x + nx, 4.5, p.z + nz);
+  scene.add(ring);
+  const glow = new T.PointLight(0xffb44a, 0.9, 40);
+  glow.position.copy(ring.position);
+  scene.add(glow);
+  return { u, pt:p, mesh:ring, glow, hit:false, spin:0 };
+});
+
+// ================= character: Salty (InstancedMesh from VoxelModel) =================
+let charGroup, charMesh, charScale = 1, charLen = 1;
+(function buildCharacter(){
+  const raw = VoxelModel.buildVoxels(2.6);
+  const vox = raw.filter(v => !v.env); // skip the built-in env slab/blobs — we build our own course
+  const {mn, mx} = (function bbox(){
+    let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+    for (const v of vox){
+      mn[0]=Math.min(mn[0],v.x); mn[1]=Math.min(mn[1],v.y); mn[2]=Math.min(mn[2],v.z);
+      mx[0]=Math.max(mx[0],v.x); mx[1]=Math.max(mx[1],v.y); mx[2]=Math.max(mx[2],v.z);
+    }
+    return {mn,mx};
+  })();
+  const cx = (mn[0]+mx[0])/2, cz = (mn[2]+mx[2])/2, baseY = mn[1];
+  charLen = mx[2]-mn[2];
+
+  const n = vox.length;
+  const geo = new T.BoxGeometry(1,1,1);
+  const mat = new T.MeshStandardMaterial({ vertexColors:true, roughness:0.55, metalness:0.05 });
+  charMesh = new T.InstancedMesh(geo, mat, n);
+  const dummy = new T.Object3D();
+  const color = new T.Color();
+  // store rest position (relative to character origin) per instance for the tail-wiggle animation
+  charMesh.userData.rest = new Float32Array(n*3);
+  charMesh.userData.isTail = new Uint8Array(n);
+  const TAIL_Z_THRESH = -4; // voxels behind this local z belong to the tail (wiggle candidates)
+  for (let i = 0; i < n; i++){
+    const v = vox[i];
+    const lx = v.x - cx, ly = v.y - baseY, lz = v.z - cz;
+    charMesh.userData.rest[i*3] = lx;
+    charMesh.userData.rest[i*3+1] = ly;
+    charMesh.userData.rest[i*3+2] = lz;
+    charMesh.userData.isTail[i] = lz < TAIL_Z_THRESH ? 1 : 0;
+    dummy.position.set(lx, ly, lz);
+    dummy.updateMatrix();
+    charMesh.setMatrixAt(i, dummy.matrix);
+    color.setRGB(v.r/255, v.g/255, v.b/255);
+    charMesh.setColorAt(i, color);
+  }
+  charMesh.instanceMatrix.needsUpdate = true;
+  if (charMesh.instanceColor) charMesh.instanceColor.needsUpdate = true;
+
+  const sizeMax = Math.max(mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]);
+  charScale = 10 / sizeMax; // normalize character to a friendly world size
+
+  charGroup = new T.Group();
+  charGroup.add(charMesh);
+  charGroup.scale.setScalar(charScale);
+  scene.add(charGroup);
+})();
+
+// ================= wake / trail particles =================
+const WAKE_MAX = 220;
+const wakeGeo = new T.BufferGeometry();
+const wakePos = new Float32Array(WAKE_MAX*3);
+const wakeCol = new Float32Array(WAKE_MAX*3);
+const wakeAlpha = new Float32Array(WAKE_MAX);
+wakeGeo.setAttribute('position', new T.BufferAttribute(wakePos, 3));
+wakeGeo.setAttribute('color', new T.BufferAttribute(wakeCol, 3));
+const wakeMat = new T.PointsMaterial({ size:1.6, vertexColors:true, transparent:true, opacity:0.85, depthWrite:false });
+const wakePoints = new T.Points(wakeGeo, wakeMat);
+scene.add(wakePoints);
+const wakeParticles = []; // ring buffer of {x,y,z,life,maxLife,r,g,b}
+let wakeHead = 0;
+function spawnWake(x, y, z, boosted){
+  const p = wakeParticles[wakeHead] || (wakeParticles[wakeHead] = {});
+  p.x = x + (Math.random()-0.5)*1.2;
+  p.y = y + (Math.random()-0.5)*0.8;
+  p.z = z + (Math.random()-0.5)*1.2;
+  p.maxLife = boosted ? 0.9 : 0.6;
+  p.life = p.maxLife;
+  if (boosted){ p.r=1.0; p.g=0.75; p.b=0.35; } else { p.r=0.43; p.g=0.95; p.b=0.82; }
+  wakeHead = (wakeHead + 1) % WAKE_MAX;
+}
+function updateWake(dt){
+  for (let i = 0; i < WAKE_MAX; i++){
+    const p = wakeParticles[i];
+    if (!p || p.life <= 0){ wakePos[i*3+1] = -9999; continue; }
+    p.life -= dt;
+    const t = Math.max(0, p.life / p.maxLife);
+    wakePos[i*3] = p.x; wakePos[i*3+1] = p.y + (1-t)*1.5; wakePos[i*3+2] = p.z;
+    wakeCol[i*3] = p.r*t + 0.02; wakeCol[i*3+1] = p.g*t + 0.05; wakeCol[i*3+2] = p.b*t + 0.06;
+  }
+  wakeGeo.attributes.position.needsUpdate = true;
+  wakeGeo.attributes.color.needsUpdate = true;
+}
+
+// ================= drive physics =================
+const state = {
+  x: lanePts[0].x, z: lanePts[0].z,
+  heading: Math.atan2(lanePts[0].tx, lanePts[0].tz),
+  speed: 0, steer: 0, throttle: 0,
+  lean: 0, boostFuel: 1, boosting: false, boostFlashT: 0,
+  wiggle: 0, started: false, finished: false, elapsed: 0
+};
+const MAX_SPEED = 46, BOOST_SPEED = 78, ACCEL = 38, DRAG = 0.9, BRAKE_DRAG = 2.4;
+const TURN_RATE = 1.9, LEAN_MAX = 0.55, BOOST_DRAIN = 0.55, BOOST_REGEN = 0.18;
+
+const keys = {};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key===' ') e.preventDefault(); });
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// touch: joystick (steer/throttle) + boost button
+let isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+if (isTouch) document.body.classList.add('touch');
+const joyZone = document.getElementById('joyZone');
+const joyKnob = document.getElementById('joyKnob');
+let joy = { active:false, id:null, dx:0, dy:0 };
+function joyReset(){ joy.active=false; joy.id=null; joy.dx=0; joy.dy=0; joyKnob.style.transform='translate(-50%,-50%)'; }
+joyZone.addEventListener('pointerdown', e => {
+  joyZone.setPointerCapture(e.pointerId);
+  joy.active = true; joy.id = e.pointerId;
+  const r = joyZone.getBoundingClientRect(); joy.cx = r.left + r.width/2; joy.cy = r.top + r.height/2;
+});
+joyZone.addEventListener('pointermove', e => {
+  if (!joy.active || e.pointerId !== joy.id) return;
+  const max = 40;
+  let dx = e.clientX - joy.cx, dy = e.clientY - joy.cy;
+  const d = Math.hypot(dx, dy);
+  if (d > max){ dx = dx/d*max; dy = dy/d*max; }
+  joy.dx = dx/max; joy.dy = dy/max;
+  joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+});
+addEventListener('pointerup', e => { if (joy.id === e.pointerId) joyReset(); });
+addEventListener('pointercancel', e => { if (joy.id === e.pointerId) joyReset(); });
+
+const boostBtn = document.getElementById('boostbtn');
+let touchBoost = false;
+boostBtn.addEventListener('pointerdown', e => { touchBoost = true; boostBtn.classList.add('active'); e.preventDefault(); });
+addEventListener('pointerup', () => { touchBoost = false; boostBtn.classList.remove('active'); });
+addEventListener('pointercancel', () => { touchBoost = false; boostBtn.classList.remove('active'); });
+
+function readInput(){
+  let steer = 0, throttle = 0, boost = false;
+  if (keys['arrowleft'] || keys['a']) steer -= 1;
+  if (keys['arrowright'] || keys['d']) steer += 1;
+  if (keys['arrowup'] || keys['w']) throttle += 1;
+  if (keys['arrowdown'] || keys['s']) throttle -= 1;
+  if (keys[' '] || keys['shift']) boost = true;
+  if (joy.active){ steer += joy.dx; throttle += -joy.dy; }
+  if (touchBoost) boost = true;
+  steer = Math.max(-1, Math.min(1, steer));
+  throttle = Math.max(-1, Math.min(1, throttle || (isTouch ? 0.6 : 0))); // touch: gentle auto-throttle baseline, still steerable
+  return { steer, throttle, boost };
+}
+
+// HUD elements
+const speedVal = document.getElementById('speedVal');
+const speedoBox = document.getElementById('speedo');
+const bmFill = document.getElementById('bmFill');
+const statusEl = document.getElementById('status');
+const splitEl = document.getElementById('split');
+const speedlinesEl = document.getElementById('speedlines');
+const boostflashEl = document.getElementById('boostflash');
+const finishEl = document.getElementById('finish');
+const finishTime = document.getElementById('finishTime');
+document.getElementById('againBtn').addEventListener('click', resetRun);
+
+function resetRun(){
+  state.x = lanePts[0].x; state.z = lanePts[0].z;
+  state.heading = Math.atan2(lanePts[0].tx, lanePts[0].tz);
+  state.speed = 0; state.steer = 0; state.lean = 0; state.boostFuel = 1;
+  state.boosting = false; state.started = false; state.finished = false; state.elapsed = 0;
+  for (const r of rings) r.hit = false;
+  finishEl.classList.remove('show');
+  statusEl.textContent = 'Swim to the start line';
+}
+
+let splitTimer = null;
+function showSplit(text){
+  splitEl.textContent = text;
+  splitEl.classList.add('show');
+  clearTimeout(splitTimer);
+  splitTimer = setTimeout(() => splitEl.classList.remove('show'), 1200);
+}
+
+// ================= main loop =================
+resize();
+let last = performance.now();
+(function loop(now){
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  requestAnimationFrame(loop);
+
+  const input = readInput();
+
+  if (!state.finished){
+    // --- throttle -> speed (accel/drag) ---
+    const wantBoost = input.boost && state.boostFuel > 0.02;
+    state.boosting = wantBoost;
+    const targetTop = wantBoost ? BOOST_SPEED : MAX_SPEED;
+    if (input.throttle > 0.01){
+      state.speed += ACCEL * input.throttle * (wantBoost ? 1.6 : 1) * dt;
+    } else if (input.throttle < -0.01){
+      state.speed -= BRAKE_DRAG * 10 * (-input.throttle) * dt;
+    } else {
+      state.speed -= DRAG * dt * 6; // coast drag
+    }
+    state.speed = Math.max(0, Math.min(targetTop, state.speed));
+    if (!wantBoost) state.speed = Math.min(state.speed, MAX_SPEED + (state.speed>MAX_SPEED? -60*dt : 0));
+
+    // boost fuel drain/regen
+    if (wantBoost) state.boostFuel = Math.max(0, state.boostFuel - BOOST_DRAIN * dt);
+    else state.boostFuel = Math.min(1, state.boostFuel + BOOST_REGEN * dt);
+
+    // --- steering -> heading, with speed-scaled turn rate + lean ---
+    const speedFrac = state.speed / MAX_SPEED;
+    state.heading += input.steer * TURN_RATE * (0.35 + 0.65*Math.min(1,speedFrac)) * dt;
+    const targetLean = -input.steer * LEAN_MAX * Math.min(1, 0.4 + speedFrac);
+    state.lean += (targetLean - state.lean) * Math.min(1, 6*dt);
+
+    // --- integrate position along heading ---
+    state.x += Math.sin(state.heading) * state.speed * dt;
+    state.z += Math.cos(state.heading) * state.speed * dt;
+
+    // --- keep the swimmer inside the lane: soft steer back toward centerline ---
+    const near = nearestLane(state.x, state.z);
+    if (near.dist > LANE_HW){
+      const p = near.pt;
+      const nx = -p.tz, nz = p.tx;
+      const side = (state.x-p.x)*nx + (state.z-p.z)*nz > 0 ? 1 : -1;
+      state.x = p.x + nx*LANE_HW*side*0.98;
+      state.z = p.z + nz*LANE_HW*side*0.98;
+      state.speed *= 0.85; // gentle wall scrub
+    }
+
+    // start line trigger
+    if (!state.started && near.u > 0.015){ state.started = true; statusEl.textContent = 'GO! Chase the boost rings'; }
+    if (state.started) state.elapsed += dt;
+
+    // boost-ring checkpoints
+    for (const r of rings){
+      if (r.hit) continue;
+      const d = Math.hypot(state.x - r.pt.x, state.z - r.pt.z);
+      if (d < 8){
+        r.hit = true;
+        state.boostFuel = 1;
+        state.speed = Math.min(BOOST_SPEED, state.speed + 18);
+        state.boostFlashT = 0.4;
+        showSplit('BOOST RING!');
+        r.glow.intensity = 2.4;
+      }
+    }
+    for (const r of rings){
+      r.spin += dt;
+      r.mesh.rotation.z = r.spin * 0.6;
+      r.mesh.material.emissiveIntensity = r.hit ? 0.15 : (0.5 + Math.sin(r.spin*3)*0.15);
+      r.glow.intensity = Math.max(r.hit ? 0.1 : 0.9, r.glow.intensity - dt*2);
+      r.mesh.visible = !r.hit || (r.spin % 1 < 0.5); // fade/flicker out once collected
+    }
+
+    // finish line
+    if (state.started && !state.finished && near.u > finishGate.u){
+      state.finished = true;
+      finishTime.textContent = 'Time: ' + state.elapsed.toFixed(1) + 's';
+      finishEl.classList.add('show');
+    }
+
+    // --- wake particles trail behind the swimmer while moving ---
+    if (state.speed > 4){
+      const tailX = state.x - Math.sin(state.heading) * (charLen*charScale*0.42);
+      const tailZ = state.z - Math.cos(state.heading) * (charLen*charScale*0.42);
+      const rate = state.boosting ? 3 : 1;
+      for (let k = 0; k < rate; k++) spawnWake(tailX, 1.2, tailZ, state.boosting);
+    }
+
+    // boost flash decay
+    if (state.boostFlashT > 0) state.boostFlashT = Math.max(0, state.boostFlashT - dt);
+  }
+
+  updateWake(dt);
+
+  // --- character placement: position, heading, roll (lean), swim wiggle ---
+  charGroup.position.set(state.x, 1.6 + Math.sin(now*0.002)*0.15, state.z);
+  charGroup.rotation.y = state.heading;
+  charGroup.rotation.z = state.lean;
+  state.wiggle += dt * (2.2 + state.speed*0.14);
+  if (charMesh){
+    const rest = charMesh.userData.rest, isTail = charMesh.userData.isTail;
+    const n = charMesh.count;
+    const dummy = new T.Object3D();
+    const amp = 0.35 + Math.min(1, state.speed/MAX_SPEED) * 0.9 + (state.boosting?0.5:0);
+    for (let i = 0; i < n; i++){
+      const lx = rest[i*3], ly = rest[i*3+1], lz = rest[i*3+2];
+      let x = lx, y = ly;
+      if (isTail[i]){
+        const t = -lz; // distance back along the tail
+        const phase = state.wiggle - t*0.12;
+        x = lx + Math.sin(phase) * amp * Math.min(1, t/14);
+      }
+      dummy.position.set(x, y, lz);
+      dummy.updateMatrix();
+      charMesh.setMatrixAt(i, dummy.matrix);
+    }
+    charMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // --- camera: smooth chase behind + slightly above, with boost FOV kick ---
+  const camBack = 22, camUp = 9;
+  const behindX = state.x - Math.sin(state.heading)*camBack;
+  const behindZ = state.z - Math.cos(state.heading)*camBack;
+  const desired = new T.Vector3(behindX, camUp, behindZ);
+  cam.position.lerp(desired, Math.min(1, 5*dt));
+  const lookAt = new T.Vector3(
+    state.x + Math.sin(state.heading)*8,
+    2 + Math.sin(now*0.002)*0.15,
+    state.z + Math.cos(state.heading)*8
+  );
+  cam._look = cam._look || lookAt.clone();
+  cam._look.lerp(lookAt, Math.min(1, 6*dt));
+  cam.lookAt(cam._look);
+
+  const targetFov = state.boosting ? BOOST_FOV : BASE_FOV;
+  cam.fov += (targetFov - cam.fov) * Math.min(1, 4*dt);
+  cam.updateProjectionMatrix();
+
+  // --- HUD ---
+  speedVal.textContent = Math.round(state.speed);
+  speedoBox.classList.toggle('boost', state.boosting);
+  const fuelPct = Math.round(state.boostFuel * 100);
+  bmFill.style.width = fuelPct + '%';
+  bmFill.classList.toggle('full', state.boostFuel > 0.97);
+
+  // --- effects: speed-line vignette scales with speed/boost, boost flash pulse ---
+  const speedT = Math.min(1, state.speed / MAX_SPEED);
+  speedlinesEl.style.opacity = (state.boosting ? 0.85 : speedT*0.4).toFixed(2);
+  boostflashEl.classList.toggle('on', state.boostFlashT > 0);
+
+  renderer.render(scene, cam);
+})(last);
+
+})();
+</script>
+</body>
+</html>
