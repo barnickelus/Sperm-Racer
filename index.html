@@ -954,6 +954,17 @@ const MUSIC_STYLES={
      stays a racing track rather than a waltz. The melody is the two shapes the set is
      built from: the verse is four ascending COILS each restarting a step higher, and the
      B strain is one symmetrical ARCH up and back down. */
+  /* Lily — a MUSIC BOX, because the course is a toy. Bell lead over a marimba comb, a
+     gentle 3-beat bar (12 steps), no hi-hat: the sparse chime-and-comb texture is what a
+     wound music box actually produces, and the high register comes free from playNote's
+     +12. Melody is major pentatonic so it stays a toy, never a ballad. */
+  macro:    { inst:'bell', melWave:'triangle', bassWave:'sine', bassInst:'marimba',
+              volMul:0.98, drumVol:0.78,
+              drums:{kick:[0],snare:[6]}, bass:[0,4,5,7],
+              hihat:0, beatGroup:3, tempoMul:0.95, station:'12.4 DUCKPOND BOX',
+              stab:{inst:'marimba', wave:'triangle', note:16, steps:[8], dur:0.12, vol:0.13},
+              mel:[0,null,4,7,4,null, 9,null,7,4,2,null],
+              melB:[12,null,9,7,9,null, 7,null,4,2,0,null] },
   coil:     { inst:'organ', melWave:'triangle', bassWave:'sawtooth', bassInst:'brass',
               volMul:1.08, drumVol:1.0,
               drums:{kick:[0,8],snare:[4,12],openhat:[14]}, bass:[0,7,5,7],
@@ -2158,6 +2169,16 @@ const TRACKS=[
    tunnels:[[0.44,0.54]], critters:[0.34], pills:[0.72], dams:[0.88],
    ctrl:[[-400,10,380],[-410,12,60],[-380,18,-260],[-230,32,-430],[60,46,-470],
          [330,58,-330],[420,52,-60],[350,36,220],[140,22,400],[-160,12,470]]},
+  /* Lily — "the Windowsill Pond": a tilt-shift macro diorama. The racers are TOY-SCALE,
+     crossing a glossy clay pond on a windowsill; everything past the water dissolves into
+     the depth-of-field blur of a giant domestic room — which here is a painted skydome of
+     soft colour blobs and bokeh discs, plus near fog. Houseplant blades tower like trees,
+     rubber ducks are the landmarks, licorice curls punctuate the verges. The road IS the
+     pond surface: wet-look white-specular water over a smeared mint clay bed. */
+  {name:'Lily', macro:true, music:'macro', key:8, tempo:176, sky:0x54406e,
+   tunnels:[[0.30,0.37],[0.68,0.75]], critters:[0.52], pills:[0.22], dams:[0.82],
+   ctrl:[[340,6,180],[365,10,-120],[190,20,-330],[-50,14,-385],[-300,22,-265],
+         [-385,8,10],[-305,16,255],[-70,26,365],[175,12,335],[315,6,245]]},
   {name:'Perla', voxel:true, bead:true, key:2, tempo:186, sky:0x0a0714,
    tunnels:[[0.34,0.44]], critters:[0.6], pills:[0.2], dams:[0.74],
    ctrl:[[350,8,210],[430,20,-50],[290,36,-310],[30,50,-400],[-245,42,-320],
@@ -2559,6 +2580,77 @@ function coilBatch(geo, list){
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
   return m;
 }
+/* ============== MACRO KIT (Lily) ============== *
+ * Toy-scale clay pond under tilt-shift blur. Two material rules carry the whole look:
+ *  1. The WATER is gloss — hard white specular, like the natatorium road. Wet reads as
+ *     specular, not as a colour.
+ *  2. The CLAY is smeared, not piped: smooth Phong with a soft violet-tinted specular,
+ *     no texture — the reference's pads are troweled flat, unlike Iris's nozzle coils.
+ * The background blur is NOT done with fog alone: fog kills scenery into one value, but
+ * the blurred room needs shapes. macroSky() paints soft radial-gradient blobs (a shelf
+ * band, warm boxes, bokeh discs) onto a camera-riding dome — radial gradients because
+ * they are guaranteed everywhere canvas runs, unlike ctx.filter blur. */
+const MAC={ waterDeep:0x232366, water:0x31318a, waterHi:0x7fd0e8,
+  mint:0x57e6a9, mintHi:0x8ff2c8, mintDeep:0x1f8f6a, teal:0x2ab8a0,
+  duck:0xffd23f, beak:0xff8c2a,
+  leaf:0x2f8f4f, leafDeep:0x1d5f36, leafEdge:0xcfe86e,
+  pink:0xff3fae, tendril:0xe8285f };
+function macMat(hex, shine, spec){
+  // r128 gamma-encodes on output without decoding authored hexes — the same lift that
+  // turned the bead moustache silver. Decode here so the palette reads as written.
+  const m=new T.MeshPhongMaterial({color:0xffffff,
+    shininess:shine==null?38:shine, specular:spec==null?0x5a4a66:spec});
+  m.color.setHex(hex==null?0xffffff:hex).convertSRGBToLinear();
+  return m;
+}
+function macBatch(geo, list, shine, spec){
+  const m=new T.InstancedMesh(geo, macMat(0xffffff, shine, spec), list.length);
+  m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(v.c).convertSRGBToLinear(); m.setColorAt(i,c);   // instanceColor is never decoded by r128
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
+function macroSky(){
+  const c=document.createElement('canvas'); c.width=1024; c.height=512;
+  const x=c.getContext('2d');
+  // the room as a vertical gradient: violet floor shadow up through mauve to dusty rose
+  // flipY means canvas y=0 lands at the BOTTOM of the view, so the floor shadow is
+  // painted at the top of the canvas and the rosy ceiling at the bottom
+  const g=x.createLinearGradient(0,0,0,512);
+  g.addColorStop(0.00,'#241035'); g.addColorStop(0.30,'#3a2a55');
+  g.addColorStop(0.52,'#8f6fa8'); g.addColorStop(0.72,'#b87898');
+  g.addColorStop(1.00,'#6a4a7e');
+  x.fillStyle=g; x.fillRect(0,0,1024,512);
+  const blob=(bx,by,r,col,a)=>{
+    const rg=x.createRadialGradient(bx,by,0,bx,by,r);
+    rg.addColorStop(0,col); rg.addColorStop(1,'rgba(0,0,0,0)');
+    x.globalAlpha=a; x.fillStyle=rg;
+    x.fillRect(bx-r,by-r,r*2,r*2); x.globalAlpha=1;
+  };
+  // out-of-focus furniture: a slate shelf band, warm box shapes, one red swoosh, and a
+  // hazard-yellow smear — abstract enough to be "stuff in a room", never a legible object
+  for(let i=0;i<7;i++) blob(90+i*150, 265+((i*53)%40), 105, 'rgba(90,106,158,0.95)', 0.50);
+  blob(210,285,130,'rgba(240,170,80,0.98)',0.60);  blob(840,270,150,'rgba(210,75,65,0.95)',0.55);
+  blob(560,300,115,'rgba(245,215,70,0.95)',0.48);  blob(700,255,95,'rgba(35,35,60,0.95)',0.60);
+  blob(120,310,90,'rgba(255,110,170,0.95)',0.44);  blob(950,290,120,'rgba(55,95,80,0.95)',0.50);
+  // bokeh: the tilt-shift signature — soft bright discs in the UPPER view, which after
+  // the flip means the upper canvas rows are y 340-480
+  for(let i=0;i<16;i++){
+    const bx=(i*211)%1024, by=345+((i*97)%135), r=9+((i*37)%22);
+    blob(bx,by,r, i%3? 'rgba(255,242,222,1)':'rgba(185,242,255,1)', 0.30+((i*13)%22)/100);
+  }
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.needsUpdate=true;
+  const m=new T.Mesh(new T.SphereGeometry(1150,32,20),
+    new T.MeshBasicMaterial({map:t, side:T.BackSide, fog:false, depthWrite:false}));
+  m.frustumCulled=false; return m;
+}
 const FELT_PAL=[0xe8e4d9,0xa9b8a0,0x5a6b84,0x1b2350,0x2438a8,0xc4207e,0xe8408c,
                 0xc11b2e,0xe23a2a,0xe86a22,0xe8b22a,0x1f6b70,0x3a1440,0x170a24];
 const FELT_WOOL=[0xe8408c,0xc4207e,0xc11b2e,0xe23a2a,0x8f9c72,0xa9b8a0,0xe8e4d9,0x5a6b84];
@@ -2891,8 +2983,18 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
-function applyTrackLighting(studio, pool, coil, paint, felt){
-  if(felt){
+function applyTrackLighting(studio, pool, coil, paint, felt, macro){
+  if(macro){
+    // TOY POND UNDER A ROOM LAMP. The reference is lit like a macro photo on a windowsill:
+    // one warm domestic key from high camera-right, a hot pink rim (the room's neon
+    // bouncing off the glaze), a mint fill off the clay, violet ambient. Total ~2.6 — the
+    // water needs enough key for its white specular streak to actually fire.
+    hemi.color.setHex(0xb890d8); hemi.groundColor.setHex(0x123830); hemi.intensity=0.50;
+    sun.color.setHex(0xffd8e8);  sun.intensity=1.00;  sun.position.set(60,120,80);
+    rim.color.setHex(0xff5fae);  rim.intensity=0.55;  rim.position.set(-80,40,-40);
+    fill.color.setHex(0x40e0c0); fill.intensity=0.40; fill.position.set(-40,30,90);
+    flesh.color.setHex(0x8a5aff);flesh.intensity=0.20;flesh.position.set(0,-20,40);
+  } else if(felt){
     // FELTED VALLEY. Felicia was the only kit in the game whose palette and whose rig
     // came from different worlds: FELT_PAL is magenta, crimson, ember and plum, and it
     // was being filled by the DEFAULT biological rig — a cyan hemisphere (0x9fe8df) over
@@ -3384,8 +3486,10 @@ function buildTrack(idx){
   // Felicia gets a LONG range now that it has real terrain: the far ridges are the
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
-  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : 120));
-  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : 560));
+  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 140 : 120)));
+  // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
+  // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
+  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 620 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -3408,7 +3512,8 @@ function buildTrack(idx){
   const bead  =!!TRACKS[idx].bead;       // ...or as glossy beadwork under a studio rig
   const pool  =!!TRACKS[idx].pool;       // ...or as a 70s natatorium under a light canopy
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
-  applyTrackLighting(bead, pool, coil, paint, felt);
+  const macro =!!TRACKS[idx].macro;      // ...or as a tilt-shift toy pond on a windowsill
+  applyTrackLighting(bead, pool, coil, paint, felt, macro);
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
   // works off the authored values rather than off whatever it left behind last frame.
   // Cleared for every other course by the TRACK_PULSE reset at the top of this function.
@@ -3431,7 +3536,9 @@ function buildTrack(idx){
     // middle rung of the value ladder instead of doing what it used to and reading lilac.
     : paint ? 0x8a8470
     // just under the sky, so the horizon reads as a cyclorama sweep rather than a cut
-    : TRACKS[idx].coil ? 0xcfc3b2 : 0x2a1a22);  // dark so speculars/pods carry
+    : TRACKS[idx].coil ? 0xcfc3b2
+    // Lily: the plane is the wider pond the deck crosses — deep blue-violet water
+    : TRACKS[idx].macro ? 0x14144a : 0x2a1a22);  // dark so speculars/pods carry
   trackLoop = loop; trackCross = cross;
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
@@ -3536,6 +3643,13 @@ function buildTrack(idx){
       fg.setIndex(fi); fg.computeVertexNormals();
       trackGroup.add(new T.Mesh(fg, harbMat(0x2a251c)));
     }
+  } else if(macro){
+    skyDome=macroSky(); trackGroup.add(skyDome);
+    // the pond bed: one thick smeared mint clay slab carrying the water — crown kept well
+    // below the roadbed (r=13 lowered 22), the propagated lesson from Marina and friends
+    const bed=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,10,loop),
+      macMat(MAC.mintDeep, 30, 0x2a4a44));
+    bed.position.y-=22; trackGroup.add(bed);
   } else if(pool){
     const wallTex=poolWallTex();
     const basin=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,12,loop),
@@ -3832,6 +3946,24 @@ function buildTrack(idx){
     rg.globalAlpha=0.10; rg.fillStyle='#241f16';
     for(let i=0;i<520;i++) rg.fillRect(Math.random()*64, Math.random()*256, 1+Math.random()*2, 1);
     rg.globalAlpha=1;
+  } else if(macro){
+    // POND WATER. Depth comes from the canvas — wobbling bands of deep violet-blue — and
+    // wet comes from the material's white specular, not from painted highlights. The
+    // streaks run ALONG the lane (v) as long thin reflection smears: cyan and white from
+    // the room, one or two pink from the tendrils, mint off the pads.
+    for(let y=0;y<256;y++){
+      const w2=Math.sin(y*0.045)*7+Math.sin(y*0.013+1.4)*12;
+      const f=(Math.sin((y+w2)*0.055)+1)/2;
+      const r0=0x23+((0x31-0x23)*f|0), g0=0x23+((0x31-0x23)*f|0), b0=0x66+((0x8a-0x66)*f|0);
+      rg.fillStyle='rgb('+r0+','+g0+','+b0+')'; rg.fillRect(0,y,64,1);
+    }
+    const SM=[['rgba(127,208,232,',10],['rgba(255,255,255,',5],['rgba(255,63,174,',3],['rgba(143,242,200,',5]];
+    for(const [col,n2] of SM) for(let i=0;i<n2;i++){
+      const sx=((i*173+col.length*37)%56)+4, sy0=(i*997+col.length*61)%256;
+      const ln=30+((i*211)%70), al=0.10+((i*53)%18)/100;
+      rg.fillStyle=col+al+')';
+      for(let yy=0;yy<ln;yy++) rg.fillRect(sx+Math.sin((sy0+yy)*0.09)*1.6, (sy0+yy)%256, 1.6, 1);
+    }
   } else if(pool){
     /* the pool floor is drawn by poolTileTex(); nothing to paint into rc here */
   } else if(bead){
@@ -4024,7 +4156,12 @@ function buildTrack(idx){
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
-  const road=new T.Mesh(geo, coil
+  const road=new T.Mesh(geo, macro
+    // wet is a hard WHITE specular (the natatorium lesson); slight violet emissive keeps
+    // the water from going black where the key misses it
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d0d2a,
+        shininess:140,specular:0xffffff,side:T.DoubleSide})
+    : coil
     // matte, opaque, untinted: the banded texture IS the surface here
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:0,specular:0x000000,
         side:T.DoubleSide})
@@ -4349,6 +4486,26 @@ function buildTrack(idx){
       trackGroup.add(harbBatch(new T.ConeGeometry(1,1,7), harbMat(0xffffff), cones));
       trackGroup.add(harbBatch(new T.CylinderGeometry(1,1,1,9), harbMat(0xffffff), cans));
     }
+  } else if(macro){
+    // LILY PADS lapping both edges — flattened irregular clay discs on the mint ladder,
+    // each at ITS OWN side's wall (28.2 outer / 48.4 infield — the Iris guardrail lesson),
+    // overlapping sizes on an irregular cadence so the shoreline never tiles.
+    const pads=[];
+    for(let i=0;i<STEPS;i+=4){
+      const sp=SAMP[i];
+      for(const side of [-1,1]){
+        if((i/4 + (side>0?0:2)) % 5 === 4) continue;             // gaps — water shows through
+        const infld = side*innerSign>0;
+        const out=(infld ? HW*2.30 : HW*1.36) + ((i*13+(side>0?0:7))%22);
+        const r=5.5+((i*17+(side>0?3:0))%17)*0.55;
+        pads.push({x:sp.p.x+sp.n.x*side*out, y:-1.3-((i*7)%8)*0.12,
+                   z:sp.p.z+sp.n.z*side*out,
+                   s:r, sy:0.9+((i*11)%10)*0.09, sz:r*(0.78+((i*29)%40)*0.01),
+                   ry:((i*31)%628)/100, rz:(((i*23)%12)-6)/100,
+                   c:[MAC.mint,MAC.mintHi,MAC.teal,MAC.mintDeep][(i/4|0)%4]});
+      }
+    }
+    trackGroup.add(macBatch(new T.CylinderGeometry(1,0.92,1,9), pads, 46, 0x6a5a76));
   } else if(pool){
     // Pale stone coping running the whole rim, the way a pool deck edges the water.
     const cope=[], d=new T.Object3D(), c=new T.Color();
@@ -4503,6 +4660,32 @@ function buildTrack(idx){
         }
       }
     }
+  } else if(macro){
+    // THE THICKET: giant houseplant blades leaning in from both verges and crossing
+    // overhead — an open colonnade with sky between the leaves (the felt-tunnel lesson:
+    // enclosure is what makes a tunnel unreadable). rz=-side*lean arcs the blade ACROSS
+    // the road once ry has aligned local z with the tangent.
+    const blades=[];
+    for(const sg of tun){
+      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
+      for(let i=i0;i<=i1;i+=7+((i*13)%5)){
+        const sp=SAMP[i%STEPS], yaw=Math.atan2(sp.t.x,sp.t.z);
+        for(const side of [-1,1]){
+          const out=HW*1.55+((i*11+(side>0?0:5))%10);
+          // rooted in the POND and sized from the deck's own height, so the blade both
+          // stands on something and still clears the road wherever the circuit has climbed
+          const h=(sp.p.y+2)+34+((i*17+(side>0?7:0))%18);
+          const lean=Math.asin(Math.min(0.62, out/h));
+          blades.push({x:sp.p.x+sp.n.x*side*out, y:-2.2+h*0.44,
+                       z:sp.p.z+sp.n.z*side*out,
+                       s:1.9+((i*7)%8)*0.14, sy:h, sz:0.85,
+                       ry:yaw, rz:-side*lean,
+                       c:(i+(side>0?0:1))%5===0 ? MAC.leafEdge
+                         : ((i/7|0)%2 ? MAC.leaf : MAC.leafDeep)});
+        }
+      }
+    }
+    trackGroup.add(macBatch(new T.ConeGeometry(1,1,5), blades, 22, 0x2a3a2a));
   } else if(felt){
     /* THE REED. The old tunnel was a CLOSED torus every three samples, each one wearing
        the same marbled strata map — which is precisely how you build "an unreadable
@@ -5010,6 +5193,78 @@ function buildTrack(idx){
     // The sails as a whole are the thing the light plays over: one shared material means
     // one emissive channel for the whole fleet, driven off the ambient beat in frame().
     TRACK_PULSE.push({mat:sailMat, base:0x14110a, amp:0.55});
+  } else if(macro){
+    /* THE POND'S CAST, three families:
+       SNAKE PLANTS — clumps of striped blades towering like trees, the scale-flip cue.
+       RUBBER DUCKS — three big landmark ducks (real Groups, so they can bob in frame())
+         plus a scatter of static ducklings. The duck is the image's whole joke: a bath
+         toy taller than you are.
+       LICORICE CURLS — pink open-torus tendrils rising near the plants.
+       All placement side-aware and clear of each side's wall. */
+    const blades=[], curls=[];
+    const stations=[0.04,0.15,0.24,0.38,0.47,0.58,0.63,0.78,0.90,0.96];
+    stations.forEach((u,k)=>{
+      const i2=(Math.round(u*STEPS)+((k*37)%23)-11+STEPS)%STEPS, sp=SAMP[i2];
+      const side=(k%3===1)?1:-1;
+      const infld=side*innerSign>0;
+      const base=(infld ? HW*2.55 : HW*1.55)+((k*29)%50);
+      const bx=sp.p.x+sp.n.x*side*base, bz=sp.p.z+sp.n.z*side*base;
+      const giant=(k===3)?1.8:1;                      // one hero clump, the Iris giant lesson
+      const nB=5+((k*7)%5);
+      for(let b2=0;b2<nB;b2++){
+        const a=b2/nB*Math.PI*2+((k*11)%10)*0.1, rr=(2.5+((b2*13+k)%5))*giant;
+        const h=(30+((b2*17+k*23)%36))*giant;
+        // WIDE and THIN — a sansevieria is a strap, and a narrow round cone is a conifer,
+        // which is the exact mistake the felt sails documented. Acid edge every third.
+        blades.push({x:bx+Math.cos(a)*rr, y:-2.2+h*0.5, z:bz+Math.sin(a)*rr,
+                     s:(3.3+((b2*7)%5)*0.4)*giant, sy:h, sz:0.68*giant,
+                     rx:(((b2*19+k)%14)-7)*0.014, rz:(((b2*23+k)%14)-7)*0.016,
+                     ry:a,
+                     c:b2%3===2 ? MAC.leafEdge : (b2%2 ? MAC.leaf : 0x3fae62)});
+      }
+      const nC=2+(k%3);
+      for(let t2=0;t2<nC;t2++){
+        curls.push({x:bx+((t2*31+k*7)%30)-15, y:-2+((t2*13)%9)*0.6,
+                    z:bz+((t2*17+k*11)%30)-15,
+                    s:5+((t2*23+k)%9), sy:5+((t2*19+k)%9), sz:5+((t2*23+k)%9),
+                    ry:((t2*41+k*13)%628)/100, rz:((t2*29)%628)/100,
+                    c:t2%2 ? MAC.pink : MAC.tendril});
+      }
+    });
+    trackGroup.add(macBatch(new T.ConeGeometry(1,1,5), blades, 22, 0x2a3a2a));
+    trackGroup.add(macBatch(new T.TorusGeometry(1,0.13,6,14,4.3), curls, 70, 0x8a4a5a));
+    // ducks: three landmark Groups that bob, plus static ducklings in one batch
+    TRACK_PULSE.macroDucks=[];
+    [[0.12,1],[0.50,-1],[0.83,1]].forEach(([u,side],k)=>{
+      const i2=Math.round(u*STEPS)%STEPS, sp=SAMP[i2];
+      const infld=side*innerSign>0;
+      const out=(infld ? HW*3.1 : HW*1.9)+k*14;
+      const dx=sp.p.x+sp.n.x*side*out, dz=sp.p.z+sp.n.z*side*out, dy=-1.0;   // afloat on the pond
+      const g2=new T.Group(); g2.position.set(dx,dy,dz);
+      g2.rotation.y=Math.atan2(sp.p.x-dx, sp.p.z-dz);      // faces the road
+      const sc=1+k*0.12;
+      const body=new T.Mesh(new T.SphereGeometry(9*sc,12,10), macMat(MAC.duck,80,0xfff2c0));
+      body.scale.set(1,0.8,1.15); g2.add(body);
+      const head=new T.Mesh(new T.SphereGeometry(5.2*sc,10,8), macMat(MAC.duck,80,0xfff2c0));
+      head.position.set(0,8.5*sc,6.2*sc); g2.add(head);
+      const beak=new T.Mesh(new T.ConeGeometry(2.1*sc,4*sc,8), macMat(MAC.beak,60,0xffd0a0));
+      beak.rotation.x=1.35; beak.position.set(0,7.8*sc,10.6*sc); g2.add(beak);
+      const tail2=new T.Mesh(new T.ConeGeometry(3*sc,6*sc,6), macMat(MAC.duck,80,0xfff2c0));
+      tail2.rotation.x=-1.1; tail2.position.set(0,3.5*sc,-8.5*sc); g2.add(tail2);
+      trackGroup.add(g2);
+      TRACK_PULSE.macroDucks.push({g:g2, y0:dy, ph:k*2.1});
+    });
+    const lings=[];
+    for(let k2=0;k2<9;k2++){
+      const i3=(k2*79)%STEPS, sp2=SAMP[i3];
+      const side2=(k2%2)?1:-1, infld2=side2*innerSign>0;
+      const out2=(infld2 ? HW*2.7 : HW*1.7)+((k2*43)%60);
+      lings.push({x:sp2.p.x+sp2.n.x*side2*out2, y:-0.6,
+                  z:sp2.p.z+sp2.n.z*side2*out2,
+                  s:2.6+((k2*17)%12)*0.2, sy:2.2+((k2*13)%10)*0.18, sz:3.1+((k2*17)%12)*0.2,
+                  ry:((k2*57)%628)/100, c:MAC.duck});
+    }
+    trackGroup.add(macBatch(new T.SphereGeometry(1,9,7), lings, 80, 0xfff2c0));
   } else if(pool){
     // Crimson wall slabs standing well back, mostly in shadow. Deliberately sparse: the
     // reference's room is almost entirely darkness, and filling it would kill the effect.
@@ -8981,6 +9236,13 @@ function frame(now){
   // moving, you only notice the skyline is not where you left it. That is the whole brief
   // for background motion: parallax, not animation.
   if(TRACK_PULSE.feltClouds) TRACK_PULSE.feltClouds.rotation.y=tsec*0.0086;
+  // rubber ducks ride a slow swell — the one background motion on the pond, kept at the
+  // edge of noticing
+  if(TRACK_PULSE.macroDucks) for(const d2 of TRACK_PULSE.macroDucks){
+    d2.g.position.y=d2.y0+Math.sin(tsec*0.8+d2.ph)*0.9;
+    d2.g.rotation.z=Math.sin(tsec*0.63+d2.ph)*0.05;
+    d2.g.rotation.x=Math.sin(tsec*0.51+d2.ph*1.7)*0.04;
+  }
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
