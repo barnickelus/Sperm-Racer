@@ -2630,11 +2630,21 @@ function macroSky(){
   g.addColorStop(0.62,'#8a4258'); g.addColorStop(0.75,'#4a2a55');
   g.addColorStop(1.00,'#221038');
   x.fillStyle=g; x.fillRect(0,0,1024,512);
-  const blob=(bx,by,r,col,a)=>{
+  /* The canvas wraps 360 degrees around the dome, so anything painted near x=0 or
+     x=1024 must be painted AGAIN one full width over — a clipped blob at the edge is a
+     hard vertical seam in the sky, which is exactly what showed up on device. Every
+     soft-shape helper below is wrap-aware. */
+  const blob1=(bx,by,r,col,a)=>{
     const rg=x.createRadialGradient(bx,by,0,bx,by,r);
     rg.addColorStop(0,col); rg.addColorStop(1,'rgba(0,0,0,0)');
     x.globalAlpha=a; x.fillStyle=rg;
     x.fillRect(bx-r,by-r,r*2,r*2); x.globalAlpha=1;
+  };
+  const blob=(bx,by,r,col,a)=>{
+    bx=((bx%1024)+1024)%1024;
+    blob1(bx,by,r,col,a);
+    if(bx<r) blob1(bx+1024,by,r,col,a);
+    if(bx>1024-r) blob1(bx-1024,by,r,col,a);
   };
   // out-of-focus furniture: a slate shelf band, warm box shapes, one red swoosh, and a
   // hazard-yellow smear — abstract enough to be "stuff in a room", never a legible object
@@ -2647,16 +2657,28 @@ function macroSky(){
   }
   // clouds: long low streaks — each a radial blob stretched 4x horizontally, dark violet
   // with a thin warm underlit edge offset toward the glow: the dusk signature
-  const streak=(sx2,sy2,r2,col,a2)=>{ x.save(); x.translate(sx2,sy2); x.scale(4,1);
+  const streak1=(sx2,sy2,r2,col,a2)=>{ x.save(); x.translate(sx2,sy2); x.scale(4,1);
     const rg2=x.createRadialGradient(0,0,0,0,0,r2);
     rg2.addColorStop(0,col); rg2.addColorStop(1,'rgba(0,0,0,0)');
     x.globalAlpha=a2; x.fillStyle=rg2; x.fillRect(-r2,-r2,r2*2,r2*2);
     x.globalAlpha=1; x.restore(); };
-  for(let i=0;i<7;i++){
-    const cx2=(i*167)%1024, cy2=320+((i*71)%110), r2=26+((i*43)%30);
-    streak(cx2, cy2, r2, 'rgba(44,24,66,0.9)', 0.34);
-    streak(cx2+14, cy2-9, r2*0.7, 'rgba(255,140,90,0.9)', 0.16);   // lit underside faces the glow
+  const streak=(sx2,sy2,r2,col,a2)=>{
+    sx2=((sx2%1024)+1024)%1024;
+    streak1(sx2,sy2,r2,col,a2);                 // a streak spans 4*r2, so wrap wider
+    if(sx2<r2*4) streak1(sx2+1024,sy2,r2,col,a2);
+    if(sx2>1024-r2*4) streak1(sx2-1024,sy2,r2,col,a2);
+  };
+  for(let i=0;i<10;i++){
+    const cx2=(i*167)%1024, cy2=315+((i*71)%150), r2=26+((i*43)%32);
+    streak(cx2, cy2, r2, 'rgba(44,24,66,0.9)', 0.42);
+    streak(cx2+14, cy2-9, r2*0.72, 'rgba(255,140,90,0.9)', 0.18);  // lit underside faces the glow
   }
+  // THE MOON: crisp warm-white disc, a soft halo, and an offset dusk disc carving a
+  // gentle gibbous shade. Kept well clear of the wrap line, high in the view.
+  blob(690, 442, 64, 'rgba(255,238,214,0.95)', 0.30);              // halo
+  x.fillStyle='#f4e8d4'; x.beginPath(); x.arc(690,442,21,0,6.283); x.fill();
+  x.globalAlpha=0.72; x.fillStyle='#4a2a55';
+  x.beginPath(); x.arc(683,448,20,0,6.283); x.fill(); x.globalAlpha=1;
   // a few embers of bokeh kept high in the view, much quieter than before
   for(let i=0;i<7;i++){
     const bx=(i*307)%1024, by=420+((i*67)%80), r=7+((i*37)%14);
@@ -3683,17 +3705,38 @@ function buildTrack(idx){
         for(let j=0;j<nL;j++){
           const a=a0+((j*37+cl*11)%100)/100*spread;
           const R2=960+((j*53+h2*29)%70);
-          pts.push(Math.cos(a)*R2, -28+((j*17+h2*23+cl*7)%36), Math.sin(a)*R2);
+          // ABOVE the equator: the fogged ground fills everything below the visual
+          // horizon, so a town at equator height stands entirely behind the haze — which
+          // is why the first version was invisible on device. +8..+50 sets it on the
+          // hillside over the glow band.
+          pts.push(Math.cos(a)*R2, 8+((j*17+h2*23+cl*7)%42), Math.sin(a)*R2);
         }
       }
       const pg2=new T.BufferGeometry();
       pg2.setAttribute('position', new T.Float32BufferAttribute(pts,3));
       const pm2=new T.PointsMaterial({map:TEX_GLOW, color:LCOL[cl],
-        size:2.5+cl*1.2, sizeAttenuation:false, transparent:true, opacity:0.8,
+        size:3.5+cl*1.5, sizeAttenuation:false, transparent:true, opacity:0.85,
         blending:T.AdditiveBlending, depthWrite:false, fog:false});
       const pcloud=new T.Points(pg2, pm2); pcloud.frustumCulled=false;
       skyDome.add(pcloud);
       TRACK_PULSE.macroLights.push({m:pm2, f1:1.7+cl*0.9, f2:7.3+cl*2.1, ph:cl*2.4});
+    }
+    // a couple of EARLY STARS, high and sparse, twinkling far more gently than the town —
+    // stars scintillate, they do not flicker like filaments
+    { const sp2=[];
+      for(let j=0;j<7;j++){
+        const a=j*0.93+0.5, elev=0.45+((j*37)%40)/100;       // 26-49 degrees up
+        const y2=1120*Math.sin(elev), rr=Math.sqrt(1120*1120-y2*y2);
+        sp2.push(Math.cos(a)*rr, y2, Math.sin(a)*rr);
+      }
+      const sg2=new T.BufferGeometry();
+      sg2.setAttribute('position', new T.Float32BufferAttribute(sp2,3));
+      const sm2=new T.PointsMaterial({map:TEX_GLOW, color:0xdfe8ff,
+        size:2.2, sizeAttenuation:false, transparent:true, opacity:0.8,
+        blending:T.AdditiveBlending, depthWrite:false, fog:false});
+      const stars=new T.Points(sg2, sm2); stars.frustumCulled=false;
+      skyDome.add(stars);
+      TRACK_PULSE.macroLights.push({m:sm2, f1:0.9, f2:3.1, ph:1.1, a1:0.10, a2:0.06, base:0.72});
     }
     // the pond bed: one thick smeared mint clay slab carrying the water — crown kept well
     // below the roadbed (r=13 lowered 22), the propagated lesson from Marina and friends
@@ -9303,7 +9346,8 @@ function frame(now){
   // edge of noticing
   if(TRACK_PULSE.macroLights) for(const L2 of TRACK_PULSE.macroLights){
     L2.m.opacity=Math.max(0.18, Math.min(1,
-      0.55+0.26*Math.sin(tsec*L2.f1+L2.ph)+0.14*Math.sin(tsec*L2.f2+L2.ph*1.7)));
+      (L2.base||0.55)+(L2.a1||0.26)*Math.sin(tsec*L2.f1+L2.ph)
+                     +(L2.a2||0.14)*Math.sin(tsec*L2.f2+L2.ph*1.7)));
   }
   if(TRACK_PULSE.macroDucks) for(const d2 of TRACK_PULSE.macroDucks){
     d2.g.position.y=d2.y0+Math.sin(tsec*0.8+d2.ph)*0.9;
