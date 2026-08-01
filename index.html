@@ -2563,6 +2563,14 @@ const FELT_PAL=[0xe8e4d9,0xa9b8a0,0x5a6b84,0x1b2350,0x2438a8,0xc4207e,0xe8408c,
                 0xc11b2e,0xe23a2a,0xe86a22,0xe8b22a,0x1f6b70,0x3a1440,0x170a24];
 const FELT_WOOL=[0xe8408c,0xc4207e,0xc11b2e,0xe23a2a,0x8f9c72,0xa9b8a0,0xe8e4d9,0x5a6b84];
 const FELT_YARN=[0x2438a8,0x1b2350,0x3a1440,0xc11b2e,0xe8408c,0x170a24,0x1f6b70];
+// The shoulder banks are the biggest mass of colour in the frame after the road, and
+// FELT_WOOL puts two very pale entries in eight into them — under a warm key that came
+// back as a bank of near-white that out-valued the racing surface it was supposed to
+// frame. Same family, weighted to the chromatic half, with cream as an ACCENT (one in
+// eleven) rather than a staple. FELT_WOOL still dresses the small shoulder kerb, where
+// a sparkle of cream right at the road edge is exactly what you want.
+const FELT_BANK=[0xe8408c,0xc4207e,0xc11b2e,0xe23a2a,0x8f9c72,0x3a1440,
+                 0xe8e4d9,0x5a6b84,0xc4207e,0xe86a22,0x1f6b70];
 
 // Raw tuft: an icosahedron pushed off-sphere so no two puffs read as the same ball.
 const FELT_PUFF=(()=>{
@@ -2571,6 +2579,19 @@ const FELT_PUFF=(()=>{
     v.fromBufferAttribute(p,i);
     const h=Math.sin(v.x*12.9898+v.y*78.233+v.z*37.719)*43758.5453;
     v.multiplyScalar(0.74+((h-Math.floor(h)))*0.44);
+    p.setXYZ(i,v.x,v.y,v.z);
+  }
+  g.computeVertexNormals(); return g;
+})();
+// The same tuft at 20 faces instead of 80. The shoulder kerb and the ground litter are
+// two or three units across on screen and there are thousands of them; paying detail-1
+// for those spends 150k triangles a frame on silhouettes nobody can resolve.
+const FELT_PUFF0=(()=>{
+  const g=new T.IcosahedronGeometry(1,0), p=g.attributes.position, v=new T.Vector3();
+  for(let i=0;i<p.count;i++){
+    v.fromBufferAttribute(p,i);
+    const h=Math.sin(v.x*7.317+v.y*41.11+v.z*23.7)*43758.5453;
+    v.multiplyScalar(0.72+((h-Math.floor(h)))*0.48);
     p.setXYZ(i,v.x,v.y,v.z);
   }
   g.computeVertexNormals(); return g;
@@ -2658,6 +2679,137 @@ function feltSky(){
   m.frustumCulled=false; return m;
 }
 
+/* ---- FELTED TERRAIN --------------------------------------------------------------- *
+ * The one thing the reference world has that no amount of prop-scattering substitutes
+ * for: RELIEF. A flat plane with objects standing on it reads as a studio seamless no
+ * matter what you put on it, because every silhouette meets the horizon at the same
+ * height and the whole lower half of the frame is one value. Give the world a floor that
+ * rises and falls and three things happen at once — props get somewhere to sit, the
+ * horizon gets a shape, and distant land takes a value gradient the fog can work on.
+ *
+ * THE CONSTRAINT that makes this safe on a racer: the road is authored from the spline
+ * and the physics follows SAMP, not this function. So the terrain is dressed AROUND the
+ * road, never under it — near the centreline it is pinned to a fixed depth below the
+ * roadbed (and hard-clamped below it), relief only switches on past the corridor, and the
+ * infield keeps a low roll so you can still see the far side of the circuit through the
+ * turns. Everything outside gets the amphitheatre.
+ * ---------------------------------------------------------------------------------- */
+const FELT_SEED=20873;
+// The road's embankment: inner lip just under the deck edge, toe out on the valley floor.
+// Shared by the berm mesh and by feltSeat(), so verge props sit on the slope they see.
+const FELT_BERM_IN=23.5, FELT_BERM_OUT=42;
+function fIHash(x,y,s){
+  let n=Math.imul(x,374761393)+Math.imul(y,668265263)+Math.imul(s,1013904223);
+  n=(n^(n>>>13))>>>0; n=Math.imul(n,1274126177)>>>0;
+  return ((n^(n>>>16))>>>0)/4294967295;
+}
+function fVN(x,y,s){
+  const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
+  const u=xf*xf*xf*(xf*(xf*6-15)+10), v=yf*yf*yf*(yf*(yf*6-15)+10);
+  const a=fIHash(xi,yi,s), b=fIHash(xi+1,yi,s), c=fIHash(xi,yi+1,s), d=fIHash(xi+1,yi+1,s);
+  return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;
+}
+function fFbm(x,y,oct,s){ let v=0,a=0.5,f=1;
+  for(let i=0;i<oct;i++){ v+=a*fVN(x*f,y*f,s+i*131); f*=2.03; a*=0.5; } return v; }
+// Ridged noise is what gives a range SHOULDERS instead of blobs — the creases are the
+// silhouette, and the silhouette is the only thing that survives 140 units per second.
+function fRidged(x,y,oct,s){ let v=0,a=0.5,f=1;
+  for(let i=0;i<oct;i++){ const n=1-Math.abs(fVN(x*f,y*f,s+i*577)*2-1); v+=a*n*n; f*=2.07; a*=0.5; }
+  return v; }
+const fSm=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
+
+// The track proximity field, built once per course build off SAMP. Returns, for any
+// (x,z): the distance to the nearest centreline sample, that sample's height, a
+// distance-weighted blend of nearby road heights (smooth, so the terrain never creases
+// along the loop's medial axis the way a hard nearest-sample lookup does), and which
+// side of the road the point is on.
+let FELT_GEO=null;                      // {x,z,y} decimated centreline, module-level for reuse
+function feltField(x,z){
+  let best=1e18, by=0, ysum=0, wsum=0, blat=0;
+  for(let k=0;k<FELT_GEO.length;k++){
+    const s=FELT_GEO[k], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
+    if(d2<best){ best=d2; by=s.y; blat=dx*s.nx+dz*s.nz; }
+    const w=1/(d2*d2+4e5); ysum+=w*s.y; wsum+=w;
+  }
+  return {d:Math.sqrt(best), ny:by, sy:ysum/wsum, lat:blat};
+}
+// h(x,z) for the felted valley. `f` is a feltField() result so callers that need to place
+// a prop can reuse the one lookup for both the height and the corridor test.
+function feltHeight(x,z,f,inner){
+  f=f||feltField(x,z);
+  const t=fSm(64, 300, f.d);                     // 0 hard against the road, 1 out in the hills
+  const infield=(f.lat*inner>0);
+  // the causeway shelf: the roadbed always stands on a bank, and the bank always wins
+  const shelf=f.sy-17;
+  let h=shelf+(fFbm(x*0.0024,z*0.0024,4,FELT_SEED)-0.5)*26*t;
+  // The bowl. Outside the loop it climbs into ranges; inside it stays a low wool down so
+  // the far side of the circuit is still readable through a corner.
+  const amp=infield?0.13:1.0;
+  h+=fRidged(x*0.0040,z*0.0040,5,FELT_SEED+91)*196*t*t*amp;
+  h+=fRidged(x*0.0112+40,z*0.0112-22,4,FELT_SEED+404)*44*t*amp;
+  // Wool downs. The infield is the one piece of ground a loop course shows you on every
+  // corner of every lap, and holding it flat so you can see across it left a dull grey
+  // slab filling the bottom third of half the frames. Long, low hummocks — 130-unit
+  // wavelength, 32 of relief — give it a surface without ever blocking a sightline.
+  h+=(fFbm(x*0.0076,z*0.0076,4,FELT_SEED+55)-0.5)*32*t*(infield?1.0:0.45);
+  h+=(fFbm(x*0.030,z*0.030,3,FELT_SEED+777)-0.5)*7.0;    // felt lumps, at every distance
+  const r=Math.hypot(x,z);
+  if(r>760) h+=(r-760)*0.62;                     // wall the bowl in so the horizon is land
+  // Hard guarantee: nothing the noise does can lift the ground into the roadbed.
+  if(f.d<170) h=Math.min(h, f.ny-15);
+  return h;
+}
+// Where the top of the ground is at lateral offset `out` from sample `s` on `side`: the
+// deck's own shoulder up to the berm lip, then the embankment slope, then the terrain.
+// Everything dressed on the verge asks this rather than guessing off the road's height,
+// which is the whole reason the fleece used to hang in the air on the climbing sections.
+function feltSeat(s, side, out, inner){
+  if(out<=FELT_BERM_IN) return s.p.y;
+  const x=s.p.x+s.n.x*side*out, z=s.p.z+s.n.z*side*out;
+  const g=feltHeight(x,z,null,inner);
+  if(out>=FELT_BERM_OUT) return g;
+  const k=fSm(FELT_BERM_IN, FELT_BERM_OUT, out);
+  return s.p.y*(1-k)+g*k;
+}
+// Terrain shell. Vertex-coloured rather than textured: the strata are an ELEVATION band,
+// which is what makes them read as poured sheets the valley was cut through rather than
+// as a pattern wrapped round a shape. Quantised per vertex so the bands stay poster-flat.
+function feltTerrain(inner){
+  const EXT=1900, SEG=152;      // ~12.5-unit facets: the felt lump scale, and 23k verts
+  const g=new T.PlaneGeometry(EXT,EXT,SEG,SEG); g.rotateX(-Math.PI/2);
+  const pos=g.attributes.position, N=pos.count;
+  const col=new Float32Array(N*3), c=new T.Color();
+  const LIP=new T.Color(0xe8e4d9), SINK=new T.Color(0x150618);
+  for(let i=0;i<N;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    const f=feltField(x,z);
+    const y=feltHeight(x,z,f,inner);
+    pos.setY(i,y);
+    // strata: elevation banded with a domain warp, so the seams squiggle like poured felt
+    const w=(fFbm(x*0.0065,z*0.0065,3,FELT_SEED+12)-0.5)*46;
+    const t2=(y+w+240)/17, band=Math.floor(t2);
+    c.setHex(FELT_PAL[((band%FELT_PAL.length)+FELT_PAL.length)%FELT_PAL.length]);
+    // the pressed lip on the upper edge of each sheet
+    if(t2-band>0.88) c.lerp(LIP,0.30);
+    // THE VALUE LADDER, and this is the whole reason the terrain is vertex-coloured
+    // rather than textured. The basin the road crosses sinks almost to black plum; the
+    // strata only come up to full chroma as the ground climbs out of it. So the road is
+    // always the light ribbon on a dark field near to hand, the marbling lives in the
+    // middle distance where it can be looked at, and the skyline is the brightest land.
+    // Banded colour applied evenly at every height was what turned the first pass into
+    // one flat pink image with no dark in it.
+    c.lerp(SINK, (1-fSm(-30, 130, y-f.sy))*0.90);
+    // and the whole shell is authored a third down, because the rig multiplies by ~2 and
+    // ground painted at face value came back as pale lavender covering half the frame
+    col[i*3]=c.r*0.66; col[i*3+1]=c.g*0.66; col[i*3+2]=c.b*0.66;
+  }
+  g.setAttribute('color', new T.BufferAttribute(col,3));
+  g.computeVertexNormals();
+  const m=new T.Mesh(g, new T.MeshLambertMaterial({vertexColors:true, flatShading:true}));
+  m.frustumCulled=false;
+  return m;
+}
+
 /* ============== BEADWORK KIT (Perla) ============== *
  * Glossy seed-bead sculpture: thousands of small shiny plastic beads laid in rows that
  * FOLLOW the form, lit like a product shot — magenta rim one side, blue the other, on a
@@ -2739,8 +2891,27 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
-function applyTrackLighting(studio, pool, coil, paint){
-  if(paint){
+function applyTrackLighting(studio, pool, coil, paint, felt){
+  if(felt){
+    // FELTED VALLEY. Felicia was the only kit in the game whose palette and whose rig
+    // came from different worlds: FELT_PAL is magenta, crimson, ember and plum, and it
+    // was being filled by the DEFAULT biological rig — a cyan hemisphere (0x9fe8df) over
+    // a teal ground bounce. Multiply a magenta tuft by cyan and you get grey; multiply a
+    // crimson one by teal and you get eau-de-nil. That single mismatch is why a course
+    // authored in hot pinks rendered as a field of mint pastels under a red sky.
+    // The reference lights it the way clay is lit for stop-motion: one warm cream key
+    // high and to the left, a hot magenta rim to put a coloured edge on every silhouette,
+    // and a deep blue bounce from below so shaded sides stay CHROMATIC instead of grey.
+    // Felt has no specular at all, so all of the shape has to come out of these three.
+    // Total is deliberately ~2.2 against the default rig's ~2.95. The sky here is an
+    // unlit shader and it is meant to be the brightest thing in the frame; light the land
+    // to default exposure and the whole image goes high-key pink with no dark in it.
+    hemi.color.setHex(0xffcbd8); hemi.groundColor.setHex(0x2a0c26); hemi.intensity=0.60;
+    sun.color.setHex(0xffe2c4);  sun.intensity=0.78; sun.position.set(-120,170,-80);
+    rim.color.setHex(0xe8408c);  rim.intensity=0.48; rim.position.set(140,60,150);
+    fill.color.setHex(0x2438a8); fill.intensity=0.22; fill.position.set(40,-60,-120);
+    flesh.color.setHex(0xe86a22);flesh.intensity=0.14;flesh.position.set(90,20,-60);
+  } else if(paint){
     // PLEIN AIR. The single worst thing about Sienna was that it never had a rig of its
     // own and inherited the default BIOLOGICAL one — a cyan hemisphere (0x9fe8df) over a
     // teal ground bounce. Multiply an olive canvas by cyan and you get bottle green;
@@ -3210,13 +3381,20 @@ function buildTrack(idx){
   // room for one: things were sharp, then gone. Widening to 34/560 keeps the dissolve
   // (Sienna is still the fastest fade of any course) while leaving a middle distance for
   // the fleet to recede through, which is where the depth in a harbour painting lives.
-  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : 120);
-  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : 560);
+  // Felicia gets a LONG range now that it has real terrain: the far ridges are the
+  // composition's frame, and 120/560 was dissolving them before the eye could read the
+  // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
+  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : 120));
+  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : 560));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
   // overridden here — every other course still gets its own from trackSky.
   if(TRACKS[idx].paint) scene.fog.color.setHex(0xdcd5bd);
+  // Same reasoning on Felicia: the sky's own horizon band is a warm plum-crimson, and
+  // fading the land to the track tint (0x3a1440, a cold blue-plum) put a hue seam right
+  // along the skyline. Fade the land to the colour the sky actually is where they meet.
+  if(TRACKS[idx].felt) scene.fog.color.setHex(0x64203c);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -3230,7 +3408,7 @@ function buildTrack(idx){
   const bead  =!!TRACKS[idx].bead;       // ...or as glossy beadwork under a studio rig
   const pool  =!!TRACKS[idx].pool;       // ...or as a 70s natatorium under a light canopy
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
-  applyTrackLighting(bead, pool, coil, paint);
+  applyTrackLighting(bead, pool, coil, paint, felt);
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
   // works off the authored values rather than off whatever it left behind last frame.
   // Cleared for every other course by the TRACK_PULSE reset at the top of this function.
@@ -3243,7 +3421,8 @@ function buildTrack(idx){
     // down because real beads of one colour are identical, not mottled
     : bead ? (list)=>voxBatch(list, new T.MeshPhongMaterial({shininess:120,specular:0xffffff}), 0.12)
     : voxBatch;
-  groundPlane.visible = !wire;           // the vector course supplies its own ground grid
+  // the vector course supplies its own ground grid; Felicia supplies a whole terrain
+  groundPlane.visible = !wire && !felt;
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -3432,21 +3611,92 @@ function buildTrack(idx){
     const tubeMat=feltMat(0x7d6c86, feltTex);   // tinted down so it sits under the road
     const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,11,12,loop), tubeMat);
     tube.position.y-=19; trackGroup.add(tube);      // r=11: crown was +2, hid 12.6
-    // banded ridges rising outside the course — the amphitheatre wall of the reference
-    const ridge=[];
-    for(let i=0;i<STEPS;i+=9){
-      const s2=SAMP[i];
-      for(const side of [-1,1]){
-        // pushed well out: at close range these read as clutter beside the track rather
-        // than as the amphitheatre wall the reference frames everything with
-        const out=HW*(7.5+((i*37)%50)/8);
-        ridge.push({x:s2.p.x+s2.n.x*side*out, y:s2.p.y-26+((i*53)%30),
-                    z:s2.p.z+s2.n.z*side*out,
-                    s:34+((i*29)%46), sy:52+((i*17)%76), sz:34+((i*41)%38),
-                    ry:((i*13)%628)/100, c:FELT_PAL[(i/9|0)%FELT_PAL.length]});
+
+    /* THE VALLEY. Decimate the centreline into the proximity field the terrain reads,
+       then displace a single shell around it. This replaces the flat ground plane
+       entirely (see groundPlane.visible above), which is why the plane is switched off
+       for this course and left on for every other one. */
+    FELT_GEO=[];
+    for(let i=0;i<STEPS;i+=9){ const s2=SAMP[i];
+      FELT_GEO.push({x:s2.p.x, y:s2.p.y, z:s2.p.z, nx:s2.n.x, nz:s2.n.z}); }
+    trackGroup.add(feltTerrain(innerSign));
+
+    /* THE EMBANKMENT. Once the world has a floor, a road hanging seventeen units above it
+       on an eleven-unit tube is a shelf with nothing holding up its edges — the same bug
+       the harbour course had before it got its pilings. This is a banked skirt from just
+       under the road edge out to the valley floor on both sides, wearing the strata map
+       with its V running with world height so the sheets stay level as the road climbs.
+       Everything on the verge now has a slope to sit on instead of a gap to hang over. */
+    for(const side of [1,-1]){
+      const bp=[], bu=[], bi=[];
+      for(let i=0;i<=LAST;i++){
+        const s2=SAMP[i%STEPS];
+        const a=s2.p.clone().addScaledVector(s2.bn, side*FELT_BERM_IN);
+        const ox=s2.p.x+s2.n.x*side*FELT_BERM_OUT, oz=s2.p.z+s2.n.z*side*FELT_BERM_OUT;
+        const oy=feltHeight(ox,oz,null,innerSign)-3.5;      // buried into the terrain
+        bp.push(a.x,a.y+0.15,a.z, ox,oy,oz);
+        bu.push(i*0.09, (a.y+0.15)/22, i*0.09, oy/22);
       }
+      for(let i=0;i<LAST;i++){ const a=i*2,b=a+1,c2=a+2,d2=a+3; bi.push(a,b,c2, b,d2,c2); }
+      const bg=new T.BufferGeometry();
+      bg.setAttribute('position',new T.Float32BufferAttribute(bp,3));
+      bg.setAttribute('uv',new T.Float32BufferAttribute(bu,2));
+      bg.setIndex(bi); bg.computeVertexNormals();
+      trackGroup.add(new T.Mesh(bg, feltMat(0xbfb0b8, feltTex)));
     }
-    trackGroup.add(feltBatch(new T.ConeGeometry(1,1.8,6,1), ridge));
+
+    /* CROWNS. What used to stand here was 156 cones whose bases were 50-140 units BELOW
+       the ground plane, so all you ever saw was the tips: a picket fence of identical
+       narrow triangles. The range itself is terrain now, so these are down to a handful
+       of big banded spurs seated on the ridges they crown — the occasional sharp peak
+       that breaks a soft skyline, which is the only job a cone has left. Placed by
+       walking the outer ring and only accepting spots the terrain has actually lifted. */
+    const ridge=[], PK=[];
+    for(let i=0;i<STEPS;i+=11){
+      const s2=SAMP[i], side=((i/11|0)%2)?1:-1;
+      if(side*innerSign>0) continue;                    // outside the loop only
+      const out=HW*(9.5+((i*37)%64)/9);
+      const cx=s2.p.x+s2.n.x*side*out, cz=s2.p.z+s2.n.z*side*out;
+      const f=feltField(cx,cz), gy=feltHeight(cx,cz,f,innerSign);
+      if(gy < f.sy+16) continue;                        // only crown ground that actually rose
+      let near=false;
+      for(const q of PK){ const dx=q[0]-cx, dz=q[1]-cz;
+        if(dx*dx+dz*dz < 150*150){ near=true; break; } }
+      if(near) continue;
+      PK.push([cx,cz]);
+      const H=64+((i*17)%86), R=H*(0.44+((i*29)%30)/100);   // fat enough to read as mass
+      // Deliberately the COOL, DARK half of the palette, with cream as a rarity: a crown
+      // is a silhouette against the sky, and four cream peaks in a frame stop being peaks
+      // and start being glaciers competing with the road for the eye.
+      const CP=[0x2a0f34,0x141a3c,0x3d4a5c,0x1b2350,0x14383c,0x0e0618,0x3a1440,0xe8e4d9];
+      ridge.push({x:cx, y:gy+H*0.5-H*0.28, z:cz, s:R, sy:H, sz:R*(0.78+((i*41)%40)/100),
+                  ry:((i*13)%628)/100, c:CP[(i/11|0)%CP.length]});
+    }
+    if(ridge.length) trackGroup.add(feltBatch(new T.ConeGeometry(1,1,7,1), ridge));
+
+    /* CLOUD BANKS. Flat-shaded lumps well above the ridge line, unfogged so they stay a
+       hard silhouette against the poster sky, drifting on TRACK_PULSE. This is the one
+       piece of background motion the course gets, and it is a slow rotation of the whole
+       ring about the circuit centre — parallax you notice only if you look for it. */
+    { const cl=[];
+      for(let i=0;i<16;i++){
+        const a=(i/16)*6.283+((i*37)%13)/13, r=880+((i*97)%420);
+        const bx=ccx+Math.cos(a)*r, bz=ccz+Math.sin(a)*r, by=250+((i*53)%150);
+        for(let j=0;j<5;j++){
+          const s2=52+((i*29+j*17)%74);
+          cl.push({x:bx+(((i*13+j*7)%20)-10)*11, y:by+(((i*7+j*23)%12)-6)*5.0,
+                   z:bz+(((i*19+j*11)%20)-10)*11,
+                   s:s2, sy:s2*(0.22+((i+j)%5)*0.05), sz:s2*0.82,
+                   ry:((i*31+j*3)%628)/100,
+                   c:((i+j)%3) ? 0xd8dde0 : 0xa294ac});
+        }
+      }
+      const cm=feltBatch(new T.IcosahedronGeometry(1,1), cl);
+      cm.material.fog=false;
+      const cg=new T.Group(); cg.position.set(ccx,0,ccz);
+      cm.position.set(-ccx,0,-ccz); cg.add(cm);
+      trackGroup.add(cg); TRACK_PULSE.feltClouds=cg;
+    }
   } else if(wire){
     // Hanging wireframe lattice: cross-braced rungs dropping from the roadbed, plus a
     // horizon grid far below. Reads as structure without a single filled surface.
@@ -3755,10 +4005,15 @@ function buildTrack(idx){
   // added to a near-white sky they read as dirt on the lens. On the oil course they become
   // warm dust in low sun instead — larger, far fainter, and only visible where they cross
   // something dark, which is exactly how motes behave in air.
+  // Same argument on the felted valley as on the oil course: these are additive sparks,
+  // and additive sparks over a hot magenta sky are white specks with nothing behind them.
+  // Warm them to loose fibre and drop them to where they only show against dark ground.
   const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,
-    color:paint?0xf0e4c4:0xffc6dd, size:paint?4.6:3.2, sizeAttenuation:true,
+    color:paint?0xf0e4c4:felt?0xffd8bc:0xffc6dd, size:paint?4.6:felt?4.2:3.2,
+    sizeAttenuation:true,
     transparent:true, opacity:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
-  trackGroup.add(motes); TRACK_PULSE.motes=motes; TRACK_PULSE.motesDim=paint?0.16:0;
+  trackGroup.add(motes); TRACK_PULSE.motes=motes;
+  TRACK_PULSE.motesDim=paint?0.16:felt?0.42:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -3780,11 +4035,29 @@ function buildTrack(idx){
 
   // ---- start/finish gantry ----
   const s0=SAMP[0];
+  if(felt){
+    /* The start line as a WARP BEAM. The shared gantry is a white plastic bar on two teal
+       cylinders, and it is not rotated to the road, so on this course it was a 52-unit
+       slab of the one material that exists nowhere else in the valley, hanging across the
+       frame every lap. Same object, stated in fibre: a timber beam on two posts with a
+       short banner of woven strips hung from it. Kept up at +9 and above so it clears the
+       racers rather than becoming a wall you drive through. */
+    const gy0=Math.atan2(s0.t.x,s0.t.z), gl=[];
+    gl.push({x:s0.p.x, y:s0.p.y+15.6, z:s0.p.z, s:3.6, sy:3.2, sz:HW*2+16, ry:gy0, c:0x4a3a2e});
+    for(let b=0;b<3;b++)
+      gl.push({x:s0.p.x, y:s0.p.y+12.6-b*1.7, z:s0.p.z, s:2.8, sy:1.5, sz:HW*2+3, ry:gy0,
+               c:[0xc4207e,0xe8b22a,0x2438a8][b]});
+    for(const side of [-1,1])
+      gl.push({x:s0.p.x+s0.n.x*side*(HW+3), y:s0.p.y+7.6, z:s0.p.z+s0.n.z*side*(HW+3),
+               s:5.2, sy:16.6, sz:4.2, ry:gy0, c:0x3a2a24});
+    trackGroup.add(feltBatch(new T.BoxGeometry(1,1,1), gl));
+  } else {
   const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
   bar.position.copy(s0.p).add(new T.Vector3(0,14,0)); trackGroup.add(bar);
   for(const side of [-1,1]){
     const post=new T.Mesh(new T.CylinderGeometry(1.4,1.4,16,8),new T.MeshPhongMaterial({color:0x2b6e66,flatShading:true}));
     post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
+  }
   }
 
   // ---- edge border: villi, curbs, pylons, tufts, coping, or mooring posts ----
@@ -3937,26 +4210,50 @@ function buildTrack(idx){
     }
     trackGroup.add(coilBatch(new T.TorusGeometry(1,0.18,5,22,4.7), vol));
   } else if(felt){
-    // The raw-tuft state: banks of wool clumps crowding both shoulders. This is the
-    // signature element of the reference, and it doubles as the course's soft edge.
-    const tufts=[];
+    /* The raw-tuft state: banks of wool crowding both shoulders. This is the signature
+       element and it doubles as the course's soft edge, so it stays — but in TWO rows
+       with two different jobs, because one row cannot do both.
+       A low kerb row rides the deck's own shoulder: capped at 2.6 units, so on the infield
+       where the apron is a legal shortcut you are brushing a rumble strip rather than
+       driving through a hedge. The tall bank then stands at each side's OWN wall — 48.4
+       infield, 28.2 outside — seated down the embankment, so the thing your eye reads as
+       the edge of the world is actually where the edge of the world is. */
+    const tufts=[], kerb=[];
     for(let i=0;i<STEPS;i+=2){
       const s2=SAMP[i];
       for(const side of [-1,1]){
-        const n=3+((i*7)%3);
-        for(let b=0;b<n;b++){
-          const out=HW+1.2+b*2.6+((i*11+b*29)%18)/6;
-          const sz=1.5+((i*13+b*37)%26)/9;
-          tufts.push({x:s2.p.x+s2.n.x*side*out+(((i*19+b*7)%12)-6)*0.3,
-                      y:s2.p.y+0.4+sz*0.35+((i*23+b*5)%14)*0.16,
-                      z:s2.p.z+s2.n.z*side*out+(((i*29+b*3)%12)-6)*0.3,
+        for(let b=0;b<2+((i*7)%2);b++){                     // shoulder kerb
+          const out=HW+1.0+b*2.3+((i*11+b*29)%12)/7;
+          const sz=1.3+((i*13+b*37)%16)/12;
+          kerb.push({x:s2.p.x+s2.n.x*side*out+(((i*19+b*7)%12)-6)*0.25,
+                      y:s2.p.y+0.2+sz*0.30,
+                      z:s2.p.z+s2.n.z*side*out+(((i*29+b*3)%12)-6)*0.25,
                       s:sz, sy:sz*(0.62+((i*31+b*11)%40)/80), rx:((i*3)%628)/100,
                       ry:((i*7+b)%628)/100, rz:((i*5+b*3)%628)/100,
                       c:FELT_WOOL[(i+b)%FELT_WOOL.length]});
         }
+        // Just PAST each side's wall, not on it. The car is hard-clamped to the corridor
+        // so it can never touch these, but the chase camera swings wide of the car in a
+        // corner and a bank sitting exactly on the wall put a cream boulder through the
+        // lens every time you pinned the outside. Three units of clearance fixes it.
+        const base=(side*innerSign>0) ? HW*2.40 : HW*1.46;
+        for(let b=0;b<3+((i*13)%3);b++){
+          const out=base+b*3.2+((i*11+b*29)%20)/5;
+          // size grows OUTWARD. A heap of fleece piles that way anyway, and it means the
+          // row nearest the corridor is the smallest one, so a chase camera swinging wide
+          // in a corner brushes a two-unit tuft instead of a seven-unit boulder.
+          const sz=2.1+b*1.05+((i*17+b*37)%22)/10;
+          tufts.push({x:s2.p.x+s2.n.x*side*out+(((i*19+b*7)%14)-7)*0.5,
+                      y:feltSeat(s2,side,out,innerSign)+sz*0.34+((i*23+b*5)%12)*0.14,
+                      z:s2.p.z+s2.n.z*side*out+(((i*29+b*3)%14)-7)*0.5,
+                      s:sz, sy:sz*(0.58+((i*31+b*11)%44)/80), rx:((i*3)%628)/100,
+                      ry:((i*7+b)%628)/100, rz:((i*5+b*3)%628)/100,
+                      c:FELT_BANK[(i+b*3)%FELT_BANK.length]});
+        }
       }
     }
     trackGroup.add(feltBatch(FELT_PUFF, tufts));
+    trackGroup.add(feltBatch(FELT_PUFF0, kerb));
   } else if(wire){
     // Light pylons marching down both shoulders — a tapering wire post topped with a ring,
     // which is what gives the vector course a readable edge at speed.
@@ -4034,18 +4331,73 @@ function buildTrack(idx){
       }
     }
   } else if(felt){
-    const ringGeo=new T.TorusGeometry(HW+4,3.4,7,16);
-    const ringMat=feltMat(0xffffff, feltTex);
+    /* THE REED. The old tunnel was a CLOSED torus every three samples, each one wearing
+       the same marbled strata map — which is precisely how you build "an unreadable
+       striped canyon". Three separate things were wrong with it and all three had the
+       same cause, which is that it enclosed you:
+         it put striped surface UNDER the road as well as over it, so the corridor stopped
+           being distinguishable from the tunnel;
+         at three-sample spacing the rings fused into one continuous striped barrel, so
+           there was no rib to read the speed against;
+         and being closed it removed the sky, which was the only high value in the frame
+           and therefore the only thing the tunnel could have been dark against.
+       Rebuilt as the reed of a loom: open ARCH ribs with air between them, dark against
+       the sky, standing on legs that reach the ground, with the warp running through them
+       lengthwise. Value contrast does the legibility; the longitudinal threads do the
+       continuity; the gaps do the speed.
+       CORRIDOR: a symmetric arch centred on the road cannot clear both walls, because
+       they are at different distances (48.4 infield, 28.2 outside). So the arch is
+       DELIBERATELY off-centre — struck from a point 11 units toward the infield with a
+       40-unit half-span, which lands its feet at 51 and 29. Slightly asymmetric overhead,
+       which reads as a hand-built shed rather than an error, and legal on both sides. */
+    const ribs=[], legs=[], OFF=11, SPAN=40;
+    // Authored MUCH darker than the palette's own darks. A rib's whole job is to be a
+    // black shape against a bright sky, and this rig lifts anything above about 0.15
+    // linear — 0x1b2350 came back as pale periwinkle, which is why the first cut of this
+    // arcade read as a row of pastel croquet hoops.
+    const RIBPAL=[0x0d0714,0x1a0c22,0x0b1030,0x0d0714,0x141a3c,0x1a0c22];
     for(const sg of tun){
       const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
-      for(let i=i0;i<=i1;i+=3){
-        const s2=SAMP[i%STEPS];
-        const ring=new T.Mesh(ringGeo, ringMat);
-        ring.position.copy(s2.p).add(new T.Vector3(0,1,0));
-        ring.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s2.t);
-        trackGroup.add(ring);
+      let i=i0, n=0;
+      while(i<=i1){
+        const s2=SAMP[i%STEPS], ry=Math.atan2(s2.t.x,s2.t.z);
+        const mouth=(i<i0+4)||(i>i1-10);          // portal ribs: heavier, and cream
+        const cx=s2.p.x+s2.n.x*innerSign*OFF, cz=s2.p.z+s2.n.z*innerSign*OFF;
+        const H=(38+((n*13)%9))*(mouth?1.06:1);
+        ribs.push({x:cx, y:s2.p.y+1, z:cz, s:SPAN, sy:H, sz:mouth?46:30, ry,
+                   c:mouth?0xe8e4d9:RIBPAL[n%RIBPAL.length]});
+        // every rib stands on two legs that reach the valley floor, so the arch is a
+        // structure rather than a hoop hanging over the road
+        for(const px of [-1,1]){
+          const fx=s2.p.x+s2.n.x*(innerSign*OFF+px*SPAN),
+                fz=s2.p.z+s2.n.z*(innerSign*OFF+px*SPAN);
+          const gy=feltHeight(fx,fz,null,innerSign), top=s2.p.y+2;
+          if(top-gy>1) legs.push({x:fx, y:(gy+top)*0.5, z:fz,
+                                  s:6.0, sy:top-gy, sz:mouth?9:6.4, ry, c:0x2a1c18});
+        }
+        i += 7+(n%3)*2; n++;                      // irregular bay spacing, never a comb
+      }
+      // THE WARP running the length of the throat: continuous cream and gold threads
+      // curving over the arch profile. These are what give a bay-spaced tunnel continuity
+      // — without them the ribs read as unrelated gateways rather than as one shed.
+      for(let w=0;w<5;w++){
+        const th=Math.PI*(0.16+w*0.17), pts=[];
+        for(let i2=i0-3;i2<=i1+3;i2+=4){
+          const s2=SAMP[((i2%STEPS)+STEPS)%STEPS];
+          const lat=innerSign*OFF+Math.cos(th)*SPAN*0.94;
+          pts.push(new T.Vector3(s2.p.x+s2.n.x*lat,
+                                 s2.p.y+1+Math.sin(th)*36, s2.p.z+s2.n.z*lat));
+        }
+        if(pts.length<3) continue;
+        trackGroup.add(new T.Mesh(
+          new T.TubeGeometry(new T.CatmullRomCurve3(pts,false), pts.length, 0.62, 5, false),
+          feltMat(w%2 ? 0xe8b22a : 0xe8e4d9)));
       }
     }
+    // half-torus: unit ring, upper half only, so the arch is open underneath and the road
+    // keeps its own surface all the way through
+    if(ribs.length) trackGroup.add(feltBatch(new T.TorusGeometry(1,0.075,5,22,Math.PI), ribs));
+    if(legs.length) trackGroup.add(feltBatch(new T.BoxGeometry(1,1,1), legs));
   } else if(wire){
     // Hoops of pure line, banked to the road and alternating colour so the tunnel
     // stretches strobe past as you drive them.
@@ -4629,52 +4981,223 @@ function buildTrack(idx){
        supports them. Two rules fix that and are worth stating, because they are what the
        cleanup actually is: every prop SITS ON SOMETHING, and every prop is ALIGNED to the
        road rather than randomly tumbled. */
-    const clumps=[], posts=[], beams=[], cloth=[], spools=[];
-    // fleece piles: bedded down on the verge just under the roadbed instead of drifting
-    // up to 30 units above it, and squashed rather than spun on all three axes
-    for(let k=0;k<130;k++){
+    const clumps=[], box=[], spools=[], sph=[], cyl=[], cone=[];
+    // FLEECE. Bedded on the terrain now rather than hung off the roadbed's own height:
+    // this course used to place them at `p.y-7`, which on a spline that climbs from 10 to
+    // 62 left whole chains of them hanging up to fifty units clear of the ground. A prop
+    // in mid-air is read as a bug however good it looks.
+    for(let k=0;k<150;k++){
       const s2=SAMP[(k*37)%STEPS];
-      const side=(k%2?-1:1), out=HW*(2.9+((k*13)%46)/7);
-      const sz=5+((k*17)%16);
-      clumps.push({x:s2.p.x+s2.n.x*side*out+(((k*23)%26)-13),
-                   y:s2.p.y-7-((k*29)%7)+sz*0.34,
-                   z:s2.p.z+s2.n.z*side*out+(((k*31)%26)-13),
+      const side=(k%2?-1:1), out=HW*(2.6+((k*13)%58)/6);
+      const sz=5+((k*17)%17);
+      const cx=s2.p.x+s2.n.x*side*out+(((k*23)%30)-15),
+            cz=s2.p.z+s2.n.z*side*out+(((k*31)%30)-15);
+      if(!harbClearOK(cx,cz,sz)) continue;
+      clumps.push({x:cx, y:feltHeight(cx,cz,null,innerSign)+sz*0.30, z:cz,
                    s:sz, sy:sz*(0.52+((k*7)%30)/70), sz:sz*(0.86+((k*5)%20)/70),
-                   ry:((k*19)%628)/100, c:FELT_WOOL[k%FELT_WOOL.length]});
+                   ry:((k*19)%628)/100, c:FELT_BANK[k%FELT_BANK.length]});
     }
-    // looms: a pair of uprights, a head beam, and a half-woven striped blanket on the warp
-    for(let k=0;k<26;k++){
-      const i2=(k*(STEPS/26)|0)%STEPS, s2=SAMP[i2];
-      const side=(k%2?-1:1), out=HW*(2.05+((k*7)%5)*0.34);
-      const yaw=Math.atan2(s2.t.x, s2.t.z);            // square-on to the road
-      const H=31+((k*11)%16), W=21+((k*5)%13);   // sized to READ from the road, not dot the horizon
-      const bx=s2.p.x+s2.n.x*side*out, bz=s2.p.z+s2.n.z*side*out, by=s2.p.y-8;
+
+    /* THE LOOMS. The review's verdict was "they read as billboards rather than looms",
+       and it was right for a structural reason: the two uprights were spread ALONG the
+       road while the cloth's wide axis ran ACROSS it, so the frame and the cloth were in
+       two different planes that never met. What you saw was a printed card floating
+       between two unrelated sticks.
+       Rebuilt in an explicit local frame — `u` along the road, `v` out from it — with
+       everything in ONE plane and real depth in the third axis:
+         posts on footed blocks, deeper than they are wide;
+         a cloth beam and a breast beam whose ends overhang the posts;
+         a curtain of cream WARP THREADS, which is the thing that actually says loom;
+         woven cloth rolled down from the top beam, with thickness, so it casts across
+           the warp instead of being coplanar with it;
+         a heddle bar set BEHIND the warp — one element out of plane is what gives a
+           frame its depth at a glance;
+         a shuttle, and stone warp-weights swinging at the bottom of the threads.
+       Half the count and roughly double the size: fourteen structures you can read at
+       140 units per second beats twenty-six you cannot. */
+    for(let k=0;k<14;k++){
+      const i2=(Math.round(k*STEPS/14)+((k*47)%29)-14+STEPS)%STEPS, s2=SAMP[i2];
+      const side=(k%2?-1:1);
+      // side-aware, exactly as the coil course's guardrails are: the two walls are at
+      // different distances, so one fixed offset is legal on one side and inside the
+      // corridor on the other. The old HW*2.05 = 45.1 was 3 units inside the apron.
+      const out=(side*innerSign>0) ? HW*(3.1+((k*7)%5)*0.30) : HW*(1.9+((k*11)%6)*0.26);
+      const ux=s2.t.x, uz=s2.t.z, vx=s2.n.x*side, vz=s2.n.z*side;
+      const bx=s2.p.x+vx*out, bz=s2.p.z+vz*out;
+      const H=44+((k*13)%22), W=30+((k*17)%15);
+      if(!harbClearOK(bx,bz,12)) continue;
+      const yaw=Math.atan2(ux,uz);                     // local X -> v (out), local Z -> u
+      const by=feltHeight(bx,bz,null,innerSign)-2.5;
+      const P=(dx,dv,y,sv,sy,su,c,ry)=>box.push({
+        x:bx+ux*dx+vx*dv, y:y, z:bz+uz*dx+vz*dv, s:sv, sy:sy, sz:su,
+        ry:ry==null?yaw:ry, c:c});
+      const TIMBER=FELT_PAL[(k*3)%FELT_PAL.length];
       for(const px of [-1,1]){
-        posts.push({x:bx+s2.t.x*px*W*0.5, y:by+H*0.5, z:bz+s2.t.z*px*W*0.5,
-                    s:2.3, sy:H, sz:2.3, ry:yaw, c:FELT_PAL[(k*3)%FELT_PAL.length]});
+        P(px*W*0.5, 0, by+H*0.5, 4.6, H, 3.4, TIMBER);          // upright
+        P(px*W*0.5, 0, by+2.2, 8.4, 4.4, 6.6, 0x3a2a24);        // its foot, on the ground
       }
-      beams.push({x:bx, y:by+H, z:bz, s:W+4, sy:2.6, sz:3.2, ry:yaw, c:0x4a3a2e});
-      // the cloth itself: stacked slats, so it stripes exactly like the road it dresses
-      const rows=5, drop=H*0.52;
+      P(0, 0, by+H,      5.6, 4.2, W+11, 0x4a3a2e);             // cloth beam, ends overhung
+      P(0, 0, by+7.0,    5.2, 3.6, W+8,  0x4a3a2e);             // breast beam
+      P(0, 3.6, by+H*0.44, 2.6, 2.4, W+5, 0x2a1c18);            // heddle bar, set BEHIND
+      // the warp: a curtain of threads on an uneven sett, which is what a hand-dressed
+      // loom looks like and what a ruled grid does not
+      const NW=9+(k%3)*2;
+      for(let t3=0;t3<NW;t3++){
+        const f2=(t3+0.5)/NW-0.5;
+        P(f2*W*0.92+((k*3+t3*7)%5-2)*0.22, -0.4, by+(H+7)*0.5, 0.85, H-7.0, 0.85,
+          (t3%4===1)?0xe8b22a:0xe8e4d9);
+      }
+      // woven cloth rolling down off the head beam, in front of the warp and with depth
+      const rows=6, drop=H*0.42;
       for(let r=0;r<rows;r++){
-        cloth.push({x:bx, y:by+H-2.4-drop*(r+0.5)/rows, z:bz,
-                    s:W*0.86, sy:drop/rows*0.92, sz:1.1, ry:yaw,
-                    c:FELT_PAL[(k*2+r*3)%FELT_PAL.length]});
+        P(0, -2.4, by+H-2.6-drop*(r+0.5)/rows, 3.2, drop/rows*0.94, W*0.94,
+          FELT_PAL[(k*2+r*3)%FELT_PAL.length]);
       }
-      // spools stacked at the foot, which is what stops the frame looking planted in nothing
-      for(let q=0;q<3;q++){
-        const t2=((k*13+q*29)%20)/20-0.5;
-        spools.push({x:bx+s2.t.x*t2*W, y:by+1.6+q*0.3, z:bz+s2.t.z*t2*W,
-                     s:2.1+((k+q)%3)*0.5, sy:3.0+((k*q)%4)*0.6, sz:2.1+((k+q)%3)*0.5,
+      P(-W*0.18, -4.6, by+H-2.6-drop-1.4, 2.4, 1.8, W*0.30, 0x8a5a2e);   // the shuttle
+      // warp weights: stones tied to the foot of every third thread
+      for(let t3=1;t3<NW;t3+=3){
+        const f2=(t3+0.5)/NW-0.5;
+        sph.push({x:bx+ux*(f2*W*0.92)+vx*-0.4, y:by+9.4, z:bz+uz*(f2*W*0.92)+vz*-0.4,
+                  s:1.9, sy:2.6, sz:1.9, c:0x5a6b84});
+      }
+      // spools and skeins piled at the foot — the thing that stops a frame looking planted
+      // in nothing, and the course's third fibre state (spun thread) at readable size
+      for(let q=0;q<5;q++){
+        const t2=((k*13+q*29)%22)/22-0.5;
+        spools.push({x:bx+ux*t2*W*1.15+vx*(3.5+(q%2)*3), y:by+2.4+(q%2)*2.6,
+                     z:bz+uz*t2*W*1.15+vz*(3.5+(q%2)*3),
+                     s:2.6+((k+q)%3)*0.7, sy:4.4+((k*q)%4)*0.9, sz:2.6+((k+q)%3)*0.7,
                      rx:Math.PI*0.5, ry:yaw, c:FELT_YARN[(k+q)%FELT_YARN.length]});
       }
     }
+
+    /* SPUN THREAD, the third fibre state, finally at the scale it needs. Half-buried yarn
+       tangles and small stones scattered right across the valley floor including the
+       INFIELD, which a loop course shows you on every corner and which otherwise reads as
+       an empty slab. Nothing here is close enough to the road to be driven through, and
+       every one is seated on the terrain it landed on. */
+    const yarn=[], stone=[];
+    // Restrained on purpose. The first pass at this put ~350 saturated loops across the
+    // basin and the infield came back looking like spilled confetti — bright arcs at
+    // every distance, competing with the racing line for attention. A quarter of the
+    // count, in the palette's dark half only, and kept 130 units back from the road, so
+    // it is a TEXTURE on the ground rather than a layer of objects on top of it.
+    const YDARK=[0x2438a8,0x1b2350,0x3a1440,0x170a24,0xc11b2e,0x1b2350];
+    for(let k=0;k<340;k++){
+      const a=((k*2.399)%6.283), r=140+((k*137)%580);
+      const jx=ccx+Math.cos(a)*r, jz=ccz+Math.sin(a)*r;
+      const sz=3.0+((k*29)%40)/10;
+      if(harbTrackDist(jx,jz)<130 || !harbClearOK(jx,jz,sz+4)) continue;
+      const gy=feltHeight(jx,jz,null,innerSign);
+      if(k%4===0){
+        yarn.push({x:jx, y:gy+sz*0.14, z:jz, s:sz, sy:sz, sz:sz*(0.6+((k*7)%40)/70),
+                   rx:Math.PI*0.5+(((k*13)%20)-10)/34, ry:((k*23)%628)/100,
+                   c:YDARK[k%YDARK.length]});
+      } else {
+        stone.push({x:jx, y:gy+sz*0.10, z:jz, s:sz*0.9, sy:sz*0.32, sz:sz*0.8,
+                    rx:((k*3)%628)/100, ry:((k*19)%628)/100,
+                    c:[0x3d4a5c,0x2a0f30,0x141a3c,0x6a7458][k%4]});
+      }
+    }
+    if(yarn.length)  trackGroup.add(feltBatch(new T.TorusGeometry(1,0.13,6,14,Math.PI*1.55), yarn));
+    if(stone.length) trackGroup.add(feltBatch(FELT_PUFF0, stone));
+
+    /* THE HERD. The reference's whole world is built around one animal, and a racer that
+       goes past a landscape with nothing alive in it feels like a set. These are big —
+       thirty units at the shoulder — and they stand on the ridges OUTSIDE the circuit
+       where the road runs toward them, so they read as a silhouette on a skyline rather
+       than as a prop you pass. All of them share four instanced batches with everything
+       else in this branch, so the whole herd costs no extra draw calls. */
+    const llama=(lx,ly,lz,S,ry)=>{
+      const cs=Math.cos(ry), sn=Math.sin(ry);
+      const at=(ax,ay,az)=>({x:lx+(ax*cs+az*sn)*S, y:ly+ay*S, z:lz+(az*cs-ax*sn)*S});
+      const CR=0xe8e4d9, SH=0xcfc9ba;
+      const put=(arr,ax,ay,az,sx,sy2,sz2,c,rx)=>{ const p=at(ax,ay,az);
+        arr.push({x:p.x,y:p.y,z:p.z,s:sx*S,sy:sy2*S,sz:sz2*S,ry:ry,rx:rx||0,c:c}); };
+      put(sph, 0,1.55,0,   1.75,1.50,2.55, CR);          // barrel
+      put(sph, 0,1.40,-1.6,1.28,1.15,1.30, CR);          // haunch
+      put(cyl, 0,3.55,1.05,0.74,3.60,0.74, CR);          // neck
+      put(sph, 0,5.42,1.36,0.62,0.66,0.80, CR);          // head
+      put(sph, 0,5.02,2.16,0.38,0.34,0.78, SH);          // snout, long enough to read
+      for(const s3 of [-1,1]){
+        // Oversized on purpose. At the distance this is seen from the road the whole
+        // animal is a hundred pixels tall and only the OUTLINE survives; two long spikes
+        // off the top of a small head is the entire difference between reading as a llama
+        // and reading as an unidentified pale lump.
+        put(cone, 0.34*s3,6.30,1.16, 0.26,1.05,0.26, CR);            // ears
+        put(cyl,  0.86*s3,0.85,0.95, 0.30,1.90,0.30, SH);            // fore legs
+        put(cyl,  0.80*s3,0.85,-1.5, 0.30,1.90,0.30, SH);            // hind legs
+        put(sph,  0.40*s3,5.42,1.80, 0.15,0.15,0.15, 0xc11b2e);      // the red stare
+      }
+      put(cone, 0,2.30,-2.5, 0.28,0.55,0.28, CR, Math.PI*0.82);      // tail
+      put(sph,  0,5.90,1.42, 0.44,0.30,0.40, 0xe8408c);              // pink headdress tuft
+      // fleece: puffs over the barrel, which is the whole reason it reads as felted.
+      // Kept above the knee so the legs stay in the silhouette — at the first size they
+      // swallowed the whole animal and it read as a bird on a mound.
+      for(let q=0;q<24;q++){
+        const a=(q*2.399), v2=Math.acos(1-2*((q+0.5)/24));
+        const px=Math.sin(v2)*Math.cos(a)*1.66, py=Math.cos(v2)*1.10+1.75,
+              pz=Math.sin(v2)*Math.sin(a)*2.34;
+        if(py<1.05) continue;
+        const p=at(px,py,pz), ps=(0.34+((q*7)%5)*0.07)*S;
+        clumps.push({x:p.x,y:p.y,z:p.z, s:ps, sy:ps*0.86, sz:ps,
+                     ry:(q*1.7)%6.28, c:(q%7)?CR:0xe8b8cc});
+      }
+      // three tufts tight against the feet, low. An earlier version ringed the animal at
+      // radius 2 and squashed them flat, which drew a pale plank under it and made it look
+      // more airborne, not less.
+      for(let q=0;q<3;q++){
+        const a=q*2.1, p=at(Math.cos(a)*1.1, 0.35, Math.sin(a)*1.5), ps=(0.62+(q%3)*0.16)*S;
+        clumps.push({x:p.x,y:p.y,z:p.z, s:ps, sy:ps*0.72, sz:ps,
+                     ry:(q*2.1)%6.28, c:(q%2)?0xd6cfbe:CR});
+      }
+    };
+    /* Sited NEAR, not far. Placed out on the ridges they read as a pale shape against a
+       bright sky with nothing under them, because at four hundred units the hill they are
+       standing on has fogged to almost the sky's own value — so however carefully the
+       ground is measured, the picture says floating. On the valley floor eighty to a
+       hundred and thirty units out, the road stands seventeen above them and you look
+       DOWN on them against dark wool, which is what actually reads as standing on
+       something. Smaller to match the distance. */
+    { const put=[];
+      for(let k=0;k<STEPS && put.length<4;k+=17){
+        const s2=SAMP[k], side=((k/17|0)%2)?1:-1;
+        if(side*innerSign>0) continue;                  // outside the bowl only
+        for(const mul of [3.7,4.5,5.4,6.4]){
+          const out=HW*mul;
+          const lx=s2.p.x+s2.n.x*side*out, lz=s2.p.z+s2.n.z*side*out;
+          const f=feltField(lx,lz);
+          // The terrain MESH is an 11-unit grid, so the analytic height can sit several
+          // units above the triangle actually drawn under it — which on a ridge is the
+          // difference between an animal standing on a hill and one hovering over it.
+          // Take the lowest of five probes across a grid cell and sink a little further.
+          let gy=feltHeight(lx,lz,f,innerSign);
+          for(const [ox,oz] of [[-9,0],[9,0],[0,-9],[0,9]])
+            gy=Math.min(gy, feltHeight(lx+ox,lz+oz,null,innerSign));
+          if(gy>f.sy-6) continue;                       // must be BELOW the road, not on it
+          // and the ground 60 further out must not have fallen away, or it stands on the
+          // lip of a drop and the horizon cuts under its feet
+          const dx2=(lx-s2.p.x), dz2=(lz-s2.p.z), dl=Math.hypot(dx2,dz2)||1;
+          if(feltHeight(lx+dx2/dl*60, lz+dz2/dl*60, null, innerSign) < gy-6) continue;
+          if(!harbClearOK(lx,lz,18)) continue;
+          let near=false;
+          for(const q of put){ const dx=q[0]-lx, dz=q[1]-lz;
+            if(dx*dx+dz*dz < 260*260){ near=true; break; } }
+          if(near) continue;
+          put.push([lx,lz]);
+          llama(lx, gy-1.6, lz, 3.9, Math.atan2(s2.p.x-lx, s2.p.z-lz));  // facing the road
+          break;
+        }
+      }
+    }
+
     const BOX=new T.BoxGeometry(1,1,1);
     trackGroup.add(feltBatch(FELT_PUFF, clumps));
-    trackGroup.add(feltBatch(BOX.clone(), posts));
-    trackGroup.add(feltBatch(BOX.clone(), beams));
-    trackGroup.add(feltBatch(BOX.clone(), cloth));
+    trackGroup.add(feltBatch(BOX.clone(), box));
     trackGroup.add(feltBatch(new T.CylinderGeometry(1,1,1,10), spools));
+    if(sph.length)  trackGroup.add(feltBatch(new T.SphereGeometry(1,10,8), sph));
+    if(cyl.length)  trackGroup.add(feltBatch(new T.CylinderGeometry(0.8,1,1,8), cyl));
+    if(cone.length) trackGroup.add(feltBatch(new T.ConeGeometry(1,2,7), cone));
     BOX.dispose();
   } else if(bead){
     // Oversized bead orbs, exactly the two magenta spheres flanking the reference plinth.
@@ -8281,6 +8804,10 @@ function frame(now){
     hemi.intensity=A.hemi*(1-k*0.035);
     rim.intensity=A.rim*(1-k*0.10);
   }
+  // Felicia's cloud ring. One revolution takes about twelve minutes — you never catch it
+  // moving, you only notice the skyline is not where you left it. That is the whole brief
+  // for background motion: parallax, not animation.
+  if(TRACK_PULSE.feltClouds) TRACK_PULSE.feltClouds.rotation.y=tsec*0.0086;
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
