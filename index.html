@@ -11813,7 +11813,18 @@ buildRacers = function(){
     // road width) instead of almost on top of it — spawning this close put the chase
     // camera and the countdown's orbit cam right in the gate geometry for the opening
     // seconds, reading as a giant lit band stuck across the screen
-    const pos=s.p.clone().addScaledVector(s.n,lane).addScaledVector(s.t,-(45+k*8));
+    // ...and walk that distance back ALONG the centreline rather than projecting a straight
+    // line off the start sample: on a course that starts in a bend (Marina) the straight
+    // line left the back of the grid 30+ units off the road, idling beside the raised pool
+    // until the lights went and every kart snapped onto the water.
+    // A point-to-point course has no "behind the start" to walk into — wrapping would put
+    // the grid on the FINISH line — so there the walk stops at the first sample and the
+    // remainder runs straight back off it, exactly as before.
+    const want=45+k*8, wrap=TRACKS[selTrack].loop!==false;
+    let g=2, back=0;
+    while(back<want && (wrap || g>0)){ const q=(g-1+STEPS)%STEPS; back+=SAMP[g].p.distanceTo(SAMP[q].p); g=q; }
+    const sg=SAMP[g];
+    const pos=sg.p.clone().addScaledVector(sg.n,lane).addScaledVector(sg.t,-Math.max(0,want-back));
     obj.position.copy(pos);
     scene.add(obj);
     // soft ground shadow disc that grounds the racer
@@ -11825,7 +11836,7 @@ buildRacers = function(){
       remote: !!(np && np.id!==NET.self),
       human: !!np,
       x:pos.x, z:pos.z, y:pos.y,
-      head:Math.atan2(s.t.x,s.t.z),
+      head:Math.atan2(sg.t.x,sg.t.z),    // facing along the road where it stands
       spd:0, idx:2, prog:s.u, lap:0, total:0,
       drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
