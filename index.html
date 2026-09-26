@@ -2239,8 +2239,10 @@ const TRACKS=[
           melB:[12,15,12,15, 10,12,15,17, 15,12,10,8, 10,null,12,null],
           bass:[0,2,3,2] },
    tunnels:[[0.26,0.34],[0.64,0.72]], critters:[0.48], pills:[0.18], dams:[0.78],
+   // one change from the mirror: the road comes down off the south shoulder to run a
+   // causeway a few units above the lake (y -10 at the 9th point), then climbs to the line
    ctrl:[[-330,10,230],[-430,26,-40],[-300,46,-300],[-40,62,-400],[240,50,-320],
-         [400,32,-70],[320,20,170],[90,14,330],[-150,10,380],[-290,10,320]]},
+         [400,32,-70],[320,20,170],[90,12,340],[-150,-10,395],[-290,6,320]]},
 ];
 const STEPS=700;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
@@ -2893,6 +2895,12 @@ const fSm=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-
 // side of the road the point is on.
 let FELT_GEO=null;                      // {x,z,y} decimated centreline, module-level for reuse
 let FELT_NOTCH=null;                    // Aurora's sunrise col {x,z,a}; null on every other build
+let FELT_LAKE=null;                     // Aurora's lake {x,z,y,r}; null on every other build
+// True where a prop would stand in Aurora's lake. Always false on Felicia.
+function feltWet(x,z,y){
+  const L=FELT_LAKE; if(!L) return false;
+  return y < L.y+1.5 && Math.hypot(x-L.x, z-L.z) < L.r;
+}
 function feltField(x,z){
   let best=1e18, by=0, ysum=0, wsum=0, blat=0;
   for(let k=0;k<FELT_GEO.length;k++){
@@ -3244,7 +3252,107 @@ function dawnBalloon(k){
   flame.position.y=-5.6; g.add(flame);
   return {g, flame};
 }
+/* SPIRES. Felicia's crowns are single seven-sided cones, and at dawn they stood in the
+   haze as a row of flat grey triangles that overlapped one another like cut paper. A
+   form in aerial perspective still needs STRUCTURE to read as land rather than as a
+   shape: these are stacks of weathered felt strata — tapering tiers with a ledge at every
+   bedding plane, clustered with one or two lower towers so each reads as a massif with a
+   history instead of a solitary spike. Built dark at the foot and paler toward the top,
+   where the low sun finds them first; one in three has its crown already lit gold. Fog
+   still greys them off with distance, so the value ladder of the range is unchanged. */
+const SPIRE_BASE=[0x1f4a52,0x243e5c,0x2f5a4c,0x1a3348,0x3a5670,0x163a40];
+function dawnSpire(tiers, ledges, cx, gy, cz, H, R, i){
+  const lit=(i%3)===0, base=new T.Color(), hi=new T.Color(0x86aeb0), gold=new T.Color(0xc98a48);
+  const col=(k,n,top)=>{
+    base.setHex(SPIRE_BASE[(i+k)%SPIRE_BASE.length]).lerp(hi, 0.10+0.45*(k/n));
+    if(lit && top) base.lerp(gold, 0.85);
+    return base.getHex();
+  };
+  const cols=[[0,0,1.0,1.0]];
+  const nSat=1+(i%2);
+  for(let q=0;q<nSat;q++){
+    const a=((i*2.3+q*2.1)%6.283), d=R*(0.55+0.2*q);
+    cols.push([Math.cos(a)*d, Math.sin(a)*d, 0.42+((i*7+q*13)%25)/100, 0.62]);
+  }
+  for(const [ox,oz,hk,rk] of cols){
+    // Each bed is a lumpy felt slab, not a turned cylinder: machined tiers read as silos
+    // and chimneys. Beds overlap a fifth of their height so the stack is one mass, and
+    // every other bed is wider than the one under it — the overhang is what says
+    // "eroded rock" rather than "built thing", and it throws a shadow line at each plane.
+    const HH=H*1.12*hk, n=5+((i+Math.round(hk*10))%3)+(hk>0.9?2:0);
+    let r=R*0.62*rk, x=cx+ox, z=cz+oz;
+    // seat on the LOWEST ground under the footprint, or a stack on a crest hangs its
+    // foot over the far slope and floats
+    let y=feltHeight(x,z,null,innerSign);
+    for(const [ax,az] of [[1,0],[-1,0],[0,1],[0,-1]]) y=Math.min(y, feltHeight(x+ax*r, z+az*r, null, innerSign));
+    y-=H*0.12;
+    for(let k=0;k<n;k++){
+      const th=HH/n*(0.80+((i*11+k*17)%45)/100);
+      const top=(k===n-1), over=(k%2===1)?1.10:0.96;
+      tiers.push({x, y:y+th*0.5, z, s:r*over, sy:th*0.82, sz:r*over*(0.78+((i+k)%5)*0.06),
+                  ry:((i*13+k*29)%628)/100, rx:(((i*3+k)%7)-3)*0.02, c:col(k,n,top)});
+      y+=th*0.80;
+      x+=(((i*5+k*3)%9)-4)*r*0.05; z+=(((i*3+k*7)%9)-4)*r*0.05;   // the stack leans
+      r*=0.84+((i*3+k*5)%12)/100;
+    }
+  }
+}
+/* THE LAKE. The negative turned Felicia's black basin into pale haze that already read
+   like water from a distance, so here it is made literal: one sheet at a fixed level
+   in the low ground the causeway crosses. The shader reflects the dawn sky through slow
+   wind ripples — apricot where it faces the sun, mint away from it, a glitter path on the
+   sun line — fogs itself like the land, keeps the poster banding, and fades at its rim
+   so the shoreline is wherever the felt climbs out of it. */
+function dawnLake(L){
+  const mat=new T.ShaderMaterial({ transparent:true, depthWrite:true,
+    uniforms:{ uTime:{value:0}, uSun:{value:DAWN_SUN.clone()}, uC:{value:new T.Vector2(L.x,L.z)},
+      uR:{value:L.r}, uFog:{value:new T.Color(0xd4ece2)},
+      uNear:{value:scene.fog.near}, uFar:{value:scene.fog.far} },
+    vertexShader:`varying vec3 vW; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz;
+      gl_Position=projectionMatrix*viewMatrix*w; }`,
+    fragmentShader:`
+      varying vec3 vW; uniform float uTime,uR,uNear,uFar; uniform vec3 uSun,uFog; uniform vec2 uC;
+      vec3 sky(vec3 d){
+        float el=max(d.y,0.0), sd=dot(d,uSun);
+        vec3 c=mix(vec3(0.831,0.925,0.886), vec3(0.600,0.870,0.860), smoothstep(0.02,0.30,el));
+        c=mix(c, vec3(0.330,0.640,0.760), smoothstep(0.26,0.95,el));
+        c=mix(c, vec3(1.000,0.820,0.600), pow(max(sd,0.0),5.0)*(1.0-smoothstep(0.0,0.55,el))*0.85);
+        float anti=smoothstep(0.1,0.9,-sd);
+        c=mix(c, vec3(0.930,0.780,0.820), anti*(1.0-smoothstep(0.02,0.20,el))*0.6);
+        return c;
+      }
+      void main(){
+        vec2 p=vW.xz; float t=uTime;
+        // four travelling swells; the gradient of their sum is the surface slope
+        vec2 g=vec2(0.0);
+        g+=vec2(0.09,0.0)*cos(p.x*0.09+t*0.60);
+        g+=vec2(0.0,0.07)*cos(p.y*0.07-t*0.45);
+        g+=vec2(0.16,0.16)*0.6*cos((p.x+p.y)*0.16+t*0.90);
+        g+=vec2(0.23,-0.23)*0.4*cos((p.x-p.y)*0.23-t*1.20);
+        g+=vec2(0.61,0.37)*0.15*cos(p.x*0.61+p.y*0.37+t*2.1);
+        vec3 N=normalize(vec3(-g.x*0.22,1.0,-g.y*0.22));
+        vec3 V=normalize(vW-cameraPosition);
+        vec3 R=reflect(V,N); R.y=abs(R.y);
+        // Morning water is the brightest ground in the picture — it is a mirror held up to
+        // the palest part of the sky — so the body colour is a light sea-glass, not a depth.
+        float fres=0.45+0.55*pow(1.0-max(dot(-V,N),0.0),3.0);
+        vec3 deep=vec3(0.470,0.720,0.700);
+        vec3 c=mix(deep, sky(R), fres);
+        float gl=pow(max(dot(R,uSun),0.0),260.0);
+        c+=vec3(1.0,0.90,0.70)*gl*1.6;                  // the glitter path
+        c=floor(c*13.0+0.5)/13.0;                       // the poster banding, as the sky
+        float dist=length(vW-cameraPosition);
+        c=mix(c, uFog, smoothstep(uNear,uFar,dist));
+        float a=1.0-smoothstep(uR*0.78,uR,length(p-uC));
+        gl_FragColor=vec4(c,a);
+      }`});
+  const m=new T.Mesh(new T.CircleGeometry(L.r,96).rotateX(-Math.PI/2), mat);
+  m.position.set(L.x, L.y, L.z); m.renderOrder=-1; m.frustumCulled=false;
+  m.userData.dawnKeep=true;
+  return m;
+}
 function dawnDressing(inner, ccx, ccz){
+  if(FELT_LAKE){ const lk=dawnLake(FELT_LAKE); trackGroup.add(lk); TRACK_PULSE.dawnLake=lk.material; }
   /* BALLOONS. Morning is when balloons fly — the air is still and cool — and they give the
      sky what Felicia's never had: things at several DEPTHS in it, which is what makes a sky
      read as air instead of a backdrop. Six, all well outside the circuit, each climbing a
@@ -3319,7 +3427,8 @@ function dawnDressing(inner, ccx, ccz){
       const min=side*inner>0 ? HW*2.25 : HW*1.35;
       const out=min+((i*41)%60);
       const x=s2.p.x+s2.n.x*side*out, z=s2.p.z+s2.n.z*side*out;
-      P.push(x, feltSeat(s2, side, out, inner)+0.8, z);
+      const gy2=feltSeat(s2, side, out, inner); if(feltWet(x,z,gy2)) continue;
+      P.push(x, gy2+0.8, z);
     }
     const pg=new T.BufferGeometry(); pg.setAttribute('position',new T.Float32BufferAttribute(P,3));
     const pm=new T.PointsMaterial({color:0xffffff, size:1.6, transparent:true, opacity:0.5, depthWrite:false});
@@ -3951,6 +4060,7 @@ function buildTrack(idx){
   applyTrackLighting(bead, pool, coil, paint, felt, macro);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
+  FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
   // works off the authored values rather than off whatever it left behind last frame.
   // Cleared for every other course by the TRACK_PULSE reset at the top of this function.
@@ -4222,6 +4332,11 @@ function buildTrack(idx){
     // Shared state, so assigned on both felt courses (and cleared above for the rest):
     // the col is apexed on the opening run and points along the sun's azimuth.
     FELT_NOTCH = dawn ? {x:SAMP[40].p.x, z:SAMP[40].p.z, a:Math.atan2(DAWN_SUN.z, DAWN_SUN.x)} : null;
+    // The lake sits wherever the road runs lowest, five units under the deck: the valley
+    // floor there is the embankment's own toe (road-17), so the water fills the basin the
+    // causeway dips into and the shore is simply where the ground climbs back out.
+    if(dawn){ let lo=0; for(let i=1;i<STEPS;i++) if(SAMP[i].p.y<SAMP[lo].p.y) lo=i;
+      FELT_LAKE={x:SAMP[lo].p.x, z:SAMP[lo].p.z, y:SAMP[lo].p.y-5, r:430}; }
     for(let i=0;i<STEPS;i+=9){ const s2=SAMP[i];
       FELT_GEO.push({x:s2.p.x, y:s2.p.y, z:s2.p.z, nx:s2.n.x, nz:s2.n.z}); }
     trackGroup.add(feltTerrain(innerSign));
@@ -4256,7 +4371,7 @@ function buildTrack(idx){
        of big banded spurs seated on the ridges they crown — the occasional sharp peak
        that breaks a soft skyline, which is the only job a cone has left. Placed by
        walking the outer ring and only accepting spots the terrain has actually lifted. */
-    const ridge=[], PK=[];
+    const ridge=[], PK=[], tiers=[], ledges=[];
     for(let i=0;i<STEPS;i+=11){
       const s2=SAMP[i], side=((i/11|0)%2)?1:-1;
       if(side*innerSign>0) continue;                    // outside the loop only
@@ -4284,11 +4399,16 @@ function buildTrack(idx){
       // (the gold is authored a step deeper than it looks: under the dawn key 0xe9b870 came
       // back as a cream glacier, the exact failure the palette note above warns about)
       const CPD=[0x1f4a52,0x243e5c,0x2f5a4c,0x1a3348,0x3a5670,0x163a40,0x2c4a5e,0xc98a48];
+      if(dawn){ dawnSpire(tiers, ledges, cx, gy, cz, H, R, i); continue; }
       ridge.push({x:cx, y:gy+H*0.5-H*0.28, z:cz, s:R, sy:H, sz:R*(0.78+((i*41)%40)/100),
                   ry:((i*13)%628)/100, c:(dawn?CPD:CP)[(i/11|0)%CP.length]});
     }
     if(ridge.length){ const rm=feltBatch(new T.ConeGeometry(1,1,7,1), ridge);
       if(dawn) rm.userData.dawnKeep=true; trackGroup.add(rm); }
+    if(tiers.length){
+      const tm=feltBatch(FELT_PUFF, tiers);
+      tm.userData.dawnKeep=true; trackGroup.add(tm);
+    }
 
     /* CLOUD BANKS. Flat-shaded lumps well above the ridge line, unfogged so they stay a
        hard silhouette against the poster sky, drifting on TRACK_PULSE. This is the one
@@ -5974,6 +6094,7 @@ function buildTrack(idx){
       const cx=s2.p.x+s2.n.x*side*out+(((k*23)%30)-15),
             cz=s2.p.z+s2.n.z*side*out+(((k*31)%30)-15);
       if(!harbClearOK(cx,cz,sz)) continue;
+      if(feltWet(cx,cz,feltHeight(cx,cz,null,innerSign))) continue;
       clumps.push({x:cx, y:feltHeight(cx,cz,null,innerSign)+sz*0.30, z:cz,
                    s:sz, sy:sz*(0.52+((k*7)%30)/70), sz:sz*(0.86+((k*5)%20)/70),
                    ry:((k*19)%628)/100, c:FELT_BANK[k%FELT_BANK.length]});
@@ -6009,6 +6130,7 @@ function buildTrack(idx){
       if(!harbClearOK(bx,bz,12)) continue;
       const yaw=Math.atan2(ux,uz);                     // local X -> v (out), local Z -> u
       const by=feltHeight(bx,bz,null,innerSign)-2.5;
+      if(feltWet(bx,bz,by+2.5)) continue;
       const P=(dx,dv,y,sv,sy,su,c,ry)=>box.push({
         x:bx+ux*dx+vx*dv, y:y, z:bz+uz*dx+vz*dv, s:sv, sy:sy, sz:su,
         ry:ry==null?yaw:ry, c:c});
@@ -6070,6 +6192,7 @@ function buildTrack(idx){
       const sz=3.0+((k*29)%40)/10;
       if(harbTrackDist(jx,jz)<130 || !harbClearOK(jx,jz,sz+4)) continue;
       const gy=feltHeight(jx,jz,null,innerSign);
+      if(k%4===0 && feltWet(jx,jz,gy)) continue;       // yarn would float; stones may drown
       if(k%4===0){
         yarn.push({x:jx, y:gy+sz*0.14, z:jz, s:sz, sy:sz, sz:sz*(0.6+((k*7)%40)/70),
                    rx:Math.PI*0.5+(((k*13)%20)-10)/34, ry:((k*23)%628)/100,
@@ -6161,6 +6284,7 @@ function buildTrack(idx){
           const dx2=(lx-s2.p.x), dz2=(lz-s2.p.z), dl=Math.hypot(dx2,dz2)||1;
           if(feltHeight(lx+dx2/dl*60, lz+dz2/dl*60, null, innerSign) < gy-6) continue;
           if(!harbClearOK(lx,lz,18)) continue;
+          if(feltWet(lx,lz,gy)) continue;
           let near=false;
           for(const q of put){ const dx=q[0]-lx, dz=q[1]-lz;
             if(dx*dx+dz*dz < 260*260){ near=true; break; } }
@@ -9976,6 +10100,7 @@ function frame(now){
     F.g.rotation.y=-a-Math.PI/2;           // heading along the circle
     for(const b of F.birds){ const w=Math.sin(tsec*2.2+b.ph)*0.45; b.wl.rotation.x=-w; b.wr.rotation.x=w; }
   }
+  if(TRACK_PULSE.dawnLake) TRACK_PULSE.dawnLake.uniforms.uTime.value=tsec;
   if(TRACK_PULSE.dawnDew) for(const d of TRACK_PULSE.dawnDew)
     d.m.opacity=0.25+0.4*Math.max(0,Math.sin(tsec*1.3+d.ph));
   // rubber ducks ride a slow swell — the one background motion on the pond, kept at the
