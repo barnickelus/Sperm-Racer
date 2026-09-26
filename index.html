@@ -2075,7 +2075,7 @@ const TRACKS=[
      lets each character's bass and drums do whatever their genre does underneath it.
      Rhythmically it is sparse — long notes and rests, not a stream of eighths — because a
      dense melody leaves a one-drop nowhere to breathe and buries a four-on-the-floor. */
-  {name:'Ophelia',  key:0, tempo:220, sky:0x3a2632, tunnels:[[0.30,0.40]],
+  {name:'Ophelia',  ophelia:true, key:0, tempo:220, sky:0xdfe6d6, tunnels:[[0.30,0.40]],
    song:{ name:"Ophelia's Run",
           mel: [0,null,3,5,   7,null,7,5,   3,null,5,7,   5,null,3,null],
           melB:[12,null,10,7, 10,null,12,15, 15,null,12,10, 7,null,5,null],
@@ -4375,6 +4375,842 @@ function harbGullGeo(){
   g.computeVertexNormals(); return g;
 }
 
+/* ============== THE STREAM: Ophelia's dressing kit ============== *
+ * The first course anyone plays, dressed as the setting of Millais' OPHELIA (1851-52):
+ * a slow English stream in high summer, banks thick with botanically exact flowers, a
+ * crack willow leaning over the water. The figure is not here; the place, the palette
+ * and the way it is painted are.
+ * The PAINTING is the brief, not only the subject. The Pre-Raphaelites laid jewel-bright
+ * local colour over a wet white ground and refused atmospheric softening, so everything
+ * here is crisp and faceted, colours are decoded so they land as authored, and the fog
+ * only starts a long way out.
+ * THE VALUE LADDER, lightest to darkest:
+ *   summer sky > meadowsweet & daisies > lit meadow > willow > bank > copses > water
+ * The racing channel is the darkest large shape in the frame: a black-green ribbon laid
+ * through light green under a pale sky, silvering toward the distance where it takes the
+ * sky (Fresnel), which is the read that says RIVER before any detail does. The saturated
+ * notes (magenta loosestrife, forget-me-not blue, poppy red) are kept to the waterline,
+ * which is exactly where the eye has to be at 140 units/s.
+ * WHERE THINGS MAY STAND. The stream runs from the outside bank (toe 29.5) to the infield
+ * bank (toe 49) — past the 28.2 wall and the 48.4 apron limit. Between road edge and bank
+ * is SHALLOWS: drivable, lighter, gravel and water-crowfoot, the honest read of "off the
+ * racing line". In the willow tunnel the infield bank closes in to 29.5 (the corridor is
+ * 28.2 both sides there), so the stream narrows under the trees. Every prop is seated on
+ * the terrain function H() it shares with the ground mesh, and anything that reaches over
+ * the corridor is held at least 23 above the water there (chase cam +13, mega +18).
+ * ---------------------------------------------------------------------------------- */
+const OPH={
+  haze:0xdfe6d6,                      // horizon haze = fog colour (raw: fog mixes after encoding)
+  sun:new T.Vector3(150,170,70).normalize(),
+  flow:4.0,                           // units/s: the current, for the water and the flowers
+  toeOut:29.5, toeIn:49.0, toeTun:29.5
+};
+// shared clock for the wind-sway shaders; module-level and harmless on every other course
+const OPH_T={value:0};
+function ophHash(x,y){ const h=Math.sin(x*127.1+y*311.7)*43758.5453; return h-Math.floor(h); }
+function ophNoise(x,y){ const ix=Math.floor(x), iy=Math.floor(y), fx=x-ix, fy=y-iy;
+  const ux=fx*fx*(3-2*fx), uy=fy*fy*(3-2*fy);
+  const a=ophHash(ix,iy), b=ophHash(ix+1,iy), c=ophHash(ix,iy+1), d=ophHash(ix+1,iy+1);
+  return a+(b-a)*ux+(c-a)*uy+(a-b-c+d)*ux*uy; }
+function ophSS(a,b,x){ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); }
+// r128 never decodes authored hexes, so an sRGB palette comes out a stop pale. Decode, the
+// same fix the macro kit uses, so the jewel colours land as written.
+const _ophC=new T.Color();
+function ophLin(hex){ return _ophC.setHex(hex).convertSRGBToLinear(); }
+// Faceted lumps: an icosahedron pushed off-sphere, non-indexed so every face is flat. Crisp
+// facets rather than soft balls is the Pre-Raphaelite edge, and it is also cheaper.
+// detail 1 is a DODECAHEDRON (36 tris, 12 facets): the crowns read as faceted masses at a
+// fraction of an icosahedron-1's 80 — and crowns were half the course's triangle budget.
+function ophLumpGeo(detail, seed){
+  const g=detail?new T.DodecahedronGeometry(1,0):new T.IcosahedronGeometry(1,0), p=g.attributes.position, v=new T.Vector3();
+  for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i);
+    const h=Math.sin(v.x*12.9898*seed+v.y*78.233+v.z*37.719)*43758.5453;
+    v.multiplyScalar(0.76+(h-Math.floor(h))*0.42); p.setXYZ(i,v.x,v.y,v.z); }
+  g.computeVertexNormals(); return g;
+}
+function ophMat(){ return new T.MeshLambertMaterial({color:0xffffff}); }
+// Wind. Displaces in WORLD space after the instance transform, weighted by |local y| so a
+// blade's root (y=0) is pinned and its tip (|y|=1) moves. The phase comes from the
+// instance's own position, so a clump sways together and the next clump is out of step —
+// a breeze crossing the bank, not a metronome.
+function ophSwayMat(amp){
+  const m=ophMat();
+  m.onBeforeCompile=sh=>{ sh.uniforms.uT=OPH_T;
+    sh.vertexShader='uniform float uT;\n'+sh.vertexShader.replace('#include <project_vertex>',
+`vec4 mvPosition = vec4( transformed, 1.0 );
+#ifdef USE_INSTANCING
+  mvPosition = instanceMatrix * mvPosition;
+  { float k=clamp(abs(position.y),0.0,1.0); k*=k;
+    float ph=instanceMatrix[3][0]*0.047+instanceMatrix[3][2]*0.031;
+    float w=sin(uT*0.83+ph)*0.7+sin(uT*2.1+ph*1.7)*0.3;
+    mvPosition.x+=w*k*${amp.toFixed(2)}; mvPosition.z+=w*k*${(amp*0.55).toFixed(2)}; }
+#endif
+mvPosition = modelViewMatrix * mvPosition;
+gl_Position = projectionMatrix * mvPosition;`); };
+  m.customProgramCacheKey=()=>'ophSway'+amp;
+  return m;
+}
+/* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
+   (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
+   is cut into 300-unit ground cells, and each cell's geometry clone carries a bounding
+   sphere around ITS instances: the frustum drops whatever is behind you, and small flora
+   (`near`) is also dropped past that distance in ophTick — a one-unit flower 420 out is a
+   pixel and a half. Measured: the props are half the frame, so this is the budget. */
+let OPH_CC=[0,0];
+function ophBatch(geo, list, mat, near){
+  const M=mat||ophMat(), CELL=300, cells=new Map();
+  for(const v of list){ const key=Math.floor((v.x-OPH_CC[0])/CELL)+','+Math.floor((v.z-OPH_CC[1])/CELL);
+    if(!cells.has(key)) cells.set(key,[]); cells.get(key).push(v); }
+  const sec=[...cells.values()], grp=new T.Group();
+  if(!geo.boundingSphere) geo.computeBoundingSphere();
+  for(const L of sec){ if(!L.length) continue;
+    const g=geo.clone(), m=ophBatch1(g, L, M), bb=new T.Box3(), pt=new T.Vector3();
+    let ext=0;
+    for(const v of L){ pt.set(v.x,v.y,v.z); bb.expandByPoint(pt);
+      ext=Math.max(ext, Math.max(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s)); }
+    g.boundingSphere=bb.getBoundingSphere(new T.Sphere());
+    g.boundingSphere.radius+=ext*geo.boundingSphere.radius*2+2;
+    m.frustumCulled=true; m.userData.ophNear=near||0; grp.add(m); }
+  return grp;
+}
+function ophBatch1(geo, list, mat){
+  const m=new T.InstancedMesh(geo, mat, list.length); m.frustumCulled=false;
+  const d=new T.Object3D();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    m.setColorAt(i, ophLin(v.c));
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
+const _ophUp=new T.Vector3(0,1,0);
+// unit geometries, base at y=0 so scale.y is height and |y| is the sway weight
+function ophGeos(){
+  // open-ended: the caps are never seen, and they were a third of the props' triangles
+  const blade=new T.ConeGeometry(1,1,3,1,true); blade.translate(0,0.5,0);
+  const strand=new T.ConeGeometry(1,1,4,1,true); strand.rotateX(Math.PI); strand.translate(0,-0.5,0);
+  const stem=new T.CylinderGeometry(1,1,1,3,1,true); stem.translate(0,0.5,0);
+  const trunk=new T.CylinderGeometry(0.6,1,1,7,1,true); trunk.translate(0,0.5,0);
+  const spike=new T.ConeGeometry(1,1,5,1,true); spike.translate(0,0.5,0);
+  return {blade, strand, stem, trunk, spike};
+}
+
+/* THE FIELD. One height function for the ground mesh, the banks and every prop's footing,
+   so nothing can be placed against a surface that is not the one drawn. */
+function ophField(innerSign, ccx, ccz){
+  const tun=(TRACKS[selTrack].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]);
+  const toe=new Float32Array(STEPS), tk=new Float32Array(STEPS);
+  for(let i=0;i<STEPS;i++){ let k=0;
+    // the infield bank closes in only INSIDE the tunnel range, where the corridor is already 28.2
+    for(const [a,b] of tun) if(i>=a&&i<=b) k=Math.max(k, ophSS(a,a+16,i)*(1-ophSS(b-16,b,i)));
+    tk[i]=k; toe[i]=OPH.toeIn-(OPH.toeIn-OPH.toeTun)*k; }
+  const inTun=i=>tun.some(([a,b])=>i>=a&&i<=b);
+  const D=[]; for(let i=0;i<STEPS;i+=7) D.push(SAMP[i].p);
+  const meadow=(x,z)=>{ let sw=0, sy=0;
+    for(const p of D){ const dx=x-p.x, dz=z-p.z, w=1/Math.pow(dx*dx+dz*dz+3600,1.6); sw+=w; sy+=w*p.y; }
+    const r=Math.hypot(x-ccx,z-ccz);
+    return sy/sw - 1 + (ophNoise(x/170,z/170)-0.5)*14 + (ophNoise(x/61+7,z/61)-0.5)*5
+         + ophSS(640,1250,r)*(60+70*ophNoise(x/300+3,z/300)); };
+  const near=(x,z)=>{ let bi=0, bd=1e18;
+    for(let i=0;i<STEPS;i+=3){ const p=SAMP[i].p, dx=x-p.x, dz=z-p.z, d=dx*dx+dz*dz; if(d<bd){bd=d;bi=i;} }
+    const b0=bi;
+    for(let k=-2;k<=2;k++){ const i=(b0+k+STEPS)%STEPS, p=SAMP[i].p, dx=x-p.x, dz=z-p.z, d=dx*dx+dz*dz;
+      if(d<bd){bd=d;bi=i;} }
+    const s=SAMP[bi], lat=(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z, inner=lat*innerSign>0;
+    const T0=inner?toe[bi]:OPH.toeOut, sg=lat<0?-1:1;
+    return {i:bi, s, lat, inner, d:Math.sqrt(bd), toe:T0, t:Math.sqrt(bd)-T0,
+            tw:s.p.y+Math.sin(s.bank||0)*T0*sg,
+            lim: inner ? (inTun(bi)?HW*1.28:HW*2.2) : HW*1.28}; };
+  const H=(x,z,nr)=>{ const q=nr||near(x,z);
+    if(q.t<0) return q.s.p.y+Math.sin(q.s.bank||0)*q.lat-3.4;          // stream bed
+    const crest=q.tw+4.6+ophNoise(q.i*0.07, q.inner?3:9)*3.4;
+    if(q.t<1.3) return q.tw-1.1+q.t*1.2;                                  // mud lip through the waterline
+    if(q.t<14) return q.tw+0.46+(crest-q.tw-0.46)*ophSS(1.3,14,q.t);      // the bank
+    return crest+(meadow(x,z)-crest)*ophSS(14,85,q.t);                    // out to the meadow
+  };
+  // the water plane at a point (the road's banked plane, as karts ride it), held at the toe
+  const surf=q=>q.s.p.y+Math.sin(q.s.bank||0)*Math.max(-q.toe,Math.min(q.toe,q.lat));
+  // Lowest a prop may reach at (x,z) with horizontal half-extent r. Over the corridor, 23
+  // above the water; for six units past the wall (the chase cam swings wide), 14.
+  const floor=(x,z,r)=>{ const q=near(x,z), a=Math.abs(q.lat)-(r||0);
+    if(a<q.lim+3) return surf(q)+23;
+    if(a<q.lim+6) return surf(q)+14;
+    return -1e9; };
+  return {toe, tk, inTun, near, H, surf, floor, meadow};
+}
+function ophGroundCol(x,z,q,out){
+  const t=q.t, C=out.setHex(0x4e8434);
+  if(t<1.6){ C.setHex(0x3a3020); }
+  else if(t<14){ C.setHex(0x2c4e20).lerp(_ophC.setHex(0x4a7a30), ophSS(1.6,14,t)*(0.7+0.3*ophNoise(x/9,z/9))); }
+  else {
+    C.lerp(_ophC.setHex(0x76a042), ophNoise(x/90,z/90));
+    C.lerp(_ophC.setHex(0x44702a), ophNoise(x/23+5,z/23)*0.4);
+    const near=1-ophSS(14,30,t);
+    C.lerp(_ophC.setHex(0x3e7030), near*0.7);
+    // painted drifts: buttercup, ox-eye daisy, sorrel — the meadow's colour at a distance
+    C.lerp(_ophC.setHex(0xdcc23a), ophSS(0.64,0.80,ophNoise(x/55+11,z/55))*ophSS(22,45,t)*0.8);
+    C.lerp(_ophC.setHex(0xe4e4d4), ophSS(0.70,0.86,ophNoise(x/38+21,z/38))*ophSS(22,45,t)*0.55);
+    C.lerp(_ophC.setHex(0x9a4a2c), ophSS(0.76,0.90,ophNoise(x/70+31,z/70))*0.45);
+    const r=Math.hypot(x,z);
+    C.lerp(_ophC.setHex(0x3c5a34), ophSS(680,1150,r)*0.7);
+  }
+  return C.convertSRGBToLinear();
+}
+/* Grass, stroke by stroke. A neutral near-white sheet of short blade marks in world UVs
+   (one repeat per 14 units) multiplying the painted vertex colour, with the material
+   colour lifted to cancel its mean, so the value plan is untouched and only the surface
+   gains its grain. Up close it is the Pre-Raphaelite blade-by-blade meadow; by the middle
+   distance it has mipped away into the drifts. */
+let OPH_GRASS=null;
+function ophGroundMat(side){
+  if(!OPH_GRASS){ const N=128, c=document.createElement('canvas'); c.width=c.height=N;
+    const g=c.getContext('2d'), R=harbRnd(0x6A55); g.fillStyle='#dcdcdc'; g.fillRect(0,0,N,N);
+    for(let k=0;k<1400;k++){ const x=R()*N, y=R()*N, L=3+R()*8, a=(R()-0.5)*0.9, v=150+(R()*105|0);
+      g.strokeStyle=`rgb(${v},${v},${v})`; g.lineWidth=R()<0.7?1:1.6; g.beginPath();
+      for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){ g.moveTo(x+ox,y+oy); g.lineTo(x+ox+Math.sin(a)*L, y+oy-Math.cos(a)*L); }
+      g.stroke(); }
+    OPH_GRASS=ophCanvasTex(c); OPH_GRASS.encoding=T.sRGBEncoding; }
+  const m=new T.MeshLambertMaterial({map:OPH_GRASS, vertexColors:true, side:side||T.FrontSide});
+  m.color.setRGB(1.36,1.36,1.36);                 // cancels the sheet's mean (~0.73 linear)
+  return m;
+}
+function ophTerrain(F, ccx, ccz){
+  const N=144, W=2900, V=(N+1)*(N+1), P=new Float32Array(V*3), Cc=new Float32Array(V*3), UV=new Float32Array(V*2), c=new T.Color();
+  let k=0;
+  for(let j=0;j<=N;j++) for(let i=0;i<=N;i++){
+    const x=ccx-W/2+i*W/N, z=ccz-W/2+j*W/N, q=F.near(x,z);
+    // buried under the hand-built bank strips near the water, so the coarse grid can never
+    // poke through the fine waterline
+    const y=F.H(x,z,q) - (q.t<18 ? 6*(1-ophSS(10,18,q.t)) : 0);
+    P[k*3]=x; P[k*3+1]=y; P[k*3+2]=z; UV[k*2]=x/14; UV[k*2+1]=z/14;
+    ophGroundCol(x,z,q,c); Cc[k*3]=c.r; Cc[k*3+1]=c.g; Cc[k*3+2]=c.b; k++;
+  }
+  const I=[];
+  for(let j=0;j<N;j++) for(let i=0;i<N;i++){ const a=j*(N+1)+i, b=a+1, c2=a+N+1, d=c2+1;
+    I.push(a,c2,b, b,c2,d); }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.BufferAttribute(P,3)); g.setAttribute('color',new T.BufferAttribute(Cc,3));
+  g.setAttribute('uv',new T.BufferAttribute(UV,2));
+  g.setIndex(I); g.computeVertexNormals();
+  return new T.Mesh(g, ophGroundMat());
+}
+// The waterline, at the resolution it needs: a strip per bank from under the water out to
+// the crest, following the same H(). Its outer edge dives under the ground grid.
+function ophBanks(F, innerSign){
+  const ST=[-4,-1,0.6,1.6,3,5,8,11,14,17,20], NS=ST.length, c=new T.Color(), grp=new T.Group();
+  for(const sd of [1,-1]){
+    const P=[], Cc=[], I=[], UV=[];
+    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS], inner=sd*innerSign>0;
+      const toe=inner?F.toe[i%STEPS]:OPH.toeOut;
+      for(const t of ST){ const L=toe+t, x=s.p.x+s.n.x*sd*L, z=s.p.z+s.n.z*sd*L, q=F.near(x,z);
+        P.push(x, F.H(x,z,q)-(t>=20?5:0), z); UV.push(x/14, z/14); ophGroundCol(x,z,q,c); Cc.push(c.r,c.g,c.b); } }
+    for(let i=0;i<STEPS;i++) for(let k=0;k<NS-1;k++){ const a=i*NS+k, b=a+1, c2=a+NS, d=c2+1;
+      I.push(a,b,c2, b,d,c2); }
+    const g=new T.BufferGeometry();
+    g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(Cc,3)); g.setAttribute('uv',new T.Float32BufferAttribute(UV,2));
+    g.setIndex(I); g.computeVertexNormals();
+    grp.add(new T.Mesh(g, ophGroundMat(T.DoubleSide)));
+  }
+  return grp;
+}
+/* THE WATER. One sheet from bank toe to bank toe on the karts' own banked plane, carrying
+   (lateral, arc, shade). Deep channel over the road, shallows beyond, blended by |lateral|
+   so the corridor edge is a value step in the water rather than a painted line. The
+   channel texture flows at OPH.flow; the gravel does not, which is what makes it read as
+   water moving over a bed. Fresnel takes the sky in the middle of the stream and the dark
+   of the banks toward the edges. Unlit by design: it computes its own look, then fogs. */
+function ophStreamGeo(F, innerSign){
+  const P=[], A=[], I=[]; let arc=0;
+  const OUT=[-(OPH.toeOut+2.5),-27,-22.5,-17,-8,0,8,17,22.5], NS=OUT.length+4;
+  for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS];
+    if(i>0){ const q=SAMP[i-1]; arc+=Math.hypot(s.p.x-q.p.x, s.p.z-q.p.z); }
+    const te=F.toe[i%STEPS]+2.5, ks=OUT.concat([0.25,0.5,0.75,1].map(f=>22.5+(te-22.5)*f));
+    const shade=1-0.5*F.tk[i%STEPS];
+    for(const k of ks){ const L=k*innerSign;
+      P.push(s.p.x+s.n.x*L, s.p.y+Math.sin(s.bank||0)*L+0.05, s.p.z+s.n.z*L); A.push(k, arc, shade); } }
+  for(let i=0;i<STEPS;i++) for(let k=0;k<NS-1;k++){ const a=i*NS+k, b=a+1, c2=a+NS, d=c2+1;
+    I.push(a,b,c2, b,d,c2); }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  g.setAttribute('aS',new T.Float32BufferAttribute(A,3)); g.setIndex(I);
+  g.userData.lap=arc; return g;
+}
+function ophCanvasTex(c, aniso){ const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.anisotropy=Math.min(aniso||8, renderer.capabilities.getMaxAnisotropy()); return t; }
+function ophDeepTex(){
+  const W=128, Hh=1024, c=document.createElement('canvas'); c.width=W; c.height=Hh;
+  const g=c.getContext('2d'), R=harbRnd(0x0FE11A);
+  const gr=g.createLinearGradient(0,0,W,0);
+  gr.addColorStop(0,'#2a3a22'); gr.addColorStop(0.16,'#16301f'); gr.addColorStop(0.5,'#0f2619');
+  gr.addColorStop(0.84,'#16301f'); gr.addColorStop(1,'#2a3a22');
+  g.fillStyle=gr; g.fillRect(0,0,W,Hh);
+  // dark holes in the bed
+  for(let k=0;k<26;k++){ const x=R()*W, y=R()*Hh, r=8+R()*22;
+    for(const oy of [-Hh,0,Hh]){ const rg=g.createRadialGradient(x,y+oy,0,x,y+oy,r);
+      rg.addColorStop(0,'rgba(6,16,10,0.55)'); rg.addColorStop(1,'rgba(6,16,10,0)');
+      g.fillStyle=rg; g.fillRect(x-r,y+oy-r,r*2,r*2); } }
+  // RIBBON WEED streaming downstream: the chalk-stream signature, and long in v so it
+  // survives the stretch — at speed these are the marks the surface passes you with
+  const WEED=['rgba(38,70,28,0.75)','rgba(52,84,32,0.6)','rgba(30,56,24,0.8)','rgba(70,96,40,0.45)'];
+  for(let k=0;k<34;k++){ const x0=6+R()*(W-12), y0=R()*Hh, len=180+R()*520, amp=2+R()*6, fr=0.01+R()*0.02, w=1.5+R()*3.5;
+    g.strokeStyle=WEED[k%WEED.length]; g.lineWidth=w; g.lineCap='round';
+    for(const oy of [-Hh,0]){ g.beginPath();
+      for(let y=0;y<=len;y+=6){ const xx=x0+Math.sin((y0+y)*fr)*amp+Math.sin(y*0.004)*y*0.02;
+        y?g.lineTo(xx,y0+y+oy):g.moveTo(xx,y0+y+oy); } g.stroke(); } }
+  // sunlit gravel through the water: a few warm flecks, so the deep is not flat black
+  for(let k=0;k<260;k++){ g.fillStyle=`rgba(${110+R()*40|0},${120+R()*30|0},${70+R()*20|0},${0.10+R()*0.18})`;
+    g.fillRect(R()*W, R()*Hh, 1+R()*2, 2+R()*5); }
+  return ophCanvasTex(c);
+}
+function ophShalTex(){
+  const N=256, c=document.createElement('canvas'); c.width=c.height=N;
+  const g=c.getContext('2d'), R=harbRnd(0xC40F);
+  g.fillStyle='#5f5a34'; g.fillRect(0,0,N,N);
+  const wrap=(fn,x,y,r)=>{ for(const ox of [-N,0,N]) for(const oy of [-N,0,N])
+    if(x+ox>-r&&x+ox<N+r&&y+oy>-r&&y+oy<N+r) fn(x+ox,y+oy); };
+  const PEB=['#766c44','#544c2c','#857752','#4a4428','#6a6440','#8e8260'];
+  for(let k=0;k<1100;k++){ const x=R()*N, y=R()*N, rx=1.2+R()*3.2, ry=rx*(0.6+R()*0.5), a=R()*3.14;
+    g.fillStyle=PEB[k%PEB.length];
+    wrap((X,Y)=>{ g.beginPath(); g.ellipse(X,Y,rx,ry,a,0,6.283); g.fill(); }, x,y,6); }
+  g.globalAlpha=0.35;
+  for(let k=0;k<30;k++){ const x=R()*N, y=R()*N, r=14+R()*30;
+    wrap((X,Y)=>{ const rg=g.createRadialGradient(X,Y,0,X,Y,r); rg.addColorStop(0,'#3e5424'); rg.addColorStop(1,'rgba(62,84,36,0)');
+      g.fillStyle=rg; g.fillRect(X-r,Y-r,r*2,r*2); }, x,y,r); }
+  g.globalAlpha=1;
+  // WATER-CROWFOOT in drifts: fine dark leaf threads trailing downstream, white five-petal
+  // flowers with yellow eyes floating over them. At ~6px a unit a flower is ~1.2 units.
+  for(let d=0;d<9;d++){ const cx=R()*N, cy=R()*N, n=6+(R()*12|0);
+    g.strokeStyle='rgba(40,70,30,0.7)'; g.lineWidth=1;
+    for(let k=0;k<n*2;k++){ const x=cx+(R()-0.5)*36, y=cy+(R()-0.5)*30;
+      wrap((X,Y)=>{ g.beginPath(); g.moveTo(X,Y); g.lineTo(X+(R()-0.5)*3,Y+10+R()*16); g.stroke(); }, x,y,30); }
+    for(let k=0;k<n;k++){ const x=cx+(R()-0.5)*34, y=cy+(R()-0.5)*28, r=3+R()*1.8, a0=R()*6.28;
+      wrap((X,Y)=>{ g.fillStyle='#f4f2e4';
+        for(let p=0;p<5;p++){ const a=a0+p*1.2566; g.beginPath(); g.ellipse(X+Math.cos(a)*r*0.55,Y+Math.sin(a)*r*0.55,r*0.52,r*0.4,a,0,6.283); g.fill(); }
+        g.fillStyle='#e8c030'; g.beginPath(); g.arc(X,Y,r*0.28,0,6.283); g.fill(); }, x,y,8); } }
+  return ophCanvasTex(c);
+}
+function ophRipTex(){
+  const N=128, c=document.createElement('canvas'); c.width=c.height=N;
+  const g=c.getContext('2d'), R=harbRnd(0x21FF1E);
+  g.fillStyle='#7a7a7a'; g.fillRect(0,0,N,N);
+  for(let k=0;k<160;k++){ const x=R()*N, y=R()*N, rx=2+R()*7, ry=rx*(2.5+R()*3), v=R()<0.5?255:0;
+    for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){ const X=x+ox, Y=y+oy;
+      if(X<-rx||X>N+rx||Y<-ry||Y>N+ry) continue;
+      g.save(); g.translate(X,Y); g.scale(1,ry/rx);
+      const rg=g.createRadialGradient(0,0,0,0,0,rx); rg.addColorStop(0,`rgba(${v},${v},${v},0.35)`); rg.addColorStop(1,`rgba(${v},${v},${v},0)`);
+      g.fillStyle=rg; g.fillRect(-rx,-rx,rx*2,rx*2); g.restore(); } }
+  return ophCanvasTex(c, 4);
+}
+function ophWaterMat(lap){
+  const Pd=lap/Math.max(1,Math.round(lap/150)), Ps=lap/Math.max(1,Math.round(lap/40));
+  const m=new T.ShaderMaterial({
+    uniforms:T.UniformsUtils.merge([T.UniformsLib.fog, {
+      uDeep:{value:null}, uShal:{value:null}, uRip:{value:null}, uT:{value:0},
+      uSky:{value:new T.Color(0xb4c8c4).convertSRGBToLinear()},
+      uBank:{value:new T.Color(0x1a2c16).convertSRGBToLinear()},
+      uPd:{value:Pd}, uPs:{value:Ps}, uFlow:{value:OPH.flow} }]),
+    vertexShader:`
+      attribute vec3 aS; varying vec3 vS; varying vec3 vW;
+      #include <fog_pars_vertex>
+      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz;
+        vec4 mvPosition=viewMatrix*w; gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`
+      uniform sampler2D uDeep, uShal, uRip; uniform float uT, uPd, uPs, uFlow;
+      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW;
+      #include <fog_pars_fragment>
+      void main(){
+        float ak=abs(vS.x), fv=uT*uFlow;
+        float deep=1.0-smoothstep(20.5,25.5,ak);
+        vec3 dC=texture2D(uDeep, vec2(vS.x/46.0+0.5, (vS.y-fv)/uPd)).rgb;
+        vec3 sC=texture2D(uShal, vec2(vS.x/uPs, vS.y/uPs)).rgb;
+        vec3 base=pow(mix(sC,dC,deep), vec3(2.2));
+        vec3 V=normalize(cameraPosition-vW);
+        float rp=texture2D(uRip, vec2(vS.x/37.0, (vS.y-fv*1.15)/61.0)).r;
+        float rq=texture2D(uRip, vec2(vS.x/23.0+0.37, (vS.y-fv*0.8)/97.0+0.5)).r;
+        // Steeper than Schlick's 5th power, and a reflection pitched a step under the sky:
+        // at the chase angle the channel must stay the darkest large shape in the frame,
+        // and only toward the distance does the stream take the light.
+        float F=0.02+0.98*pow(1.0-clamp(V.y,0.0,1.0),6.5);
+        F*=0.6+0.8*(rp*0.6+rq*0.4);
+        vec3 refl=mix(uSky, uBank, smoothstep(8.0,26.0,ak)*0.9);
+        vec3 col=mix(base, refl, clamp(F*0.85,0.0,0.82))*vS.z;
+        gl_FragColor=vec4(col,1.0);
+        #include <encodings_fragment>
+        #include <fog_fragment>
+      }`,
+    fog:true, side:T.DoubleSide });
+  m.uniforms.uDeep.value=ophDeepTex(); m.uniforms.uShal.value=ophShalTex(); m.uniforms.uRip.value=ophRipTex();
+  return m;
+}
+/* THE SKY. High summer afternoon: pale warm haze at the horizon (the lightest value in the
+   whole picture, so every tree is found against it), cerulean overhead, fair-weather
+   cumulus drifting, and a far line of woodland one value step off the haze. */
+function ophSky(){
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uT:{value:0}, uSun:{value:OPH.sun.clone()} },
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT; uniform vec3 uSun;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
+      float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
+      float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*vn(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return v; }
+      void main(){
+        vec3 d=normalize(vP-cameraPosition); float el=d.y, az=atan(d.z,d.x);
+        vec3 c=mix(vec3(0.875,0.902,0.839), vec3(0.690,0.800,0.870), smoothstep(0.0,0.30,el));
+        c=mix(c, vec3(0.400,0.580,0.780), smoothstep(0.22,0.95,el));
+        float sd=max(dot(d,uSun),0.0);
+        c+=vec3(1.0,0.94,0.80)*pow(sd,10.0)*0.16;
+        c=mix(c, vec3(1.0,0.99,0.95), smoothstep(0.9975,0.9990,sd));
+        if(el>0.0){
+          vec2 cu=d.xz/(el+0.07)*0.9+vec2(uT*0.0035, uT*0.0012);
+          float n=fbm(cu), n2=fbm(cu+vec2(0.09,0.05)*1.0);
+          float cov=smoothstep(0.55,0.70,n)*smoothstep(0.02,0.16,el);
+          vec3 cw=vec3(0.985,0.980,0.955), cs=vec3(0.735,0.765,0.830);
+          vec3 cc=mix(cw, cs, clamp((n2-0.58)*3.2,0.0,1.0)*0.85);
+          c=mix(c, cc, cov*0.95);
+        }
+        float tb=0.011+0.009*vn(vec2(az*7.0,1.0))+0.007*pow(abs(sin(az*53.0+vn(vec2(az*29.0,3.0))*4.0)),0.7);
+        // (edges kept in ascending order: reversed smoothstep edges are undefined in GLSL)
+        c=mix(c, vec3(0.640,0.715,0.670), (1.0-smoothstep(tb-0.0015,tb+0.0015,el))*0.85);
+        c=mix(c, vec3(0.875,0.902,0.839), 1.0-smoothstep(-0.05,-0.005,el));
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat); m.frustumCulled=false; return m;
+}
+// Every light re-set, so nothing strands on the next course (called after the shared rig).
+// Summer sun high and warm; a sky-blue hemisphere over a green bounce, so shadowed leaves
+// stay GREEN instead of going grey; a faint cool rim for the silhouettes against the haze.
+function applyOpheliaLighting(){
+  hemi.color.setHex(0xc4dcec); hemi.groundColor.setHex(0x42562a); hemi.intensity=0.70;
+  sun.color.setHex(0xfff0d4);  sun.intensity=0.96; sun.position.copy(OPH.sun).multiplyScalar(200);
+  rim.color.setHex(0xd4e4ff);  rim.intensity=0.22; rim.position.set(-120,60,-100);
+  fill.color.setHex(0xfff0d0); fill.intensity=0.0; fill.position.set(0,0,0);
+  flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+}
+/* ---- Ophelia placements. Everything accumulates into one bag, O, across the edge,
+   tunnel and scenery sections, and is flushed as ~10 instanced draws at the end. ---- */
+function ophBag(){ return {trunk:[], lump:[], lump0:[], strand:[], blade:[], stem:[], spike:[]}; }
+const OPH_PAL={
+  trunk:[0x464036,0x3c372e,0x4e473b,0x544c40],     // crack-willow bark: dark grey, not brown
+  willow:[0x7d9a66,0x6a8a58,0x8fa878,0x5f8050,0x9db486],   // crack willow: grey-green, silvered
+  willowDk:[0x4f6e40,0x5a7a48,0x46643a],                   // the shaded mass inside a crown
+  strand:[0x93b06c,0xa6bc7c,0x86a45e,0x7c9a58],
+  wood:[0x2f4a26,0x3a5a2c,0x27401f,0x45652f,0x324e28],
+  hill:[0x2e4630,0x34503a,0x28402c,0x3a5640],
+  pollard:[0x8aa27a,0x9cb38a,0x7a946a,0xa4b890],
+  reed:[0x5e7a36,0x6f8a3e,0x87965a,0x4f6a2e,0x7c8c48],
+  loose:[0xa8307e,0x962c74,0xb8408a,0x8e3478],
+  sweet:[0xf2e8c8,0xeadcb0,0xf6eed6],
+  forget:[0x6f9be6,0x86aef0,0x5f8ad8],
+  nettle:[0x2c4a22,0x355426,0x3a5a2a],
+  leaf:[0x3e6a2c,0x355e26,0x4a7432],
+  rose:[0xf2aabb,0xf6c8d0,0xf6ecea]
+};
+const _ophPick=(R,a)=>a[(R()*a.length)|0];
+/* A CRACK WILLOW: a leaning trunk rooted on the bank, one limb, faceted crowns and a
+   curtain of hanging strands. The lean is walked back until the whole trunk clears the
+   corridor, so a tree that cannot lean in safely stands straighter instead of reaching
+   over the road at camera height. */
+function ophWillow(F, O, R, x, z, hx, hz, len, lean, sc, opt){
+  const o=opt||{}, q0=F.near(x,z); if(q0.t<4) return false;
+  const gy=F.H(x,z,q0), rad=(2.5+R()*1.3)*sc*(o.thick||1);
+  const hl=Math.hypot(hx,hz)||1; hx/=hl; hz/=hl;
+  let base=new T.Vector3(x,gy-1.5,z);
+  // THE BOLE: willows rise before they lean. An upright first length also keeps the trunk
+  // out of the chase camera's swing near the wall, which a straight lean from the bank
+  // cannot do — that is what lets the tunnel's trees arch right over the stream.
+  if(o.rise){ const bl=0.12, bd=new T.Vector3(hx*Math.sin(bl), Math.cos(bl), hz*Math.sin(bl));
+    for(let f=0.3;f<=1.001;f+=0.35){ const p=base.clone().addScaledVector(bd,o.rise*f);
+      if(p.y-rad < F.floor(p.x,p.z,rad)) return false; }
+    O.trunk.push({x:base.x,y:base.y,z:base.z,q:new T.Quaternion().setFromUnitVectors(_ophUp,bd),
+                  s:rad*1.12,sy:o.rise+rad*0.6,sz:rad,c:_ophPick(R,OPH_PAL.trunk)});
+    base=base.clone().addScaledVector(bd,o.rise); }
+  // The lean in TWO lengths — half-bent, then fully — with a knuckle at each joint, so the
+  // trunk curves over the water instead of kinking like a pipe.
+  let dir=null, d1=null, j1=null;
+  const dvec=a=>new T.Vector3(hx*Math.sin(a), Math.cos(a), hz*Math.sin(a));
+  for(let k=0;k<7;k++, lean*=0.84){
+    const da=dvec(lean*0.55), db=dvec(lean), ja=base.clone().addScaledVector(da,len*0.4);
+    let ok=true;
+    for(let f=0.25;f<=1.001;f+=0.25){ const p=base.clone().addScaledVector(da,len*0.4*f);
+      if(p.y-rad < F.floor(p.x,p.z,rad)){ ok=false; break; } }
+    if(ok) for(let f=0.2;f<=1.001;f+=0.2){ const p=ja.clone().addScaledVector(db,len*0.6*f);
+      if(p.y-rad < F.floor(p.x,p.z,rad)){ ok=false; break; } }
+    if(ok){ dir=db; d1=da; j1=ja; break; }
+  }
+  if(!dir) return false;
+  const tc=_ophPick(R,OPH_PAL.trunk);
+  O.trunk.push({x:base.x,y:base.y,z:base.z,q:new T.Quaternion().setFromUnitVectors(_ophUp,d1),s:rad,sy:len*0.4+rad*0.5,sz:rad*0.9,c:tc});
+  if(o.rise) O.lump.push({x:base.x,y:base.y,z:base.z,s:rad*1.15,sy:rad*1.3,sz:rad*1.1,ry:R()*6,c:tc});
+  O.lump.push({x:j1.x,y:j1.y,z:j1.z,s:rad*1.0,sy:rad*1.2,sz:rad*0.95,ry:R()*6,c:tc});
+  O.trunk.push({x:j1.x,y:j1.y,z:j1.z,q:new T.Quaternion().setFromUnitVectors(_ophUp,dir),s:rad*0.9,sy:len*0.6,sz:rad*0.78,c:tc});
+  base=j1; len=len*0.6;
+  O.lump.push({x, y:gy+0.2, z, s:rad*1.9, sy:rad*1.0, sz:rad*1.7, ry:R()*6, c:tc});      // root plate
+  const tops=[[base.clone().addScaledVector(dir,len), 1]];
+  // one limb, swung off to the side and more upright — breaks the single-stick silhouette
+  { const a=(R()<0.5?-1:1)*(0.5+R()*0.5), ca=Math.cos(a), sa=Math.sin(a);
+    const lx=hx*ca-hz*sa, lz=hx*sa+hz*ca, l2=lean*0.35+0.12;
+    const d2=new T.Vector3(lx*Math.sin(l2), Math.cos(l2), lz*Math.sin(l2));
+    const b2=base.clone().addScaledVector(dir,len*0.5), L2=len*(0.42+R()*0.14);
+    let ok=true;
+    for(let f=0.3;f<=1.001;f+=0.175){ const p=b2.clone().addScaledVector(d2,L2*f);
+      if(p.y-rad*0.6 < F.floor(p.x,p.z,rad*0.6)){ ok=false; break; } }
+    if(ok){ O.trunk.push({x:b2.x,y:b2.y,z:b2.z,q:new T.Quaternion().setFromUnitVectors(_ophUp,d2),
+                          s:rad*0.55,sy:L2,sz:rad*0.5,c:tc});
+            tops.push([b2.clone().addScaledVector(d2,L2), 0.72]); } }
+  // arcade trees carry foliage all along the arching limb, not only at its tip
+  if(o.canopy) for(const f of [0.42,0.74]) tops.push([base.clone().addScaledVector(dir,len*f), 0.66]);
+  for(const [tp,f] of tops){
+    const nP=Math.round((o.crown||7)*f+R()*3);
+    for(let k=0;k<nP;k++){
+      const pr=(5.5+R()*5)*sc*f*(o.big||1), sp=10*sc*f*(o.big||1);
+      const px=tp.x+(R()-0.5)*sp*1.6, pz=tp.z+(R()-0.5)*sp*1.6;
+      let py=tp.y+(R()-0.35)*sp*0.55; const sy=pr*0.72;
+      const fl=F.floor(px,pz,pr);
+      if(py-sy*0.9<fl){ if(fl-(py-sy*0.9)>5) continue; py=fl+sy*0.9; }
+      const dark=k<nP*0.35;
+      O.lump.push({x:px,y:py,z:pz,s:pr,sy,sz:pr*(0.8+R()*0.3),ry:R()*6,rx:(R()-0.5)*0.3,
+                   c:_ophPick(R,dark?OPH_PAL.willowDk:OPH_PAL.willow)});
+      // the curtain: strands off the underside of every puff, clipped to the clearance
+      const nS=(o.strands||4)+((R()*3)|0);
+      for(let j=0;j<nS;j++){
+        const sx=px+(R()-0.5)*pr*1.5, sz=pz+(R()-0.5)*pr*1.5, y0=py-sy*0.35;
+        const qq=F.near(sx,sz);
+        const ground = qq.t<0.9 ? F.surf(qq)+0.9 : F.H(sx,sz,qq)+1.2;
+        const minB=Math.max(ground, F.floor(sx,sz,1.3));
+        const L=Math.min((9+R()*13)*sc*(o.long||1), y0-minB);
+        if(L<3) continue;
+        O.strand.push({x:sx,y:y0,z:sz,s:0.8+R()*0.7,sy:L,sz:0.8+R()*0.7,ry:R()*6,
+                       rx:(R()-0.5)*0.08,rz:(R()-0.5)*0.08,c:_ophPick(R,OPH_PAL.strand)});
+      }
+    }
+  }
+  return true;
+}
+// POLLARD WILLOWS: a stubby trunk, a knuckle, a fan of straight whips. The silhouette of
+// every English water-meadow ditch, and one that reads from four hundred units.
+function ophPollard(F, O, R, x, z){
+  const q=F.near(x,z); if(q.t<18 || !harbClearOK(x,z,10)) return false;
+  const gy=F.H(x,z,q), h=4.5+R()*3.5, r=1.5+R()*0.8, tc=_ophPick(R,OPH_PAL.trunk);
+  O.trunk.push({x,y:gy-0.8,z,s:r,sy:h+0.8,sz:r*0.9,ry:R()*6,c:tc});
+  O.lump.push({x,y:gy+h,z,s:r*1.7,sy:r*1.1,sz:r*1.6,ry:R()*6,c:tc});
+  const n=18+((R()*10)|0), v=new T.Vector3();
+  for(let k=0;k<n;k++){ const a=R()*6.283, tl=0.08+R()*0.5, L=6+R()*7;
+    v.set(Math.sin(tl)*Math.cos(a), Math.cos(tl), Math.sin(tl)*Math.sin(a));
+    O.blade.push({x:x+v.x*r, y:gy+h+r*0.5, z:z+v.z*r, q:new T.Quaternion().setFromUnitVectors(_ophUp,v),
+                  s:0.45+R()*0.3, sy:L, sz:0.45+R()*0.3, c:_ophPick(R,OPH_PAL.pollard)}); }
+  // a little foliage mass, so the head is a crown and not a bare broom
+  for(let k=0;k<3;k++) O.lump0.push({x:x+(R()-0.5)*4, y:gy+h+4+R()*4, z:z+(R()-0.5)*4,
+    s:3+R()*2, sy:2.4+R(), sz:3+R()*2, ry:R()*6, c:_ophPick(R,OPH_PAL.pollard)});
+  return true;
+}
+// Hedgerow oak / elm: short trunk, big faceted crown. Dark: these are the frame.
+function ophTree(F, O, R, x, z, sc){
+  const q=F.near(x,z); if(q.t<30 || !harbClearOK(x,z,16*sc)) return false;
+  const gy=F.H(x,z,q), h=(7+R()*6)*sc, r=(1.6+R())*sc, tc=_ophPick(R,OPH_PAL.trunk);
+  O.trunk.push({x,y:gy-1,z,s:r,sy:h+4,sz:r,ry:R()*6,c:tc});
+  const n=5+((R()*5)|0);
+  for(let k=0;k<n;k++){ const pr=(8+R()*7)*sc;
+    O.lump.push({x:x+(R()-0.5)*14*sc, y:gy+h+pr*0.5+R()*12*sc, z:z+(R()-0.5)*14*sc,
+                 s:pr, sy:pr*0.8, sz:pr*(0.8+R()*0.3), ry:R()*6, c:_ophPick(R,OPH_PAL.wood)}); }
+  return true;
+}
+/* THE BANK. Clumps on an irregular cadence, typed by a slow noise along the lap so each
+   stretch of bank has a character — a reed bed, a run of loosestrife, meadowsweet and
+   nettle, iris and forget-me-not — the way a real bank is, not a shuffled sample book.
+   Heights are ZONED from the water: nothing taller than five within five units of the
+   toe (the chase cam rides at +13 and swings wide), the tall spikes behind. */
+function ophVerge(F, O, innerSign){
+  for(const sd of [1,-1]){
+    const R=harbRnd(sd>0?0x5EED01:0x5EED02), inner=sd*innerSign>0;
+    let i=(R()*4)|0;
+    while(i<STEPS){
+      const s=SAMP[i], toe=inner?F.toe[i]:OPH.toeOut;
+      const zv=ophNoise(i*0.017+(sd>0?0:40), sd>0?1.5:7.5);
+      let type= zv<0.30?'reed': zv<0.46?'loose': zv<0.62?'sweet': zv<0.74?'iris': zv<0.84?'rose':'open';
+      if(R()<0.28) type=_ophPick(R,['reed','loose','sweet','iris','nettle','open']);
+      const at=(t,j)=>{ const L=toe+t, x=s.p.x+s.n.x*sd*L+s.t.x*j, z=s.p.z+s.n.z*sd*L+s.t.z*j;
+        const q=F.near(x,z); return {x,z,y:F.H(x,z,q),q}; };
+      const j0=(R()-0.5)*6;
+      if(type==='reed'){
+        // set back by the clump's own spread: a reed bed at the toe put blades over the wall
+        const t=3.6+R()*6.5, g=t<5?0.6:1, c0=at(t,j0), n=10+((R()*14)|0);
+        for(let k=0;k<n;k++){ const a=R()*6.283, rr=R()*3.2;
+          const x=c0.x+Math.cos(a)*rr, z=c0.z+Math.sin(a)*rr;
+          O.blade.push({x, y:c0.y-0.4, z, s:0.22+R()*0.14, sy:(6+R()*5.5)*g, sz:0.22+R()*0.14,
+                        rx:Math.sin(a)*0.16, rz:-Math.cos(a)*0.16, ry:R()*6, c:_ophPick(R,OPH_PAL.reed)}); }
+        if(t>=5 && R()<0.45) for(let k=0;k<2+((R()*3)|0);k++){ const x=c0.x+(R()-0.5)*3, z=c0.z+(R()-0.5)*3, h=6+R()*3;
+          O.stem.push({x,y:c0.y-0.3,z,s:0.12,sy:h,c:0x5a6a34});
+          O.stem.push({x,y:c0.y+h-0.3,z,s:0.46,sy:2.4,c:0x4a3222}); }            // bulrush heads
+      } else if(type==='loose'){
+        const t=4.2+R()*7, g=t<5.5?0.65:1, np=2+((R()*5)|0), c0=at(t,j0);
+        for(let p=0;p<np;p++){ const px=c0.x+(R()-0.5)*6, pz=c0.z+(R()-0.5)*6;
+          const gy=F.H(px,pz);
+          O.lump0.push({x:px,y:gy+0.6,z:pz,s:1.3,sy:1.5,sz:1.2,ry:R()*6,c:_ophPick(R,OPH_PAL.leaf)});
+          for(let k=0;k<3+((R()*4)|0);k++){ const x=px+(R()-0.5)*1.6, z=pz+(R()-0.5)*1.6, hs=(3.2+R()*2.8)*g, hk=(2.8+R()*2.4)*g;
+            O.stem.push({x,y:gy,z,s:0.13,sy:hs,c:0x4a6a2c});
+            O.spike.push({x,y:gy+hs-0.3,z,s:0.38+R()*0.16,sy:hk*1.2,rx:(R()-0.5)*0.12,rz:(R()-0.5)*0.12,c:_ophPick(R,OPH_PAL.loose)}); } }
+      } else if(type==='sweet' || type==='nettle'){
+        const t=(type==='sweet'?4.5:6)+R()*9, c0=at(t,j0);
+        if(type==='sweet' || R()<0.5) for(let k=0;k<3+((R()*5)|0);k++){
+          const x=c0.x+(R()-0.5)*5, z=c0.z+(R()-0.5)*5, gy=F.H(x,z), h=3.6+R()*3.2;
+          O.stem.push({x,y:gy,z,s:0.13,sy:h,c:0x4f6e30});
+          // a FROTH, not a cap: several small irregular heads stacked loosely over the stem
+          // (one flattened lump on a bare stalk read as a white mushroom), over dark leaves
+          O.lump0.push({x, y:gy+h*0.35, z, s:1.1+R()*0.4, sy:h*0.3, sz:1.1+R()*0.4, ry:R()*6, c:_ophPick(R,OPH_PAL.leaf)});
+          for(let f=0;f<4+((R()*3)|0);f++){ const hs=0.5+R()*0.4;
+            O.lump0.push({x:x+(R()-0.5)*1.8, y:gy+h-0.4+R()*1.3, z:z+(R()-0.5)*1.8,
+              s:hs, sy:hs*(0.8+R()*0.4), sz:hs, ry:R()*6, rx:R()*3, c:_ophPick(R,OPH_PAL.sweet)}); } }
+        for(let k=0;k<2+((R()*4)|0);k++){ const x=c0.x+(R()-0.5)*6, z=c0.z+(R()-0.5)*6, gy=F.H(x,z);
+          O.spike.push({x,y:gy-0.3,z,s:1.0+R()*0.6,sy:3.5+R()*3,ry:R()*6,c:_ophPick(R,OPH_PAL.nettle)}); }
+      } else if(type==='iris'){
+        const t=2.6+R()*2.6, c0=at(t,j0);
+        for(let k=0;k<7+((R()*6)|0);k++){ const a=R()*6.283, rr=R()*1.8;
+          O.blade.push({x:c0.x+Math.cos(a)*rr, y:c0.y-0.2, z:c0.z+Math.sin(a)*rr, s:0.42, sy:3.2+R()*1.8, sz:0.16,
+                        ry:R()*6, rx:Math.sin(a)*0.18, rz:-Math.cos(a)*0.18, c:R()<0.5?0x6f8f5a:0x5f8050}); }
+        for(let k=0;k<2+((R()*3)|0);k++){ const x=c0.x+(R()-0.5)*2.4, z=c0.z+(R()-0.5)*2.4, h=3.6+R()*1.2;
+          O.stem.push({x,y:c0.y,z,s:0.1,sy:h,c:0x5f8050});
+          O.lump0.push({x,y:c0.y+h+0.3,z,s:0.85,sy:0.75,sz:0.85,ry:R()*6,c:R()<0.8?0xf0c830:0xe8a820}); }
+      } else if(type==='rose'){
+        const t=11+R()*9, c0=at(t,j0), br=2.6+R()*1.6;
+        for(let k=0;k<3+((R()*3)|0);k++) O.lump.push({x:c0.x+(R()-0.5)*5, y:c0.y+br*0.5+R(), z:c0.z+(R()-0.5)*5,
+          s:br, sy:br*0.8, sz:br, ry:R()*6, c:_ophPick(R,[0x355a28,0x2e5024,0x3e6430])});
+        for(let k=0;k<9+((R()*8)|0);k++){ const a=R()*6.283, e=R()*1.1;
+          O.lump0.push({x:c0.x+Math.cos(a)*br*1.3*Math.cos(e), y:c0.y+br*0.9+Math.sin(e)*br*0.8,
+                        z:c0.z+Math.sin(a)*br*1.3*Math.cos(e), s:0.62, sy:0.5, sz:0.62, ry:R()*6, c:_ophPick(R,OPH_PAL.rose)}); }
+      }
+      // FORGET-ME-NOTS at the very waterline: a fine blue fringe along the dark water,
+      // the one blue in the landscape and the sharpest edge in the frame
+      if(type!=='reed' && type!=='open' ? R()<0.6 : R()<0.25){
+        for(let k=0;k<2+((R()*3)|0);k++){ const r=1.3+R()*1.3, c1=at(r*1.1+0.2+R()*1.4, j0+(R()-0.5)*8);
+          O.lump0.push({x:c1.x, y:c1.y+0.15, z:c1.z, s:r, sy:0.5, sz:r*(0.7+R()*0.4), ry:R()*6,
+                        c:R()<0.78?_ophPick(R,OPH_PAL.forget):0x4a7a30}); }
+      }
+      i += 2+((R()*5)|0);
+    }
+  }
+}
+/* THE START: a plank footbridge over the stream, piers on both banks, a garland of the
+   painting's flowers swagged along its rail. Replaces the shared gate, whose posts stand
+   inside the corridor. Deck soffit at +25, clear of every camera. */
+function ophBridge(F, O, innerSign){
+  const s0=SAMP[0], ry=Math.atan2(s0.n.x,s0.n.z), R=harbRnd(0xB41D6E);
+  const at=k=>{ const L=k*innerSign; return [s0.p.x+s0.n.x*L, s0.p.z+s0.n.z*L]; };
+  const k0=-(OPH.toeOut+15), k1=OPH.toeIn+14, span=k1-k0, km=(k0+k1)/2;
+  // Level deck, 25 over the HIGHEST water beneath it: the start straight is banked, so at
+  // the outer bank the water stands ~9 above the centreline and a deck set off the
+  // centreline cleared the chase camera there by three units.
+  let wMax=-1e9; for(let k=-OPH.toeOut;k<=OPH.toeIn;k+=1) wMax=Math.max(wMax, s0.p.y+Math.sin(s0.bank||0)*k*innerSign);
+  const yB=wMax+25, yT=yB+1.4, box=[], G=[];
+  const put=(k,dt,y,sx,sy,sz,c,q)=>{ const [x,z]=at(k); box.push({x:x+s0.t.x*dt, y, z:z+s0.t.z*dt, s:sx, sy, sz, ry, q, c}); };
+  for(const [k,sg] of [[k0-3.5,-1],[k1+3.5,1]]){ const [x,z]=at(k), gy=F.H(x,z);
+    put(k,0,(gy-2+yB)/2,8,yB-gy+2,7,0x8a8672); put(k,0,yB+0.2,8.8,1.2,7.8,0x6f6c5c); }  // stone piers
+  for(const dt of [-2.6,2.6]) put(km,dt,yB+0.5,0.9,1.6,span+8,0x3e3226);              // stringers
+  for(let k=k0-3;k<=k1+3;k+=1.35) put(k,0,yT-0.15,6.2,0.45,1.15,R()<0.5?0x6b5a44:0x7a6a52);   // planks
+  const posts=[]; for(let k=k0-2;k<=k1+2.01;k+=(span+4)/13) posts.push(k);
+  for(const dt of [-2.9,2.9]){
+    for(const k of posts) put(k,dt,yT+2.5,0.55,5,0.55,0x4a3c2c);
+    put(km,dt,yT+5,0.55,0.6,span+5,0x5a4a36);
+    put(km,dt,yT+2.6,0.35,0.35,span+4,0x4a3c2c);
+    for(let p=0;p<posts.length-1;p++){ const a=posts[p], b=posts[p+1], m=(a+b)/2;
+      for(const sg of [-1,1]){ const v=new T.Vector3(s0.n.x*innerSign*(b-a)*sg, 4.6, s0.n.z*innerSign*(b-a)*sg).normalize();
+        const [x,z]=at(m); box.push({x:x+s0.t.x*dt, y:yT+2.5, z:z+s0.t.z*dt, s:0.3, sy:Math.hypot(b-a,4.6), sz:0.3,
+                                     q:new T.Quaternion().setFromUnitVectors(_ophUp,v), c:0x55463a}); } } }
+  O.bridge=box;
+  // the garland, on the face the grid looks at, swagged bay by bay
+  const FL=[0xd6301c,0xf6f3e8,0x6a3aa0,0x6f9be6,0xefe6c8,0xf2aabb,0xf0c830];
+  let n=0;
+  for(let p=0;p<posts.length-1;p++){ const a=posts[p], b=posts[p+1];
+    for(let f=0.08;f<0.95;f+=0.105){ const k=a+(b-a)*f, [x,z]=at(k), sag=1.7*(1-(2*f-1)*(2*f-1));
+      const y=yT+4.3-sag, dt=-3.4;
+      G.push({x:x+s0.t.x*dt, y, z:z+s0.t.z*dt, s:0.95+R()*0.35, sy:0.8+R()*0.3, sz:0.95+R()*0.35, ry:R()*6,
+              c:(n%4===3)?0x3e6a2c:FL[(n*3+(R()*2|0))%FL.length]}); n++; } }
+  O.garland=G;
+}
+/* THE GARLAND ON THE WATER: flowers drifting down the stream in loose chains — poppy,
+   daisy, violet, pansy, forget-me-not, dog-rose. Flat on the karts' banked plane, so they
+   are road markings with a life of their own, not props in the corridor. They move with
+   the current at OPH.flow (see frame()): invisible at racing speed, alive on the grid. */
+function ophPetalGeo(lobes){
+  const sh=new T.Shape(), N=lobes*8;
+  for(let k=0;k<N;k++){ const a=k/N*6.2832, r=0.5+0.5*Math.pow(Math.abs(Math.cos(a*lobes/2)),0.8);
+    k ? sh.lineTo(Math.cos(a)*r, Math.sin(a)*r) : sh.moveTo(Math.cos(a)*r, Math.sin(a)*r); }
+  const g=new T.ShapeGeometry(sh); g.rotateX(-Math.PI/2); return g;
+}
+function ophFloaters(innerSign, lap, toe){
+  const R=harbRnd(0xF10A7), list=[];
+  const KIND=[[0xd6301c,0x1e1410,2.2],[0xf6f3e8,0xf0c020,1.6],[0x6a3aa0,0xf0d040,1.3],
+              [0x7a3ab0,0xf2d24a,1.7],[0x7aa8ea,0xf6e27a,1.1],[0xf2b0c0,0xf0d060,1.9]];
+  for(let gI=0;gI<64;gI++){
+    let f=(gI+R()*0.8)/64*STEPS, k=(R()<0.8?(R()-0.5)*34:(R()<0.5?-25:24+R()*18));
+    const n=3+((R()*7)|0);
+    for(let j=0;j<n;j++){ const kd=KIND[(R()*KIND.length)|0];
+      list.push({f0:f, k:Math.max(-26,Math.min(44,k)), yaw:R()*6.28, spin:(R()-0.5)*0.12,
+                 s:kd[2]*(0.85+R()*0.4), c:kd[0], e:kd[1]});
+      f+=0.35+R()*0.7; k+=(R()-0.5)*3.2; }
+  }
+  const pet=new T.InstancedMesh(ophPetalGeo(5), new T.MeshLambertMaterial({color:0xffffff,side:T.DoubleSide}), list.length);
+  const eg=new T.CircleGeometry(0.3,8); eg.rotateX(-Math.PI/2); eg.translate(0,0.06,0);
+  const eye=new T.InstancedMesh(eg, new T.MeshLambertMaterial({color:0xffffff,side:T.DoubleSide}), list.length);
+  pet.frustumCulled=eye.frustumCulled=false;
+  list.forEach((v,i)=>{ pet.setColorAt(i,ophLin(v.c)); eye.setColorAt(i,ophLin(v.e)); });
+  const D={pet, eye, list, innerSign, toe, seg:lap/STEPS, m:new T.Matrix4(), q:new T.Quaternion(), q2:new T.Quaternion(),
+           p:new T.Vector3(), sc:new T.Vector3(), N:new T.Vector3(), bn:new T.Vector3()};
+  ophDrift(D, 0);
+  pet.instanceColor.needsUpdate=true; eye.instanceColor.needsUpdate=true;
+  return D;
+}
+function ophDrift(D, tsec){
+  const adv=tsec*OPH.flow/D.seg;
+  for(let n=0;n<D.list.length;n++){ const v=D.list[n];
+    let f=(v.f0+adv)%STEPS; const i0=Math.floor(f), a=f-i0, A=SAMP[i0], B=SAMP[(i0+1)%STEPS];
+    const bank=(A.bank||0)+((B.bank||0)-(A.bank||0))*a, L=Math.min(v.k, D.toe[i0]-3.5)*D.innerSign;
+    D.p.set(A.p.x+(B.p.x-A.p.x)*a+A.n.x*L, A.p.y+(B.p.y-A.p.y)*a+Math.sin(bank)*L+0.32, A.p.z+(B.p.z-A.p.z)*a+A.n.z*L);
+    D.bn.set(A.n.x*Math.cos(bank), Math.sin(bank), A.n.z*Math.cos(bank));
+    D.N.crossVectors(A.t, D.bn).normalize();
+    D.q.setFromUnitVectors(_ophUp, D.N).multiply(D.q2.setFromAxisAngle(_ophUp, v.yaw+tsec*v.spin));
+    D.m.compose(D.p, D.q, D.sc.set(v.s,1,v.s));
+    D.pet.setMatrixAt(n, D.m); D.eye.setMatrixAt(n, D.m);
+  }
+  D.pet.instanceMatrix.needsUpdate=true; D.eye.instanceMatrix.needsUpdate=true;
+}
+function ophFlush(O, grp){
+  const G=ophGeos(), L1=ophLumpGeo(1,1.0), L0=ophLumpGeo(0,1.7);
+  if(O.trunk.length)  grp.add(ophBatch(G.trunk, O.trunk));
+  if(O.lump.length)   grp.add(ophBatch(L1, O.lump));
+  if(O.lump0.length)  grp.add(ophBatch(L0, O.lump0, null, 420));
+  if(O.stem.length)   grp.add(ophBatch(G.stem, O.stem, null, 420));
+  if(O.spike.length)  grp.add(ophBatch(G.spike, O.spike, null, 520));
+  if(O.blade.length)  grp.add(ophBatch(G.blade, O.blade, ophSwayMat(0.45), 420));
+  if(O.strand.length) grp.add(ophBatch(G.strand, O.strand, ophSwayMat(1.1), 700));
+  if(O.bridge)        grp.add(ophBatch(new T.BoxGeometry(1,1,1), O.bridge));
+  if(O.garland)       grp.add(ophBatch(ophLumpGeo(0,2.3), O.garland));
+  // the chunks that carry a distance cutoff, for ophTick
+  const cull=[]; grp.traverse(o=>{ if(o.userData&&o.userData.ophNear) cull.push(o); });
+  return cull;
+}
+/* THE WILLOW ARCADE (the tunnel). The stream narrows (the infield bank closes in to 29.5,
+   inside the tunnel range only, where the corridor is 28.2 both sides) and crack willows
+   from both banks arch over it and meet: a green cave with curtains of strands down to
+   the water at the sides, light breaking through onto the surface. Open between the
+   trunks, so the sunlit meadow flickers past on either hand — enclosure without walls. */
+function ophArcade(F, O, innerSign){
+  const R=harbRnd(0xA4CADE), tun=TRACKS[selTrack].tunnels||[], fl=[];
+  for(const [ua,ub] of tun){ const i0=Math.floor(ua*STEPS), i1=Math.floor(ub*STEPS);
+    for(const sd of [1,-1]){ let i=i0-4+((R()*3)|0)+(sd>0?0:3);
+      while(i<=i1+4){ const ii=(i+STEPS)%STEPS, s=SAMP[ii], toe=sd*innerSign>0?F.toe[ii]:OPH.toeOut;
+        const L=toe+6+R()*5, x=s.p.x+s.n.x*sd*L, z=s.p.z+s.n.z*sd*L;
+        const rise=20+R()*6, lean=0.78+R()*0.2, reach=(L-rise*0.12)+(-3+R()*9);
+        ophWillow(F,O,R,x,z, -s.n.x*sd+s.t.x*(R()-0.5)*0.4, -s.n.z*sd+s.t.z*(R()-0.5)*0.4,
+                  reach/Math.sin(lean), lean, 1.0, {rise, crown:9, strands:4, long:1.7, big:1.45, thick:1.15, canopy:true});
+        // the low willow scrub along each bank: the sides of the cave
+        for(let k=0;k<2;k++){ const Lw=toe+11+R()*9, r=4+R()*3.5,
+            wx=s.p.x+s.n.x*sd*Lw+s.t.x*(R()-0.5)*14, wz=s.p.z+s.n.z*sd*Lw+s.t.z*(R()-0.5)*14;
+          if(F.floor(wx,wz,r)>-1e8) continue;
+          O.lump.push({x:wx, y:F.H(wx,wz)+r*0.55, z:wz, s:r, sy:r*0.9, sz:r, ry:R()*6,
+                       c:_ophPick(R,OPH_PAL.willowDk)}); }
+        i+=4+((R()*3)|0);
+      } }
+    // DAPPLE: sun through the leaves, lying on the water. Additive, faint, and it breathes
+    // and slides a little with the canopy (frame()). Never a flicker.
+    for(let i=i0+6;i<=i1-4;i+=2){ const s=SAMP[i%STEPS];
+      for(let k=0;k<1+((R()*2)|0);k++){ const kk=(R()-0.5)*50, L=kk*innerSign, bank=s.bank||0;
+        fl.push({x:s.p.x+s.n.x*L+s.t.x*(R()-0.5)*6, y:s.p.y+Math.sin(bank)*L+0.22, z:s.p.z+s.n.z*L+s.t.z*(R()-0.5)*6,
+                 s:3+R()*7, bank, n:s.n, t:s.t}); } }
+  }
+  if(!fl.length) return null;
+  const g=new T.PlaneGeometry(1,1); g.rotateX(-Math.PI/2);
+  const mat=new T.MeshBasicMaterial({map:TEX_GLOW, color:0xfff0c0, transparent:true, opacity:0.24,
+    blending:T.AdditiveBlending, depthWrite:false});
+  const m=new T.InstancedMesh(g, mat, fl.length); m.frustumCulled=false;
+  const M=new T.Matrix4(), q=new T.Quaternion(), bn=new T.Vector3(), N=new T.Vector3();
+  fl.forEach((v,k)=>{ bn.set(v.n.x*Math.cos(v.bank), Math.sin(v.bank), v.n.z*Math.cos(v.bank));
+    N.crossVectors(v.t,bn).normalize(); q.setFromUnitVectors(_ophUp,N);
+    M.compose(new T.Vector3(v.x,v.y,v.z), q, new T.Vector3(v.s,1,v.s*1.3)); m.setMatrixAt(k,M); });
+  m.instanceMatrix.needsUpdate=true; m.renderOrder=2;
+  return {m, mat};
+}
+/* THE VALLEY. Hierarchy, not quantity: a handful of big crack willows on the banks are the
+   subject; pollard rows and dark copses on the meadows are the frame; a wooded ring on
+   the hills is the far edge of the world. Irregular cadence throughout (LCG, never modulo). */
+function ophScenery(F, O, innerSign, ccx, ccz){
+  const R=harbRnd(0x0FE11A2), tun=(TRACKS[selTrack].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS)-16,Math.floor(b*STEPS)+16]);
+  const inT=i=>tun.some(([a,b])=>i>=a&&i<=b);
+  const toeAt=(i,sd)=>sd*innerSign>0?F.toe[i]:OPH.toeOut;
+  // crack willows on the banks — every fifth a hero, half again the size
+  let i=10+((R()*16)|0), n=0;
+  while(i<STEPS-8){
+    if(!inT(i)){ const s=SAMP[i], sd=R()<0.5?1:-1, hero=(n%5===2), sc=hero?1.35:0.85+R()*0.3;
+      const L=toeAt(i,sd)+7+R()*9, x=s.p.x+s.n.x*sd*L, z=s.p.z+s.n.z*sd*L;
+      ophWillow(F,O,R,x,z, -s.n.x*sd+s.t.x*(R()-0.5)*0.9, -s.n.z*sd+s.t.z*(R()-0.5)*0.9,
+                (22+R()*14)*sc, 0.45+R()*0.4, sc,
+                {rise:(7+R()*8)*sc, crown:hero?10:7, strands:hero?6:4, big:hero?1.15:1, long:hero?1.3:1});
+      n++; }
+    i+=13+((R()*30)|0);
+  }
+  // pollard rows running away from the stream along the old field ditches
+  for(let r=0;r<11;r++){ const i=Math.floor((r+0.15+R()*0.7)/11*STEPS)%STEPS; if(inT(i)) continue;
+    const s=SAMP[i], sd=R()<0.5?1:-1, sk=(R()-0.5)*0.9;
+    const dx=s.n.x*sd+s.t.x*sk, dz=s.n.z*sd+s.t.z*sk, dl=Math.hypot(dx,dz);
+    let d=toeAt(i,sd)+26+R()*18; const cnt=4+((R()*6)|0);
+    for(let c=0;c<cnt;c++){ ophPollard(F,O,R, s.p.x+dx/dl*d+(R()-0.5)*3, s.p.z+dz/dl*d+(R()-0.5)*3); d+=17+R()*15; } }
+  // copses and hedgerow trees on the meadows
+  for(let c=0;c<30;c++){ const i=(R()*STEPS)|0, s=SAMP[i], sd=R()<0.5?1:-1;
+    const d=toeAt(i,sd)+70+Math.pow(R(),0.8)*520, cx=s.p.x+s.n.x*sd*d, cz=s.p.z+s.n.z*sd*d;
+    const nt=2+((R()*7)|0);
+    for(let t=0;t<nt;t++) ophTree(F,O,R, cx+(R()-0.5)*70, cz+(R()-0.5)*70, 0.9+R()*0.8); }
+  // the wooded ring on the hills — the far edge, graded out by the long fog
+  for(let k=0;k<230;k++){ const a=R()*6.283, r=760+R()*560, x=ccx+Math.cos(a)*r, z=ccz+Math.sin(a)*r;
+    if(!harbClearOK(x,z,70)) continue;
+    const pr=24+R()*28;
+    O.lump.push({x, y:F.H(x,z)+pr*0.28, z, s:pr, sy:pr*0.72, sz:pr*(0.8+R()*0.4), ry:R()*6, c:_ophPick(R,OPH_PAL.hill)}); }
+  // poppy and ox-eye daisy drifts just over the bank crest
+  for(let d=0;d<34;d++){ const i=(R()*STEPS)|0, s=SAMP[i], sd=R()<0.5?1:-1;
+    const t=16+R()*26, L=toeAt(i,sd)+t, cx=s.p.x+s.n.x*sd*L, cz=s.p.z+s.n.z*sd*L;
+    const pop=R()<0.6, m=16+((R()*22)|0);
+    for(let k=0;k<m;k++){ const x=cx+(R()-0.5)*(pop?20:14), z=cz+(R()-0.5)*(pop?20:14), q=F.near(x,z);
+      if(q.t<14) continue;
+      O.lump0.push({x, y:F.H(x,z,q)+0.7+R()*0.5, z, s:0.75+R()*0.4, sy:0.5, sz:0.75+R()*0.4, ry:R()*6,
+                    c:pop?(R()<0.9?0xd6301c:0xe8502a):(R()<0.85?0xf6f3e8:0xf0c020)}); } }
+}
+// Swifts over the meadows: a dozen dark ticks on long, fast circles. You notice the sky is
+// alive; you never watch one.
+function ophSwifts(R){
+  const list=[];
+  for(let k=0;k<14;k++){ const s=SAMP[(R()*STEPS)|0], o=(R()-0.5)*320;
+    list.push({cx:s.p.x+s.n.x*o, cz:s.p.z+s.n.z*o, y:s.p.y+48+R()*50, r:50+R()*80,
+               w:(R()<0.5?-1:1)*(0.32+R()*0.28), ph:R()*6.28, s:1.5+R()*0.6}); }
+  const m=new T.InstancedMesh(harbGullGeo(), new T.MeshLambertMaterial({color:0x2a2a30, side:T.DoubleSide}), list.length);
+  m.frustumCulled=false;
+  return {mesh:m, list, d:new T.Object3D()};
+}
+const _ophV=new T.Vector3();
+function ophTick(P, tsec){
+  OPH_T.value=tsec;
+  if(P.cull) for(const m of P.cull){ const bs=m.geometry.boundingSphere;
+    m.visible = camera.position.distanceTo(bs.center) - bs.radius < m.userData.ophNear; }
+  if(P.water) P.water.uniforms.uT.value=tsec;
+  if(P.sky) P.sky.uniforms.uT.value=tsec;
+  if(P.float) ophDrift(P.float, tsec);
+  if(P.fleck){ const k=Math.sin(tsec*0.37)*0.6+Math.sin(tsec*0.91+1.3)*0.4;
+    P.fleck.mat.opacity=0.24*(1+k*0.22);
+    P.fleck.m.position.set(Math.sin(tsec*0.23)*0.9, 0, Math.cos(tsec*0.19)*0.9); }
+  if(P.swifts){ const G=P.swifts, d=G.d;
+    for(let k=0;k<G.list.length;k++){ const v=G.list[k], a=v.ph+tsec*v.w;
+      d.position.set(v.cx+Math.cos(a)*v.r, v.y+Math.sin(a*1.9)*4, v.cz+Math.sin(a)*v.r);
+      d.rotation.set(0, -a+(v.w>0?0:Math.PI), Math.sin(a*2.7)*0.35);
+      d.scale.setScalar(v.s); d.updateMatrix(); G.mesh.setMatrixAt(k,d.matrix); }
+    G.mesh.instanceMatrix.needsUpdate=true; }
+}
+
 // Build (or rebuild) the whole track world for TRACKS[idx]
 function buildTrack(idx){
   selTrack=idx;
@@ -4403,10 +5239,11 @@ function buildTrack(idx){
   // Felicia gets a LONG range now that it has real terrain: the far ridges are the
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
-  scene.fog.near = TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 185 : 120)));
+  // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
+  scene.fog.near = TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 185 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -4419,6 +5256,8 @@ function buildTrack(idx){
   // Aurora's horizon is a pale, luminous mint. Morning haze is LIGHTER than the land it
   // swallows, which is the opposite of dusk and the single strongest cue for the hour.
   if(TRACKS[idx].dawn) scene.fog.color.setHex(0xd4ece2);
+  // Ophelia: the summer haze the sky dome paints at its horizon
+  if(TRACKS[idx].ophelia) scene.fog.color.setHex(OPH.haze);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -4434,8 +5273,11 @@ function buildTrack(idx){
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
   const macro =!!TRACKS[idx].macro;      // ...or as a tilt-shift toy pond on a windowsill
   const dawn  =!!TRACKS[idx].dawn;       // ...and on Aurora, the felt valley in negative
+  const oph   =!!TRACKS[idx].ophelia;    // ...or as Millais' stream in high summer
+  let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   applyTrackLighting(bead, pool, coil, paint, felt, macro);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
+  if(oph) applyOpheliaLighting();        // likewise: every light re-set
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
   FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
@@ -4453,7 +5295,8 @@ function buildTrack(idx){
   // the vector course supplies its own ground grid; Felicia supplies a whole terrain
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
-  groundPlane.visible = !wire && !felt && !pool;
+  // Ophelia lays a whole valley of its own, so the plane goes there too
+  groundPlane.visible = !wire && !felt && !pool && !oph;
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -4507,7 +5350,17 @@ function buildTrack(idx){
   innerSign = acc>=0 ? 1 : -1;   // +normal points toward the infield when innerSign===1
 
   // ---- understructure: tube, viaduct, lattice, strata, basin, or painted hulls ----
-  if(paint){
+  if(oph){
+    // No tube: the stream runs IN the ground. One height field feeds the valley mesh, the
+    // hand-built banks at the waterline, and the footing of every prop on the course.
+    skyDome=ophSky(); trackGroup.add(skyDome);
+    OPH_CC=[ccx,ccz];
+    OK={F:ophField(innerSign, ccx, ccz), O:ophBag()};
+    trackGroup.add(ophTerrain(OK.F, ccx, ccz));
+    trackGroup.add(ophBanks(OK.F, innerSign));
+    OK.geo=ophStreamGeo(OK.F, innerSign);
+    TRACK_PULSE.oph={sky:skyDome.material};
+  } else if(paint){
     skyDome=paintSky(); trackGroup.add(skyDome);
     TRACK_PULSE.paintSky=skyDome.material;
     // The causeway spine. Darkened hard from 0x6a6a52: this is the deepest note in the
@@ -4993,7 +5846,9 @@ function buildTrack(idx){
   geo.setIndex(ridx); geo.computeVertexNormals();
   const rc=document.createElement('canvas'); rc.width=64; rc.height=256;
   const rg=rc.getContext('2d');
-  if(paint){
+  if(oph){
+    /* the stream draws itself in ophWaterMat; nothing to paint into rc here */
+  } else if(paint){
     /* THE DECK. The old surface failed for a reason that has nothing to do with taste:
        the shared UVs run v from 0 to 40 over the lap, and 40 repeats of a 256px sheet
        whose bands were 4px put a colour change every ~1.2 world units. That is finer than
@@ -5265,7 +6120,10 @@ function buildTrack(idx){
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
-  const road=new T.Mesh(geo, macro
+  const road=new T.Mesh(oph ? OK.geo : geo, oph
+    // Ophelia: bank to bank, deep channel and shallows in one sheet on the karts' plane
+    ? (TRACK_PULSE.oph.water=ophWaterMat(OK.geo.userData.lap))
+    : macro
     // wet is a hard WHITE specular (the natatorium lesson); slight violet emissive keeps
     // the water from going black where the key misses it
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d0d2a,
@@ -5315,7 +6173,7 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt) for(const side of [HW,-HW]){
+  if(!felt && !oph) for(const side of [HW,-HW]){
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
@@ -5425,11 +6283,12 @@ function buildTrack(idx){
   // Warm them to loose fibre and drop them to where they only show against dark ground.
   const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,
     // Marina: humid air over warm water — pale aqua, not pink sparks
-    color:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:paint?4.6:felt?4.2:3.2,
+    // Ophelia: thistledown and pollen in the sun over the water
+    color:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:oph?3.0:paint?4.6:felt?4.2:3.2,
     sizeAttenuation:true,
-    transparent:true, opacity:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
+    transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  TRACK_PULSE.motesDim=paint?0.16:felt?0.42:pool?0.55:0;
+  TRACK_PULSE.motesDim=oph?0.45:paint?0.16:felt?0.42:pool?0.55:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -5451,7 +6310,9 @@ function buildTrack(idx){
 
   // ---- start/finish gantry ----
   const s0=SAMP[0];
-  if(felt){
+  if(oph){
+    ophBridge(OK.F, OK.O, innerSign);     // a plank footbridge with a garland; flushed below
+  } else if(felt){
     /* The start line as a WARP BEAM. The shared gantry is a white plastic bar on two teal
        cylinders, and it is not rotated to the road, so on this course it was a 52-unit
        slab of the one material that exists nowhere else in the valley, hanging across the
@@ -5512,7 +6373,9 @@ function buildTrack(idx){
   }
 
   // ---- edge border: villi, curbs, pylons, tufts, coping, or mooring posts ----
-  if(paint){
+  if(oph){
+    ophVerge(OK.F, OK.O, innerSign);      // reeds, loosestrife, meadowsweet, iris, forget-me-nots
+  } else if(paint){
     /* The old verge was posts every 6 samples at HW+2.2, all the same height give or take
        a four-value modulo. Two things wrong with it and only one was the tiling: at 24.2
        lateral it also sat INSIDE the 28.2 outside corridor, so the player drove through
@@ -5866,7 +6729,10 @@ function buildTrack(idx){
 
   // ---- tunnels: ribbed torus rings, or voxel arches stepped around a half-circle ----
   const tun=TRACKS[idx].tunnels||[];
-  if(coil){
+  if(oph){
+    const fk=ophArcade(OK.F, OK.O, innerSign);
+    if(fk){ trackGroup.add(fk.m); TRACK_PULSE.oph.fleck=fk; }
+  } else if(coil){
     // a rainbow throat rather than one fleshy ring: three nested arches cycling the ramp
     for(const sg of tun){
       const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
@@ -6084,7 +6950,8 @@ function buildTrack(idx){
 
   // ---- inner barrier: a faint glowing membrane set DEEP inside the loop so there's an
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
-  if(loop && !cross){
+  // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
+  if(loop && !cross && !oph){
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -6169,7 +7036,8 @@ function buildTrack(idx){
       const trueUp=new T.Vector3().crossVectors(fwd,right).normalize();
       grp.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(right,trueUp,fwd));
       const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
-        new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
+        oph ? new T.MeshLambertMaterial({color:ophLin(0x5e4c38)})     // Ophelia: a weathered plank ramp
+            : new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
       const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
         new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
@@ -6181,7 +7049,13 @@ function buildTrack(idx){
   }
 
   // ---- trackside scenery: cells, towers, wire solids, wool, pool room, or moored sails ----
-  if(paint){
+  if(oph){
+    ophScenery(OK.F, OK.O, innerSign, ccx, ccz);
+    TRACK_PULSE.oph.cull=ophFlush(OK.O, trackGroup);   // every bank, tree and flower above
+    const fl=ophFloaters(innerSign, OK.geo.userData.lap, OK.F.toe);
+    trackGroup.add(fl.pet); trackGroup.add(fl.eye); TRACK_PULSE.oph.float=fl;
+    const sw=ophSwifts(harbRnd(0x5A1F7)); trackGroup.add(sw.mesh); TRACK_PULSE.oph.swifts=sw;
+  } else if(paint){
     /* THE FLEET. What was here before was 170 free-floating sails placed at
        sp.p.y + h*0.72 with a half-height of h*0.62 — so every one of them hung between 8
        and 40 units above the water on nothing at all, which is the plainest kind of bug
@@ -7280,10 +8154,15 @@ function buildTrack(idx){
     // same hitbox — only the surface changes.
     const BALL = pool ? [0xe8503c,0xf4f0e8,0x2f6fd8,0xf2c230].map(c=>new T.MeshPhongMaterial(
       {color:c, shininess:110, specular:0xffffff, emissive:new T.Color(c).multiplyScalar(0.12)})) : null;
+    // Ophelia: floating posies — poppy, daisy, violet, buttercup — flat on the water
+    const POSY = oph ? [0xd6301c,0xf6f3e8,0x6a3aa0,0xf0c830].map(c=>new T.MeshLambertMaterial({color:ophLin(c), side:T.DoubleSide})) : null;
+    const POSYG = oph ? ophPetalGeo(5) : null, POSYE = oph ? new T.CircleGeometry(0.3,8).rotateX(-Math.PI/2) : null;
+    const POSYEM = oph ? new T.MeshLambertMaterial({color:ophLin(0xf0c020), side:T.DoubleSide}) : null;
     for(let k=0;k<NB;k++){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
       const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
-      const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out, by=s.p.y+2.2;
+      const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out;
+      const by=oph ? s.p.y+Math.sin(s.bank||0)*side*out+0.5 : s.p.y+2.2;   // posies float ON the banked water
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
       const m = felt
@@ -7303,14 +8182,18 @@ function buildTrack(idx){
           felt ? FELT_PUFF
           : wire ? new T.OctahedronGeometry(r*1.3,0)
           : vox ? new T.BoxGeometry(r*1.9,r*1.9,r*1.9)
-          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : m);
+          : oph ? POSYG
+          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : oph ? POSY[(k+c)%4] : m);
+        // Ophelia: three flat flower heads lying on the water, each with its eye
         blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6);
+        if(oph){ blob.scale.set(r*1.05,1,r*1.05); blob.position.y=-0.3+c*0.04; blob.rotation.y=Math.random()*6.28;
+          const e=new T.Mesh(POSYE, POSYEM); e.position.y=0.06; blob.add(e); }
         if(felt) blob.scale.setScalar(r*1.25);
         if(vox) blob.rotation.y=Math.random()*0.6;
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:300+hue});
     }
   }
 
@@ -10997,6 +11880,9 @@ function frame(now){
     s.m.position.x=s.x+Math.sin(tsec*0.031+s.ph)*14;
     s.m.position.z=s.z+Math.cos(tsec*0.023+s.ph)*14;
     s.m.material.opacity=s.o*(0.75+0.25*Math.sin(tsec*0.09+s.ph)); }
+  // Ophelia: the current, the wind in the reeds and willows, drifting flowers, the dapple
+  // in the willow arcade, swifts. All slow; see ophTick.
+  if(TRACK_PULSE.oph) ophTick(TRACK_PULSE.oph, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
