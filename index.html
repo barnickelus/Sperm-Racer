@@ -690,7 +690,8 @@ let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, cur
 // icon, cycling home -> alt1 -> alt2 -> ... -> home. Guido has two: a house remix of his own
 // PD folk hooks, and an original party anthem.
 const ALT_MAP={guido:['guidoAlt','guidoParty'], chad:['chadAlt'],
-  king:['kingCash','kingLounge'], rick:['rickMothership','rickDisco']};
+  king:['kingCash','kingLounge'], rick:['rickMothership','rickDisco'],
+  rastaDragon:['rasta']};   // the luck dragon can still tune back to Winston's One Drop FM
 const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
@@ -1109,6 +1110,15 @@ const MUSIC_STYLES={
               hihat:1, beatGroup:4, tempoMul:0.72, station:'60.0 TESSERA FM',
               stab:{inst:'koto', wave:'triangle', note:14, steps:[3,11], dur:0.14, vol:0.18},
               mel:[0,4,7,11,7,4,2,4], melB:[11,7,4,7,11,14,11,7] },
+  /* The Winston Irie luck dragon — the first PRODUCED station. `engine` hands the whole
+     station to SONG_ENGINE (see "Seven Scales" below): a mixed, spaced, arranged roots/dub
+     record instead of this grid. The grid fields stay only so the shared code that reads
+     every style (the victory fanfare, srNet) has something sensible to read. */
+  rastaDragon:{ engine:'sevenScales', inst:'organ', melWave:'triangle', bassWave:'sine', bassInst:'808',
+              drums:{kick:[8],snare:[8]}, bass:[0,0,5,7], hihat:2, beatGroup:4, tempoMul:1,
+              station:'77.7 IRIE HI-FI',
+              mel:[7,null,12,null,15,null,14,12, null,null,10,null,7,null,null,null],
+              melB:[12,null,10,null,8,null,7,8, 10,null,null,null,12,null,null,null] },
 };
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 // ---- richer synth voice: the old playNote was one raw oscillator straight into a
@@ -1490,10 +1500,49 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
     ] : M;
     curStyle.secs = B ? 8 : 1;
   }
+  if(curStyle.engine){ startProducedStation(tk); return; }
   musicStep=0; musicIvMs=(tk.tempo||210)*(curStyle.tempoMul||1);
   musicTimer=setInterval(musicTick, musicIvMs); }
+/* PRODUCED STATIONS in the game. One SONG_ENGINE handle per song per AudioContext, built on
+   first use and reused (its bus, echo and spring are never rebuilt); start/stop only
+   connect, fade and detach it. It is its own mix, so it goes straight to masterGain, not
+   through musicGain's compressor.
+
+   COURSE SONGS. The rule elsewhere is "the course owns the composition, the character owns
+   the arrangement", and a produced station is the one deliberate exception. Its bass line
+   IS the composition (reggae is written from the riddim up), and its form — dub drop-outs,
+   throws, breakdown, horn chorus — is built around those specific lines; laying a course's
+   16-step sketch over it would give the course neither its tune nor this record. So the
+   course keeps what it can own without breaking the song: its KEY (the station is
+   transposed into the course's key, folded to within a fourth so the bass stays deep), and
+   srNet.music reports the course song as deferred rather than pretending it is playing.
+
+   Musical time survives interruptions: a mute toggle or a trip round the dial mid-race
+   resumes on the next bar instead of replaying the intro; a new race starts from the top. */
+const producedStations={};
+let producedResume={};
+function startProducedStation(tk){
+  const id=curStyle.engine, song=SONG_ENGINE.songs[id];
+  if(!song){ curStyle.engine=null; musicIvMs=(tk.tempo||210); musicTimer=setInterval(musicTick,musicIvMs); return; }
+  let h=producedStations[id];
+  if(!h || h.ctx!==actx){                           // level 0.38 = about -20 LUFS, level with the grid stations
+    h=SONG_ENGINE.produceStation(actx, masterGain, song, {lite:isTouch, level:0.38}); h.ctx=actx; producedStations[id]=h; }
+  const k=((musicRoot%12)+12)%12;
+  h.setKey(k>6?k-12:k);
+  const fresh=state!=='race' || performance.now()-tStart<2000;
+  if(fresh) producedResume={};
+  h.start({bar:fresh?0:(producedResume[id]||0)});
+  curStyle.courseSong=curStyle.songName||null;     // what the course asked for (deferred, see above)
+  curStyle.songName=song.title;
+  musicTimer=h.timer;                               // the engine's scheduler: truthy while it plays
+}
+function stopProducedStations(){
+  for(const id in producedStations){ const h=producedStations[id];
+    if(h.running) producedResume[id]=h.stop()+1; }
+}
 let hbTimer=null;
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
+  stopProducedStations();
   if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
 // final lap: kick the music faster, pulse the HUD red at the edges, AND thump a
 // heartbeat under everything — the red vignette alone can vanish against the game's
@@ -1509,6 +1558,8 @@ function rampFinalLap(){
 // once only half a lap (or, on point-to-point tracks, roughly the last tenth of the run)
 // remains, not from the moment the final lap starts.
 function speedUpFinalStretch(){
+  if(musicTimer && curStyle && curStyle.engine){             // a produced station speeds its own clock
+    const h=producedStations[curStyle.engine]; if(h) h.setTempoScale(1.15); return; }
   if(musicTimer && curStyle){
     clearInterval(musicTimer);
     const tk=TRACKS[selTrack]||{};
@@ -1531,6 +1582,640 @@ function playVictoryFanfare(styleId){
     playNote(noteFreq(n-12), 0.32, 0.12, st.bassWave);
   }, i*90));
 }
+
+/* ==== SONG ENGINE ==== */
+/* PRODUCED STATIONS. Every other station is a 16-step grid of oscillator voices summed
+   straight into one bus: no mix, no space, no dynamics, and the same bar every few seconds.
+   This is the other way to do it: a small recording studio built once per AudioContext.
+
+     voices -> channel strips (fader, EQ/drive, pan, echo send, spring send)
+            -> mix bus -> dub filters (HP/LP, swept by the song) -> glue compressor
+            -> limiter -> soft clipper -> out
+     echo:   tape delay, ping-pong L/R, saturation + band-limiting inside the feedback loop,
+             wow and flutter on the delay time, tempo-synced to a dotted eighth
+     spring: convolver on a generated spring-tank impulse (dispersive chirps per round trip
+             of three springs, so it boings), fed by the channels and by the echo return
+
+   A song is DATA + a planner: plan(bar) returns that bar's events (notes, drum hits) and
+   automation (channel mutes, echo throws, feedback, filter sweeps), so the arrangement is
+   a real form with sections instead of a loop. The scheduler runs on the audio clock with a
+   short lookahead (never setInterval jitter on the notes themselves), and the context is
+   injected, so the exact same code renders into an OfflineAudioContext for listening tests.
+   Nothing here touches game state. */
+const SONG_ENGINE=(function(){
+  const rngOf=(seed)=>{ let a=seed>>>0; return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a;
+    t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61); return ((t^(t>>>14))>>>0)/4294967296; }; };
+  // tanh transfer curve. norm: +/-1 in -> +/-1 out (a clipper); otherwise unity small-signal
+  // gain (safe inside a feedback loop — it can only ever take level away)
+  function tanhCurve(drive,norm){ const n=2048, c=new Float32Array(n), k=norm?Math.tanh(drive):drive;
+    for(let i=0;i<n;i++){ const x=i/(n-1)*2-1; c[i]=Math.tanh(x*drive)/k; } return c; }
+  function noiseBuffer(ctx,sec){ const len=Math.floor(ctx.sampleRate*sec), b=ctx.createBuffer(1,len,ctx.sampleRate),
+    d=b.getChannelData(0), R=rngOf(99); for(let i=0;i<len;i++) d[i]=R()*2-1; return b; }
+  /* A spring tank is not a room. A pulse goes down each spring and comes back every round
+     trip, and the spring is dispersive, so each return is a CHIRP that smears a little more
+     than the last — that is the boing. Three springs of different lengths, slightly
+     different per channel, plus a diffuse wash underneath. */
+  function springIR(ctx,sec){
+    const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), R=rngOf(7771);
+    for(let ch=0;ch<2;ch++){
+      const d=buf.getChannelData(ch);
+      for(const [P0,lv] of [[0.0331,1.0],[0.0419,0.8],[0.0537,0.62]]){
+        const P=P0*(ch?1.021:0.983);
+        for(let k=0;k*P<sec*0.9;k++){
+          const t0=k*P+R()*0.0012, amp=lv*Math.exp(-k*P/0.34)*(R()<0.5?-1:1);
+          const cl=Math.min(0.085,0.004+k*0.0032), r=260/4800, fHi=4800;
+          const i0=Math.floor(t0*sr), n=Math.floor(cl*sr), m=Math.pow(r,1/n);
+          let f=fHi, ph=0;
+          for(let i=0;i<n&&i0+i<len;i++){
+            const w=Math.sin(Math.PI*i/n);
+            d[i0+i]+=amp*w*w*Math.sin(ph)*0.5; ph+=2*Math.PI*f/sr; f*=m;
+          }
+        }
+      }
+      let e=0;
+      for(let i=0;i<len;i++){ const t=i/sr;
+        d[i]+=(R()*2-1)*0.16*Math.exp(-t/0.33)*(1-Math.exp(-t/0.03)); e+=d[i]*d[i]; }
+      const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k;     // unit energy: level set by the returns, not by luck
+    }
+    return buf;
+  }
+  function buildBus(ctx,spec,lite){
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    const P=(v)=>{ if(ctx.createStereoPanner){ const p=ctx.createStereoPanner(); p.pan.value=v; return p; } return G(1); };
+    const mix=G(1), autos=[];
+    const reg=(param,def)=>{ autos.push([param,def]); return param; };
+    reg(mix.gain,1);
+    // ---- master: dub filters -> glue -> limiter -> clipper
+    const dubHP=F('highpass',20,0.707), dubLP=F('lowpass',20000,0.9);
+    reg(dubHP.frequency,20); reg(dubLP.frequency,20000); reg(dubLP.Q,0.9); reg(dubHP.Q,0.707);
+    const glue=ctx.createDynamicsCompressor();
+    glue.threshold.value=-13; glue.knee.value=12; glue.ratio.value=2; glue.attack.value=0.015; glue.release.value=0.3;
+    const makeup=G(spec.makeup||1.8);
+    const lim=ctx.createDynamicsCompressor();
+    lim.threshold.value=-3; lim.knee.value=1; lim.ratio.value=20; lim.attack.value=0.001; lim.release.value=0.12;
+    const clip=ctx.createWaveShaper(); clip.curve=tanhCurve(1.15,true);
+    const out=G(0);
+    // mastering tone: a little out of the boxy low-mids, a little air on top
+    const toneLo=F('peaking',380,0.8); toneLo.gain.value=spec.lowMid!=null?spec.lowMid:-2.5;
+    const toneHi=F('highshelf',5000); toneHi.gain.value=spec.air!=null?spec.air:4;
+    mix.connect(dubHP); dubHP.connect(dubLP); dubLP.connect(toneLo); toneLo.connect(toneHi); toneHi.connect(glue); glue.connect(makeup);
+    makeup.connect(lim); lim.connect(clip); clip.connect(out);
+    // ---- tape echo, ping-pong, with the tape in the loop
+    const echoIn=G(1), eHP=F('highpass',240,0.6), ePre=ctx.createWaveShaper(); ePre.curve=tanhCurve(1.6,false);
+    const dL=ctx.createDelay(2.5), dR=ctx.createDelay(2.5);
+    const lpL=F('lowpass',3400,0.5), lpR=F('lowpass',2700,0.5), loopHP=F('highpass',170,0.5);
+    const fbSat=ctx.createWaveShaper(); fbSat.curve=tanhCurve(1.5,false);
+    const fb=G(spec.echoFb||0.5); reg(fb.gain,spec.echoFb||0.5);
+    const pL=P(-0.72), pR=P(0.72), echoRet=G(spec.echoRet||0.9);
+    echoIn.connect(eHP); eHP.connect(ePre); ePre.connect(dL);
+    dL.connect(lpL); lpL.connect(pL); lpL.connect(dR); dR.connect(lpR); lpR.connect(pR);
+    lpR.connect(loopHP); loopHP.connect(fbSat); fbSat.connect(fb); fb.connect(dL);
+    pL.connect(echoRet); pR.connect(echoRet); echoRet.connect(mix);
+    const wow=ctx.createOscillator(), wowG=G(0.0022), flut=ctx.createOscillator(), flutG=G(0.0003);
+    wow.frequency.value=0.43; flut.frequency.value=6.1;
+    wow.connect(wowG); flut.connect(flutG);
+    for(const d of [dL,dR]){ wowG.connect(d.delayTime); flutG.connect(d.delayTime); }
+    wow.start(); flut.start();
+    // ---- spring tank
+    const springIn=G(1), sHP=F('highpass',300,0.7), conv=ctx.createConvolver();
+    conv.normalize=false; conv.buffer=springIR(ctx,lite?1.6:2.3);
+    const sPk=F('peaking',2700,1.1); sPk.gain.value=5;
+    const sLP=F('lowpass',7200,0.7), springRet=G(spec.springRet||0.8);
+    springIn.connect(sHP); sHP.connect(conv); conv.connect(sPk); sPk.connect(sLP); sLP.connect(springRet); springRet.connect(mix);
+    const e2s=G(0.16); echoRet.connect(e2s); e2s.connect(springIn);   // echo into the tank, the dub way
+    // ---- channel strips
+    const ch={};
+    for(const name in spec.channels){
+      const c=spec.channels[name], input=G(c.level);
+      let node=input;
+      for(const [k,a,b,q] of (c.chain||[])){
+        let n;
+        if(k==='drive'){ n=ctx.createWaveShaper(); n.curve=tanhCurve(a,true); }
+        else if(k==='peak'){ n=F('peaking',a,q||1); n.gain.value=b; }
+        else if(k==='hshelf'||k==='lshelf'){ n=F(k==='hshelf'?'highshelf':'lowshelf',a); n.gain.value=b; }
+        else if(k==='trim') n=G(a);
+        else n=F(k==='hp'?'highpass':'lowpass',a,b!=null?b:0.707);
+        node.connect(n); node=n;
+      }
+      const dry=G(1), pan=P(c.pan||0), es=G(c.echo||0), ss=G(c.spring||0);
+      let L=null, Rr=null;                  // fixed left/right feeds for sections that spread across the stereo field
+      if(c.spread){ L=P(-c.spread); Rr=P(c.spread); L.connect(input); Rr.connect(input); }
+      node.connect(dry); dry.connect(pan); pan.connect(mix);
+      node.connect(es); es.connect(echoIn); node.connect(ss); ss.connect(springIn);
+      // throw bus: single hits sent hard into the echo/spring. It rides the channel's fader
+      // multiplier, so a muted channel cannot throw.
+      const thr=G(1), ts=G(1);
+      thr.connect(ts); ts.connect(echoIn);
+      const thrS=G(1); thrS.connect(springIn);
+      reg(input.gain,c.level); reg(dry.gain,1); reg(es.gain,c.echo||0); reg(thr.gain,1); reg(thrS.gain,1);
+      ch[name]={in:input, L:L||input, R:Rr||input, dry, echo:es, thr, thrS, base:c};
+    }
+    return {ch, mix, out, echoIn, springIn, fb, dL, dR, dubHP, dubLP, autos, lfos:[wow,flut]};
+  }
+  // periodic waves: a 16' Hammond-ish drawbar set (played an octave down) and a free reed
+  function waves(ctx){
+    const mkW=(amps)=>{ const re=new Float32Array(amps.length+1), im=new Float32Array(amps.length+1);
+      amps.forEach((a,i)=>{ im[i+1]=a; }); return ctx.createPeriodicWave(re,im); };
+    const organ=mkW([0.45,1,0.7,0.5,0,0.22,0,0.28,0,0.08,0,0.07]);
+    const reed=[]; for(let h=1;h<=24;h++) reed.push((1/h)*(h%2?1:0.55)*(h>=3&&h<=6?1.5:1));
+    return {organ, reed:mkW(reed)};
+  }
+  function makeVoices(ctx,bus,noise,live,lite){
+    const C=bus.ch, W=waves(ctx);
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    function O(type,f,t,end,to,det){ const o=ctx.createOscillator();
+      if(typeof type==='string') o.type=type; else o.setPeriodicWave(type);
+      o.frequency.setValueAtTime(f,t); if(det) o.detune.setValueAtTime(det,t);
+      o.connect(to); o.start(t); o.stop(end); live.push([o,end]); return o; }
+    function N(t,dur,to){ const s=ctx.createBufferSource(); s.buffer=noise; s.connect(to);
+      s.start(t,Math.random()*(noise.duration-dur-0.1),dur+0.02); live.push([s,t+dur+0.03]); return s; }
+    const AD=(g,t,a,pk,d)=>{ g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,pk),t+a);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+a+d); };
+    const ASR=(g,t,a,pk,hold,r)=>{ const h=Math.max(a+0.005,hold); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(pk,t+a);
+      g.gain.setValueAtTime(pk,t+h); g.gain.exponentialRampToValueAtTime(0.0001,t+h+r); };
+    const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); }
+      if(p.spr){ const s=G(p.spr); node.connect(s); s.connect(c.thrS); } };
+    const V={
+      kick(t,p){ const v=p.v||1, g=G(0), o=O('sine',160,t,t+0.62,g);
+        o.frequency.exponentialRampToValueAtTime(60,t+0.045); o.frequency.exponentialRampToValueAtTime(47,t+0.4);
+        AD(g,t,0.003,0.95*v,0.55); g.connect(C.kick.in);
+        const cg=G(0), hp=F('highpass',2800,0.7); N(t,0.012,hp); hp.connect(cg); AD(cg,t,0.001,0.16*v,0.014); cg.connect(C.kick.in); },
+      sub(t,p){ const v=p.v||1, g=G(0), o=O('sine',70,t,t+1.6,g);         // the bass-drop boom
+        o.frequency.exponentialRampToValueAtTime(36,t+1.2); AD(g,t,0.01,0.8*v,1.5); g.connect(C.kick.in); },
+      rim(t,p){ const v=p.v||1, out=G(1), g=G(0), bp=F('bandpass',p.x?1550:2150,p.x?2.2:1.4);
+        N(t,0.07,bp); bp.connect(g); AD(g,t,0.001,0.95*v,p.x?0.035:0.065);
+        const b=G(0); O('triangle',p.x?540:405,t,t+0.09,b); AD(b,t,0.001,0.55*v,0.05);
+        g.connect(out); b.connect(out); out.connect(C.drums.in); sends(out,p,C.drums); },
+      snare(t,p){ const v=p.v||1, out=G(1), n=G(0), hp=F('highpass',1100,0.7);
+        N(t,0.24,hp); hp.connect(n); AD(n,t,0.001,0.6*v,0.19);
+        const b=G(0), o=O('triangle',205,t,t+0.16,b); o.frequency.exponentialRampToValueAtTime(172,t+0.1); AD(b,t,0.001,0.6*v,0.1);
+        n.connect(out); b.connect(out); out.connect(C.drums.in); sends(out,p,C.drums); },
+      tom(t,p){ const v=p.v||1, f=p.f||120, g=G(0), o=O('sine',f*1.5,t,t+0.5,g);
+        o.frequency.exponentialRampToValueAtTime(f,t+0.04); o.frequency.exponentialRampToValueAtTime(f*0.82,t+0.4);
+        AD(g,t,0.002,0.8*v,0.42); const s=G(0), bp=F('bandpass',f*6,1); N(t,0.03,bp); bp.connect(s); AD(s,t,0.001,0.25*v,0.03);
+        s.connect(g); g.connect(C.drums.in); sends(g,p,C.drums); },
+      hat(t,p){ const v=p.v||1, g=G(0), hp=F('highpass',p.o?6000:7200,0.8), d=p.o?0.3:0.045;
+        N(t,d+0.02,hp); hp.connect(g); AD(g,t,0.001,(p.o?0.3:0.34)*v,d); g.connect(C.hats.in); },
+      hand(t,p){ const v=p.v||1, f=p.f, g=G(0), o=O('sine',f*1.3,t,t+(p.d||0.3)+0.05,g);   // nyabinghi hand drums
+        o.frequency.exponentialRampToValueAtTime(f,t+0.025); AD(g,t,0.002,0.8*v,p.d||0.3);
+        const s=G(0), bp=F('bandpass',p.sf||1100,1.3); N(t,0.035,bp); bp.connect(s); AD(s,t,0.001,(p.sl||0.35)*v,0.03);
+        s.connect(C.perc.in); g.connect(C.perc.in); },
+      bass(t,p,sd,hz){ const v=p.v||1, f=hz(p.n-24), dur=Math.max(0.06,p.l*sd-0.02), end=t+dur+0.12;
+        const g=G(0), lp=F('lowpass',Math.min(1400,f*9),0.8), o=O('sine',f*1.025,t,end,lp);
+        o.frequency.exponentialRampToValueAtTime(f,t+0.025);
+        if(!lite){ const tg=G(0.42); O('triangle',f,t,end,tg); tg.connect(lp); }
+        lp.frequency.setValueAtTime(Math.min(1400,f*9),t); lp.frequency.exponentialRampToValueAtTime(Math.min(700,f*4.5),t+0.18);
+        lp.connect(g); ASR(g,t,0.007,0.95*v,dur,0.06); g.connect(C.bass.in); },
+      skank(t,p,sd,hz){ const v=p.v||1, g=G(0), hp=F('highpass',650,0.7), lp=F('lowpass',5600,1.1), end=t+0.2;
+        lp.frequency.setValueAtTime(5600,t); lp.frequency.exponentialRampToValueAtTime(1500,t+0.07);
+        for(const n of p.ns) O('sawtooth',hz(n),t,end,hp,(Math.random()-0.5)*14);
+        hp.connect(lp); lp.connect(g); AD(g,t,0.002,0.2*v,p.d||0.1);
+        const ng=G(0), bp=F('bandpass',2600,1); N(t,0.02,bp); bp.connect(ng); AD(ng,t,0.001,0.1*v,0.02); ng.connect(g);
+        g.connect(C.skank.in); sends(g,p,C.skank); },
+      organ(t,p,sd,hz){ const v=p.v||1, dur=(p.l||0.6)*sd, g=G(0), lp=F('lowpass',p.dark?1700:3300,0.6), end=t+dur+0.1;
+        for(const n of p.ns) O(W.organ,hz(n)/2,t,end,lp);
+        lp.connect(g); ASR(g,t,0.004,0.13*v,dur,0.035); g.connect(C.organ.in); sends(g,p,C.organ); },
+      /* Horn section: trumpet, tenor an octave down, trombone on the octave or a harmony.
+         Each part is brassy saw/square through its own opening-then-settling lowpass, with a
+         lip scoop into the note. Only the trumpet carries vibrato (an a-rate detune input is
+         the costly part of a voice), and the parts sit on the channel's fixed L/C/R feeds
+         instead of three panners per note. */
+      horn(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,p.l*sd-0.03), end=t+dur+0.25;
+        let lg=null;
+        if(dur>0.45){ const lfo=ctx.createOscillator(); lg=G(0); lfo.frequency.value=5.3; lfo.connect(lg);
+          lg.gain.setValueAtTime(0,t+0.15); lg.gain.linearRampToValueAtTime(13,t+Math.min(dur,0.55));
+          lfo.start(t); lfo.stop(end); live.push([lfo,end]); }
+        const sec=(p.throw||p.spr)?G(1):null; if(sec) sends(sec,p,C.horns);
+        const part=(freq,waves,det,cut,lvl,to,vib)=>{ const g=G(0), lp=F('lowpass',cut*0.25,1.3);
+          (lite?waves.slice(0,1):waves).forEach((w,i)=>{ const d0=i?det:-det, o=O(w,freq,t,end,lp,d0);
+            o.detune.setValueAtTime(d0-38,t); o.detune.linearRampToValueAtTime(d0,t+0.06); if(vib&&lg) lg.connect(o.detune); });
+          lp.frequency.setValueAtTime(cut*0.25,t); lp.frequency.exponentialRampToValueAtTime(cut,t+0.055);
+          lp.frequency.exponentialRampToValueAtTime(cut*0.7,t+0.35);
+          lp.connect(g); ASR(g,t,0.022,lvl*v,dur,0.09); g.connect(to); if(sec) g.connect(sec); };
+        part(f,['sawtooth','sawtooth'],7,Math.min(8000,f*9),0.17,C.horns.L,true);             // trumpet
+        part(f/2,['square'],0,Math.min(3600,f*6),0.13,C.horns.R,false);                      // tenor sax, octave down
+        part(p.h!=null?hz(p.h-12):f/2,['sawtooth'],0,Math.min(2400,f*3),0.12,C.horns.in,false); // trombone
+      },
+      mel(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,p.l*sd-0.02), end=t+dur+0.2;
+        const g=G(0), lp=F('lowpass',3400,0.7), pk=F('peaking',1450,1.4); pk.gain.value=4;
+        let lg=null;
+        if(dur>0.4 && !lite){ const lfo=ctx.createOscillator(); lg=G(0); lfo.frequency.value=5.8; lfo.connect(lg);
+          lg.gain.setValueAtTime(0,t+0.12); lg.gain.linearRampToValueAtTime(9,t+0.12+Math.min(dur,0.4));
+          lfo.start(t); lfo.stop(end); live.push([lfo,end]); }
+        for(const d of lite?[0]:[-4,4]){ const o=O(W.reed,f,t,end,lp,d); if(lg) lg.connect(o.detune); }
+        lp.connect(pk); pk.connect(g); ASR(g,t,0.028,0.16*v,dur,0.07);
+        const bg=G(0), bhp=F('highpass',2400,0.7); N(t,0.1,bhp); bhp.connect(bg); AD(bg,t,0.015,0.035*v,0.08); bg.connect(g);
+        g.connect(C.mel.in); sends(g,p,C.mel); },
+      siren(t,p,sd){ const v=p.v||1, dur=p.l*sd, end=t+dur+0.15, g=G(0), lp=F('lowpass',2600,0.8);
+        const o=O('square',p.f0||380,t,end,lp); o.frequency.exponentialRampToValueAtTime(p.f1||1100,t+dur);
+        const lfo=ctx.createOscillator(), lg=G(p.depth||420); lfo.type=p.sq?'square':'sine'; lfo.frequency.value=p.r||5;
+        lfo.connect(lg); lg.connect(o.detune); lfo.start(t); lfo.stop(end); live.push([lfo,end]);
+        lp.connect(g); ASR(g,t,0.04,0.075*v,dur,0.12); g.connect(C.fx.in); },
+      boing(t,p){ const v=p.v||1, g=G(0), lp=F('lowpass',2400,0.7); N(t,0.05,lp); lp.connect(g);   // kicking the spring tank
+        AD(g,t,0.001,1.3*v,0.05); g.connect(C.fx.thrS); const d=G(0.05); g.connect(d); d.connect(C.fx.in); },
+    };
+    return V;
+  }
+  function produceStation(ctx,dest,song,opts){
+    opts=opts||{};
+    const bus=buildBus(ctx,song.mix,!!opts.lite), noise=noiseBuffer(ctx,2.5), live=[];
+    const V=makeVoices(ctx,bus,noise,live,!!opts.lite);
+    const level=opts.level!=null?opts.level:0.9;
+    let key=0, tempoScale=1, running=false, timer=null, gen=0, connected=false;
+    let bar=0, barT=0, sd=0.2, plan=null, idx=0, planInfo=null, disconnectTimer=null, lastPump=0, lookAhead=0.3;
+    const env={lite:!!opts.lite}, lag=song.lag||{};
+    const hz=(n)=>220*Math.pow(2,(n+key+(song.key||0))/12);
+    const stepDur=()=>60/(song.bpm*tempoScale)/4;
+    const setEcho=(t,tc)=>{ const d=(song.echoSteps||3)*stepDur();
+      for(const dl of [bus.dL,bus.dR]){ if(tc) dl.delayTime.setTargetAtTime(d,t,tc); else dl.delayTime.setValueAtTime(d,t); } };
+    function load(){
+      sd=stepDur();
+      const R=rngOf(bar*7919+13);
+      plan=song.plan(bar,R,env); plan.ev.sort((a,b)=>a.s-b.s); idx=0;
+      planInfo={bar, section:plan.label, sectionId:plan.sec, pass:plan.pass, formBar:plan.pos};
+      // the mastering ride: each section sits at its own level, eased in over the first beat
+      if(plan.energy) plan.ev.push({s:-0.2, v:'@', p:{a:'energy', v:plan.energy}});
+    }
+    function auto(p,t){
+      const tc=p.tc||0.01;
+      if(p.a==='mix'){ for(const name in bus.ch){ const c=bus.ch[name], lv=p.m[name]!=null?p.m[name]:1;
+          c.in.gain.setTargetAtTime(c.base.level*lv,t,tc); c.dry.gain.setTargetAtTime(1,t,tc);
+          c.thr.gain.setTargetAtTime(lv,t,tc); c.thrS.gain.setTargetAtTime(lv,t,tc);
+          c.echo.gain.setTargetAtTime(c.base.echo||0,t,tc); } return; }
+      if(p.a==='lvl'){ const c=bus.ch[p.ch]; c.in.gain.setTargetAtTime(c.base.level*p.v,t,tc);
+        c.thr.gain.setTargetAtTime(p.v,t,tc); c.thrS.gain.setTargetAtTime(p.v,t,tc); return; }
+      if(p.a==='dry'){ bus.ch[p.ch].dry.gain.setTargetAtTime(p.v,t,tc); return; }
+      if(p.a==='echo'){ bus.ch[p.ch].echo.gain.setTargetAtTime(p.v,t,tc); return; }
+      if(p.a==='energy'){ bus.mix.gain.setTargetAtTime(p.v,t,0.25); return; }
+      if(p.a==='fb'){ bus.fb.gain.setTargetAtTime(p.v,t,p.tc||0.05); return; }
+      if(p.a==='hp'||p.a==='lp'){ const fl=p.a==='hp'?bus.dubHP:bus.dubLP, fr=fl.frequency;
+        // explicit value+ramp pairs only: a setTarget landing exactly on the end of a ramp is
+        // silently dropped by some engines, which left the whole mix high-passed
+        if(p.q!=null){ fl.Q.setValueAtTime(fstate[p.a+'Q'],t); fl.Q.linearRampToValueAtTime(p.q,t+0.05); fstate[p.a+'Q']=p.q; }
+        fr.setValueAtTime(p.l?p.from:fstate[p.a],t);
+        fr.exponentialRampToValueAtTime(p.f,t+(p.l?p.l*sd:(p.tc||0.015)*4));
+        fstate[p.a]=p.f; }
+    }
+    function timeOf(s){ const i=Math.round(s);
+      const sw=(Math.abs(s-i)<1e-6 && (i&1)) ? (song.swing||0)*sd : 0;
+      return barT+s*sd+sw; }
+    function pump(until){
+      if(!running) return;
+      const now=ctx.currentTime;
+      for(let i=live.length-1;i>=0;i--) if(live[i][1]<now) live.splice(i,1);
+      for(let guard=0;guard<4000;guard++){
+        if(idx>=plan.ev.length){ const nextT=barT+16*sd; if(nextT>=until) break; barT=nextT; bar++; load(); continue; }
+        const e=plan.ev[idx], t0=timeOf(e.s)+(lag[e.v]||0)*tempoScale,
+          t=Math.max(t0+(e.v==='@'||e.v==='kick'?0:(Math.random()-0.5)*0.006), now+0.005);
+        if(t>=until) break;
+        idx++;
+        if(t0<now-0.06 && e.v!=='@') continue;            // after a stall, drop late notes rather than pile them up
+        if(e.v==='@') auto(e.p,t); else V[e.v](t,e.p,sd,hz);
+      }
+    }
+    const fstate={};
+    function resetParams(t){ for(const [p,d] of bus.autos){ p.cancelScheduledValues(t); p.setValueAtTime(d,t); }
+      Object.assign(fstate,{hp:20,lp:20000,hpQ:0.707,lpQ:0.9}); }
+    // Lookahead adapts to how late the timer actually fires: 0.3s normally, stretching to
+    // cover a janky main thread (or a hidden tab) instead of letting the music drop out.
+    const look=()=>{ const now=(typeof performance!=='undefined')?performance.now():0, gap=lastPump?(now-lastPump)/1000:0.04;
+      lastPump=now;
+      lookAhead=Math.min(1.5,Math.max(0.3,lookAhead*0.9,gap*1.6+0.1));
+      return (typeof document!=='undefined'&&document.hidden)?Math.max(1.5,lookAhead):lookAhead; };
+    const H={
+      song, bus,
+      get running(){ return running; },
+      get timer(){ return timer; },
+      setKey(k){ key=k|0; },
+      setTempoScale(x){ tempoScale=x||1; if(running) setEcho(ctx.currentTime,0.35); },  // the tape warps to the new time
+      start(o){ o=o||{};
+        if(running) return H;
+        gen++; if(disconnectTimer){ clearTimeout(disconnectTimer); disconnectTimer=null; }
+        const t0=(o.when!=null?o.when:ctx.currentTime)+0.05;
+        tempoScale=o.tempoScale||1;
+        resetParams(t0); setEcho(t0);
+        if(!connected){ bus.out.connect(dest); connected=true; }
+        bus.out.gain.cancelScheduledValues(t0); bus.out.gain.setValueAtTime(0,t0); bus.out.gain.linearRampToValueAtTime(level,t0+0.25);
+        running=true; bar=o.bar|0; barT=t0+0.06; load();   // +0.06: bar 0's pre-downbeat mix lands after the reset
+        if(!o.manual){ lastPump=0; lookAhead=0.3; timer=setInterval(()=>pump(ctx.currentTime+look()),40); pump(t0+look()); }
+        return H; },
+      pump,
+      stop(){
+        if(!running) return bar;
+        running=false; if(timer){ clearInterval(timer); timer=null; }
+        const now=ctx.currentTime, g=bus.out.gain;
+        g.cancelScheduledValues(now); g.setValueAtTime(g.value,now); g.linearRampToValueAtTime(0,now+0.06);
+        for(const [s] of live){ try{ s.stop(now+0.07); }catch(e){} }
+        live.length=0;
+        resetParams(now+0.08); bus.fb.gain.setValueAtTime(0,now+0.08);   // flush the tape loop
+        // keep the bus pulled long enough for the echo and spring to empty, then detach it,
+        // so a stopped station costs nothing and a restart never hears a stale tail
+        const my=gen;
+        disconnectTimer=setTimeout(()=>{ disconnectTimer=null;
+          if(!running && gen===my && connected){ try{ bus.out.disconnect(); }catch(e){} connected=false; } },3000);
+        return bar; },
+      info(){ return Object.assign({bpm:+(song.bpm*tempoScale).toFixed(1), key, voices:live.length,
+        running}, planInfo||{}); },
+      dispose(){ H.stop(); for(const o of bus.lfos){ try{ o.stop(); }catch(e){} } try{ bus.out.disconnect(); }catch(e){} connected=false; },
+    };
+    return H;
+  }
+  const songs={};
+  return {produceStation, songs, rngOf};
+})();
+
+/* "SEVEN SCALES" — an original roots-reggae instrumental for the luck dragon, in A minor at
+   76 bpm, written for this engine (no borrowed melody or riddim). The riddim is the song:
+   a melodic, syncopated bass over Am-Am-D-Em (the dorian IV is what makes it lean roots
+   rather than pop minor), one-drop drums, guitar skank on 2 and 4, the organ bubble, a
+   melodica on the verse and a trumpet/tenor/trombone section on the chorus.
+
+   FORM (bars of 3.16s, 64 bars = 3:22, then loops to the riddim — the intro plays once):
+     0 Intro (4)          organ + skank through an opening high-pass, horn call, fill
+     4 Riddim (8)         one drop, bass enters, melodica verse
+    12 Horn chorus (8)    F-G-Am-Am-F-G-E-E, hand drums come in
+    20 Riddim/version (8) melodica variation, horn blats (roles swap on repeats)
+    28 Dub (8)            drop-outs, echo throws, siren, bass drop, filter dive
+    36 Bridge (8)         Dm-Dm-Am-Am-Dm-Dm-F-E, rockers drums, melodica over horn pads
+    44 Nyabinghi (8)      hand drums + bass, spring-tank organ, build, a silent beat
+    52 Horn chorus (8)    steppers kick, everything in, melodica an octave over the horns
+    60 Dub-out (4)        drums and bass, throws, fill back to the riddim
+   Every bar draws from a seeded RNG keyed to its absolute bar number, and the planner
+   consults the pass count, so the second time round the fills, hats, ghost notes, dub
+   drop-outs, bass variations and who-plays-the-verse all differ. */
+SONG_ENGINE.songs.sevenScales=(function(){
+  const CH={Am:[0,'m'],D:[5,'M'],Em:[7,'m'],F:[8,'M'],G:[10,'M'],E:[7,'7'],Dm:[5,'m'],C:[3,'M']};
+  const QU={m:[0,3,7],M:[0,4,7],'7':[0,4,10]};
+  const near=(x,c)=>{ while(x<c-6)x+=12; while(x>=c+6)x-=12; return x; };
+  const chordNotes=(chd,c)=>{ const [r,q]=CH[chd]; return QU[q].map(i=>near(r+i,c)).sort((a,b)=>a-b); };
+  const bassRoot=(chd)=>((CH[chd][0]+5)%12)-5;           // E1..D#2
+  // [step, semitone (0 = A; bass sounds two octaves under), length in steps]
+  const RIDDIM_BASS=[
+    [[0,0,3],[6,3,1],[7,7,2],[10,10,2],[12,7,3],[15,0,1]],
+    [[2,0,2],[5,3,1],[6,5,2],[8,7,4],[14,5,1],[15,3,1]],
+    [[0,5,3],[6,9,1],[7,12,2],[10,9,2],[12,5,2],[14,3,2]],
+    [[0,-5,3],[3,-2,1],[6,2,2],[8,5,2],[10,2,2],[12,-2,2],[14,-1,2]]];
+  const RIDDIM_BASS_ALT=[            // second-pass answers for bars 2 and 4
+    [[2,0,2],[5,0,1],[6,3,2],[8,7,2],[10,12,1],[11,10,1],[12,7,2],[14,3,1],[15,2,1]],
+    [[0,-5,3],[4,-5,1],[6,-2,2],[8,2,2],[10,5,2],[12,7,1],[13,5,1],[14,-1,2]]];
+  const CHORUS_BASS=[
+    [[0,-4,4],[6,0,1],[7,3,2],[10,8,2],[12,3,2],[14,-3,2]],
+    [[0,-2,4],[6,2,1],[7,5,2],[10,10,2],[12,5,2],[14,-1,2]],
+    [[0,0,3],[6,3,1],[7,7,2],[10,12,1],[11,10,1],[12,7,2],[14,3,2]],
+    [[2,0,2],[5,0,1],[6,3,2],[8,7,4],[12,5,2],[14,7,2]],
+    [[0,-4,4],[6,0,1],[7,3,2],[10,8,2],[12,3,2],[14,-3,2]],
+    [[0,-2,4],[6,2,1],[7,5,2],[10,10,2],[12,5,2],[14,-1,2]],
+    [[0,-5,4],[6,-1,1],[7,2,2],[10,7,2],[12,2,2],[14,-1,2]],
+    [[2,-5,2],[5,-5,1],[6,-1,2],[8,2,4],[12,5,2],[14,-1,2]]];
+  // melodies, semitones over A3
+  const VERSE=[
+    [[4,7,2],[6,12,2],[8,15,3],[11,14,1],[12,12,4]],
+    [[6,10,2],[8,7,6]],
+    [[2,9,2],[4,12,2],[6,17,4],[10,15,2],[12,12,4]],
+    [[0,14,6],[6,12,2],[8,10,4],[12,7,4]],
+    [[4,7,2],[6,12,2],[8,15,2],[10,17,2],[12,19,4]],
+    [[0,17,2],[2,15,2],[4,12,8]],
+    [[2,12,2],[4,9,2],[6,12,2],[8,14,2],[10,15,6]],
+    [[0,14,8],[8,10,2],[10,7,6]]];
+  const CHORUS=[
+    [[0,12,6],[6,10,2],[8,8,4],[12,7,2],[14,8,2]],
+    [[0,10,8],[10,5,2],[12,7,2],[14,10,2]],
+    [[0,12,3],[3,15,3],[6,14,2],[8,12,8]],
+    [[4,7,2],[6,10,2],[8,12,2],[10,15,2],[12,17,4]],
+    [[0,19,6],[6,17,2],[8,15,4],[12,12,4]],
+    [[0,14,6],[6,15,2],[8,17,6],[14,14,2]],
+    [[0,14,4],[4,11,4],[8,7,6],[14,11,2]],
+    [[0,14,11],[13,7,1],[14,11,2]]];
+  const BRIDGE=[
+    [[0,8,4],[4,12,4],[8,17,8]],
+    [[0,15,2],[2,12,2],[4,8,4],[8,7,2],[10,5,6]],
+    [[0,7,4],[4,12,4],[8,15,6],[14,14,2]],
+    [[0,12,12]],
+    [[0,12,4],[4,15,4],[8,20,8]],
+    [[0,19,2],[2,17,2],[4,15,4],[8,12,8]],
+    [[0,15,4],[4,12,4],[8,8,4],[12,12,4]],
+    [[0,11,6],[6,14,2],[8,17,4],[12,14,4]]];
+  const HORN_CALL=[[],[],[[8,7,2],[10,10,2],[12,12,4]],[[0,15,3],[3,14,3],[6,12,2]]];
+  const PROG={I:['Am','D','Am','D'], A:['Am','Am','D','Em'], C:['F','G','Am','Am','F','G','E','E'],
+              B:['Dm','Dm','Am','Am','Dm','Dm','F','E'], O:['Am','Am','D','E']};
+  const FORM=[
+    {id:'intro',   name:'Intro',              bars:4, prog:'I'},
+    {id:'riddim',  name:'Riddim',             bars:8, prog:'A'},
+    {id:'horns',   name:'Horn chorus',        bars:8, prog:'C'},
+    {id:'version', name:'Riddim (version)',   bars:8, prog:'A'},
+    {id:'dub',     name:'Dub',                bars:8, prog:'A'},
+    {id:'bridge',  name:'Bridge',             bars:8, prog:'B'},
+    {id:'binghi',  name:'Nyabinghi breakdown',bars:8, prog:'A'},
+    {id:'horns2',  name:'Horn chorus (steppers)', bars:8, prog:'C'},
+    {id:'outro',   name:'Dub-out',            bars:4, prog:'O'}];
+  let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
+  const TOTAL=acc, LOOP=4;
+  function locate(n){ let pos=n, pass=0;
+    if(n>=TOTAL){ const L=TOTAL-LOOP; pass=1+Math.floor((n-TOTAL)/L); pos=LOOP+(n-TOTAL)%L; }
+    const sec=FORM.find(s=>pos>=s.start&&pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
+  function chordAt(n){ const L=locate(n), P=PROG[L.sec.prog]; return P[L.b%P.length]; }
+  const HATS=[null,[0.34,0.16,0.75,0.24],[0.4,0,0.72,0],[0,0,0.72,0.3],[0.28,0.28,0.62,0.34]];
+
+  function plan(n,R,env){
+    const lite=!!(env&&env.lite);
+    const {pos,pass,sec,b}=locate(n), ev=[];
+    const E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
+    const chord=chordAt(n), next=chordAt(n+1), last=b===sec.bars-1;
+    const M={kick:1,drums:1,hats:1,bass:1,skank:1,organ:1,horns:1,mel:1,perc:0,fx:1};
+    const hum=(v)=>v*(0.88+R()*0.24);
+    // ---- building blocks
+    const kit=(style,o)=>{ o=o||{}; const v=o.v||1;
+      if(style==='drop'){ E(8,'kick',{v}); E(8,'rim',{v:hum(0.95*v),throw:o.rimThrow||0}); }
+      if(style==='rock'){ E(0,'kick',{v:0.85*v}); E(8,'kick',{v}); E(8,'rim',{v:hum(0.95*v)}); }
+      if(style==='step'){ for(const s of [0,4,8,12]) E(s,'kick',{v:(s===8?1:0.86)*v}); E(8,'rim',{v:hum(v)});
+        E(4,'rim',{v:hum(0.3),x:1}); E(12,'rim',{v:hum(0.3),x:1}); }
+      if(o.ghost) for(const s of [3,6,11,14,15]) if(R()<o.ghost) E(s,'rim',{v:0.16+R()*0.14,x:1});
+      const HP=HATS[o.hat|0];
+      if(HP) for(let s=0;s<16;s++){ const hv=HP[s%4]; if(hv>0.05 && !(o.open&&o.open.includes(s))) E(s,'hat',{v:hum(hv*(o.hv||1))}); }
+      if(o.open) for(const s of o.open) E(s,'hat',{v:hum(0.5),o:1});
+    };
+    const fill=(k)=>{ switch(k%4){
+      case 0: E(11.8,'snare',{v:0.3}); [12,13,14,15].forEach((s,i)=>E(s,'snare',{v:0.45+i*0.16})); break;
+      case 1: [[8,200],[10,160],[12,122],[14,98]].forEach(([s,f])=>E(s,'tom',{f,v:hum(0.85)})); E(15,'snare',{v:0.75}); break;
+      case 2: E(9.8,'snare',{v:0.3}); E(10,'snare',{v:0.75}); E(11,'rim',{v:0.25,x:1}); E(12,'rim',{v:0.7});
+              E(14,'snare',{v:1,throw:0.95}); break;                      // the snare into the echo
+      case 3: [170,132,102].forEach((f,i)=>E(12+i*4/3,'tom',{f,v:0.85})); E(15,'rim',{v:0.9,throw:0.7}); break; } };
+    const bassLine=(line,o)=>{ o=o||{}; for(const [s,nn,l] of line){ if(o.cut!=null&&s>=o.cut) continue; E(s,'bass',{n:nn,l,v:hum(o.v||1)*1}); } };
+    const tmpl=(k)=>{ const r=bassRoot(chord), q=CH[chord][1], th=r+(q==='m'?3:4), fi=r+7, oc=r+12;
+      let ap=bassRoot(next)-1; if(Math.abs(ap-r)>7) ap+=ap<r?12:-12;
+      return [[[0,r,3],[6,th,1],[7,fi,2],[10,oc,2],[12,fi,2],[14,ap,2]],
+              [[2,r,2],[5,r,1],[6,th,2],[8,fi,4],[12,oc,1],[14,fi,1],[15,ap,1]],
+              [[0,r,6],[8,r,3],[12,fi,2],[14,r,2]],
+              [[8,r,7]]][k]; };
+    const riddimBass=(o)=>{ const i=b%4;
+      let line=RIDDIM_BASS[i];
+      if(pass>0 && (i===1||i===3) && R()<0.6) line=RIDDIM_BASS_ALT[i===1?0:1];
+      bassLine(line,o); };
+    const skank=(o)=>{ o=o||{}; const ns=chordNotes(chord,14);
+      for(const s of [4,12]){ E(s,'skank',{ns,v:hum(o.v||1),throw:o.throw||0});
+        if(o.dbl && R()<o.dbl) E(s+1,'skank',{ns,v:hum(0.45)}); } };
+    const bubble=(o)=>{ o=o||{}; const rh=chordNotes(chord,13), lh=[near(CH[chord][0],1)]; lh.push(lh[0]+7);
+      const v=o.v||1;
+      for(let q=0;q<4;q++){ const s=q*4;
+        if(!lite) E(s+1,'organ',{ns:rh,l:0.55,v:hum(0.55*v)});
+        E(s+2,'organ',{ns:lh,l:0.7,v:hum(0.62*v),dark:1});
+        E(s+3,'organ',{ns:rh,l:0.55,v:hum(0.9*v)}); } };
+    const lead=(voice,line,o)=>{ o=o||{}; if(!line) return;
+      for(const [s,nn,l] of line) E(s,voice,{n:nn+(o.oct||0),l:l*(o.stac||1),v:hum(o.v||1),throw:o.throw||0,spr:o.spr||0,h:o.harm?harmBelow(nn+(o.oct||0)):null}); };
+    // trombone harmony: the nearest chord tone a third-ish under the melody note
+    const harmBelow=(nn)=>{ const cands=chordNotes(chord,nn-4).concat(chordNotes(chord,nn-10)); let best=nn-12;
+      for(const c of cands){ const d=nn-c; if(d>=3&&d<=5){ best=c; break; } } return best; };
+    const hand=(o)=>{ o=o||{}; const v=o.v||1;
+      E(0,'hand',{f:68,d:0.8,v:0.95*v,sf:500,sl:0.2});                       // bass drum
+      for(const [s,vv] of [[0,0.5],[6,0.4],[8,0.85],[14,0.45]]) E(s,'hand',{f:175,d:0.22,v:hum(vv*v),sf:900});  // funde heartbeat
+      for(let s=1;s<16;s++){ const pr=(s%2)?0.34:0.2; if(R()<pr*(o.busy||1)) E(s,'hand',{f:s%4===3?420:345,d:0.1,v:hum(0.45*v),sf:1900,sl:0.45}); } };  // repeater
+
+    // ---- the sections
+    const id=sec.id;
+    if(id==='intro'){
+      Object.assign(M,{kick:0,bass:0,horns:1,mel:0,drums:b>=2?1:0,hats:b>=2?1:0});
+      if(b===0){ E(0,'boing',{v:1}); A(0,{a:'hp',from:900,f:120,l:32}); }
+      if(b===1) E(8,'siren',{l:8,f0:300,f1:900,r:4.5,depth:500});
+      if(b===2){ A(0,{a:'hp',f:20,tc:0.3}); kit('none',{hat:2,hv:0.7}); E(8,'rim',{v:0.7,throw:0.6}); }
+      if(b===3){ kit('none',{hat:1}); E(8,'rim',{v:0.8}); fill(pass+1); }
+      skank({v:b<2?0.8:1, throw:b===0?0.5:0}); bubble({v:0.9});
+      lead('horn',HORN_CALL[b],{v:0.95,throw:0.2});
+    }
+    else if(id==='riddim' || id==='version'){
+      const ver=id==='version', swap=ver && (pass%2===1);
+      M.perc=ver&&pass>0?0.6:0;
+      kit('drop',{hat:ver?(pass%2?4:1):(pass%2?3:1), ghost:ver?0.4:0.22, open:(b%2===1)?[14]:null});
+      if(b===0 && !ver) E(0,'sub',{v:0.8});                          // the bass lands
+      riddimBass();
+      skank({dbl:ver?0.5:0.15}); bubble();
+      if(M.perc) hand({v:0.6,busy:0.6});
+      const vline=VERSE[b].map(x=>x.slice());
+      if(!ver) lead('mel',vline,{v:0.95, throw:b%4===3?0.35:0});
+      else if(!swap){                                                   // melodica leads, horns blat on the and-of-4
+        lead('mel',VERSE[(b+4)%8],{v:1,oct:pass>1?12:0,throw:b%2?0.3:0});
+        if(b%2===1){ const top=chordNotes(chord,11); E(14,'horn',{n:top[top.length-1],l:1.5,v:0.7,throw:0.5}); }
+      } else {                                                          // on repeats the horns take the verse
+        lead('horn',VERSE[b],{v:0.8,harm:true});
+        if(b%2===1) lead('mel',[[14,VERSE[b][0][1]+12,2]],{v:0.6,throw:0.6});
+      }
+      if(last) fill(pass+(ver?2:0));
+    }
+    else if(id==='horns' || id==='horns2'){
+      const big=id==='horns2';
+      M.perc=big?0.8:0.55;
+      kit(big?'step':'drop',{hat:big?4:1, ghost:0.25, open:big?[2,6,10,14]:[14], hv:big?0.9:1});
+      if(b===0){ E(0,'boing',{v:big?1:0.6}); if(big){ E(0,'sub',{v:1}); A(0,{a:'hp',f:20,tc:0.01}); } }
+      bassLine(CHORUS_BASS[b]);
+      skank({dbl:big?0.6:0.3}); bubble({v:big?1:0.9});
+      hand({v:big?0.8:0.6,busy:big?1.2:0.7});
+      lead('horn',CHORUS[b],{v:big?1.05:0.95,harm:big||b>=4,throw:(b%4===3)?0.3:0.08});
+      if(big) lead('mel',CHORUS[b],{oct:12,v:0.4,throw:0.35});
+      if(last) fill(big?1+pass:2);
+    }
+    else if(id==='dub'){
+      /* The dub. The mixing desk is the instrument now: faders come down and back up, single
+         hits are thrown into the tape echo, the siren goes, the whole mix is dragged through
+         the filters. The order of the moves is drawn from the bar's RNG, so the second dub is
+         not the first one again. */
+      kit('drop',{hat:(b===2||b===6)?4:1, ghost:0.3, open:b===2?[2,6,10,14]:null});
+      riddimBass({v:1});
+      skank({}); bubble({v:0.9});
+      const moves=[
+        ()=>{ A(8,{a:'lvl',ch:'skank',v:0}); A(8,{a:'lvl',ch:'organ',v:0});
+              E(4,'skank',{ns:chordNotes(chord,14),v:0.9,throw:0.9}); },                         // drum & bass from the and-of-2
+        ()=>{ M.hats=0; M.skank=0; M.organ=0; ev.forEach(e=>{ if(e.v==='rim'&&e.s===8) e.p.throw=0.9; });
+              E(12,'siren',{l:12,f0:420,f1:1300,r:6,depth:380}); },                              // rim into the echo, siren
+        ()=>{ M.bass=0; M.skank=0; E(0,'boing',{v:0.9}); E(6,'organ',{ns:chordNotes(chord,13),l:1,v:1,throw:1});
+              A(0,{a:'hp',from:20,f:380,l:16}); },                                               // bass out, filter creeps up
+        ()=>{ A(0,{a:'hp',f:20,tc:0.004}); E(0,'sub',{v:1}); E(0,'kick',{v:0.9}); M.organ=0.5; },   // THE DROP
+        ()=>{ A(-0.1,{a:'dry',ch:'skank',v:0}); A(-0.1,{a:'echo',ch:'skank',v:0.9}); A(0,{a:'fb',v:0.74,tc:0.2});
+              lead('mel',VERSE[0].slice(0,3),{v:0.9,throw:0.8}); },                                 // skank as echo only, runaway tape
+        ()=>{ M.hats=0; A(0,{a:'fb',v:0.5,tc:0.3}); lead('mel',[[14,19,2]],{v:0.7,throw:0.8}); },
+        ()=>{ A(0,{a:'lp',from:18000,f:330,l:16,q:5}); E(8,'siren',{l:8,f0:600,f1:250,r:8,depth:300,sq:1}); },  // dive
+        ()=>{ A(0,{a:'lp',f:330,tc:0.01}); A(8,{a:'lp',from:330,f:18000,l:8,q:0.9}); M.bass=1;
+              ev.forEach(e=>{ if(e.v==='bass'&&e.s>=8) e.s=-1; }); fill(2+pass); },                // roll back out
+      ];
+      // bars 0,3,6,7 are anchors (in, drop, dive, out); the middle moves shuffle per pass
+      const mids=[1,2,4,5]; if(pass%2===1) mids.reverse(); if(pass>=2) mids.push(mids.shift());
+      const order=[0,mids[0],mids[1],3,mids[2],mids[3],6,7];
+      moves[order[b]]();
+      for(let i=ev.length-1;i>=0;i--) if(ev[i].s<0 && ev[i].v==='bass') ev.splice(i,1);
+      if(b===7) A(15.9,{a:'lp',f:20000,q:0.9,tc:0.01});
+      if(b===0) A(0,{a:'fb',v:0.55,tc:0.2});
+    }
+    else if(id==='bridge'){
+      M.perc=0.5;
+      kit('rock',{hat:pass%2?2:1, ghost:0.25, open:b%2?[14]:null});
+      bassLine(tmpl(b%4===3?2:(b+pass)%2));
+      skank({dbl:0.25}); bubble({v:0.85});
+      hand({v:0.5,busy:0.5});
+      lead('mel',BRIDGE[b],{v:1,throw:b%2?0.35:0.15});
+      const top=chordNotes(chord,5);                                   // horn pads under the melodica
+      E(0,'horn',{n:top[1],l:14,v:0.42,h:top[0]});
+      if(last) fill(3+pass);
+    }
+    else if(id==='binghi'){
+      /* Nyabinghi. The kit steps out and the hand drums carry it: the big bass drum on one,
+         the funde's heartbeat, the repeater talking over the top. Then the build — hats,
+         a snare roll that tightens from eighths to sixteenths, the whole mix high-passed
+         up and up — and a beat and a half of nothing but echo before the chorus drops. */
+      M.perc=1.1; M.hats=b>=4?1:0; M.drums=b>=4?1:0.8; M.skank=b>=4?1:0; M.horns=0.8; M.mel=0.8;
+      M.organ=b<4?0.9:1;
+      hand({v:1,busy:1.3});
+      bassLine(tmpl(b<2?3:b<4?2:(b%2)));
+      if(b<4){ E(4,'organ',{ns:chordNotes(chord,13),l:1,v:1,spr:0.9}); E(12,'organ',{ns:chordNotes(chord,13),l:1,v:0.8,throw:0.7});
+               if(b===1||b===3) E(8,'rim',{v:0.8,throw:0.9});
+               if(b===2) lead('horn',[[0,0,12]],{v:0.55}); }
+      else { kit('none',{hat:b>=6?4:2}); E(8,'rim',{v:0.9}); skank({}); }
+      if(b===5 && pass>0) lead('mel',[[0,12,2],[2,15,2],[4,19,8]],{v:0.8,throw:0.6});
+      if(b===6){ for(let s=0;s<16;s+=2) E(s,'snare',{v:0.25+s*0.03}); A(0,{a:'hp',from:20,f:180,l:16});
+                 E(0,'siren',{l:16,f0:300,f1:1500,r:3,depth:250}); }
+      if(b===7){ for(let s=0;s<12;s++) E(s,'snare',{v:0.4+s*0.045});
+                 A(0,{a:'hp',from:180,f:650,l:12});
+                 ev.forEach(e=>{ if(e.v==='bass'&&e.s>=8) e.s=-1; });
+                 E(11,'snare',{v:1,throw:1});
+                 for(const c of ['kick','drums','hats','bass','skank','organ','horns','mel','perc']) A(12,{a:'lvl',ch:c,v:0,tc:0.006}); }
+      for(let i=ev.length-1;i>=0;i--) if(ev[i].s<0 && ev[i].v==='bass') ev.splice(i,1);
+    }
+    else if(id==='outro'){
+      M.horns=1; M.perc=0.5;
+      kit('drop',{hat:b<2?2:1, ghost:0.35});
+      riddimBass();
+      if(b===0){ M.skank=0; M.organ=0; E(4,'organ',{ns:chordNotes(chord,13),l:1,v:1,throw:1}); }
+      if(b===1){ M.organ=0; skank({throw:0.9}); }
+      if(b>=2){ skank({}); bubble({v:0.8}); }
+      if(b===2) lead('horn',[[0,12,6],[6,15,2],[8,14,8]],{v:0.8,throw:0.4,harm:true});
+      if(b===3){ const bb=[[0,-5,4],[6,-1,1],[7,2,2],[10,7,2],[12,2,2],[14,-1,2]]; ev.splice(0,ev.length,...ev.filter(e=>e.v!=='bass')); bassLine(bb);
+                 lead('horn',[[0,14,4],[4,11,4],[8,7,4]],{v:0.75,harm:true}); fill(1+pass); }
+      hand({v:0.45,busy:0.4});
+    }
+    A(-0.2,{a:'mix',m:M,tc:0.008});
+    const ENERGY={intro:0.9, riddim:0.9, horns:1, version:0.93, dub:0.92, bridge:0.95, binghi:0.84, horns2:1.12, outro:0.86};
+    return {ev, label:sec.name, sec:id, pos, pass, energy:ENERGY[id]};
+  }
+  return {
+    title:'Seven Scales', bpm:76, key:0, swing:0.14, echoSteps:3,
+    // the feel: the kick and bass sit on the grid, everything else leans back behind it
+    lag:{skank:0.011, organ:0.007, rim:0.004, snare:0.004, hat:0.003, horn:0.009, mel:0.014},
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan,
+    mix:{ makeup:0.55, echoFb:0.5, echoRet:0.85, springRet:0.75,
+      channels:{
+        kick:  {level:0.95, pan:0,     echo:0,    spring:0.02, chain:[['hp',32],['peak',60,3,1.2],['lp',4500]]},
+        drums: {level:0.7,  pan:0.08,  echo:0.06, spring:0.22, chain:[['hp',140],['peak',4200,2,1]]},
+        hats:  {level:1.4,  pan:0.34,  echo:0.03, spring:0.04, chain:[['hp',5200]]},
+        bass:  {level:1.0,  pan:0,     echo:0,    spring:0,    chain:[['hp',30],['drive',2.2],['lp',1000],['peak',110,2,0.9],['peak',320,-3,1],['trim',0.2]]},
+        skank: {level:1.5,  pan:0.42,  echo:0.1,  spring:0.32, chain:[['hp',420],['peak',2800,2,1]]},
+        organ: {level:0.7,  pan:-0.4,  echo:0.06, spring:0.12, chain:[['hp',200],['lshelf',320,-3]]},
+        horns: {level:0.6,  pan:0,     spread:0.32, echo:0.14, spring:0.2,  chain:[['hp',140],['peak',260,-2.5,0.9],['peak',1400,2.5,0.8],['hshelf',7000,-2]]},
+        mel:   {level:0.65, pan:-0.14, echo:0.3,  spring:0.16, chain:[['hp',220]]},
+        perc:  {level:0.7,  pan:-0.22, echo:0.05, spring:0.12, chain:[['hp',55]]},
+        fx:    {level:0.55, pan:0.2,   echo:0.7,  spring:0.3,  chain:[['hp',200]]},
+      } },
+  };
+})();
+/* ==== /SONG ENGINE ==== */
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
  *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
@@ -17642,6 +18327,10 @@ window.srNet={
   // What is actually playing: which tune, and whose arrangement of it. Read-only, and the
   // only practical way to check a course song is re-genring rather than overwriting.
   get music(){ if(!curStyle) return {playing:false};
+    if(curStyle.engine){ const h=producedStations[curStyle.engine];
+      return {playing:!!(h&&h.running), station:curStyle.station||null, song:curStyle.songName,
+        engine:curStyle.engine, courseSong:curStyle.courseSong?curStyle.courseSong+' (deferred: produced station keeps its own riddim, in the course key)':null,
+        now:h?h.info():null}; }
     return {playing:!!musicTimer, station:curStyle.station||null,
       song:curStyle.songName||'(character tune)',
       arrangement:{inst:curStyle.inst, melWave:curStyle.melWave, bassInst:curStyle.bassInst||null,
