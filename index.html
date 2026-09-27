@@ -2139,6 +2139,21 @@ const TRACKS=[
    critters:[0.62], pills:[0.22], dams:[0.80],
    ctrl:[[380,6,140],[410,16,-120],[280,32,-350],[30,48,-440],[-230,56,-350],
          [-400,62,-140],[-300,48,60],[-360,34,200],[-120,24,330],[120,16,420],[320,10,290]]},
+  /* Trixie — "World 1-1": Pixie's circuit, pushed from voxel props on a void to a whole
+     16-bit overworld at sunset. Same road, hazards and tunnel; the voxel flag keeps the
+     shared cube dressing (crates, jump ramps), arcade:true swaps in the world — see the
+     ARCADE KIT. Her song is a chip tune in natural minor that leans on the harmonic-minor
+     V the way console themes do: bass i-bVI-bVII-V (0,8,10,7), which no other course
+     uses. The A strain is broken-chord arpeggios, one chord per beat, the idiom a
+     three-voice sound chip forces; the B strain is the long-note tune sung over it. */
+  {name:'Trixie', voxel:true, arcade:true, key:2, tempo:176, sky:0x1a1a46, tunnels:[[0.36,0.46]],
+   song:{ name:'Insert Coin',
+          mel: [12,7,3,7,   15,12,8,12,   17,14,10,14,   14,11,7,null],
+          melB:[19,null,15,17, 20,null,15,20, 22,null,17,14, 19,null,null,null],
+          bass:[0,8,10,7] },
+   critters:[0.62], pills:[0.22], dams:[0.80],
+   ctrl:[[380,6,140],[410,16,-120],[280,32,-350],[30,48,-440],[-230,56,-350],
+         [-400,62,-140],[-300,48,60],[-360,34,200],[-120,24,330],[120,16,420],[320,10,290]]},
   // Vera — "the Vector Vein": drawn the way a vector arcade cabinet drew, in glowing
   // wireframe over near-black. No lit surfaces anywhere on this course — the road is an
   // unlit neon grid, the understructure is a lattice of light, the scenery is floating
@@ -2512,6 +2527,756 @@ function saltyVox(){
     out.push({x,y,z,c});
   }
   return out;
+}
+
+/* ============== ARCADE KIT (Trixie) ============== *
+ * Trixie is Pixie's circuit taken the whole way: not voxel PROPS standing on a void, but a
+ * voxel WORLD — a 16-bit platformer overworld at sunset that the course runs through.
+ * Pixie's problem was never the cubes, it was that nothing had a place to be: pastel
+ * stacks hung at random heights over a flat brown plane under a flat navy sky, all at one
+ * middle value, so the eye had nowhere to go and the props read as floating. Everything
+ * here answers to one idea instead — the console-era overworld — and the value ladder
+ * that goes with it, darkest near and lightest far:
+ *   SKY      a pixel-art dome: dithered scanline bands, a scanline sun in a notch of the
+ *            far range, two parallax cloud decks drifting one sky-pixel at a time, stars.
+ *   LAND     a heightfield of real block columns (one merged mesh, hidden faces culled):
+ *            grass caps with a dripping lip over checkered dirt, rock, snow on the rim.
+ *            The course is dressed ONTO it — embankments rise to carry the road, a hill
+ *            is cut by the tunnel, the rim closes the valley — so every prop has a column
+ *            top to stand on and the road stands on the land.
+ *   PLACE    the Egg Castle on its mesa (the goal of every run, the princess of the
+ *            genre), a lake fed by a pipe waterfall, groves, pipes, the marquee.
+ * Colour discipline: every surface is picked from a short fixed palette, distance is
+ * STEPPED (fog quantised into five dithered bands, the way a 16-bit parallax stack
+ * separates its layers), and every texture is magnified with nearest filtering.
+ * ---------------------------------------------------------------------------------- */
+const ARC_SUN=new T.Vector3(0.26,0,-0.966).normalize();   // azimuth of the setting sun
+const ARC_SUN_EL=0.075;                                  // radians above the horizon
+const ARC_WATER=1.0;                                     // lake surface
+const ARC_MESA={x:30, z:-50, rx:116, rz:96, h:56};       // the castle's table mountain
+const ARC_LAKE={x:48, z:150, rx:150, rz:110};            // at its foot, south side
+const ARC_FOG=0xb0648c;                                  // the far range's haze
+const ARC_TEX={};                                        // canvas textures, built once
+function arcHash(x,z){
+  let n=Math.imul(x|0,374761393)+Math.imul(z|0,668265263)+0x5bd1e995;
+  n=(n^(n>>>13))>>>0; n=Math.imul(n,1274126177)>>>0;
+  return ((n^(n>>>16))>>>0)/4294967295;
+}
+function arcVN(x,z){ const xi=Math.floor(x), zi=Math.floor(z), fx=x-xi, fz=z-zi;
+  const ux=fx*fx*(3-2*fx), uz=fz*fz*(3-2*fz);
+  const a=arcHash(xi,zi), b=arcHash(xi+1,zi), c=arcHash(xi,zi+1), d=arcHash(xi+1,zi+1);
+  return a+(b-a)*ux+(c-a)*uz+(a-b-c+d)*ux*uz; }
+function arcFbm(x,z){ return arcVN(x,z)*0.55+arcVN(x*2.1+5.3,z*2.1+1.7)*0.3+arcVN(x*4.3+9.1,z*4.3+3.3)*0.15; }
+const arcSS=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+// GLSL colour literals. Unlit shaders write display values straight out (raw sRGB); lit
+// materials work in linear, so their palette is decoded first and lands as authored.
+const arcG3=h=>{ const c=new T.Color(h); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
+const arcL3=h=>{ const c=new T.Color(h).convertSRGBToLinear(); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
+const arcCss=h=>'#'+(h>>>0).toString(16).padStart(6,'0');
+// 4x4 ordered dither, the pattern every 16-bit console used to fake more colours
+const ARC_BAYER=`float arcBayer(vec2 p){ vec2 a=mod(p,2.0), b=mod(floor(p*0.5),2.0);
+  return (mod(a.x*2.0+a.y*3.0,4.0)*4.0+mod(b.x*2.0+b.y*3.0,4.0)+0.5)/16.0; }`;
+// STEPPED FOG. The ordinary smooth fog is exactly what a painted 3D scene does and a
+// console never could; quantised into five bands with a 2x2-pixel ordered dither between
+// them, distance separates into flat layers the way a parallax stack does.
+const ARC_FOGC=`#ifdef USE_FOG
+  float fogFactor=smoothstep(fogNear,fogFar,fogDepth);
+  fogFactor=clamp(floor(fogFactor*5.0+arcBayer(floor(gl_FragCoord.xy*0.5)))/5.0,0.0,1.0);
+  gl_FragColor.rgb=mix(gl_FragColor.rgb,fogColor,fogFactor);
+#endif`;
+function arcPatch(mat, key, fragPre, colorHook, vtxDecl, vtxBody){
+  mat.onBeforeCompile=sh=>{
+    if(vtxDecl) sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\n'+vtxDecl)
+      .replace('#include <begin_vertex>','#include <begin_vertex>\n'+vtxBody);
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\n'+ARC_BAYER+'\n'+(fragPre||''))
+      .replace('#include <fog_fragment>',ARC_FOGC);
+    if(colorHook) sh.fragmentShader=sh.fragmentShader
+      .replace('#include <color_fragment>','#include <color_fragment>\n'+colorHook);
+  };
+  // every patched material has an identical onBeforeCompile source text, so without a key
+  // of its own the program cache would hand the terrain shader to a plain prop, or back
+  mat.customProgramCacheKey=()=>'arc-'+key;
+  return mat;
+}
+function arcMat(key, opts){ return arcPatch(new T.MeshLambertMaterial(Object.assign({color:0xffffff},opts||{})), key); }
+// Same record shape as feltBatch/harbBatch; colours are decoded from sRGB because
+// instanceColor is multiplied in linear space and would otherwise come out washed pale.
+function arcBatch(geo, mat, list){
+  const m=new T.InstancedMesh(geo, mat, list.length); m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z);
+    d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(v.c==null?0xffffff:v.c).convertSRGBToLinear(); m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
+// Pixel textures: nearest when magnified (the pixels ARE the style), mipmapped when
+// minified, or a road seen edge-on at 140 units/s turns into crawling moire.
+function arcTex(key, w, h, draw){
+  if(ARC_TEX[key]) return ARC_TEX[key];
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const g=cv.getContext('2d'); draw(g,w,h);
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.LinearMipmapLinearFilter;
+  t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return ARC_TEX[key]=t;
+}
+const arcPx=(g,hex,x,y,w,h)=>{ g.fillStyle=arcCss(hex); g.fillRect(x,y,w||1,h||1); };
+// Mode-7 tarmac: dithered asphalt, red/white rumble strips, a dark hem inside them
+function arcRoadTex(){ return arcTex('road',64,256,g=>{
+  const R=harbRnd(0xA11CE);
+  arcPx(g,0x5e5a72,0,0,64,256);
+  for(let k=0;k<760;k++) arcPx(g, R()<0.5?0x524d66:0x6c6882, (R()*32|0)*2, (R()*128|0)*2, 2, 2);
+  for(let y=0;y<256;y+=16){ const c=(y/16)%2?0xf2eee8:0xd8303c; arcPx(g,c,0,y,6,16); arcPx(g,c,58,y,6,16); }
+  arcPx(g,0x2e2a3c,6,0,1,256); arcPx(g,0x2e2a3c,57,0,1,256);
+}); }
+// castle stone: two courses of bricks per block face, lit top edge, shaded bottom edge
+function arcBrickTex(){ return arcTex('brick',16,16,g=>{
+  arcPx(g,0xc8c0d4,0,0,16,16);
+  for(const y0 of [0,8]){ arcPx(g,0xe6def0,0,y0,16,1); arcPx(g,0xa098b0,0,y0+6,16,1); arcPx(g,0x5e566e,0,y0+7,16,1); }
+  arcPx(g,0x5e566e,15,0,1,7); arcPx(g,0x5e566e,7,8,1,7);
+  arcPx(g,0xe6def0,0,1,1,5); arcPx(g,0xe6def0,8,9,1,5);
+}); }
+// the question block: every run of the genre starts by hitting one
+function arcQTex(){ return arcTex('qblk',16,16,g=>{
+  arcPx(g,0xf0a830,0,0,16,16); arcPx(g,0xffd27a,1,1,14,1); arcPx(g,0xffd27a,1,1,1,14);
+  arcPx(g,0x8a4a10,0,0,16,1); arcPx(g,0x8a4a10,0,15,16,1); arcPx(g,0x8a4a10,0,0,1,16); arcPx(g,0x8a4a10,15,0,1,16);
+  for(const [x,y] of [[2,2],[13,2],[2,13],[13,13]]) arcPx(g,0x8a4a10,x,y);
+  const Q=['.XXXX.','XX..XX','XX..XX','...XX.','..XX..','..XX..','......','..XX..','..XX..'];
+  for(const [col,dx] of [[0x6a3000,1],[0xfff4dc,0]]) Q.forEach((r,y)=>{ for(let x=0;x<6;x++) if(r[x]==='X') arcPx(g,col,5+x+dx,3+y+dx); });
+}); }
+// lake tile: dusk sky caught in the ripples; animated by stepping its offset a pixel
+function arcWaterTex(){ return arcTex('water',16,16,g=>{
+  arcPx(g,0x4a3c8c,0,0,16,16);
+  const L=[[2,1,4,0xf29478],[6,9,5,0x7a6cc4],[10,3,3,0xf6b884],[10,12,3,0x7a6cc4],[13,0,3,0x6456aa],[14,7,4,0xf29478]];
+  for(const [y,x,w,c] of L) arcPx(g,c,x,y,w,1);
+}); }
+function arcFallTex(){ return arcTex('fall',16,16,g=>{
+  arcPx(g,0x7a9ae8,0,0,16,16);
+  for(const [x,y,h,c] of [[2,0,9,0xe0ecff],[3,2,6,0xe0ecff],[7,4,12,0xe0ecff],[11,0,6,0xe0ecff],[12,10,6,0xe0ecff],[5,0,16,0x5a78c8],[14,3,10,0x5a78c8]])
+    arcPx(g,c,x,y,1,h);
+}); }
+// Crisp pixel lettering: canvas text is antialiased, so it is drawn to a scratch canvas
+// and hard-thresholded before it is stamped onto the sign.
+function arcText(g, str, x, y, size, col, shadow){
+  const w=Math.ceil(str.length*size*0.7)+4, h=size+4;
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const q=c.getContext('2d');
+  q.font=`bold ${size}px monospace`; q.textBaseline='top'; q.fillStyle='#fff'; q.fillText(str,1,1);
+  const id=q.getImageData(0,0,w,h).data;
+  for(let yy=0;yy<h;yy++) for(let xx=0;xx<w;xx++) if(id[(yy*w+xx)*4+3]>110){
+    if(shadow!=null) arcPx(g,shadow,x+xx+1,y+yy+1);
+  }
+  for(let yy=0;yy<h;yy++) for(let xx=0;xx<w;xx++) if(id[(yy*w+xx)*4+3]>110)
+    arcPx(g, typeof col==='function'?col(yy/h):col, x+xx, y+yy);
+  return w;
+}
+function arcMarqueeTex(){ return arcTex('marq',256,64,g=>{
+  arcPx(g,0x120a1e,0,0,256,64);
+  arcPx(g,0xffd24a,2,2,252,1); arcPx(g,0xffd24a,2,61,252,1); arcPx(g,0xffd24a,2,2,1,60); arcPx(g,0xffd24a,253,2,1,60);
+  arcText(g,'1UP 004250',8,5,9,0xff5a6a);
+  arcText(g,'HI 999990',174,5,9,0xf2eee8);
+  const w=Math.ceil(6*30*0.7)+4;
+  arcText(g,'TRIXIE',128-w/2+2,15,30,v=>v<0.42?0xfff2a0:v<0.66?0xffc040:0xff7a30, 0xc0204a);
+  arcText(g,'WORLD 1-1',98,50,9,0x7de0ff);
+}); }
+
+/* THE SKY. Every term is evaluated on a quantised (azimuth, elevation) grid, so the dome
+   is literally made of sky-pixels about four screen pixels across, and every edge in it —
+   band, sun, cloud, ridge — is a stair. Layers, back to front: dithered bands, stars,
+   the sun's halo and its scanline disc, two cloud decks, the far range, the near range. */
+function arcSky(){
+  const sa=Math.atan2(ARC_SUN.z,ARC_SUN.x);
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uT:{value:0} },
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT;
+      ${ARC_BAYER}
+      float hs(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(hs(i),hs(i+vec2(1.0,0.0)),f.x),mix(hs(i+vec2(0.0,1.0)),hs(i+vec2(1.0,1.0)),f.x),f.y); }
+      const float PX=0.0055; const float SA=${sa.toFixed(4)}; const float SE=${ARC_SUN_EL.toFixed(4)};
+      float wrapA(float a){ return a-6.2831853*floor((a+3.14159265)/6.2831853); }
+      // a range silhouette: flat-topped plateaus 'cells' sky-pixels wide, notched at the sun
+      float ridge(float az, float cells, float seed, float lo, float amp){
+        float b=floor(az/(PX*cells));
+        float h=lo+amp*(vn(vec2(b*0.23+seed,seed))*0.65+vn(vec2(b*0.71+seed*2.0,1.0))*0.35);
+        float ds=wrapA((b+0.5)*PX*cells-SA);
+        h*=1.0-0.78*exp(-ds*ds/0.045);
+        return floor(h/PX)*PX; }
+      // a deck of flat-bottomed pixel clouds, drifting a whole sky-pixel at a time
+      float cloud(vec2 q, float drift, float base, float top, float sc){
+        float v=(q.y-base)/(top-base); if(v<0.0||v>1.0) return 0.0;
+        float u=(q.x+floor(uT*drift/PX)*PX)*sc;
+        float n=vn(vec2(u*1.3, v*2.0))*0.62+vn(vec2(u*3.3+4.0, v*4.6))*0.38;
+        return n*smoothstep(0.0,0.12,v)*(1.0-smoothstep(0.4,1.0,v)); }
+      void main(){
+        vec3 d=normalize(vP-cameraPosition);
+        float az=atan(d.z,d.x), el=asin(clamp(d.y,-1.0,1.0));
+        vec2 pix=floor(vec2(az,el)/PX), q=(pix+0.5)*PX;
+        float b=arcBayer(pix);
+        float e=q.y+(b-0.5)*0.032;
+        vec3 c = e<0.025?${arcG3(0xffd98a)}: e<0.060?${arcG3(0xffac5e)}: e<0.110?${arcG3(0xf77a62)}:
+                 e<0.180?${arcG3(0xd4567a)}: e<0.270?${arcG3(0x9a4486)}: e<0.390?${arcG3(0x5e3680)}:
+                 e<0.550?${arcG3(0x33286a)}: ${arcG3(0x1a1a46)};
+        if(q.y>0.30){ float h=hs(pix); if(h>0.9935){
+          float tw=step(0.3,hs(pix+floor(uT*1.1+h*37.0)));
+          c=mix(c, ${arcG3(0xfff4d8)}, (0.35+0.65*tw)*smoothstep(0.30,0.46,q.y)); } }
+        float dz=wrapA(q.x-SA)*cos(q.y); float r=length(vec2(dz, q.y-SE));
+        float rj=r+(b-0.5)*0.03;
+        if(rj<0.200 && e>0.06) c=${arcG3(0xffac5e)};
+        if(rj<0.135 && e>0.025) c=${arcG3(0xffd98a)};
+        if(r<0.078){
+          float yy=(SE-q.y)/0.078;
+          bool gap = yy>0.08 && mod(pix.y,4.0) < floor(yy*3.4+0.5);
+          if(!gap) c = q.y>SE+0.025 ? ${arcG3(0xfff6d0)} : ${arcG3(0xffcf5a)};
+        }
+        float n1=cloud(q, 0.0021, 0.085, 0.205, 6.0);
+        if(n1>0.52){ float up=cloud(q+vec2(0.0,2.0*PX),0.0021,0.085,0.205,6.0), dn=cloud(q-vec2(0.0,2.0*PX),0.0021,0.085,0.205,6.0);
+          c = up<0.52 ? ${arcG3(0xffe2c8)} : dn<0.52 ? ${arcG3(0xb0648e)} : ${arcG3(0xf29ca6)}; }
+        float n2=cloud(q, 0.0050, 0.24, 0.40, 3.6);
+        if(n2>0.56){ float up=cloud(q+vec2(0.0,2.0*PX),0.005,0.24,0.40,3.6), dn=cloud(q-vec2(0.0,2.0*PX),0.005,0.24,0.40,3.6);
+          c = up<0.56 ? ${arcG3(0xffc8c0)} : dn<0.56 ? ${arcG3(0x7a4a8e)} : ${arcG3(0xc8709a)}; }
+        float hF=ridge(q.x, 5.0, 3.0, 0.035, 0.12);
+        if(q.y<hF) c = q.y>hF-PX*1.5 ? ${arcG3(0xeaa0a0)} : ${arcG3(0xd0829a)};
+        float hN=ridge(q.x, 3.0, 11.0, 0.012, 0.07);
+        if(q.y<hN) c = q.y>hN-PX*1.5 ? ${arcG3(0xc87a98)} : ${arcG3(ARC_FOG)};
+        if(q.y<0.0) c=${arcG3(ARC_FOG)};
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,24), mat);
+  m.frustumCulled=false; return m;
+}
+
+/* THE FIELD. One pass over a block grid: 16-unit columns across the valley, 48-unit ones
+   for the rim beyond. Each column gets a natural height (valley, mesa, lake, rim, the hill
+   the tunnel cuts) and is then CLAMPED against every nearby sample of the road:
+     - inside the drivable corridor (48.4 infield / 28.2 outside / 28.2 both sides in the
+       tunnel) its top is held below the lowest point of the banked road plane over the
+       column's whole footprint, so nothing the player can reach is ever inside a block;
+     - beyond it an embankment band holds the land within a slope of the road, so the road
+       is carried on stepped earth rather than hung in the air or buried in a wall.
+   Tunnel samples also leave a roof: a hanging column over the corridor, its underside a
+   clear 21.5 above the highest point of the road under it. The same record answers
+   "how high is the ground here" for everything placed afterwards. */
+function arcField(inS, ccx, ccz, tunIdx){
+  const X0=Math.round((ccx-720)/16)*16, Z0=Math.round((ccz-720)/16)*16;
+  const XC0=X0-432, ZC0=Z0-432;        // 48 coarse cells of 48 = 2304; fine block = coarse 9..38
+  const inTunJ=j=>tunIdx.some(([a,b])=>j>=a&&j<=b), deepJ=j=>tunIdx.some(([a,b])=>j>=a+3&&j<=b-3);
+  const SJ=SAMP.map((s,j)=>({x:s.p.x,y:s.p.y,z:s.p.z,nx:s.n.x,nz:s.n.z,sb:Math.sin(s.bank||0),
+                             tun:inTunJ(j),deep:deepJ(j)}));
+  const M=ARC_MESA, L=ARC_LAKE, sa=Math.atan2(ARC_SUN.z,ARC_SUN.x);
+  const cell=(x,z,cs)=>{
+    const reach=cs*0.7072;
+    let lo=-1e9, hi=1e9, corr=false, nd=1e9, nj=-1, marg=1e9, roofB=-1e9, hill=-1e9;
+    for(let j=0;j<SJ.length;j++){
+      const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
+      if(d2>360000) continue;
+      const d=Math.sqrt(d2);
+      if(d<nd){ nd=d; nj=j; }
+      const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0) ? (s.tun?HW*1.28:HW*2.2) : HW*1.28;
+      if(d-lim<marg) marg=d-lim;
+      if(s.tun && d<240) hill=Math.max(hill, s.y+40-Math.max(0,d-70)*0.30);
+      const dE=d-reach;
+      if(dE<lim+1.5){
+        const lc=Math.max(-lim,Math.min(lim,lat)), sbA=Math.abs(s.sb)*reach;
+        hi=Math.min(hi, s.y+s.sb*lc-sbA-0.6); corr=true;
+        if(s.tun) roofB=Math.max(roofB, s.y+s.sb*lc+sbA+21.5);
+      } else {
+        const e=dE-lim;
+        if(!s.deep) hi=Math.min(hi, s.y+4+e*0.9);
+        lo=Math.max(lo, s.y-1.5-e*0.55);
+      }
+    }
+    const S0=nj>=0?SJ[nj]:null;
+    const inner=S0 ? ((x-S0.x)*S0.nx+(z-S0.z)*S0.nz)*inS>0 : false;
+    let h, kind=0, lake=false, mesa=false;
+    if(inner){
+      h=6+10*arcFbm(x/150,z/150)+arcSS(90,240,nd)*10*arcFbm(x/90+7,z/90+3);
+      const mx=(x-M.x)/M.rx, mz=(z-M.z)/M.rz, me=mx*mx+mz*mz+(arcVN(x/40,z/40)-0.5)*0.35;
+      const lx=(x-L.x)/L.rx, lz=(z-L.z)/L.rz, le=lx*lx+lz*lz+(arcVN(x/35+11,z/35)-0.5)*0.4;
+      if(me<1){ h=M.h; mesa=true; }
+      else if(le<1){ h=-10; kind=5; lake=true; }
+      else if(le<1.4){ h=4; kind=1; }
+    } else {
+      const e=Math.min(nd,600), rise=arcSS(40,440,e);
+      const a=Math.atan2(z-ccz,x-ccx); let da=a-sa; da=Math.atan2(Math.sin(da),Math.cos(da));
+      const notch=1-0.72*Math.exp(-da*da/0.05);
+      h=8+rise*(70+190*arcFbm(x/300+3,z/300+9))*notch+rise*18*arcFbm(x/70,z/70);
+    }
+    if(hill>h){ h=hill; if(kind) kind=0; lake=false; }
+    let top=Math.min(Math.max(h,lo),hi);
+    const q=cs>16?8:4;
+    top=corr ? Math.floor(top*2)/2 : Math.floor(top/q)*q;
+    if(top>hi) top=hi;
+    if(lake && top>ARC_WATER-1){ lake=false; kind=1; }
+    if(!corr && !lake && kind!==1) kind = top>=150 ? 3 : top>=108 ? 2 : 0;
+    if(kind===0 && S0 && S0.tun && nd<80) kind=4;               // cave walls
+    const roof=(corr && S0 && S0.tun) ? roofB : null;
+    return {x,z,cs,top,kind,marg,nj,nd,inner,mesa,lake,roof,hill,
+            tint:0.93+0.12*arcHash(Math.round(x),Math.round(z))};
+  };
+  const fine=new Array(90*90), coarse=new Array(48*48);
+  for(let iz=0;iz<90;iz++) for(let ix=0;ix<90;ix++) fine[iz*90+ix]=cell(X0+(ix+0.5)*16, Z0+(iz+0.5)*16, 16);
+  for(let iz=0;iz<48;iz++) for(let ix=0;ix<48;ix++){
+    if(ix>=9&&ix<=38&&iz>=9&&iz<=38) continue;
+    coarse[iz*48+ix]=cell(XC0+(ix+0.5)*48, ZC0+(iz+0.5)*48, 48);
+  }
+  const get=(x,z)=>{
+    const fx=Math.floor((x-X0)/16), fz=Math.floor((z-Z0)/16);
+    if(fx>=0&&fx<90&&fz>=0&&fz<90) return fine[fz*90+fx];
+    const cx=Math.floor((x-XC0)/48), cz=Math.floor((z-ZC0)/48);
+    if(cx>=0&&cx<48&&cz>=0&&cz<48) return coarse[cz*48+cx]||null;
+    return null; };
+  const topAt=(x,z)=>{ const c=get(x,z); return c ? c.top : -40; };
+  // the lowest ground under a footprint, so a prop's foot never hangs off a step edge
+  const footAt=(x,z,r)=>Math.min(topAt(x-r,z-r),topAt(x+r,z-r),topAt(x-r,z+r),topAt(x+r,z+r),topAt(x,z));
+  // Clearance of a point from the WHOLE corridor, not just from the sample a prop was hung
+  // off: on a tight bend another stretch of road can pass closer than the one you measured
+  // from. Minus r for the prop's own half-extent; a prop is legal when this is >= 1.
+  const clear=(x,z,r)=>{ let m=1e9;
+    for(const s of SJ){ const dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>40000) continue;
+      const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
+      const v=Math.sqrt(d2)-lim; if(v<m) m=v; }
+    return m-(r||0); };
+  return {fine, coarse, get, topAt, footAt, clear, SJ, tunIdx, inS, ccx, ccz,
+          B:{plain:[], brick:[], q:[], glow:[]}};
+}
+
+// One merged mesh for the whole land: a top quad per column, and side quads only where
+// a neighbour is lower (the buried faces never exist). Tunnel roofs add their own box.
+function arcTerrainMesh(F){
+  const P=[],N=[],C=[],TP=[],K=[],I=[]; let vc=0;
+  const quad=(v,n,tint,top,kind)=>{
+    for(const p of v){ P.push(p[0],p[1],p[2]); N.push(n[0],n[1],n[2]); C.push(tint,tint,tint); TP.push(top); K.push(kind); }
+    I.push(vc,vc+1,vc+2, vc,vc+2,vc+3); vc+=4; };
+  const side=(c,dir,y0,y1,top,kind)=>{
+    const h=c.cs/2, x0=c.x-h, x1=c.x+h, z0=c.z-h, z1=c.z+h, t=c.tint*(kind===4?0.8:1);
+    if(y1-y0<0.01) return;
+    if(dir===0) quad([[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]],[1,0,0],t,top,kind);
+    else if(dir===1) quad([[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],[x0,y0,z0]],[-1,0,0],t,top,kind);
+    else if(dir===2) quad([[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],[x0,y0,z1]],[0,0,1],t,top,kind);
+    else quad([[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],[x1,y0,z0]],[0,0,-1],t,top,kind);
+  };
+  const emit=c=>{
+    const h=c.cs/2, x0=c.x-h, x1=c.x+h, z0=c.z-h, z1=c.z+h, t=c.top;
+    quad([[x0,t,z0],[x0,t,z1],[x1,t,z1],[x1,t,z0]],[0,1,0],c.tint,t,c.kind);
+    const offs=c.cs>16?[-h+8,0,h-8]:[0];
+    const nb=(dir)=>{ let m=1e9;
+      for(const o of offs){
+        const px= dir===0?x1+1: dir===1?x0-1: c.x+o, pz= dir===2?z1+1: dir===3?z0-1: c.z+o;
+        m=Math.min(m, F.topAt(px,pz)); }
+      return Math.max(m,-40); };
+    for(let dir=0;dir<4;dir++){ const n=nb(dir); if(n<t) side(c,dir,n,t,t,c.kind); }
+    if(c.roof!=null){
+      const yb=Math.ceil(c.roof), yt=Math.max(yb+8, Math.floor(c.hill/4)*4);
+      quad([[x0,yt,z0],[x0,yt,z1],[x1,yt,z1],[x1,yt,z0]],[0,1,0],c.tint,yt,0);
+      quad([[x0,yb,z0],[x1,yb,z0],[x1,yb,z1],[x0,yb,z1]],[0,-1,0],c.tint*0.7,yt,4);
+      for(let dir=0;dir<4;dir++) side(c,dir,yb,yt,yt,4);
+    }
+  };
+  for(const c of F.fine) emit(c);
+  for(const c of F.coarse) if(c) emit(c);
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  g.setAttribute('normal',new T.Float32BufferAttribute(N,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+  g.setAttribute('aTop',new T.Float32BufferAttribute(TP,1));
+  g.setAttribute('aKind',new T.Float32BufferAttribute(K,1));
+  g.setIndex(I);
+  const pal={GA:0x5cb848,GB:0x46a03e,LIP:0x2c7a38,DA:0xc4783e,DB:0x9c5632,SA:0xeed49a,SB:0xdcbc80,
+             SSA:0xc89a66,SSB:0xa87e52,RT:0xa89aa8,RTB:0x928498,RA:0x7c7090,RB:0x665a7a,
+             NA:0xf6f2ff,NB:0xd8d4f0,CA:0x5a3a4c,CB:0x44283a,CEIL:0x2e1e30};
+  const defs=Object.entries(pal).map(([k,v])=>`const vec3 ${k}=${arcL3(v)};`).join('\n');
+  const mat=arcPatch(new T.MeshLambertMaterial({color:0xffffff, vertexColors:true}), 'terrain',
+    `varying vec3 vW; varying vec3 vNrm; varying float vTop; varying float vKind;
+     float arcH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+     ${defs}`,
+    `{ float aFD=0.0;
+      #ifdef USE_FOG
+        aFD=fogDepth;
+      #endif
+      float fade=1.0-smoothstep(240.0,620.0,aFD);
+      int k=int(vKind+0.5); vec3 tc;
+      if(vNrm.y>0.5){
+        float n=arcH(floor(vW.xz*0.5));
+        vec3 a=GA, b=GB;
+        if(k==1||k==5){ a=SA; b=SB; } else if(k==2){ a=RT; b=RTB; } else if(k==3){ a=NA; b=NB; }
+        tc=mix(mix(a,b,0.3), n>0.7?b:a, fade);
+      } else if(vNrm.y<-0.5){ tc=CEIL; }
+      else {
+        float along=abs(vNrm.x)>0.5 ? vW.z : vW.x;
+        float dd=vTop-vW.y, col=floor(along*0.5), lip=0.0;
+        if(k==0||k==4) lip=2.0+2.0*step(0.55,arcH(vec2(col,3.0)))+2.0*step(0.86,arcH(vec2(col,7.0)));
+        else if(k==3) lip=3.0+2.0*step(0.5,arcH(vec2(col,5.0)));
+        else if(k==1) lip=1.0+step(0.6,arcH(vec2(col,9.0)));
+        if(dd<lip){ tc = k==3 ? NB : k==1 ? SB : LIP; }
+        else {
+          float ch=mod(floor(vW.y*0.125)+floor(along*0.125),2.0);
+          vec3 a=DA, b=DB;
+          if(k==1||k==5){ a=SSA; b=SSB; } else if(k==2||k==3){ a=RA; b=RB; } else if(k==4){ a=CA; b=CB; }
+          tc=mix(mix(a,b,0.5), ch>0.5?b:a, fade);
+        }
+      }
+      diffuseColor.rgb*=tc; }`,
+    `attribute float aTop; attribute float aKind; varying vec3 vW; varying vec3 vNrm; varying float vTop; varying float vKind;`,
+    `vW=(modelMatrix*vec4(transformed,1.0)).xyz; vNrm=normal; vTop=aTop; vKind=aKind;`);
+  const m=new T.Mesh(g, mat); m.frustumCulled=false;
+  return m;
+}
+
+/* THE LAKE, and the pipe that feeds it. The water is one sheet at the lake level; the
+   land columns stand through it, so its shore is simply wherever the ground rises out.
+   The waterfall pours from a warp pipe set into the mesa cliff — the genre's plumbing
+   doing the one job it has in a landscape. */
+function arcWater(F){
+  const L=ARC_LAKE, M=ARC_MESA, P={};
+  const wt=arcWaterTex(), W=L.rx*2.8, D=L.rz*2.8;
+  wt.repeat.set(W/32, D/32);
+  const wg=new T.PlaneGeometry(W,D); wg.rotateX(-Math.PI/2);
+  const wm=arcPatch(new T.MeshBasicMaterial({map:wt}), 'water');
+  const w=new T.Mesh(wg, wm); w.position.set(L.x, ARC_WATER, L.z); trackGroup.add(w);
+  P.water=wt;
+  // walk south from the castle until the mesa ends: that face is the cliff
+  const px=F.get(M.x+8,M.z).x; let zc=null;
+  for(let z=M.z; z<M.z+M.rz*1.6; z+=16){ const c=F.get(px,z); if(c && c.top<M.h-1){ zc=c.z-c.cs/2; break; } }
+  if(zc!=null && F.topAt(px,zc+8)<ARC_WATER+2){
+    const py=M.h-11, B=F.B;
+    B.plain.push({x:px, y:py, z:zc+1, s:10, sy:10, sz:14, c:0x2fae48});           // bore, half in the rock
+    B.plain.push({x:px, y:py, z:zc+9, s:13, sy:13, sz:4, c:0x52cf5e});            // the lip
+    B.plain.push({x:px, y:py, z:zc+11.05, s:9.5, sy:9.5, sz:0.3, c:0x0a2412});    // the dark mouth
+    const ft=arcFallTex(), fh=py-4.8-ARC_WATER;
+    ft.repeat.set(1, fh/16);
+    const fm=arcPatch(new T.MeshBasicMaterial({map:ft, side:T.DoubleSide}), 'fall');
+    const f=new T.Mesh(new T.PlaneGeometry(8, fh), fm);
+    f.position.set(px, ARC_WATER+fh/2, zc+11.4); trackGroup.add(f);
+    P.fall=ft;
+    const R=harbRnd(0xF0A3);
+    for(let k=0;k<7;k++){ const s=2.5+R()*3.5;
+      B.plain.push({x:px+(R()-0.5)*14, y:ARC_WATER+s*0.2, z:zc+12+R()*9, s, sy:s*0.7, c:k%3?0xf4f4ff:0xc8dcff}); }
+  }
+  return P;
+}
+
+/* THE VERGE. The outside limit is red-and-white kerb standing just beyond 28.2 and the
+   infield limit a clipped hedge just beyond 48.4, both seated on the ground under them.
+   A kerb reaches up to at least deck height wherever the embankment falls away, so the
+   corridor edge always reads from the driver's seat. */
+function arcVerge(F, inS){
+  const B=F.B, R=harbRnd(0x7E57), tun=F.tunIdx;
+  const nearTun=i=>tun.some(([a,b])=>i>=a-3&&i<=b+3);
+  for(let i=0;i<STEPS;i+=2){
+    if(nearTun(i)) continue;
+    const s=SAMP[i], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+    // kerb: a red/white cap riding at deck height on a dark stone plinth down to the ground
+    { const lat=-inS*30.9, x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat;
+      if(F.clear(x,z,5.2)>=1){
+        const g=F.footAt(x,z,3), capT=Math.max(s.p.y+sb*lat+1.4, g+2.4), capB=capT-2.4;
+        B.plain.push({x, y:(capT+capB)/2, z, s:3.2, sy:2.4, sz:9.6, ry, c:(i/2|0)%2?0xf2eee8:0xd8303c});
+        if(capB-g>0.2) B.plain.push({x, y:(capB+g)/2, z, s:3.0, sy:capB-g, sz:9.4, ry, c:0x4a3a52}); } }
+    if(R()<0.22) continue;                                         // hedges have gaps
+    { const lat=inS*(HW*2.2+3.8), x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, len=6+R()*4;
+      if(F.clear(x,z,Math.hypot(2.2,len/2))>=1){
+        const g=F.footAt(x,z,3), hh=3+R()*3.5;
+        B.plain.push({x, y:g+hh/2, z, s:4.4, sy:hh, sz:len, ry, c:R()<0.5?0x2c7a38:0x357f3a}); } }
+  }
+}
+
+/* THE TUNNEL: a castle gate cut into the hill. Stone portals at both mouths (walls
+   outside 28.2, lintel a clear 21 over the deck), the hill's own columns for walls, the
+   hanging roof for a ceiling, torches fixed to the rock, and their light pooled on the
+   darkened road. */
+function arcTunnel(F, inS){
+  const B=F.B, R=harbRnd(0x70C4), torches=[];
+  for(const [i0,i1] of F.tunIdx){
+    for(const im of [i0+4, i1-4]){
+      const s=SAMP[im], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+      const y0=Math.floor((s.p.y-24)/5)*5;
+      for(let lat=-47.5; lat<=47.5; lat+=5){
+        const x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, g=F.footAt(x,z,2.5);
+        const sfMax=s.p.y+sb*lat+Math.abs(sb)*2.5+0.6, wall=Math.abs(lat)>=31.7;
+        const cap=s.p.y+(wall?40:34)+(Math.abs(lat)>40?-5:0);
+        for(let yb=y0; yb<cap; yb+=5){
+          if(yb+5<=g) continue;
+          if(!wall && yb<sfMax+21) continue;
+          const top=yb+5>=cap;
+          if(top && (Math.round(lat/5)%2)) continue;               // crenellation
+          const key=!wall && Math.abs(lat)<3 && yb<sfMax+26;
+          (key?B.q:B.brick).push({x, y:yb+2.5, z, s:5, sy:5, sz:5.4, ry, c:key?0xffffff:((Math.round(lat/5)+yb/5)%4?0xc8c0d4:0xb4aac4)});
+        }
+      }
+    }
+    for(let i=i0+5; i<=i1-5; i+=9+(R()*7|0)){
+      const s=SAMP[i], sd=R()<0.5?1:-1, sb=Math.sin(s.bank||0);
+      let wl=null;
+      for(let lat=30; lat<64; lat+=1.5){
+        const x=s.p.x+s.n.x*sd*lat, z=s.p.z+s.n.z*sd*lat;
+        if(F.topAt(x,z)>s.p.y+sb*sd*lat+14){ wl=lat; break; }
+      }
+      if(wl==null) continue;
+      const lat=Math.max(30.6, wl-1.0), x=s.p.x+s.n.x*sd*lat, z=s.p.z+s.n.z*sd*lat, y=s.p.y+sb*sd*lat+10;
+      if(F.clear(x,z,1.3)<0.9) continue;
+      B.plain.push({x, y, z, s:0.9, sy:3.6, sz:0.9, c:0x6a3a22});
+      torches.push({x, y:y+2.6, z, ph:R()*6.28, sd, i});
+    }
+  }
+  if(!torches.length) return null;
+  const fl=new T.InstancedMesh(new T.BoxGeometry(1,1,1), arcPatch(new T.MeshBasicMaterial({color:0xffffff}),'flame'), torches.length);
+  fl.frustumCulled=false; trackGroup.add(fl);
+  const c0=new T.Color(0xffb040); torches.forEach((f,i)=>fl.setColorAt(i,c0));
+  const hp=[]; for(const f of torches) hp.push(f.x,f.y,f.z);
+  const hg=new T.BufferGeometry(); hg.setAttribute('position',new T.Float32BufferAttribute(hp,3));
+  const halo=new T.Points(hg,new T.PointsMaterial({map:TEX_GLOW,color:0xff9a40,size:22,sizeAttenuation:true,
+    transparent:true,opacity:0.45,blending:T.AdditiveBlending,depthWrite:false}));
+  halo.frustumCulled=false; trackGroup.add(halo);
+  // each torch's light, pooled on the banked deck beside it
+  const lg=new T.PlaneGeometry(1,1); lg.rotateX(-Math.PI/2);
+  const lm=new T.InstancedMesh(lg,new T.MeshBasicMaterial({map:TEX_GLOW,color:0xff8a3a,transparent:true,opacity:0.5,
+    blending:T.AdditiveBlending,depthWrite:false}),torches.length);
+  lm.frustumCulled=false;
+  const m4=new T.Matrix4(), qq=new T.Quaternion(), sc=new T.Vector3(34,1,34);
+  torches.forEach((f,k)=>{ const s=SAMP[f.i], up=new T.Vector3().crossVectors(s.t,s.bn).normalize();
+    const fw=new T.Vector3().crossVectors(s.bn,up).normalize(); qq.setFromRotationMatrix(m4.makeBasis(s.bn,up,fw));
+    const pv=s.p.clone().addScaledVector(s.bn,f.sd*(HW-8)).addScaledVector(up,0.22);
+    lm.setMatrixAt(k,new T.Matrix4().compose(pv,qq,sc)); });
+  lm.instanceMatrix.needsUpdate=true; lm.renderOrder=2; trackGroup.add(lm);
+  return {m:fl, list:torches, halo};
+}
+
+// Block-built castle: stone shells (bricks), red stepped roofs, flags, a gate, and the
+// Egg in a gold cradle on the keep. Everything stands on the mesa or on the course below.
+function arcCastle(F, cx, cy, cz){
+  const B=F.B, S=7, st=0xd0c8dc, st2=0xb8aec8, dark=0x201428;
+  const blk=(x,y,z,c,list)=>list.push({x:cx+x, y:cy+y+S/2, z:cz+z, s:S, c});
+  const HC=S*8;
+  for(let row=0;row<5;row++) for(let a=-HC;a<=HC;a+=S){
+    for(const [x,z] of [[a,-HC],[a,HC],[-HC,a],[HC,a]]){
+      if(row===4 && (Math.round(a/S)%2)) continue;
+      if(z===HC && Math.abs(x)<=S*1.5 && row<3) continue;           // the gate
+      blk(x,row*S,z,(row*3+Math.round(a/S))%7===0?st2:st,B.brick);
+    }
+  }
+  for(let row=0;row<3;row++) for(let x=-S;x<=S;x+=S) blk(x,row*S,HC-S,dark,B.plain);
+  blk(0,3*S,HC,0xffffff,B.q);                                         // keystone
+  const roof=(x0,z0,y0,w,cA,cB)=>{ for(let k=0;k<4;k++){ const ww=w-k*5.6;
+      B.plain.push({x:cx+x0, y:cy+y0+k*4.2+2.1, z:cz+z0, s:ww, sy:4.2, c:k%2?cB:cA}); } };
+  const flag=(x0,z0,y0,c)=>{ B.plain.push({x:cx+x0, y:cy+y0+8, z:cz+z0, s:1.1, sy:16, c:0x5a4a3a});
+    B.plain.push({x:cx+x0+4.6, y:cy+y0+13.5, z:cz+z0, s:8.4, sy:5.6, sz:0.8, c}); };
+  for(const [tx,tz] of [[-HC,-HC],[HC,-HC],[-HC,HC],[HC,HC]]){
+    for(let row=0;row<9;row++) for(let dx=-S;dx<=S;dx+=S) for(let dz=-S;dz<=S;dz+=S){
+      if(!dx&&!dz) continue;
+      if(row===8 && (dx&&dz)===0) continue;
+      blk(tx+dx,row*S,tz+dz,(row+dx/S+dz/S+9)%3?st:st2,B.brick);
+    }
+    roof(tx,tz,9*S,24,0xd8444a,0xb03040);
+    flag(tx,tz,9*S+16.8,(tx>0)===(tz>0)?0xff6fa0:0xfff0f4);
+  }
+  const K=S*2.5;
+  for(let row=0;row<12;row++) for(let dx=-K;dx<=K;dx+=S) for(let dz=-K;dz<=K;dz+=S){
+    if(Math.abs(dx)<K-1&&Math.abs(dz)<K-1) continue;
+    if(row===11 && (Math.round((dx+dz)/S)%2)) continue;
+    const mid=(Math.abs(dx)<S||Math.abs(dz)<S) && (row===7||row===8);
+    blk(dx,row*S,dz, mid?dark:((row+Math.round(dx/S)+9)%4?st:st2), mid?B.plain:B.brick);
+  }
+  // gold cradle and the Egg
+  const top=cy+12*S;
+  for(let a=0;a<14;a++){ const th=a/14*Math.PI*2;
+    B.plain.push({x:cx+Math.cos(th)*12, y:top+2, z:cz+Math.sin(th)*12, s:4, sy:4, c:0xffc83a}); }
+  const egg=[], rx=15, ry=19, E=4, ey=top+4+ry-2;
+  const inside=(x,y,z)=>(x*x)/(rx*rx)+(y*y)/(ry*ry)+(z*z)/(rx*rx)<=1;
+  for(let x=-rx;x<=rx;x+=E) for(let y=-ry;y<=ry;y+=E) for(let z=-rx;z<=rx;z+=E){
+    if(!inside(x,y,z)) continue;
+    if(inside(x+E,y,z)&&inside(x-E,y,z)&&inside(x,y+E,z)&&inside(x,y-E,z)&&inside(x,y,z+E)&&inside(x,y,z-E)) continue;
+    const hl=(x<-2&&y>5&&x>-13);
+    egg.push({x:cx+x, y:ey+y, z:cz+z, s:E, c:hl?0xffffff:y>2?0xfff0dc:y>-7?0xffe0cc:0xf6c8b4});
+  }
+  const em=arcMat('egg',{emissive:0x402818});
+  trackGroup.add(arcBatch(new T.BoxGeometry(1,1,1), em, egg));
+  const halo=glowSprite(0xffe2b0, 120); halo.material.opacity=0.28; halo.position.set(cx, ey, cz);
+  trackGroup.add(halo);
+  return em;
+}
+
+function arcPine(B,x,g,z,k){
+  B.plain.push({x, y:g+3*k, z, s:2.4*k, sy:6*k, c:0x5a3422});
+  const W=[13,10,7,4], cs=[0x1e5a48,0x246a50,0x2a7a56,0x3a8a5c];
+  for(let t=0;t<4;t++) B.plain.push({x, y:g+(6+t*4.6+2.3)*k, z, s:W[t]*k, sy:4.6*k, c:cs[t]});
+}
+function arcBush(B,x,g,z,k){
+  B.plain.push({x, y:g+5*k, z, s:3*k, sy:10*k, c:0x6a3a22});
+  const y=g+(10+5)*k;
+  B.plain.push({x, y, z, s:13*k, sy:10*k, c:0x3e9a3e});
+  B.plain.push({x, y:y-1*k, z, s:18*k, sy:6*k, sz:10*k, c:0x358a36});
+  B.plain.push({x, y:y-1*k, z, s:10*k, sy:6*k, sz:18*k, c:0x358a36});
+  B.plain.push({x, y:y+6.5*k, z, s:8*k, sy:3*k, c:0x5ab84a});
+}
+function arcPipe(B,x,g,z,h){
+  B.plain.push({x, y:g+h/2, z, s:10, sy:h, c:0x2fae48});
+  B.plain.push({x:x-3.2, y:g+h/2, z:z+5.05, s:1.6, sy:h, sz:0.2, c:0x7ce88a});
+  B.plain.push({x, y:g+h+2.5, z, s:13, sy:5, c:0x52cf5e});
+  B.plain.push({x, y:g+h+5.1, z, s:9.5, sy:0.3, c:0x0a2412});
+}
+
+/* SCENERY: groves where a slow noise field says so and almost nowhere else (clearings are
+   what make a grove read), pipes in clumps on the outer bank, the castle on its mesa,
+   birds wheeling over the lake. Every prop is placed at a column centre, on the lowest
+   ground under its footprint, and only where its whole footprint clears the corridor. */
+function arcScenery(F, inS){
+  const B=F.B, R=harbRnd(0x5CE7E), M=ARC_MESA;
+  const order=F.fine.map((c,i)=>i).sort((a,b)=>arcHash(a,77)-arcHash(b,77));
+  let nt=0, np=0;
+  for(const idx of order){
+    const c=F.fine[idx];
+    if(c.lake || c.kind===1 || c.kind===5 || c.kind===3) continue;
+    const dm=Math.hypot(c.x-M.x, c.z-M.z);
+    if(c.mesa && dm<86) continue;
+    const grove=arcFbm(c.x/210+2, c.z/210+8);
+    const p = grove>0.56 ? 0.42 : grove>0.47 ? 0.10 : 0.02;
+    if(arcHash(idx,5)>p) continue;
+    const pine = !c.inner && c.top>24 || c.kind===2;
+    const k=0.8+arcHash(idx,9)*0.7, half=(pine?6.5:9)*k+1.5;
+    if(c.marg<half-12) continue;
+    const jx=(arcHash(idx,11)-0.5)*4, jz=(arcHash(idx,13)-0.5)*4;
+    const x=c.x+jx, z=c.z+jz;
+    if(F.clear(x,z,half*1.415)<1) continue;
+    const g=F.footAt(x,z,2);
+    if(g<ARC_WATER+1) continue;
+    if(pine) arcPine(B,x,g,z,k); else arcBush(B,x,g,z,k);
+    if(++nt>=280) break;
+  }
+  // pipes: a few clumps of two or three on the outer bank, never in a grove
+  const seeds=[40,118,176,388,460,560,640];
+  for(const si of seeds){
+    const s=SAMP[si], out=-inS;
+    let made=0;
+    for(let k=0;k<3;k++){
+      const lat=out*(42+k*15+R()*6), along=(R()-0.5)*20;
+      const x0=s.p.x+s.n.x*lat+s.t.x*along, z0=s.p.z+s.n.z*lat+s.t.z*along;
+      const c=F.get(x0,z0); if(!c || c.kind>1 || F.clear(c.x,c.z,9.2)<1) continue;
+      if(k>0 && R()<0.3) continue;
+      const g=F.footAt(c.x,c.z,6.5), h=8+R()*20;
+      arcPipe(B,c.x,g,c.z,h); made++; np++;
+    }
+  }
+  const eggMat=arcCastle(F, M.x, M.h, M.z);
+  // birds: dark pixel gulls wheeling over the lake, two-frame wingbeat
+  const bm=arcPatch(new T.MeshBasicMaterial({color:0x2a1830}), 'bird');
+  const birds=new T.InstancedMesh(new T.BoxGeometry(1,1,1), bm, 5*3); birds.frustumCulled=false;
+  trackGroup.add(birds);
+  const bl=[]; for(let k=0;k<5;k++) bl.push({r:50+R()*80, y:70+R()*45, sp:(0.10+R()*0.08)*(k%2?1:-1), ph:R()*6.28, fp:R()*6.28});
+  return {eggMat, birds:{m:birds, list:bl}};
+}
+
+// Everything accumulated above, as three instanced draws, plus the start marquee.
+function arcFlush(F){
+  const B=F.B;
+  if(B.plain.length) trackGroup.add(arcBatch(new T.BoxGeometry(1,1,1), arcMat('plain'), B.plain));
+  if(B.brick.length) trackGroup.add(arcBatch(new T.BoxGeometry(1,1,1), arcMat('brick',{map:arcBrickTex()}), B.brick));
+  let qm=null;
+  if(B.q.length){ qm=arcMat('q',{map:arcQTex(), emissive:0x000000}); trackGroup.add(arcBatch(new T.BoxGeometry(1,1,1), qm, B.q)); }
+  return qm;
+}
+
+/* THE MARQUEE. The start line as the top of an arcade cabinet: a lit sign with the course
+   name, score and world number, hung from a beam of bricks and question blocks on two
+   brick towers. Towers are outside both walls (34.5 outside, 55 infield), the sign's
+   underside 21 over the deck, and a chase of bulbs runs round its edge. */
+function arcGantry(F, inS){
+  const B=F.B, s=SAMP[0], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+  const at=lat=>({x:s.p.x+s.n.x*lat, z:s.p.z+s.n.z*lat});
+  const by=s.p.y+Math.abs(sb)*32+29.5, beamY=by+11;
+  const towerLat=sd=>{ let l=sd===inS?55:34.5; while(F.clear(s.p.x+s.n.x*sd*l, s.p.z+s.n.z*sd*l, 7.1)<1 && l<90) l+=2.5; return sd*l; };
+  const Lo=towerLat(-inS), Li=towerLat(inS);
+  for(const lat of [Lo, Li]){
+    for(const [da,dt] of [[-2.5,-2.5],[2.5,-2.5],[-2.5,2.5],[2.5,2.5]]){
+      const x=s.p.x+s.n.x*(lat+da)+s.t.x*dt, z=s.p.z+s.n.z*(lat+da)+s.t.z*dt;
+      const g=F.footAt(x,z,2.5);
+      for(let y=g; y<beamY-2.5; y+=5) B.brick.push({x, y:y+2.5, z, s:5, sz:5, ry, c:0xc86a50});
+    }
+  }
+  let k=0;
+  for(let lat=Lo-inS*2.5; inS>0 ? lat<=Li+2.6 : lat>=Li-2.6; lat+=inS*5, k++){
+    const p=at(lat), q=(k%4===2);
+    (q?B.q:B.brick).push({x:p.x, y:beamY+2.5, z:p.z, s:5, sz:5.4, ry, c:q?0xffffff:0xc86a50});
+  }
+  const face=arcPatch(new T.MeshBasicMaterial({map:arcMarqueeTex()}), 'marq');
+  const rimM=arcMat('marqrim');
+  rimM.color.setHex(0x2a1a3a);
+  const board=new T.Mesh(new T.BoxGeometry(64,16,2.4), [rimM,rimM,rimM,rimM,face,face]);
+  board.position.set(s.p.x, by, s.p.z); board.rotation.y=ry; trackGroup.add(board);
+  for(const lat of [-24,24]){ const p=at(lat);
+    B.plain.push({x:p.x, y:(by+8+beamY)/2, z:p.z, s:0.7, sy:beamY-(by+8), ry, c:0x3a2a2a}); }
+  const bulbs=[], bm=arcPatch(new T.MeshBasicMaterial({color:0xffffff}), 'bulb');
+  for(const fz of [-1.35,1.35]) for(const fy of [-8.4,8.4]) for(let u=-30;u<=30;u+=3){
+    const lx=u, x=s.p.x+s.n.x*(-lx)+s.t.x*fz, z=s.p.z+s.n.z*(-lx)+s.t.z*fz;
+    bulbs.push({x, y:by+fy, z});
+  }
+  const bi=new T.InstancedMesh(new T.BoxGeometry(1.3,1.3,1.3), bm, bulbs.length); bi.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color(0x8a6a30);
+  bulbs.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,ry,0); d.updateMatrix(); bi.setMatrixAt(i,d.matrix); bi.setColorAt(i,c); });
+  bi.instanceMatrix.needsUpdate=true; if(bi.instanceColor) bi.instanceColor.needsUpdate=true;
+  trackGroup.add(bi);
+  // chequered flag line painted across the deck
+  const ft=arcTex('chk',16,4,g=>{ for(let y=0;y<4;y++) for(let x=0;x<16;x++) arcPx(g,(x+y)%2?0x141018:0xf2eee8,x,y); });
+  // laid on the BANKED deck (the same basis the road is built on), not level across it
+  const fl=new T.Mesh(new T.PlaneGeometry(HW*2,5.5), arcPatch(new T.MeshLambertMaterial({map:ft}), 'chk'));
+  fl.geometry.rotateX(-Math.PI/2);
+  const up=new T.Vector3().crossVectors(s.t,s.bn).normalize(), fw=new T.Vector3().crossVectors(s.bn,up).normalize();
+  fl.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(s.bn,up,fw));
+  fl.position.copy(s.p).addScaledVector(up,0.14); trackGroup.add(fl);
+  return {m:bi, n:bulbs.length};
+}
+
+// Background life, all of it stepped like tile animation: the lake ripples a pixel at a
+// time, the fall pours, question blocks glint through their three-colour cycle, the
+// marquee bulbs chase, torches flicker on their own clocks, the Egg breathes, gulls flap.
+function arcTick(A, t){
+  A.sky.uniforms.uT.value=t;
+  if(A.water) A.water.offset.x=(Math.floor(t*2.6)%16)/16;
+  if(A.fall) A.fall.offset.y=(Math.floor(t*9)%16)/16;
+  if(A.q){ const ph=[0,1,2,1][Math.floor(t*2.2)%4]; A.q.emissive.setRGB(0.05*ph, 0.028*ph, 0); }
+  if(A.egg){ const b=0.5+0.5*Math.sin(t*0.8); A.egg.emissive.setRGB(0.20+0.07*b, 0.11+0.04*b, 0.07+0.02*b); }
+  if(A.bulbs){ const k=Math.floor(t*3.2); if(k!==A.bk){ A.bk=k; const m=A.bulbs.m, on=A.cOn, off=A.cOff;
+    for(let i=0;i<A.bulbs.n;i++) m.setColorAt(i, (i+k)%4===0?on:off);
+    m.instanceColor.needsUpdate=true; } }
+  if(A.birds){ const B=A.birds, d=A.dObj, L=ARC_LAKE;
+    B.list.forEach((b,k)=>{
+      const a=b.ph+t*b.sp, x=L.x+Math.cos(a)*b.r, z=L.z+Math.sin(a)*b.r, y=b.y+Math.sin(t*0.3+b.fp)*3;
+      const hd=Math.atan2(-Math.sin(a)*Math.sign(b.sp), Math.cos(a)*Math.sign(b.sp)) ;
+      const up=(Math.floor(t*3.3+b.fp)%2)===0;
+      d.position.set(x,y,z); d.rotation.set(0,hd,0); d.scale.set(1.2,1.2,4); d.updateMatrix(); B.m.setMatrixAt(k*3,d.matrix);
+      for(const sd of [-1,1]){
+        const ox=Math.cos(hd)*sd*3.6, oz=-Math.sin(hd)*sd*3.6;
+        d.position.set(x+ox, y+(up?1.3:-0.6), z+oz); d.rotation.set(0,hd,sd*(up?-0.45:0.35));
+        d.scale.set(6,0.6,2.2); d.updateMatrix(); B.m.setMatrixAt(k*3+(sd<0?1:2), d.matrix);
+      }
+    });
+    B.m.instanceMatrix.needsUpdate=true; }
+  if(A.torch){ const T2=A.torch, d=A.dObj;
+    T2.list.forEach((f,i)=>{ const fr=(Math.floor(t*7+f.ph*3)%3);
+      const s=[1.5,1.9,1.3][fr];
+      d.position.set(f.x, f.y+(fr===1?0.3:0), f.z); d.rotation.set(0,0,0); d.scale.set(s, s*1.35, s); d.updateMatrix();
+      T2.m.setMatrixAt(i,d.matrix); T2.m.setColorAt(i, fr===2?A.cF2:A.cF1); });
+    T2.m.instanceMatrix.needsUpdate=true; T2.m.instanceColor.needsUpdate=true;
+    T2.halo.material.opacity=0.42+0.06*[0,1,-1][Math.floor(t*5)%3]; }
+}
+// The rig matches the painted sun: a warm key from its azimuth (lifted well above its
+// true elevation, or every top face would be in shadow and the cubes lose their three
+// tones), a cool violet sky fill, a rose rim from behind. Every light is set.
+function applyArcadeLighting(){
+  hemi.color.setHex(0x9a90e0); hemi.groundColor.setHex(0x3a2448); hemi.intensity=0.60;
+  sun.color.setHex(0xffd6a6);  sun.intensity=1.02; sun.position.set(ARC_SUN.x*140,125,ARC_SUN.z*140);
+  rim.color.setHex(0xff6f9e);  rim.intensity=0.26; rim.position.set(-ARC_SUN.x*100,40,-ARC_SUN.z*100);
+  fill.color.setHex(0xffffff); fill.intensity=0.0; fill.position.set(0,0,0);
+  flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
 }
 
 /* ============== NEON VECTOR KIT (Vera) ============== *
@@ -6126,10 +6891,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -6144,6 +6909,8 @@ function buildTrack(idx){
   if(TRACKS[idx].dawn) scene.fog.color.setHex(0xd4ece2);
   // Ophelia: the summer haze the sky dome paints at its horizon
   if(TRACKS[idx].ophelia) scene.fog.color.setHex(OPH.haze);
+  // Trixie: land dissolves into the far range's rose haze, not into the night-blue zenith
+  if(TRACKS[idx].arcade) scene.fog.color.setHex(ARC_FOG);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -6160,11 +6927,14 @@ function buildTrack(idx){
   const macro =!!TRACKS[idx].macro;      // ...or as a tilt-shift toy pond on a windowsill
   const dawn  =!!TRACKS[idx].dawn;       // ...and on Aurora, the felt valley in negative
   const oph   =!!TRACKS[idx].ophelia;    // ...or as Millais' stream in high summer
+  const arc   =!!TRACKS[idx].arcade;     // ...and on Trixie, a whole 16-bit world of blocks
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   let MK=null;                           // Lily's ground oracle + prop bag, likewise
+  let AK=null;                           // Trixie's block field + prop bag, likewise
   applyTrackLighting(bead, pool, coil, paint, felt, macro);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   if(oph) applyOpheliaLighting();        // likewise: every light re-set
+  if(arc) applyArcadeLighting();         // likewise
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
   FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
@@ -6183,7 +6953,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro;   // Lily lays its own pond
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc;   // Lily lays its own pond
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -6684,6 +7454,29 @@ function buildTrack(idx){
       grid.push(a,-40,-G, a,-40,G);
     }
     trackGroup.add(neonBatch(grid, 0x0e3a6a, 0.5));
+  } else if(arc){
+    // Trixie: the sky, the land the road is carried on, and the lake (see ARCADE KIT)
+    skyDome=arcSky(); trackGroup.add(skyDome);
+    const tunIdx=(TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]);
+    AK=arcField(innerSign, ccx, ccz, tunIdx);
+    trackGroup.add(arcTerrainMesh(AK));
+    const wp=arcWater(AK);
+    TRACK_PULSE.arc={sky:skyDome.material, water:wp.water||null, fall:wp.fall||null, dObj:new T.Object3D(), bk:-1,
+      cOn:new T.Color(0xfff2b0), cOff:new T.Color(0x4a3018), cF1:new T.Color(0xffa030), cF2:new T.Color(0xffe070)};
+    // The deck's thickness: a dark stone fascia hung under both edges, so the road is a
+    // slab resting on the embankment rather than a ribbon. Its top edge is 1.2 under the
+    // banked deck at HW+0.2 — beneath the surface, never in the corridor.
+    const fmat=arcMat('fascia'); fmat.color.setHex(0x3a2e48);
+    for(const side of [1,-1]){
+      const fp=[], fi=[];
+      for(let i=0;i<=LAST;i++){ const s2=SAMP[i%STEPS], up=new T.Vector3().crossVectors(s2.t,s2.bn).normalize();
+        const a=s2.p.clone().addScaledVector(s2.bn, side*(HW+0.2)).addScaledVector(up,-1.2);
+        fp.push(a.x,a.y,a.z, a.x,a.y-6.5,a.z); }
+      for(let i=0;i<LAST;i++){ const a=i*2; fi.push(a,a+1,a+2, a+1,a+3,a+2); }
+      const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(fp,3));
+      fg.setIndex(fi); fg.computeVertexNormals();
+      fmat.side=T.DoubleSide; trackGroup.add(new T.Mesh(fg, fmat));
+    }
   } else if(vox){
     // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
     // course reads as something BUILT. Wider as it descends, which makes the elevation
@@ -7013,6 +7806,15 @@ function buildTrack(idx){
   if(felt){ rt.repeat.set(1, 0.7);
     rt.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy()); }
   if(vox){ rt.minFilter=rt.magFilter=T.NearestFilter; rt.generateMipmaps=false; }
+  // Trixie: Mode-7 tarmac with square pixels (18 repeats a lap, an integer, so the rumble
+  // strips close at the line), and the deck darkened through the tunnel so the torches'
+  // light has something to fall on — compression in value, then release into the sunset.
+  if(arc){ rt=arcRoadTex(); rt.repeat.set(1, 18/40);
+    const tn=(TRACKS[idx].tunnels||[]).map(([a,b])=>[a*STEPS,b*STEPS]), rc2=[];
+    for(let i=0;i<=LAST;i++){ let k=0;
+      for(const [a,b] of tn) k=Math.max(k, Math.min(1,(i-a)/8+0.25, (b-i)/8+0.25));
+      const v=1-0.58*Math.max(0,Math.min(1,k)); rc2.push(v,v,v, v,v,v); }
+    geo.setAttribute('color',new T.Float32BufferAttribute(rc2,3)); }
   // Unlit on the vector course: brightness there must come from the emissive lines
   // themselves, not from the scene's lamps, or it stops reading as vector art.
   const road=new T.Mesh(oph ? OK.geo : geo, oph
@@ -7045,6 +7847,8 @@ function buildTrack(idx){
         shininess:150,specular:0xffffff,side:T.DoubleSide})
     : wire
     ? new T.MeshBasicMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
+    : arc
+    ? arcPatch(new T.MeshLambertMaterial({map:rt,color:0xffffff,vertexColors:true,side:T.DoubleSide}),'road')
     : vox
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d1832,
         shininess:6,specular:0x223355,side:T.DoubleSide,flatShading:true})
@@ -7070,7 +7874,7 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt && !oph && !macro) for(const side of [HW,-HW]){   // Lily: the glazed lip is its edge
+  if(!felt && !oph && !macro && !arc) for(const side of [HW,-HW]){   // Lily: the glazed lip is its edge
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
@@ -7178,14 +7982,15 @@ function buildTrack(idx){
   // Same argument on the felted valley as on the oil course: these are additive sparks,
   // and additive sparks over a hot magenta sky are white specks with nothing behind them.
   // Warm them to loose fibre and drop them to where they only show against dark ground.
-  const motes=new T.Points(mg,new T.PointsMaterial({map:TEX_SPARK,
+  // Trixie: no map at all, so each mote is a hard square pixel — fireflies in the dusk
+  const motes=new T.Points(mg,new T.PointsMaterial({map:arc?null:TEX_SPARK,
     // Marina: humid air over warm water — pale aqua, not pink sparks
     // Ophelia: thistledown and pollen in the sun over the water
-    color:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:oph?3.0:paint?4.6:felt?4.2:3.2,
+    color:arc?0xffe27a:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:arc?1.6:oph?3.0:paint?4.6:felt?4.2:3.2,
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  TRACK_PULSE.motesDim=oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
+  TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -7265,6 +8070,8 @@ function buildTrack(idx){
     // up the straight at sample 60 — where the bank passes through zero, so the arch needs
     // no extra height — far enough ahead that the grid's chase camera sees the whole of it
     const bw=lilyBridge(MK, innerSign, 60); MK.G.rac.push(...bw.rac); MK.G.wLeaf.push(...bw.leaf);
+  } else if(arc){
+    TRACK_PULSE.arc.bulbs=arcGantry(AK, innerSign);   // the arcade marquee (see arcGantry)
   } else {
   const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
   bar.position.copy(s0.p).add(new T.Vector3(0,14,0)); trackGroup.add(bar);
@@ -7558,6 +8365,8 @@ function buildTrack(idx){
       }
     }
     trackGroup.add(neonBatch(seg, 0x19d2ff, 0.85));
+  } else if(arc){
+    arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
   } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
@@ -7718,6 +8527,8 @@ function buildTrack(idx){
     }
     if(seg.length)  trackGroup.add(neonBatch(seg,  0xff2fb9, 0.9));
     if(segB.length) trackGroup.add(neonBatch(segB, 0x19d2ff, 0.9));
+  } else if(arc){
+    TRACK_PULSE.arc.torch=arcTunnel(AK, innerSign);   // castle gate through the hill
   } else if(vox){
     const arch=[];
     for(const seg of tun){
@@ -7801,7 +8612,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro){
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc){   // Trixie: the hedge is the wall
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -8862,6 +9673,10 @@ function buildTrack(idx){
     for(const g2 of shapes) g2.dispose();
     trackGroup.add(neonBatch(near, 0x9d5cff, 0.75));
     trackGroup.add(neonBatch(far,  0x19d2ff, 0.45));
+  } else if(arc){
+    const sc=arcScenery(AK, innerSign);
+    TRACK_PULSE.arc.egg=sc.eggMat; TRACK_PULSE.arc.birds=sc.birds;
+    TRACK_PULSE.arc.q=arcFlush(AK);       // every block above, as three instanced draws
   } else if(vox){
     // colour-banded blocky towers, tapering as they rise, for parallax depth
     const towers=[], PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
@@ -8954,6 +9769,8 @@ function buildTrack(idx){
         ? new T.MeshBasicMaterial({color:new T.Color(`hsl(${290+hue}, 95%, 66%)`),
             wireframe:true,transparent:true,opacity:0.95,
             blending:T.AdditiveBlending,depthWrite:false})
+        : arc
+        ? TRACK_PULSE.arc.q                 // Trixie: they are question blocks
         : vox
         ? new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 72%, 60%)`),
             flatShading:true,shininess:16,emissive:new T.Color(`hsl(${300+hue}, 60%, 14%)`)})
@@ -8976,7 +9793,7 @@ function buildTrack(idx){
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:300+hue});
     }
   }
 
@@ -12994,6 +13811,7 @@ function frame(now){
   // Ophelia: the current, the wind in the reeds and willows, drifting flowers, the dapple
   // in the willow arcade, swifts. All slow; see ophTick.
   if(TRACK_PULSE.oph) ophTick(TRACK_PULSE.oph, tsec);
+  if(TRACK_PULSE.arc) arcTick(TRACK_PULSE.arc, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
