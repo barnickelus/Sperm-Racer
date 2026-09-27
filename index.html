@@ -7005,6 +7005,20 @@ function buildTrack(idx){
   let ccx=0,ccz=0; for(const s of SAMP){ ccx+=s.p.x; ccz+=s.p.z; } ccx/=SAMP.length; ccz/=SAMP.length;
   let acc=0; for(const s of SAMP){ acc += s.n.x*(ccx-s.p.x) + s.n.z*(ccz-s.p.z); }
   innerSign = acc>=0 ? 1 : -1;   // +normal points toward the infield when innerSign===1
+  // Lily runs a few units over a pond at y=-2, and full banking on her low corners dropped
+  // the dipping edge of the corridor (48.4 infield, 28.2 outside) up to 11 units under the
+  // water — a kart cutting the inside of the hairpin before the line drove UNDER the pond.
+  // So her bank is capped per sample to keep that edge 0.8 above the water. Everything
+  // (road, embankment, props, placeOnTrack, the landing test) reads s.bank, so physics and
+  // visuals stay in step; high sections keep the full 0.36.
+  if(TRACKS[idx].macro && loop){
+    for(const s of SAMP){ const b=s.bank||0; if(!b) continue;
+      const reach=(b*innerSign<0) ? HW*2.2 : HW*1.28;          // lateral reach on the side that dips
+      const cap=Math.asin(Math.max(0, Math.min(1, (s.p.y-(-2)-0.8)/reach)));
+      if(Math.abs(b)>cap){ const ba=Math.sign(b)*cap; s.bank=ba;
+        s.bn.set(s.n.x*Math.cos(ba), Math.sin(ba), s.n.z*Math.cos(ba)); }
+    }
+  }
 
   // ---- understructure: tube, viaduct, lattice, strata, basin, or painted hulls ----
   if(oph){
