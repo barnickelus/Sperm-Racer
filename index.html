@@ -1025,6 +1025,41 @@ const MUSIC_STYLES={
                     5,null,7,null,8,null,7,null, 5,null,7,5,1,null,null,null],
               melB:[0,null,-4,null,0,null,1,null, 0,null,0,-4,-5,null,null,null,
                     0,null,1,null,7,null,5,null, 1,null,0,null,null,null,null,null] },
+  /* Ukiyo-e Kenji — the same Sakura Sakura in miyako-bushi, but struck the way a print is
+     pulled: sparer, more ma (space) between the strokes. The taiko keeps only its lone DON
+     and one late 'ka', and the shakuhachi sigh is replaced by HYOSHIGI — the two hardwood
+     clappers that open a kabuki scene — as a high, dry marimba double-clack before each
+     downbeat. A woodblock print, played on wood blocks. Root/octave only, so in key anywhere. */
+  ukiyo:    { inst:'koto', melWave:'triangle', bassWave:'triangle', bassInst:'koto',
+              volMul:1.06, drumVol:1.05,
+              drums:{kick:[0,10],snare:[14]}, bass:[0,0,7,5],
+              hihat:0, beatGroup:4, tempoMul:0.98, station:'36.5 FUJI FM',
+              stab:{inst:'marimba', wave:'triangle', note:24, steps:[12,13], dur:0.05, vol:0.15},
+              mel: [5,null,5,null,7,null,null,null, 5,null,5,null,7,null,null,null,
+                    5,null,7,null,8,null,7,null, 5,null,7,5,1,null,null,null],
+              melB:[0,null,-4,null,0,null,1,null, 0,null,0,-4,-5,null,null,null,
+                    0,null,1,null,7,null,5,null, 1,null,0,null,null,null,null,null] },
+  /* Birdie Wingate — hot 1920s jazz, an ORIGINAL tune written for her ("Wing Walk"). The
+     grid is read as swung eighths: `swing:0.33` lays every off-step late into the 2:1
+     triplet lilt, so a 16-step bar is two bars of 4/4. Everything else is period idiom:
+       - lead: the new 'clarinet' voice (odd-harmonic reed, delayed vibrato)
+       - the CHARLESTON figure as a muted-horn stab: beat 1 and the and-of-2 (steps 0,3)
+       - TWO-BEAT bass: a plucked upright on 1 and 3 only (bass lands every 4 steps)
+       - drums led by brushes: a swish on every beat, a light snare on 2 and 4, feathered
+         kick on 1 and 3, no hi-hat
+     The tune: A strain opens on the Charleston rhythm and bends a blue minor third into the
+     major (3 -> 4); the bridge climbs to the IV and walks chromatically home (7-8-9). Blue
+     notes and approach tones only ever sit a semitone off a chord tone, so a course song
+     played through this arrangement keeps its own harmony. */
+  aviator:  { inst:'clarinet', melWave:'square', bassWave:'triangle', bassInst:'pluck',
+              volMul:1.04, drumVol:0.9, swing:0.33,
+              drums:{kick:[0,4,8,12],snare:[2,6,10,14],brush:[0,2,4,6,8,10,12,14]}, bass:[0,7,0,7],
+              hihat:0, beatGroup:4, tempoMul:0.78, station:'92.6 WING WALK FM',
+              stab:{inst:'brass', wave:'sawtooth', note:7, steps:[0,3,8,11], dur:0.13, vol:0.13},
+              mel: [12,null,null,9,null,11,12,null, 7,null,4,null,3,4,null,null,
+                    9,null,null,7,null,9,10,null, 9,7,4,2,0,null,null,null],
+              melB:[5,null,null,9,null,12,null,14, 15,16,null,14,12,null,9,null,
+                    7,null,null,4,null,7,8,9, 11,null,12,null,7,null,null,null] },
   beadBosun:{ inst:'whistle', melWave:'triangle', bassWave:'sine', bassInst:'pluck',
               volMul:1.06, drumVol:1.0,
               drums:{kick:[0,7,8,15],snare:[4,12]}, bass:[0,5,7,5],
@@ -1169,6 +1204,19 @@ function playNote(freq,dur,vol,type,inst){
       o.frequency.setValueAtTime(freq*1.7,t);
       o.frequency.exponentialRampToValueAtTime(Math.max(28,freq*0.85), t+0.08);
       atk=0.003; filt0=9000; filt1=9000; fDecay=dur; rel=Math.max(dur,0.45); break; }
+    case 'clarinet': {                               // hot-jazz clarinet: a square core IS the clarinet's
+      // odd-harmonic chalumeau spectrum (a closed cylindrical bore has no even partials),
+      // two of them 7 cents apart for the reed's breath, under a soft fixed-ish lowpass so it
+      // stays woody rather than chip-tune. Breathy 30ms attack, and a vibrato that fades IN
+      // after the attack (0 -> 0.7% at 5.2Hz over 150ms), the way a player leans into a note.
+      const o1=mk('square',freq,-4), o2=mk('square',freq,3);
+      const lfo=actx.createOscillator(), lg=actx.createGain();
+      lfo.type='sine'; lfo.frequency.value=5.2;
+      lg.gain.setValueAtTime(0,t); lg.gain.linearRampToValueAtTime(freq*0.007,t+0.15);
+      lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
+      lfo.start(t); lfo.stop(t+dur*1.2+0.08);
+      f.Q.value=0.7;
+      atk=0.03; filt0=Math.min(5200,freq*5); filt1=Math.min(3800,freq*3.2); fDecay=Math.min(0.2,dur); rel=dur*1.2; break; }
     default:                                        // house synth: chorus-thick pluck
       mk(type||'triangle',freq,-6); mk(type||'triangle',freq,7);
   }
@@ -1209,6 +1257,18 @@ function drumOpenHat(){ if(!actx||!musicGain)return; const t=actx.currentTime;
   const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6500;
   const g=actx.createGain(); g.gain.value=0.15;
   src.connect(hp); hp.connect(g); g.connect(musicGain); src.start(t); }
+// brushed snare "swish": a wire brush dragged across the head. Unlike the snare's hard
+// transient this SWELLS in (40ms linear attack) and fades over ~180ms, high-passed and
+// band-limited so it sits as a soft "tshh" under a swing band rather than a hit.
+function drumBrush(vol){ if(!actx||!musicGain)return; const t=actx.currentTime;
+  const len=Math.floor(actx.sampleRate*0.22), buf=actx.createBuffer(1,len,actx.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=actx.createBufferSource(); src.buffer=buf;
+  const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=4200; bp.Q.value=0.6;
+  const g=actx.createGain(); const v=0.11*(vol||1);
+  g.gain.setValueAtTime(0.0001,t); g.gain.linearRampToValueAtTime(v,t+0.04);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.2);
+  src.connect(bp); bp.connect(g); g.connect(musicGain); src.start(t); src.stop(t+0.22); }
 // muted rhythm-guitar "chug": short, percussive, palm-muted-sounding hit — a generic funk/rock
 // rhythm-guitar technique (no pitch content at all, just filtered noise), not tied to any
 // specific song. Accented hits are louder/brighter, unaccented ones sit further back.
@@ -1219,10 +1279,24 @@ function guitarChug(accent){ if(!actx||!musicGain)return; const t=actx.currentTi
   const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=accent?1500:950; bp.Q.value=1.4;
   const g=actx.createGain(); g.gain.value=accent?0.24:0.13;
   src.connect(bp); bp.connect(g); g.connect(musicGain); src.start(t); src.stop(t+0.06); }
+/* SWING. The sequencer is a fixed-rate grid, so a style with `swing` (fraction of a step)
+   plays every odd step late by that much: at 0.33 the pair of eighths becomes the 2:1
+   triplet lilt of hot jazz. The step index is claimed on time, so the grid never drifts,
+   and a late step checks the timer is still running so nothing sounds after a stop.
+   Styles without `swing` take the synchronous path exactly as before. */
+let musicIvMs=210;
 function musicTick(){
+  const st0=curStyle||MUSIC_STYLES.guido;
+  if(st0.swing && (musicStep&1)){
+    const raw=musicStep++;
+    setTimeout(()=>{ if(musicTimer) musicStepAt(raw); }, musicIvMs*st0.swing);
+    return;
+  }
+  musicStepAt(musicStep++);
+}
+function musicStepAt(raw){
   const st=curStyle||MUSIC_STYLES.guido;
   const bg=st.beatGroup||4, steps=bg*4;
-  const raw=musicStep++;
   const step=raw % steps;                 // bar position (drums/bass gate on this)
   // per-style drum PATTERNS (st.drums={kick:[steps],snare:[steps]}) — a trap beat, a
   // four-on-the-floor, and a shanty stomp should not all share one generic groove;
@@ -1254,6 +1328,7 @@ function musicTick(){
     if(st.drums.kick.includes(step) && (!half || step%(bg*2)===0)) drumKick(drumVol*(half?1.15:1));
     if(st.drums.snare.includes(step)) drumSnare(drumVol*(sec===2||sec===7?1.12:1));
     if(st.drums.openhat && st.drums.openhat.includes(step)) drumOpenHat();
+    if(st.drums.brush && st.drums.brush.includes(step)) drumBrush(drumVol*(step%bg===0?1:0.7));
     if(step%bg===0){ const bn=st.bass[(step/bg|0)%st.bass.length];
       playNote(noteFreq(bn-12),0.5,0.22*volMul*DYN,st.bassWave,st.bassInst);
       playNote(noteFreq(bn-24),0.6,0.10*volMul*DYN,'sine','808');  // sub-octave, opens the bottom
@@ -1383,7 +1458,8 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
     ] : M;
     curStyle.secs = B ? 8 : 1;
   }
-  musicStep=0; musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)); }
+  musicStep=0; musicIvMs=(tk.tempo||210)*(curStyle.tempoMul||1);
+  musicTimer=setInterval(musicTick, musicIvMs); }
 let hbTimer=null;
 function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
   if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
@@ -1407,7 +1483,8 @@ function speedUpFinalStretch(){
     // interval multiplier = 1/(1+speedup), so ~0.8696 -> tempo is exactly 15% faster
     // (1/0.8696=1.15x). Was 0.8 (25%), then 0.72 (~39% despite reading like a modest bump) —
     // dialed back per feedback that the ramp was too aggressive.
-    musicTimer=setInterval(musicTick, (tk.tempo||210)*(curStyle.tempoMul||1)*(1/1.15));   // 15% faster, more urgent
+    musicIvMs=(tk.tempo||210)*(curStyle.tempoMul||1)*(1/1.15);
+    musicTimer=setInterval(musicTick, musicIvMs);   // 15% faster, more urgent
   }
 }
 // victory fanfare: the racing music cuts out at the finish line, then this plays a rising
@@ -1830,6 +1907,76 @@ const OP_ART={
     '.RR..SSMMSS..RR.','.KK...SSSS...KK.','...NNWWNNWWNN...','...NNNNWWNNNN..K',
   ], {K:'#15151c',L:'#4a5890',G:'#e8b43a',T:'#b08a3a',H:'#2a2530',W:'#f2efe6',
       R:'#a3172a',S:'#eec39c',B:'#1c1410',P:'#171218',M:'#6a2a22',N:'#22305c'}, 11, 34, 40),
+  // Ukiyo-e Kenji — a nishiki-e in miniature: a keyblock border on buff paper, a Prussian
+  // bokashi wiped down from the top edge, Kenji's kabuto in indigo with carved suji lines
+  // and the gold-ochre crescent, vermilion lacing, and the wave (his tail) breaking across
+  // the foot of the block with Fuji small in the trough. A vermilion seal, no lettering.
+  ukiyo:`<defs>
+      <linearGradient id="ukSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22578f"/><stop offset="1" stop-color="#f4ead3" stop-opacity="0"/></linearGradient>
+      <linearGradient id="ukBowl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c2c4c"/><stop offset="1" stop-color="#5f8ab4"/></linearGradient>
+      <linearGradient id="ukWave" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22578f"/><stop offset="1" stop-color="#1c2c4c"/></linearGradient>
+      <linearGradient id="ukFace" x1="0" y1="0" x2="0" y2="1"><stop offset=".55" stop-color="#efcca2"/><stop offset="1" stop-color="#d9a67a"/></linearGradient>
+    </defs>
+    <g stroke="#1f1b18" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="6" y="6" width="188" height="200" fill="#f4ead3" stroke-width="3"/>
+    <rect x="7.5" y="7.5" width="185" height="70" fill="url(#ukSky)" stroke="none"/>
+    <g stroke="none" fill="#6b5a44" opacity=".07"><rect x="8" y="30" width="184" height="1"/><rect x="8" y="92" width="184" height="1"/><rect x="8" y="141" width="184" height="1"/><rect x="8" y="176" width="184" height="1"/></g>
+    <path d="M24,14 L64,74" stroke-width="10"/><path d="M24,14 L64,74" stroke="#1c2c4c" stroke-width="6.5"/>
+    <g fill="#f4ead3" stroke="none"><path d="M29,21 l3,1 l-1,3 l-3,-1Z M35,30 l3,1 l-1,3 l-3,-1Z M41,39 l3,1 l-1,3 l-3,-1Z"/></g>
+    <ellipse cx="48" cy="50" rx="9" ry="4" transform="rotate(-34 48 50)" fill="#c99a3a" stroke-width="2"/>
+    <path d="M128,174 L150,152 L158,152 L182,174 Z" fill="#22578f" stroke-width="2"/>
+    <path d="M143,159 L150,152 L158,152 L165,159 L160,161 L156,157 L152,161 L147,158 Z" fill="#f4ead3" stroke-width="1.2"/>
+    <path d="M40,100 C40,154 160,154 160,100 C160,64 40,64 40,100 Z" fill="url(#ukFace)" stroke-width="3"/>
+    <path d="M40,98 L28,128 L46,134 L56,104 Z M160,98 L172,128 L154,134 L144,104 Z" fill="#c04a2e" stroke-width="2.4"/>
+    <path d="M34,112 L52,118 M31,121 L49,127 M166,112 L148,118 M169,121 L151,127" stroke-width="1.8" fill="none"/>
+    <g fill="#f4ead3" stroke="none"><circle cx="40" cy="116" r="1.4"/><circle cx="37" cy="125" r="1.4"/><circle cx="160" cy="116" r="1.4"/><circle cx="163" cy="125" r="1.4"/></g>
+    <path d="M36,92 C36,40 164,40 164,92 Q100,82 36,92 Z" fill="url(#ukBowl)" stroke-width="3"/>
+    <path d="M100,48 L60,88 M100,48 L80,86 M100,48 L100,85 M100,48 L120,86 M100,48 L140,88" stroke-width="1.8" fill="none"/>
+    <path d="M32,94 Q100,80 168,94 L166,100 Q100,88 34,100 Z" fill="#1c2c4c" stroke-width="2.4"/>
+    <rect x="38" y="84" width="16" height="15" fill="#1c2c4c" stroke-width="2.2" transform="rotate(-8 46 91)"/>
+    <rect x="146" y="84" width="16" height="15" fill="#1c2c4c" stroke-width="2.2" transform="rotate(8 154 91)"/>
+    <circle cx="46" cy="91.5" r="4.2" fill="#c99a3a" stroke-width="1.4"/><circle cx="154" cy="91.5" r="4.2" fill="#c99a3a" stroke-width="1.4"/>
+    <path d="M46,16 Q100,112 154,16 Q100,82 46,16 Z" fill="#c99a3a" stroke-width="2.6"/>
+    <rect x="93" y="58" width="14" height="12" fill="#c99a3a" stroke-width="2"/>
+    <path d="M62,102 q14,-9 30,-2 M108,100 q16,-7 30,2" fill="none" stroke-width="5.5"/>
+    <ellipse cx="79" cy="118" rx="13" ry="14" fill="#fbf5e6" stroke-width="2.6"/>
+    <ellipse cx="121" cy="118" rx="13" ry="14" fill="#fbf5e6" stroke-width="2.6"/>
+    <path d="M80,114 l4,5 l-4,5 l-4,-5 Z M120,114 l4,5 l-4,5 l-4,-5 Z" fill="#1f1b18" stroke="none"/>
+    <path d="M88,142 q12,-8 24,0" fill="none" stroke="#7e2a1c" stroke-width="4.5"/>
+    <path d="M6,206 L6,176 C20,154 50,146 72,156 C88,163 92,178 80,184 C70,188 62,180 68,174 C58,176 60,190 74,192 C96,196 112,176 128,172 C150,166 176,176 194,186 L194,206 Z" fill="url(#ukWave)" stroke-width="2.6"/>
+    <path d="M10,172 C26,154 52,150 70,158" fill="none" stroke="#f4ead3" stroke-width="3"/>
+    <g fill="#f4ead3" stroke-width="1.4"><path d="M22,160 q3,-8 8,-5 q-4,1 -3,5 Z M34,154 q3,-8 8,-5 q-4,1 -3,5 Z M47,151 q3,-8 8,-5 q-4,1 -3,5 Z M60,152 q4,-8 9,-4 q-4,1 -4,5 Z M72,158 q5,-7 9,-2 q-4,0 -5,4 Z"/></g>
+    <g fill="none" stroke="#7fa6c4" stroke-width="1.6"><path d="M100,196 a6,6 0 0 1 12,0 M116,196 a6,6 0 0 1 12,0 M132,194 a6,6 0 0 1 12,0 M148,196 a6,6 0 0 1 12,0 M164,197 a6,6 0 0 1 12,0 M108,204 a6,6 0 0 1 12,0 M124,204 a6,6 0 0 1 12,0 M140,204 a6,6 0 0 1 12,0 M156,204 a6,6 0 0 1 12,0"/></g>
+    <rect x="164" y="14" width="22" height="22" fill="#c04a2e" stroke="#7e2a1c" stroke-width="1.6"/>
+    <rect x="167.5" y="17.5" width="15" height="15" fill="none" stroke="#f4ead3" stroke-width="1.6"/>
+    <circle cx="175" cy="25" r="3.6" fill="none" stroke="#f4ead3" stroke-width="1.8"/>
+    </g>`,
+  // Birdie Wingate — the barnstormer: leather helmet with the sheepskin roll and ear flaps,
+  // goggles pushed up on the brow, freckles, a sure grin, and the turquoise scarf streaming
+  // off the frame, because the scarf is how you pick her out from behind.
+  aviator:`${opTail('#efc19b','#c8946c')}
+    <path d="M52,150 C30,146 22,172 2,166 C8,186 34,184 50,170 C40,190 20,196 6,206 C28,210 52,196 62,160 Z" fill="#14a3a6" ${OP_LINE} stroke-width="3"/>
+    <path d="M8,168 l-6,-2 M10,172 l-7,1 M8,204 l-5,4 M12,206 l-3,6" stroke="#fbf3df" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M18,170 q4,8 2,14 M22,196 q6,2 8,8" fill="none" stroke="#c02a2e" stroke-width="5"/>
+    ${opHead('#efc19b','#c8946c')}
+    <path d="M36,98 C34,42 68,24 100,24 C132,24 166,42 164,98 L165,128 Q156,146 145,128 L143,100 C140,72 124,60 100,60 C76,60 60,72 57,100 L55,128 Q44,146 35,128 Z" fill="#74432a" ${OP_LINE} stroke-width="3.5"/>
+    <path d="M100,26 V60" stroke="#d8b27a" stroke-width="2" stroke-dasharray="3 3"/>
+    <path d="M56,128 L57,100 C60,72 76,60 100,60 C124,60 140,72 143,100 L145,128" fill="none" stroke="${OP_OUT}" stroke-width="11"/>
+    <path d="M56,128 L57,100 C60,72 76,60 100,60 C124,60 140,72 143,100 L145,128" fill="none" stroke="#fbf1dc" stroke-width="7"/>
+    <path d="M36,52 Q100,32 164,52" fill="none" stroke="#2a1a12" stroke-width="6"/>
+    <g ${OP_LINE} stroke-width="3"><circle cx="80" cy="44" r="15" fill="#96661a"/><circle cx="120" cy="44" r="15" fill="#96661a"/></g>
+    <circle cx="80" cy="44" r="10" fill="#3f7f98"/><circle cx="120" cy="44" r="10" fill="#3f7f98"/>
+    <path d="M74,40 l6,-4 M114,40 l6,-4" stroke="#dff4ff" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M95,44 h10" stroke="#2a1a12" stroke-width="5"/>
+    <circle cx="44" cy="120" r="3.5" fill="#96661a" stroke="${OP_OUT}" stroke-width="1.4"/><circle cx="156" cy="120" r="3.5" fill="#96661a" stroke="${OP_OUT}" stroke-width="1.4"/>
+    ${opEyes('normal')}
+    <path d="M64,68 q14,-10 28,-3 M108,70 q14,-4 28,2" fill="none" stroke="#4e1e0c" stroke-width="5" stroke-linecap="round"/>
+    <g fill="#9a4a26"><circle cx="63" cy="106" r="2"/><circle cx="70" cy="111" r="2"/><circle cx="60" cy="114" r="1.8"/><circle cx="68" cy="103" r="1.6"/><circle cx="137" cy="106" r="2"/><circle cx="130" cy="111" r="2"/><circle cx="140" cy="114" r="1.8"/><circle cx="132" cy="103" r="1.6"/></g>
+    <path d="M80,117 q20,17 42,-3 q-4,15 -21,15 q-17,0 -21,-12 Z" fill="#4a1a14" ${OP_LINE} stroke-width="2.5"/>
+    <path d="M84,119 q17,10 34,-2 l-1,5 q-16,8 -32,1 Z" fill="#fbf6ea"/>
+    <path d="M58,142 q42,22 84,0 v12 q-42,22 -84,0 Z" fill="#14a3a6" ${OP_LINE} stroke-width="3"/>
+    <ellipse cx="56" cy="152" rx="10" ry="8" fill="#14a3a6" ${OP_LINE} stroke-width="2.6"/>
+    <g transform="translate(100,160)"><path d="M-3,0 q-8,-5 -16,-3 q8,4 16,6 M3,0 q8,-5 16,-3 q-8,4 -16,6" fill="#d9a94a" stroke="${OP_OUT}" stroke-width="1.2"/><circle r="3" fill="#d9a94a" stroke="${OP_OUT}" stroke-width="1.2"/></g>`,
   // Bosun Pearl — pink bead body, white cap with the blue band, brass anchor, and the
   // threaded mouth strand that is the whole point of the rig.
   beadBosun:opBeads([
@@ -11226,6 +11373,198 @@ function samuraiTextures(){
   return _samuraiTex;
 }
 
+/* ============== WOODBLOCK KIT (Ukiyo-e Kenji) ============== *
+ * Kenji re-cut as a Hokusai-school nishiki-e. Same treatment-not-rebuild contract as
+ * paper/felt/paint: the samurai build runs untouched, then ukiyoify() re-inks it.
+ * What makes a print read as a print, and what each maps to here:
+ *   - FLAT colour blocks, one inking per block, no modelling light -> MeshBasicMaterial,
+ *     every colour snapped to a small print palette (Prussian blue, indigo, muted
+ *     vermilion, flesh/buff paper, sumi black, gold-ochre for the crescent)
+ *   - the KEY BLOCK: a crisp sumi line round every shape -> normal-extruded back-face
+ *     hulls, baked into ONE merged mesh for everything that never deforms (so the whole
+ *     key block is a single draw), with small per-part hulls on the eyes and mouth
+ *     because those scale for expressions
+ *   - BOKASHI, the wiped-block gradient Hokusai put in every sky and sea -> vertex
+ *     colours on the big surfaces (helmet bowl, head) and a painted gradient on the tail
+ *   - the grain of the cherry block and the tooth of the kozo paper -> one faint
+ *     multiplied canvas over every block
+ *   - the tail becomes the wave: Prussian-to-paper bokashi carrying seigaiha scallops.
+ * Colours are authored as the sRGB hex you would mix, and converted to linear so the
+ * sRGB output shows them as authored (flat Basic has no light to fudge them back).
+ * --------------------------------------------------------------------------------- */
+const UKIYO_INK={ sumi:0x1f1b18, indigo:0x1c2c4c, prussian:0x22578f, sky:0x7fa6c4,
+  vermilion:0xc04a2e, vermDark:0x7e2a1c, flesh:0xefcca2, fleshShade:0xd9a67a,
+  paper:0xfbf5e6, ochre:0xc99a3a };
+function ukiyoLin(hex){ return new T.Color(hex).convertSRGBToLinear(); }
+function ukiyoGrain(x,w,h,k){
+  // cherry-block woodgrain: long, slightly wandering strokes across the block...
+  x.save(); x.globalAlpha=0.045*k; x.strokeStyle='#5a4630'; x.lineWidth=1;
+  for(let i=0;i<Math.round(h/3);i++){
+    const y0=(i*37%h)+((i*13)%3); x.beginPath(); x.moveTo(0,y0);
+    for(let px=0;px<=w;px+=16) x.lineTo(px, y0+Math.sin(px*0.02+i)*2.2);
+    x.stroke(); }
+  // ...and the kozo paper's fibre tooth
+  x.globalAlpha=0.06*k;
+  for(let i=0;i<w*h/40;i++){ const h1=Math.sin(i*12.9898)*43758.5453, h2=Math.sin(i*78.233)*12345.678;
+    x.fillStyle=(i&1)?'#6b5a44':'#ffffff';
+    x.fillRect((h1-Math.floor(h1))*w, (h2-Math.floor(h2))*h, 1, 1); }
+  x.restore();
+}
+let _ukiyoTex=null;
+function ukiyoTextures(){
+  if(_ukiyoTex) return _ukiyoTex;
+  const mk=(w,h,draw,rx,ry)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    const x=c.getContext('2d'); draw(x,w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding; if(rx) t.repeat.set(rx,ry||1); return t; };
+  // the shared grain, near-white so it only multiplies a whisper into each colour block
+  const grain=mk(128,128,(x,w,h)=>{ x.fillStyle='#ffffff'; x.fillRect(0,0,w,h); ukiyoGrain(x,w,h,1.2); }, 3, 3);
+  // odoshi lacing, re-inked: vermilion cords with a sumi key line, paper-white knots
+  const lace=mk(128,32,(x,w,h)=>{
+    x.fillStyle='#c04a2e'; x.fillRect(0,0,w,h);
+    for(let i=0;i<w;i+=8){ x.fillStyle='#7e2a1c'; x.fillRect(i,0,2,h); }
+    x.fillStyle='#f4ead3'; for(let i=4;i<w;i+=16) x.fillRect(i-2,3,4,4);
+    x.fillStyle='#1f1b18'; x.fillRect(0,h-3,w,3);
+    ukiyoGrain(x,w,h,1);
+  }, 6, 1);
+  // tsuka wrap: indigo cord over paper-white same diamonds
+  const tsuka=mk(32,64,(x,w,h)=>{
+    x.fillStyle='#1c2c4c'; x.fillRect(0,0,w,h); x.fillStyle='#f4ead3';
+    for(let y=0;y<h;y+=16){ x.beginPath(); x.moveTo(w/2,y+2); x.lineTo(w-4,y+8); x.lineTo(w/2,y+14);
+      x.lineTo(4,y+8); x.closePath(); x.fill(); }
+    ukiyoGrain(x,w,h,1);
+  }, 3, 2);
+  // the tail as a wave: u runs root->tip along x, v runs round the tube along y. Bokashi
+  // from indigo at the root through Prussian to paper at the tip, with seigaiha scallop
+  // rows printed over it in a lighter blue and the foam-white crest lines Hokusai carved.
+  const tail=mk(512,64,(x,w,h)=>{
+    const gr=x.createLinearGradient(0,0,w,0);
+    gr.addColorStop(0,'#1c2c4c'); gr.addColorStop(0.35,'#22578f');
+    gr.addColorStop(0.72,'#7fa6c4'); gr.addColorStop(1,'#f4ead3');
+    x.fillStyle=gr; x.fillRect(0,0,w,h);
+    x.lineWidth=2;
+    for(let row=0; row<5; row++) for(let col=-1; col<22; col++){
+      const cx=col*24+(row&1)*12, cy=row*16;
+      const t=cx/w; if(t>0.8) continue;
+      for(let k=3;k>=1;k--){
+        x.strokeStyle= k===3 ? 'rgba(31,27,24,0.55)' : `rgba(244,234,211,${0.55-0.25*t})`;
+        x.beginPath(); x.arc(cx, cy, k*4, Math.PI, 0); x.stroke(); }
+    }
+    ukiyoGrain(x,w,h,1);
+  });
+  _ukiyoTex={grain,lace,tsuka,tail};
+  return _ukiyoTex;
+}
+// Snap any stray colour onto the print palette (nearest in plain RGB is plenty here).
+function ukiyoNearest(hex){
+  const c=new T.Color(hex); let best=UKIYO_INK.sumi, bd=1e9;
+  for(const k in UKIYO_INK){ const p=new T.Color(UKIYO_INK[k]);
+    const d=(p.r-c.r)**2+(p.g-c.g)**2+(p.b-c.b)**2; if(d<bd){ bd=d; best=UKIYO_INK[k]; } }
+  return best;
+}
+// Paint a vertical bokashi into a geometry as vertex colours (top -> bottom in local y).
+function ukiyoBokashi(geo, top, bot, pow){
+  const p=geo.attributes.position; let y0=1e9, y1=-1e9;
+  for(let i=0;i<p.count;i++){ const y=p.getY(i); if(y<y0)y0=y; if(y>y1)y1=y; }
+  const A=ukiyoLin(top), B=ukiyoLin(bot), col=new Float32Array(p.count*3), c=new T.Color();
+  for(let i=0;i<p.count;i++){ const t=Math.pow((y1-p.getY(i))/((y1-y0)||1), pow||1);
+    c.copy(A).lerp(B,t); col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b; }
+  geo.setAttribute('color', new T.BufferAttribute(col,3));
+}
+// Outward-extruded hull of a geometry, transformed by M, appended to `out`. Normals are
+// averaged per position first, so hard-edged parts (boxes, capped cylinders) extrude as
+// one closed shell instead of splitting open along every seam.
+function ukiyoHullInto(geo, M, w, out){
+  const g2=(geo.index ? geo.toNonIndexed() : geo.clone());
+  if(!g2.attributes.normal) g2.computeVertexNormals();
+  g2.applyMatrix4(M);
+  const P=g2.attributes.position, N=g2.attributes.normal, acc=new Map();
+  const key=i=>Math.round(P.getX(i)*500)+','+Math.round(P.getY(i)*500)+','+Math.round(P.getZ(i)*500);
+  for(let i=0;i<P.count;i++){ const k=key(i); let a=acc.get(k); if(!a){ a=[0,0,0]; acc.set(k,a); }
+    a[0]+=N.getX(i); a[1]+=N.getY(i); a[2]+=N.getZ(i); }
+  const n=new T.Vector3();
+  for(let i=0;i<P.count;i++){ const a=acc.get(key(i)); n.set(a[0],a[1],a[2]);
+    if(n.lengthSq()<1e-8) n.set(N.getX(i),N.getY(i),N.getZ(i));
+    n.normalize();
+    out.push(P.getX(i)+n.x*w, P.getY(i)+n.y*w, P.getZ(i)+n.z*w); }
+  g2.dispose();
+}
+function ukiyoify(g){
+  const TX=ukiyoTextures(), ud=g.userData;
+  const keyMat=()=>new T.MeshBasicMaterial({color:ukiyoLin(UKIYO_INK.sumi), side:T.BackSide});
+  const block=(hex, extra)=>{ const m=new T.MeshBasicMaterial(Object.assign({
+      color:ukiyoLin(hex), map:TX.grain}, extra||{}));
+    return m; };
+  // the lacquer, gloss and nucleus are known by what the samurai build made them from
+  const LACQUER=0x0e0f16, RIDGE=0x1c2548;
+  const drop=[], dynamic=new Set([...(ud.eyes||[]), ud.mouth].filter(Boolean));
+  const skipHull=new Set([ud.tailMesh, ...(ud.pupils||[])]);
+  g.traverse(o=>{
+    if(!o.isMesh || !o.material) return;
+    if(o.material.side===T.BackSide && o.material.isMeshBasicMaterial){
+      o.material.color.copy(ukiyoLin(UKIYO_INK.sumi)); skipHull.add(o); return; }   // tail key line
+    const old=o.material, hex=old.color ? old.color.getHex() : 0xffffff;
+    if(old.isMeshBasicMaterial && old.transparent){ drop.push(o); return; }      // painted gloss: a print has none
+    if(o===ud.head){
+      const hm=block(0xffffff,{vertexColors:true});
+      // syncObjects' boost flush writes head.material.emissive every frame. Basic has no such
+      // uniform (the renderer would throw refreshing it), so the head's shader is given one:
+      // the flush then lifts the print a touch toward paper-white on a boost.
+      hm.emissive=new T.Color(0); hm.emissiveIntensity=1;   // the uniform refresh multiplies by it
+      hm.onBeforeCompile=sh=>{ sh.uniforms.emissive={value:hm.emissive};
+        sh.fragmentShader=sh.fragmentShader.replace('uniform vec3 diffuse;','uniform vec3 diffuse;\nuniform vec3 emissive;')
+          .replace('#include <envmap_fragment>','#include <envmap_fragment>\n\toutgoingLight += emissive;'); };
+      o.material=hm;
+      ukiyoBokashi(o.geometry, UKIYO_INK.flesh, UKIYO_INK.fleshShade, 2.2);
+      return; }
+    if(o===ud.tailMesh){ o.material=block(0xffffff,{map:TX.tail, side:T.DoubleSide}); return; }
+    if(old.map===samuraiTextures().lace){ o.material=block(0xffffff,{map:TX.lace, side:old.side}); return; }
+    if(old.map===samuraiTextures().tsuka){ o.material=block(0xffffff,{map:TX.tsuka}); return; }
+    if(hex===LACQUER && o.geometry.type==='SphereGeometry' && o.geometry.parameters.radius===1){
+      // the hachi bowl: the big bokashi block, indigo at the crown wiped out to Prussian
+      o.geometry=o.geometry.clone();
+      ukiyoBokashi(o.geometry, UKIYO_INK.indigo, UKIYO_INK.sky, 1.4);
+      o.material=block(0xffffff,{vertexColors:true, side:old.side}); return; }
+    let ink;
+    if(hex===LACQUER) ink=UKIYO_INK.indigo;
+    else if(hex===RIDGE) ink=UKIYO_INK.sumi;           // the suji ridges become carved lines
+    else if(hex===0xe8b43a) ink=UKIYO_INK.ochre;
+    else if(hex===0xa3172a) ink=UKIYO_INK.vermilion;
+    else if(hex===0x442222) ink=UKIYO_INK.vermDark;
+    else if(hex===0xffffff) ink=UKIYO_INK.paper;
+    else ink=ukiyoNearest(hex);
+    if(ink===UKIYO_INK.sumi) skipHull.add(o);          // black on black needs no key line
+    o.material=block(ink,{side:old.side});
+  });
+  for(const o of drop) o.parent.remove(o);
+  // the nucleus sits inside a head that is now an opaque block — nothing left to see
+  g.traverse(o=>{ if(o.isMesh && o.geometry.type==='SphereGeometry' && o.geometry.parameters.radius===1.5
+    && o.position.z===1) drop.push(o); });
+  for(const o of drop) if(o.parent) o.parent.remove(o);
+  // --- the key block
+  g.updateMatrixWorld(true);
+  const inv=new T.Matrix4().copy(g.matrixWorld).invert(), M=new T.Matrix4(), pts=[];
+  const sph=new T.Sphere(), sc=new T.Vector3();
+  g.traverse(o=>{
+    if(!o.isMesh || skipHull.has(o) || dynamic.has(o) || o.userData.isOutline) return;
+    if(o.parent && dynamic.has(o.parent)) return;
+    M.multiplyMatrices(inv, o.matrixWorld);
+    o.geometry.computeBoundingSphere(); sph.copy(o.geometry.boundingSphere).applyMatrix4(M);
+    if(sph.radius<0.2) return;                         // catch-lights and pins: no line
+    const w = o===ud.head ? 0.17 : Math.max(0.05, Math.min(0.12, sph.radius*0.05));
+    ukiyoHullInto(o.geometry, M, w, pts);
+  });
+  const kg=new T.BufferGeometry(); kg.setAttribute('position', new T.Float32BufferAttribute(pts,3));
+  const key=new T.Mesh(kg, keyMat()); key.userData.isOutline=true; g.add(key);
+  // parts that scale for expressions carry their own line, in their own local space
+  for(const o of dynamic){
+    const p=[]; ukiyoHullInto(o.geometry, new T.Matrix4(), o===ud.mouth?0.10:0.16, p);
+    const kg2=new T.BufferGeometry(); kg2.setAttribute('position', new T.Float32BufferAttribute(p,3));
+    const k2=new T.Mesh(kg2, keyMat()); k2.userData.isOutline=true; o.add(k2);
+  }
+  // the head halo, re-inked as a soft Prussian aura rather than a pink glow
+  if(ud.glow && ud.glow.material) ud.glow.material.color=new T.Color(0x9fc2e6);
+}
+
 /* ============== WINSTON + CLEETUS KIT ============== *
  * Both were built from stock primitives placed by eye: Winston's tam was three stacked
  * cylinders (a traffic cone) and his locks were eleven straight dowels splayed all round
@@ -11289,6 +11628,90 @@ function updateSway(o, r, now){
     const w=now*s.f + s.ph;
     s.o.rotation.x = s.bx + drag*s.drag + Math.sin(w)*s.amp;
     s.o.rotation.z = s.bz + side*(s.side!=null?s.side:s.drag) + Math.sin(w*0.77+1.3)*s.amp*0.6;
+  }
+}
+
+/* ============== AVIATOR KIT (Birdie Wingate) ============== *
+ * A 1920s barnstormer: leather flying helmet with ear flaps and a sheepskin roll, goggles
+ * pushed up on the brow, and a long silk scarf. The chase camera lives behind her, so the
+ * scarf is the character: two free ribbons knotted at the back of the neck that hang when
+ * she is parked, stream and flutter out behind with speed, swing wide in a slide and lift
+ * when she drops off a ramp. Each ribbon is rebuilt per frame from a spine (a few dozen
+ * vertices), which is cheaper than a pivot chain and bends like cloth instead of links. */
+let _aviTex=null;
+function aviatorTextures(){
+  if(_aviTex) return _aviTex;
+  const mk=(w,h,draw,rx,ry)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding; if(rx) t.repeat.set(rx,ry||1); return t; };
+  // helmet leather: worn brown with a darker panel seam and a row of saddle stitches
+  const leather=mk(128,64,(x,w,h)=>{
+    x.fillStyle='#74432a'; x.fillRect(0,0,w,h);
+    for(let i=0;i<60;i++){ const h1=Math.sin(i*91.7)*4375.5, h2=Math.sin(i*17.3)*9173.1;
+      x.fillStyle=i&1?'rgba(40,20,10,.05)':'rgba(255,220,180,.035)';
+      x.beginPath(); x.ellipse((h1-Math.floor(h1))*w,(h2-Math.floor(h2))*h,6+i%9,2+i%3,0,0,7); x.fill(); }
+    x.fillStyle='#4a2a18'; x.fillRect(0,0,3,h);
+    x.fillStyle='#d8b27a'; for(let y=2;y<h;y+=6) x.fillRect(6,y,2,3);
+  }, 4, 1);
+  // silk scarf: turquoise (her own colour, and nothing else on a track is) with a cream
+  // border down both edges, a crimson band and a cream fringe at the free end
+  // (v runs along the ribbon; canvas top = the free end)
+  const silk=mk(32,256,(x,w,h)=>{
+    x.fillStyle='#14a3a6'; x.fillRect(0,0,w,h);
+    x.fillStyle='rgba(120,230,225,.30)'; for(let i=6;i<w-6;i+=7) x.fillRect(i,0,2,h);   // sheen
+    x.fillStyle='#fbf3df'; x.fillRect(0,0,3,h); x.fillRect(w-3,0,3,h);
+    x.fillStyle='#c02a2e'; x.fillRect(0,16,w,8); x.fillStyle='#fbf3df'; x.fillRect(0,30,w,4);
+    x.fillStyle='#fbf3df'; for(let i=1;i<w;i+=4) x.fillRect(i,0,2,8);                    // fringe
+  });
+  _aviTex={leather,silk};
+  return _aviTex;
+}
+function makeScarfRibbon(N){
+  const pos=new Float32Array((N+1)*3*3), uv=new Float32Array((N+1)*3*2), idx=[];
+  for(let i=0;i<=N;i++) for(let j=0;j<3;j++){ const k=(i*3+j)*2; uv[k]=j/2; uv[k+1]=i/N; }
+  for(let i=0;i<N;i++) for(let j=0;j<2;j++){ const a=i*3+j, b=a+1, c=a+3, d=c+1; idx.push(a,c,b, b,c,d); }
+  const geo=new T.BufferGeometry();
+  geo.setAttribute('position', new T.BufferAttribute(pos,3));
+  geo.setAttribute('uv', new T.BufferAttribute(uv,2));
+  geo.setIndex(idx);
+  return {geo,pos};
+}
+const _sfA=new T.Vector3(), _sfB=new T.Vector3(), _sfT=new T.Vector3(), _sfX=new T.Vector3(),
+      _sfN=new T.Vector3(), _sfUp=new T.Vector3(0,1,0), _sfSp=[];
+function updateScarf(g, r, now){
+  const k=Math.min(1, Math.abs(r.spd||0)/130), kk=Math.pow(k,0.6);
+  const slip=Math.sin(r.slip||0);                 // trailing direction in model space leans by the slip
+  const lift=r.air ? Math.max(-1, Math.min(1, -(r.vy||0)/70)) : 0;
+  for(const s of g.userData.scarf){
+    const {geo,pos,N,L,W,base,ph,dx}=s;
+    _sfA.set(dx*0.5-0.30, -0.62, -0.72); _sfB.set(dx-0.04, 0.46, -1);
+    _sfA.lerp(_sfB, kk).normalize();
+    const om=4.5+9*k, A=0.2+1.3*k;
+    for(let i=0;i<=N;i++){
+      const t=i/N, d=t*L;
+      const p=_sfSp[i]||(_sfSp[i]=new T.Vector3());
+      p.copy(base).addScaledVector(_sfA, d);
+      p.y -= (1-kk)*0.10*d*d/L;                                   // droops at a crawl
+      p.x += A*t*Math.sin(now*om - t*7 + ph) + slip*d*(0.45+0.55*k);
+      p.y += A*0.7*t*Math.sin(now*om*1.17 - t*9 + ph+1.7) + lift*d*0.4;
+      if(p.y<-1.6) p.y=-1.6;                                      // never through the road
+    }
+    for(let i=0;i<=N;i++){
+      const t=i/N, a=_sfSp[Math.max(0,i-1)], b=_sfSp[Math.min(N,i+1)];
+      _sfT.subVectors(b,a).normalize();
+      _sfX.crossVectors(_sfT,_sfUp); if(_sfX.lengthSq()<1e-6) _sfX.set(1,0,0); _sfX.normalize();
+      const tw=s.roll + (0.25+0.55*k)*t*Math.sin(now*om*0.8 - t*6 + ph);   // the silk flips as it flutters
+      _sfN.crossVectors(_sfT,_sfX);
+      _sfX.multiplyScalar(Math.cos(tw)).addScaledVector(_sfN, Math.sin(tw));
+      _sfN.crossVectors(_sfT,_sfX);
+      const w=W*(0.55+0.45*Math.min(1,t*4))*0.5, p=_sfSp[i];
+      for(let j=0;j<3;j++){
+        const o=(j-1)*w, bil=j===1?0.10*W:0, q=(i*3+j)*3;
+        pos[q]=p.x+_sfX.x*o+_sfN.x*bil; pos[q+1]=p.y+_sfX.y*o+_sfN.y*bil; pos[q+2]=p.z+_sfX.z*o+_sfN.z*bil;
+      }
+    }
+    geo.attributes.position.needsUpdate=true;
+    geo.computeVertexNormals(); geo.computeBoundingSphere();
   }
 }
 let _chTex=null;
@@ -11392,6 +11815,8 @@ function makeCell(hue, typeId){
   if(felt) typeId = 'hillbilly';        // Felted Cleetus: the shaggiest base to fleece
   const paint = typeId === 'paint';
   if(paint) typeId = 'french';          // Plein-Air Pierre: beret, the obvious painter
+  const ukiyo = typeId === 'ukiyo';
+  if(ukiyo) typeId = 'samurai';         // Ukiyo-e Kenji: Kenji Tachibana, re-cut in cherry wood
   if(VOX_RACERS[typeId]) return makeVoxelCell(typeId);   // replaces the model, not a reskin
   const g=new T.Group();
   let tailTextured=false;
@@ -12345,6 +12770,110 @@ function makeCell(hue, typeId){
     const KT=new T.Vector3(-3.85,6.0,-1.0), KB=new T.Vector3(-2.35,1.6,-5.5);
     kat.position.copy(KT);
     kat.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), KT.clone().sub(KB).normalize());
+  } else if(typeId === 'aviator'){
+    // Birdie Wingate — barnstormer. Everything is seated on the head ellipsoid through
+    // headPt(), so the helmet, its sheepskin roll, the goggle strap and the scarf wrap all
+    // hug the same surface instead of being stacked by eye.
+    const K=charKitTextures(), AT=aviatorTextures();
+    head.material.color.setHex(0xefc19b); head.material.emissive.setHex(0x3a2214);
+    const leather=new T.MeshPhongMaterial({color:0xffffff, map:AT.leather, shininess:30, side:T.DoubleSide});
+    const darkLeather=new T.MeshPhongMaterial({color:0x2a1a12, emissive:0x080403, shininess:25, side:T.DoubleSide});
+    const fleece=new T.MeshPhongMaterial({color:0xfff6e2, emissive:0x3a3428, shininess:2});
+    const brass=new T.MeshPhongMaterial({color:0x96661a, emissive:0x1e1002, shininess:110});
+    const glass=new T.MeshPhongMaterial({color:0x3f7f98, emissive:0x0a2430, shininess:140, specular:0xffffff});
+    const silkMat=new T.MeshPhongMaterial({color:0xffffff, map:AT.silk, shininess:60, specular:0x6a6458, side:T.DoubleSide});
+    const wrapSilk=new T.MeshPhongMaterial({color:0x14a3a6, emissive:0x04302f, shininess:60, specular:0x6a6458, side:T.DoubleSide});
+    const hairMat=new T.MeshPhongMaterial({color:0x8a3a1a, emissive:0x220a03, shininess:20});
+    const V=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k));
+    const nrm=p=>new T.Vector3(p.x/(HEAD_RX*HEAD_RX),(p.y-HEAD_CY)/(HEAD_RY*HEAD_RY),p.z/(HEAD_RZ*HEAD_RZ)).normalize();
+    const FACE=Math.PI/2;
+    const faceDist=ph=>Math.abs(Math.atan2(Math.sin(ph-FACE),Math.cos(ph-FACE)));   // 0 at the face, PI at the back
+    // --- the helmet's lower edge, as a polar angle against distance round from the face:
+    // high over the brow, dropping down the cheeks into rounded ear flaps, a notch behind
+    // each ear, and lifting clear over the back where the tail leaves the head
+    const EDGE=[[0,0.66],[0.46,0.66],[0.98,2.28],[1.1,2.46],[1.38,2.46],[1.6,1.98],[1.85,2.12],
+                [2.4,2.06],[2.78,1.22],[Math.PI,1.14]];
+    const edgeAt=ph=>{ const d=faceDist(ph);
+      for(let i=1;i<EDGE.length;i++) if(d<=EDGE[i][0]){ const [d0,a]=EDGE[i-1], [d1,b]=EDGE[i];
+        const t=(d-d0)/(d1-d0), e=t*t*(3-2*t); return a+(b-a)*e; }
+      return EDGE[EDGE.length-1][1]; };
+    const helmet=new T.Mesh(gridGeo(72,16,(u,v)=>{ const ph=u*Math.PI*2;
+      return headPt(v*edgeAt(ph), ph, 1.06+0.015*Math.sin(v*Math.PI)); }), leather);
+    g.add(helmet);
+    // sheepskin roll round the whole edge — the cream line that draws the helmet from behind
+    const trimPts=[]; for(let i=0;i<120;i++){ const ph=i/120*Math.PI*2; trimPts.push(V(edgeAt(ph),ph,1.075)); }
+    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(trimPts,true),180,0.25,6,true), fleece));
+    // centre seam from brow to nape
+    const seamPts=[]; for(let i=0;i<=10;i++) seamPts.push(V(0.64*(1-i/10)+0.02,FACE,1.08));
+    for(let i=0;i<=10;i++) seamPts.push(V(0.02+1.08*i/10,FACE+Math.PI,1.08));
+    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(seamPts),30,0.07,5,false), darkLeather));
+    // --- goggles pushed up on the brow, on an elastic strap round the helmet
+    const strapTh=ph=>0.44+(0.98-0.44)*(1-Math.cos(faceDist(ph)))/2;
+    g.add(new T.Mesh(gridGeo(64,1,(u,v)=>{ const ph=u*Math.PI*2; return headPt(strapTh(ph)+(v-0.5)*0.13, ph, 1.088); }), darkLeather));
+    const surf=(x,y,k)=>{ const dx=x/(HEAD_RX*k), dy=(y-HEAD_CY)/(HEAD_RY*k);
+      return new T.Vector3(x,y,HEAD_RZ*k*Math.sqrt(Math.max(0,1-dx*dx-dy*dy))); };
+    const up=new T.Vector3(0,1,0), zz=new T.Vector3(0,0,1);
+    for(const sx of [-1,1]){
+      const c=surf(sx*1.18,5.72,1.085), n=nrm(c);
+      const cup=new T.Mesh(new T.CylinderGeometry(0.70,0.80,0.36,18), darkLeather);
+      cup.position.copy(c).addScaledVector(n,0.16); cup.quaternion.setFromUnitVectors(up,n); g.add(cup);
+      const rim=new T.Mesh(new T.TorusGeometry(0.64,0.15,8,20), brass);
+      rim.position.copy(c).addScaledVector(n,0.36); rim.quaternion.setFromUnitVectors(zz,n); g.add(rim);
+      const lens=new T.Mesh(new T.CylinderGeometry(0.58,0.58,0.08,18), glass);
+      lens.position.copy(c).addScaledVector(n,0.36); lens.quaternion.setFromUnitVectors(up,n); g.add(lens);
+    }
+    { const c=surf(0,5.86,1.085), n=nrm(c);
+      const bridge=new T.Mesh(new T.BoxGeometry(0.72,0.30,0.22), darkLeather);
+      bridge.position.copy(c).addScaledVector(n,0.18); bridge.quaternion.setFromUnitVectors(up,n); g.add(bridge); }
+    // --- ear-flap snaps (the chin strap is buckled out of sight under the scarf)
+    for(const sx of [-1,1]){
+      const snap=new T.Mesh(new T.SphereGeometry(0.2,8,6), brass);
+      snap.position.copy(V(2.05,FACE+sx*1.24,1.085)); g.add(snap);
+    }
+    // --- face: auburn brows, the left one cocked; freckles over the cheeks; a sure grin
+    const browMat=new T.MeshPhongMaterial({color:0x4e1e0c, emissive:0x160602});
+    for(const sx of [-1,1]){
+      const b=new T.Mesh(new T.BoxGeometry(1.55,0.30,0.45), browMat);
+      seatOnFace(b, sx*1.35, sx<0?5.22:5.02, 0.28); b.rotation.z=sx<0?0.20:-0.06; b.rotation.x=-0.5; g.add(b);
+    }
+    const FR=[[1.80,2.60],[2.18,2.38],[2.50,2.70],[2.08,2.86],[2.62,2.30],[1.88,2.20]];
+    const freck=new T.InstancedMesh(new T.SphereGeometry(0.15,6,4),
+      new T.MeshPhongMaterial({color:0x9a4a26, emissive:0x200800}), FR.length*2);
+    { const d=new T.Object3D(); let i=0;
+      for(const sx of [-1,1]) for(const [x,y] of FR){ const a=seatOnFace(d, sx*x, y, 0.0);
+        d.quaternion.setFromUnitVectors(zz,a.n); d.scale.set(1,1,0.35); d.updateMatrix(); freck.setMatrixAt(i++,d.matrix); } }
+    g.add(freck);
+    g.remove(mouth);
+    const grin=faceMouth(1.0, 2.62, 2.02, 0.10, K.grin, 0.05);
+    grin.rotation.z=0.07;                                    // a touch lopsided: sure of herself
+    g.add(grin); g.userData.mouth=grin;
+    // --- auburn bob curling out from under the back of the helmet, either side of the tail
+    const CURL=[[0,2.30,0.55],[0,2.46,0.60],[0,2.62,0.52]];
+    const curls=new T.InstancedMesh(new T.SphereGeometry(1,10,8), hairMat, CURL.length*2);
+    { const d=new T.Object3D(); let i=0;
+      for(const sx of [-1,1]) for(const [th0,dd,rr] of CURL){ const ph=FACE+sx*dd;
+        const th=th0||edgeAt(ph)+0.12, p=V(th,ph,1.0);
+        d.position.copy(p).addScaledVector(nrm(p), rr*0.45); d.scale.set(rr,rr*0.85,rr); d.rotation.set(0,0,0);
+        d.updateMatrix(); curls.setMatrixAt(i++,d.matrix); } }
+    g.add(curls);
+    // --- the scarf: a wrap round the neck, a knot behind the left jaw, two free tails
+    g.add(new T.Mesh(gridGeo(48,4,(u,v)=>headPt(2.2+0.36*v, u*Math.PI*2, 1.075+0.05*Math.sin(v*Math.PI))), wrapSilk));
+    const KPH=-0.55, knotP=V(2.34,KPH,1.13);
+    const knot=new T.Mesh(new T.SphereGeometry(0.62,12,8), wrapSilk);
+    knot.position.copy(knotP); knot.scale.set(1,0.8,1.1); g.add(knot);
+    // pilot's wings pinned to the front of the wrap
+    { const c=V(2.3,FACE,1.12), n=nrm(c);
+      const pin=new T.Group(); pin.position.copy(c).addScaledVector(n,0.06); pin.quaternion.setFromUnitVectors(zz,n); g.add(pin);
+      const disc=new T.Mesh(new T.CylinderGeometry(0.24,0.24,0.10,14), brass); disc.rotation.x=Math.PI/2; pin.add(disc);
+      for(const sx of [-1,1]){ const w=new T.Mesh(new T.BoxGeometry(0.85,0.20,0.06), brass);
+        w.position.set(sx*0.52,0.06,0); w.rotation.z=sx*0.22; pin.add(w); } }
+    const scarf=[]; g.userData.scarf=scarf;
+    for(const [L,W,dx,ph,roll,off] of [[14,2.5,-0.34,0,0.15,0],[10,2.0,0.06,2.1,-0.35,0.35]]){
+      const N=22, {geo,pos}=makeScarfRibbon(N);
+      const m=new T.Mesh(geo, silkMat); m.frustumCulled=false; g.add(m);
+      scarf.push({geo,pos,N,L,W,dx,ph,roll,base:knotP.clone().add(new T.Vector3(0,-0.1-off*0.4,-0.25-off))});
+    }
+    updateScarf(g,{spd:80,slip:0},0);
   } else if(typeId === 'french'){
     head.material.color.setHex(0xf0cdb0); head.material.emissive.setHex(0x3a2c20);
     // bigger, more tilted beret so it reads as a beret (not a dark cap) from behind —
@@ -12397,7 +12926,12 @@ function makeCell(hue, typeId){
   // wash out/bleed onto everything nearby).
   g.userData.baseEmissive = head.material.emissive.clone();
 
-  if(paint){
+  if(ukiyo){
+    ukiyoify(g);
+    // Basic materials carry no light, so the boost flush has nothing to brighten; the base
+    // is re-read anyway to keep the contract every other treatment keeps
+    g.userData.baseEmissive = g.userData.head.material.emissive.clone();
+  } else if(paint){
     paintify(g);
     // same as every other treatment: materials are rebuilt and emissive rescaled, so the
     // stored base has to be re-read or the boost flush restores the pre-paint value
@@ -12463,6 +12997,8 @@ const SPERM_TYPES = [
   {id:'rasta', name:'Winston Irie', hue:140, desc:'Knitted tam, locks out the back. Never rushes and somehow never loses time — smooth through everything.', stats:{skill:1.0, spinResist:0.55, brake:0.72, driftMult:1.15}},
   {id:'nerd', name:'Norbert Quark', hue:210, desc:'Taped frames, pocket protector, and the apex worked out in advance. Slow off the line, unbeatable on a clean lap.', stats:{skill:1.07, turn:1.22, maxV:1.06, accel:0.9}},
   {id:'samurai', name:'Kenji Tachibana', hue:157, desc:'Lacquered kabuto, golden crescent, katana over the shoulder. Bows to the grid, then takes every apex with one clean cut.', stats:{skill:1.02, turn:1.12, spinResist:0.65, driftCharge:1.12}},
+  {id:'ukiyo', name:'Ukiyo-e Kenji', hue:232, desc:'Kenji cut in cherry wood and pulled on paper, Hokusai-style. Prussian blue, one clean key line, a tail that breaks like a wave.', stats:{skill:1.02, turn:1.12, spinResist:0.65, driftCharge:1.12}},
+  {id:'aviator', name:'Birdie Wingate', hue:184, desc:'Leather helmet, goggles up, silk scarf a mile long. Banned from looping the county fair grandstand, so now she loops the track.', stats:{skill:1.0, boostLen:1.18, accel:1.1, turn:1.06}},
   {id:'beadBosun', name:'Bosun Pearl', hue:322, desc:'Pink beadwork under a white sailor cap and a brass anchor. Her mouth is a threaded strand that redraws itself with her mood.', stats:{skill:1.0, spinResist:0.62, turn:1.15, brake:0.8}},
   {id:'beadBandido', name:'Beaded Bandido', hue:22, desc:'Strung in glossy beads under a hand-threaded sombrero. The moustache streams in the wind and he wears his mood on his face.', stats:{skill:1.0, driftMult:1.2, turn:1.12, spinResist:0.7}},
 ];
@@ -12550,6 +13086,26 @@ const ITEM_ICONS={boost:'🔥',spore:'🦠',cyst:'🟣',shield:'🛡️',slick:'
 // personalized "signature" projectile per character — mechanically identical to 'spore'
 // (a homing shot that spins out whoever it touches, i.e. "causes other racers to crash"),
 // just uniquely themed per racer so each one has an item that's recognizably theirs.
+// Folded paper dart for Birdie's signature: nose on +z, two wings and a keel, each face in
+// both windings so the single-sided item material shows it from above and below.
+function paperPlaneGeo(){
+  const N=[0,0.1,3.0], L=[-2.4,0.35,-2.2], R=[2.4,0.35,-2.2], K=[0,-0.9,-2.0], C=[0,0.15,-2.2];
+  const tris=[[N,C,L],[N,R,C],[N,K,C],[N,C,K]], p=[];
+  for(const [a,b,c] of tris){ p.push(...a,...b,...c, ...a,...c,...b); }
+  const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(p,3));
+  g.computeVertexNormals(); return g;
+}
+// Items fly on a heading the mesh never sees, so the dart points itself along its own
+// motion each frame and barrel-rolls as it goes.
+function paperPlaneFly(m){
+  const last=new T.Vector3(), d=new T.Vector3(); let roll=0, init=false;
+  m.onBeforeRender=()=>{
+    if(!init){ last.copy(m.position); init=true; return; }
+    d.subVectors(m.position,last); last.copy(m.position);
+    if(d.x*d.x+d.z*d.z>1e-4) m.rotation.set(0, Math.atan2(d.x,d.z), 0);
+    roll+=0.18; m.rotateZ(roll);
+  };
+}
 const SIGNATURE_ITEMS={
   guido:    { name:'Meatball',      icon:'🍝', color:0x9c3a1e, emissive:0x3a0f08, geo:()=>new T.SphereGeometry(2.3,10,8) },
   irish:    { name:'Lucky Charms',  icon:'🍀', color:0x2ecc71, emissive:0x0e4a24, geo:()=>new T.OctahedronGeometry(2.1,0) },
@@ -12578,6 +13134,10 @@ const SIGNATURE_ITEMS={
   // gold ring of speaker-cone rather than anything off a flag.
   rasta:    { name:'Bass Drop',     icon:'🔊', color:0xf2c230, emissive:0x4a3406, geo:()=>new T.TorusGeometry(1.8,0.55,8,18) },
   samurai:  { name:'Katana Slash',  icon:'⚔️', color:0xdfe8f2, emissive:0x2a3a5a, geo:()=>new T.TorusGeometry(1.9,0.32,6,18,Math.PI*1.2) },
+  // Ukiyo-e Kenji throws the wave off Kanagawa: a curling Prussian-blue crest.
+  ukiyo:    { name:'Great Wave',    icon:'🌊', color:0x22578f, emissive:0x0a1a30, geo:()=>new T.TorusGeometry(1.9,0.5,6,18,Math.PI*1.3) },
+  // Birdie sails a folded paper dart that barrel-rolls all the way to its target.
+  aviator:  { name:'Paper Airplane', icon:'✈️', color:0xf4efe2, emissive:0x3a3830, geo:paperPlaneGeo, init:paperPlaneFly },
   cholo:    { name:'Fuzzy Dice',    icon:'🎲', color:0xd8397a, emissive:0x3a0e22, geo:()=>new T.BoxGeometry(2.4,2.4,2.4) },
 };
 function giveItem(r){
@@ -12614,6 +13174,7 @@ function useItem(r){
     const sig=SIGNATURE_ITEMS[r.id]||SIGNATURE_ITEMS.guido;
     const m=new T.Mesh(sig.geo(), new T.MeshPhongMaterial({color:sig.color,emissive:sig.emissive,flatShading:true}));
     m.add(glowSprite(sig.color,11));
+    if(sig.init) sig.init(m);                        // optional per-item flight behaviour
     m.position.set(r.x,r.y+3,r.z); scene.add(m);
     projectiles.push({mesh:m,x:r.x,z:r.z,head:r.head,owner:r,life:3.2,spd:230});
     if(r.you) showToast(sig.name+'!','t-gold');
@@ -13050,7 +13611,8 @@ const BARKS={guido:'Ay, madone!', irish:'Top o\' the smack to ya!', latin:'¡Arr
   sailor:'Yarrr!', cholo:'¡Órale!', voxel:'YARRR.EXE', kingVox:'PAY UP, IN 64 BIT!', wire:'FEEL THE GRID!',
   dough:'FRESH OUT THE TUB!', paper:'FOLD AND STRIKE!', mosaic:'STAND BACK!',
   felt:'SPUN AND SPUN OUT!', bead:'STRUNG AND SLUNG!', paint:'ALLA PRIMA!',
-  beadSalty:'THREADED, YARRR!', beadJuan:'BEAD BY BEAD!', samurai:'IPPON!'};
+  beadSalty:'THREADED, YARRR!', beadJuan:'BEAD BY BEAD!', samurai:'IPPON!',
+  ukiyo:'THE WAVE BREAKS!', aviator:'CONTACT!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
@@ -13358,6 +13920,7 @@ function syncObjects(dt,now){
     if(r.obj.userData.bandido) updateBandido(r.obj, r, dt);
     if(r.obj.userData.bosun) updateBosun(r.obj, r, dt);
     if(r.obj.userData.sway) updateSway(r.obj, r, now);   // Winston's locks, Cleetus's jug + straw
+    if(r.obj.userData.scarf) updateScarf(r.obj, r, now); // Birdie's scarf streams, swings and lifts
     // celebration body language: happy bounce + side-to-side victory sway
     if(r.celebT>0){ r.celebT-=dt;
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
@@ -14972,7 +15535,7 @@ window.srNet={
       song:curStyle.songName||'(character tune)',
       arrangement:{inst:curStyle.inst, melWave:curStyle.melWave, bassInst:curStyle.bassInst||null,
         drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
-        tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null},
+        tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null, swing:curStyle.swing||0},
       mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
   get race(){ return {state, laps:LAPS, karts:racers.map(r=>({name:r.name, you:!!r.you,
     remote:!!r.remote, netId:r.netId||null, lap:r.lap,
