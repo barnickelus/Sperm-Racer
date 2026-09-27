@@ -2213,12 +2213,12 @@ const TRACKS=[
    tunnels:[[0.44,0.54]], critters:[0.34], pills:[0.72], dams:[0.88],
    ctrl:[[-400,10,380],[-410,12,60],[-380,18,-260],[-230,32,-430],[60,46,-470],
          [330,58,-330],[420,52,-60],[350,36,220],[140,22,400],[-160,12,470]]},
-  /* Lily — "the Windowsill Pond": a tilt-shift macro diorama. The racers are TOY-SCALE,
-     crossing a glossy clay pond on a windowsill; everything past the water dissolves into
-     the depth-of-field blur of a giant domestic room — which here is a painted skydome of
-     soft colour blobs and bokeh discs, plus near fog. Houseplant blades tower like trees,
-     rubber ducks are the landmarks, licorice curls punctuate the verges. The road IS the
-     pond surface: wet-look white-specular water over a smeared mint clay bed. */
+  /* Lily — "the Water Garden at Dusk": Monet's Giverny as a glazed-ceramic tilt-shift
+     miniature. The racers are toy-scale; the course is the stream that feeds the lily pond,
+     run along a raised garden embankment, under the green Japanese footbridge at the line,
+     through a wisteria walk and a bamboo grove of stone lanterns, past frogs on giant pads,
+     with poplars and the pink house across the water melting into the reddish dusk room
+     (the painted macroSky dome, village lights, moon and early stars). See LILY kit. */
   {name:'Lily', macro:true, music:'macro', key:8, tempo:176, sky:0x6e3648,
    tunnels:[[0.30,0.37],[0.68,0.75]], critters:[0.52], pills:[0.22], dams:[0.82],
    ctrl:[[340,6,180],[365,10,-120],[190,20,-330],[-50,14,-385],[-300,22,-265],
@@ -2748,6 +2748,872 @@ function macroSky(){
   const m=new T.Mesh(new T.SphereGeometry(1150,32,20),
     new T.MeshBasicMaterial({map:t, side:T.BackSide, fog:false, depthWrite:false}));
   m.frustumCulled=false; return m;
+}
+/* ============== LILY: THE WATER GARDEN AT DUSK ============== *
+ * Monet's water garden at Giverny, an hour after the sun has gone behind the poplars, made
+ * as a glazed-ceramic miniature. The racers are toy-scale, so the waterlilies are the size
+ * of their karts and a frog on a pad is a landmark. The course IS the stream that feeds the
+ * pond: it runs along a raised garden embankment (jade-glazed lip, moss verge, a concave
+ * bank down to the water), under the green Japanese footbridge at the line, through a
+ * wisteria walk and a bamboo grove with stone lanterns, and round the big lily pond.
+ * VALUE LADDER (dusk): the sky's glow band is the lightest thing; the pond and the stream
+ * sit a step below it and carry its light as specular; the verges and the far meadow are
+ * darker again; the poplars and the bridge are the darkest shapes, and they are placed
+ * against the glow on purpose. Colour lives in the near field only — lilies, azaleas,
+ * wisteria — and cools into the reddish haze with distance (fog does the rest).
+ * Everything is instanced; placement is always "on the bank" (lilyGround's bankY) or "on
+ * the water" (y=-2), and always clear of each side's corridor wall. */
+const MAC_T={value:0};           // sway clock for the lily shaders; advanced in lilyTick only
+const LILY={ pond:0x221f62, pondSpec:0xa07a6a,
+  rimTop:0xb8ead4, rimFace:0x5aa88e, verge:0x2c6a4c, vergeDk:0x1f5040, shoulder:0x1b3c3c,
+  wet:0x1e1e50, shoreLip:0x40304e, meadow:0x1f3a2e, meadowFar:0x2e3a38,
+  bridge:0x1f7a52, bridgeDk:0x15503a, stone:0x847a92, stoneDk:0x524a62, lamp:0xffb45a,
+  wis:[0x9a70e0,0x8456d4,0xb08cf0,0xa268d8,0x7448c4,0xc4a2f2], wisLeaf:[0x3a8a52,0x2f7a48,0x4a9a5e],
+  pad:[0x2f9e52,0x3fae62,0x23804a,0x46c08a,0x2a8a5a,0x57b878], padRed:0x6a3050,
+  lily:[0xfff6f4,0xfff0cc,0xffb0d8,0xff6ab8,0xf890c8,0xfff6f4], gold:0xffc43a,
+  iris:[0x7a5ae8,0x9a7af0,0x6040d0,0xb09af8], irisLeaf:[0x3aa06a,0x2f8a58,0x52b87a],
+  azalea:[0xff4fa8,0xff6ab8,0xe8307e,0xff8cc8,0xff3f8e], azLeaf:0x1c4c34,
+  cattail:0x4a2e2a, reed:0x5a8a4a,
+  tree:[0x22382e,0x2a4032,0x2e2638,0x42284a], culm:[0x3f9a5a,0x58b070,0x2f7e4a,0x6ac080],
+  bLeaf:[0x2f8a4a,0x46a860,0x2a7040,0x5ab870],
+  koi:[0xff7a2a,0xfff2e4,0xff4a2a,0xffb84a,0xff9a3a], frog:0x46b868, frogBelly:0xd8f0a0,
+  house:0xd88e8a, shutter:0x2f8a5a, roof:0x5a5878, window:0xffc070, firefly:0xd8ff8a };
+function lilyLin(hex){ return new T.Color(hex).convertSRGBToLinear(); }
+// Instanced batch with a caller-supplied material. Same sRGB decode as macBatch.
+function macInst(geo, list, mat){
+  const m=new T.InstancedMesh(geo, mat, list.length); m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((v,i)=>{
+    d.position.set(v.x,v.y,v.z); d.rotation.set(v.rx||0, v.ry||0, v.rz||0);
+    d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(v.c).convertSRGBToLinear(); m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  return m;
+}
+/* Batched but CULLABLE (the Ophelia lesson): r128 culls an InstancedMesh by its geometry's
+   bounds, so one lap-spanning batch is drawn whole every frame. Cut each family into
+   220-unit cells, each a view of the shared attributes with a bounding sphere round ITS
+   instances; the frustum drops what is behind you, and small flora (`near`) is also
+   dropped past that distance in lilyTick — a two-unit lily 450 out is under a pixel. */
+function lilyCells(geo, list, mat, near){
+  const CELL=220, cells=new Map(), grp=new T.Group();
+  if(!geo.boundingSphere) geo.computeBoundingSphere();
+  const gr=geo.boundingSphere.radius+geo.boundingSphere.center.length();
+  for(const v of list){ const key=Math.floor(v.x/CELL)+','+Math.floor(v.z/CELL);
+    if(!cells.has(key)) cells.set(key,[]); cells.get(key).push(v); }
+  for(const sec of cells.values()){
+    const g=new T.BufferGeometry(); for(const k in geo.attributes) g.setAttribute(k, geo.attributes[k]);
+    if(geo.index) g.setIndex(geo.index);
+    const m=macInst(g, sec, mat); m.frustumCulled=true;
+    let cx=0,cy=0,cz=0; for(const v of sec){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=sec.length; cy/=sec.length; cz/=sec.length;
+    let r=0; for(const v of sec){ const sc=Math.max(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s);
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+sc*gr+2); }
+    g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    if(near) (TRACK_PULSE.lily.cull=TRACK_PULSE.lily.cull||[]).push({m, near});
+    grp.add(m);
+  }
+  return grp;
+}
+// Glaze with optional baked shade ramp (vertex colours multiply the instance colour).
+function lilyMat(shine, spec, opt){
+  // matte foliage goes Lambert: per-vertex light is a fraction of the fragment cost, and a
+  // leaf's glaze highlight is below what reads at speed. Flowers and water keep Phong.
+  const m=(opt&&opt.lam) ? new T.MeshLambertMaterial({color:0xffffff}) : macMat(0xffffff, shine, spec);
+  if(opt&&opt.vc) m.vertexColors=true;
+  if(opt&&opt.dbl) m.side=T.DoubleSide;
+  if(opt&&opt.sway){ const amp=opt.sway;
+    // Breeze. World-space displacement after the instance transform, weighted by |local y|
+    // so the attachment (y=0) is pinned and the tip moves; phase from the instance's own
+    // position, so neighbours drift out of step. Amplitudes are a unit or less at the tip.
+    m.onBeforeCompile=sh=>{ sh.uniforms.uT=MAC_T;
+      sh.vertexShader='uniform float uT;\n'+sh.vertexShader.replace('#include <project_vertex>',
+`vec4 mvPosition = vec4( transformed, 1.0 );
+#ifdef USE_INSTANCING
+  mvPosition = instanceMatrix * mvPosition;
+  { float k=clamp(abs(position.y),0.0,1.0); k*=k;
+    float ph=instanceMatrix[3][0]*0.041+instanceMatrix[3][2]*0.029;
+    float w=sin(uT*0.71+ph)*0.7+sin(uT*1.93+ph*1.6)*0.3;
+    mvPosition.x+=w*k*${amp.toFixed(2)}; mvPosition.z+=w*k*${(amp*0.6).toFixed(2)}; }
+#endif
+mvPosition = modelViewMatrix * mvPosition;
+gl_Position = projectionMatrix * mvPosition;`); };
+    m.customProgramCacheKey=()=>'lilySway'+m.type+amp+(m.side===T.DoubleSide?'d':'')+(m.vertexColors?'v':'');
+  }
+  return m;
+}
+/* THE WATER'S REFLECTION, painted in the shader. The lane and the pond both carry it.
+   A dusk pond is a mirror of the sky at a grazing angle and a dark window straight down,
+   so: a Fresnel-like weight on the view depression; the sky's own gradient (red glow band
+   at the horizon, mauve, then indigo) looked up by the reflected ray's elevation; a dark
+   broken band where the far shore's trees stand in the reflection; slow ripple rings; and
+   the nearest lanterns' reflections as the long vertical streaks lights make on water.
+   uLamp is refilled every frame with the eight lanterns nearest the camera (lilyTick). */
+const LILY_U={ uLamp:{value:Array.from({length:8},()=>new T.Vector4(0,-999,0,0))} };
+const LILY_GLSL=`
+uniform float uT; uniform vec4 uLamp[8]; uniform float uWet; varying vec3 vLW;
+float lilyH(float x){ return fract(sin(x*127.1)*43758.5453); }
+vec3 lilySky(float e){
+  vec3 glow=vec3(0.62,0.20,0.12), mid=vec3(0.34,0.10,0.19), top=vec3(0.09,0.04,0.15);
+  return mix(mix(glow,mid,smoothstep(0.0,0.10,e)), top, smoothstep(0.10,0.45,e)); }
+vec4 lilyRefl(vec3 wp){
+  vec3 V=wp-cameraPosition; float dist=length(V); V/=dist;
+  float e=max(0.0,-V.y), fr=pow(1.0-e,5.0);
+  float wob=sin(wp.x*0.23+uT*0.9)*0.5+sin(wp.z*0.19-uT*0.7)*0.5;
+  float er=max(0.0,e+wob*0.010);
+  vec3 c=lilySky(er);
+  float az=atan(V.z,V.x);
+  float tr=0.5+0.5*sin(az*19.0+1.1)*sin(az*7.0+0.3); tr=smoothstep(0.3,0.8,tr);
+  float sil=1.0-smoothstep(0.003,0.009+0.026*tr,er);
+  c=mix(c, vec3(0.05,0.035,0.08), sil*0.72);
+  vec3 L=vec3(0.0);
+  vec2 g=floor(wp.xz/26.0); float h=lilyH(g.x*17.0+g.y*3.1);
+  vec2 c0=(g+0.2+0.6*vec2(h,lilyH(h*9.1+2.0)))*26.0; float ph=fract(uT*0.21+h), rr=length(wp.xz-c0);
+  L+=vec3(0.55,0.45,0.75)*exp(-pow((rr-ph*9.0)*1.3,2.0))*(1.0-ph)*(1.0-ph)*0.35*step(0.35,h);
+  vec2 a2=normalize(V.xz);
+  for(int k=0;k<6;k++){ vec4 q=uLamp[k]; if(q.w<=0.0) continue;
+    vec3 M=vec3(q.x, 2.0*wp.y-q.y, q.z); vec3 W=normalize(M-cameraPosition);
+    vec2 b2=normalize(W.xz); float dh=a2.x*b2.y-a2.y*b2.x, dv=V.y-W.y;
+    L+=vec3(1.0,0.6,0.26)*q.w*step(0.0,dot(a2,b2))*exp(-dh*dh/0.00012-dv*dv/0.0025); }
+  float fade=1.0-smoothstep(360.0,620.0,dist);
+  float a=clamp(fr*uWet*0.9,0.0,0.88)*fade;
+  return vec4(c*a+L*fade, a); }
+`;
+function lilyWaterPatch(m, wet){
+  m.onBeforeCompile=sh=>{ sh.uniforms.uT=MAC_T; sh.uniforms.uLamp=LILY_U.uLamp; sh.uniforms.uWet={value:wet};
+    sh.vertexShader='varying vec3 vLW;\n'+sh.vertexShader.replace('#include <project_vertex>',
+      '#include <project_vertex>\n  vLW=(modelMatrix*vec4(transformed,1.0)).xyz;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\n'+LILY_GLSL)
+      .replace('#include <fog_fragment>','{ vec4 lr=lilyRefl(vLW); gl_FragColor.rgb=gl_FragColor.rgb*(1.0-lr.a)+lr.rgb; }\n#include <fog_fragment>'); };
+  m.customProgramCacheKey=()=>'lilyWater'+wet;
+  return m;
+}
+function lilyShade(g, f){
+  const p=g.attributes.position, c=new Float32Array(p.count*3);
+  for(let i=0;i<p.count;i++){ const k=f(p.getX(i),p.getY(i),p.getZ(i)); c[i*3]=c[i*3+1]=c[i*3+2]=k; }
+  g.setAttribute('color', new T.BufferAttribute(c,3)); return g;
+}
+/* A FLOWER from tiers of pointed petals: [count, length, elevation, curl, width, offset].
+   Nymphaea is three tiers (flat sepals, a cup, an upright heart); an iris is three drooping
+   falls under three upright standards. Unit radius, base at the origin, pale at the tips. */
+function lilyFlowerGeo(tiers, baseR){
+  const P=[], TAU=Math.PI*2;
+  for(const [n,len,el,curl,w,off] of tiers) for(let k=0;k<n;k++){
+    const a=(k+off)/n*TAU, dx=Math.cos(a), dz=Math.sin(a), px=-dz, pz=dx;
+    const S=[0,0.33,0.68,1], Wd=[w*0.35,w,w*0.72,0];
+    const pt=S.map((s,j)=>{ const r=baseR+len*s*Math.cos(el), y=len*s*Math.sin(el)+curl*len*s*s;
+      return [[dx*r-px*Wd[j], y, dz*r-pz*Wd[j]], [dx*r+px*Wd[j], y, dz*r+pz*Wd[j]]]; });
+    for(let j=0;j<3;j++){ const [L0,R0]=pt[j], [L1,R1]=pt[j+1];
+      P.push(...L0,...R0,...R1, ...L0,...R1,...L1); }
+  }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  g.computeVertexNormals();
+  return lilyShade(g,(x,y,z)=>0.72+0.28*Math.min(1,Math.hypot(x,z)/0.9));
+}
+// a smooth glazed lump (the bank shrubs and crowns): a low sphere pushed off-round
+function lilyLumpGeo(seed, amp){
+  amp=amp||0.3;
+  const g=new T.SphereGeometry(1,8,5), p=g.attributes.position, v=new T.Vector3();
+  for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i);
+    const h=Math.sin(v.x*12.9898*seed+v.y*78.233+v.z*37.719)*43758.5453;
+    v.multiplyScalar(1-amp*0.5+(h-Math.floor(h))*amp); p.setXYZ(i,v.x,v.y,v.z); }
+  g.computeVertexNormals();
+  return lilyShade(g,(x,y)=>0.62+0.38*Math.max(0,Math.min(1,(y+1)/1.7)));
+}
+/* ---------------- THE GROUND: pond, embankment, far shore ---------------- *
+ * Returns MK, the placement oracle every later section uses: bankY(i,lat) is the height of
+ * the verge/bank at signed lateral lat from sample i; toe(i,sd) is where that bank meets
+ * the water; shore(x,z) is the far meadow's height (or null over water). */
+function lilyGround(inS, cx, cz){
+  const N=STEPS, TAU=Math.PI*2, R=harbRnd(0x11E5D05);
+  const Wd=sd=> sd*inS>0 ? 51 : 31;       // flat verge: each side's own corridor wall + margin
+  const SI=i=>SAMP[((Math.round(i)%N)+N)%N];   // callers jitter i, so round here
+  const surf=(s,lat)=>s.p.y+Math.sin(s.bank||0)*lat;
+  const prof=(s,sd)=>{ const W=Wd(sd), yW=surf(s,sd*W)-0.3, ySh=yW-1.0,
+    D=Math.max(0.3,ySh+2.6); return {W,yW,ySh,D,R:6+D*1.25}; };
+  // (never below the water: where the saturated banking drops a verge under the pond, a
+  // prop stands in the shallows rather than drowned)
+  const bankY=(i,lat)=>{ const s=SI(i), sd=lat<0?-1:1, a=Math.abs(lat), q=prof(s,sd);
+    if(a<=q.W) return Math.max(-2, surf(s,lat)-0.3);
+    if(a<=q.W+2.5) return Math.max(-2, q.yW+(q.ySh-q.yW)*(a-q.W)/2.5);
+    const t=Math.min(1,(a-q.W-2.5)/q.R); return Math.max(-2, -2.6+q.D*Math.pow(1-t,1.7)); };
+  const toe=(i,sd)=>{ const q=prof(SI(i),sd);
+    const t=1-Math.pow(Math.min(1,0.6/q.D),1/1.7); return q.W+2.5+q.R*t; };
+  const at=(i,lat)=>{ const s=SI(i); return [s.p.x+s.n.x*lat, s.p.z+s.n.z*lat]; };
+
+  // THE POND. One gloss sheet; a tiled ripple normal map breaks the low gold key into a
+  // glitter path instead of one smooth highlight, which is what makes it read as water.
+  { const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
+    const img=x.createImageData(128,128), TW=Math.PI*2/128;
+    // integer harmonics only (so it tiles), but many of them at odd angles, so the glitter
+    // breaks up instead of printing a lattice of highlights across the pond
+    const h=(u,v)=>Math.sin(u*TW*3+Math.sin(v*TW*2)*1.4)*0.45+Math.sin(v*TW*5+u*TW*1+Math.sin(u*TW*2)*0.9)*0.4
+                  +Math.sin((u*2+v*3)*TW)*0.3+Math.sin((u*7-v*4)*TW)*0.22+Math.sin((u*5+v*9)*TW+1.3)*0.16
+                  +Math.sin((u*11-v*6)*TW+0.4)*0.1+Math.sin((u*3-v*13)*TW+2.2)*0.08;
+    for(let v=0;v<128;v++) for(let u=0;u<128;u++){
+      const gx=h(u+1,v)-h(u-1,v), gy=h(u,v+1)-h(u,v-1), L=Math.hypot(gx*2,gy*2,1), o=(v*128+u)*4;
+      img.data[o]=(-gx*2/L*0.5+0.5)*255; img.data[o+1]=(-gy*2/L*0.5+0.5)*255;
+      img.data[o+2]=(1/L*0.5+0.5)*255; img.data[o+3]=255; }
+    x.putImageData(img,0,0);
+    const nt=new T.CanvasTexture(c); nt.wrapS=nt.wrapT=T.RepeatWrapping; nt.repeat.set(151,137);
+    const pm=new T.MeshPhongMaterial({color:lilyLin(LILY.pond), specular:lilyLin(LILY.pondSpec),
+      shininess:160, emissive:lilyLin(0x0c0a26), normalMap:nt, normalScale:new T.Vector2(0.11,0.11)});
+    lilyWaterPatch(pm, 0.8);
+    const pond=new T.Mesh(new T.PlaneGeometry(2600,2600,1,1), pm);
+    pond.rotation.x=-Math.PI/2; pond.position.set(cx,-2,cz); trackGroup.add(pond);
+  }
+  // THE EMBANKMENT, one continuous extrusion per side. Profile (lateral from centreline):
+  // jade glaze lip at the road edge (+0.55, flat enough to be kerb, not wall), moss verge on
+  // the banked plane out to the side's wall, a shoulder, then a CONCAVE bank to below the
+  // waterline — concave so its whole face is visible from the road above it.
+  const C=new T.Color(), col=(h,k)=>{ C.setHex(h).convertSRGBToLinear(); if(k!=null) C.multiplyScalar(k); return [C.r,C.g,C.b]; };
+  const mix=(a,b,t)=>{ const A=new T.Color(a).convertSRGBToLinear(), B=new T.Color(b).convertSRGBToLinear(); A.lerp(B,t); return [A.r,A.g,A.b]; };
+  // The verge is a MATERIAL, not a colour: a moss canvas with a speckle of small flowers
+  // (daisy, clover, lady's smock, buttercup) so the apron scrolls past as a surface. The
+  // texture's left strip is plain white — the glaze lip maps there and keeps its own tint;
+  // the verge's vertex colours are near-neutral so the moss shows as painted.
+  const vt=(()=>{ const c=document.createElement('canvas'); c.width=c.height=256; const x=c.getContext('2d'), R2=harbRnd(0x3055);
+    x.fillStyle='#ffffff'; x.fillRect(0,0,24,256);
+    x.fillStyle='#35684a'; x.fillRect(24,0,232,256);
+    const dab=(px,py,r,col,a)=>{ x.globalAlpha=a; x.fillStyle=col; for(const oy of [-256,0,256]){ x.beginPath(); x.ellipse(px,py+oy,r*1.3,r,0,0,6.283); x.fill(); } };
+    for(let k=0;k<420;k++) dab(30+R2()*220, R2()*256, 3+R2()*11, ['#2a5a3e','#44784e','#2c5648','#3e7050','#28503a'][(R2()*5)|0], 0.5);
+    for(let k=0;k<900;k++){ x.globalAlpha=0.5; x.fillStyle=R2()<0.5?'#5a9060':'#20452f';
+      const px=28+R2()*224, py=R2()*256; x.fillRect(px,py,1,2+R2()*3); }
+    const FL=['#ff8cc4','#fff4ea','#fff4ea','#c0a4f4','#ffd65a','#ff5aa0'];
+    for(let k=0;k<760;k++){ const px=30+R2()*220, py=R2()*256, col=FL[(R2()*FL.length)|0], r=0.55+R2()*0.8;
+      dab(px,py,r,col,0.8); }
+    x.globalAlpha=1;
+    const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+    t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy()); return t; })();
+  const bm=lilyMat(14, 0x2a3a38, {vc:true, dbl:true, lam:1}); bm.map=vt;
+  for(const sd of [-1,1]){
+    const P=[], Cc=[], UV=[], I=[]; let NP=0, arc=0;
+    for(let i=0;i<=N;i++){
+      const s=SAMP[i%N], q=prof(s,sd), mot=0.9+0.1*Math.sin(i*0.37)*Math.sin(i*0.113+1.3);
+      if(i>0){ const pp=SAMP[(i-1)%N].p; arc+=Math.hypot(s.p.x-pp.x, s.p.z-pp.z); }
+      const L=[HW-0.4, HW+0.5, HW+2.1, HW+3.0, (HW+3+q.W)*0.5, q.W, q.W+2.5];
+      const Y=[surf(s,sd*L[0])+0.03, surf(s,sd*L[1])+0.55, surf(s,sd*L[2])+0.55, surf(s,sd*L[3])-0.3,
+               surf(s,sd*L[4])-0.3, q.yW, q.ySh];
+      const CL=[col(LILY.rimFace), col(LILY.rimTop), col(LILY.rimTop,0.92), col(0xb8c8b8,0.8),
+                col(0xc8d4c4,mot), col(0xa8b8a8,mot), col(0x6a7a70)];
+      const U=[0.04,0.04,0.04,0.12, 0.12+(L[4]-L[3])/30, 0.12+(L[5]-L[3])/30, 0.12+(L[6]-L[3])/30];
+      for(const t of [0.2,0.45,0.72,1]){ L.push(q.W+2.5+q.R*t); Y.push(-2.6+q.D*Math.pow(1-t,1.7));
+        CL.push(mix(0x5a6a66, 0x3a3a70, Math.min(1,t*1.3))); U.push(U[6]+q.R*t/30); }
+      NP=L.length;
+      for(let k=0;k<NP;k++){ P.push(s.p.x+s.n.x*sd*L[k], Y[k], s.p.z+s.n.z*sd*L[k]); Cc.push(...CL[k]); UV.push(U[k], arc/26); }
+    }
+    for(let i=0;i<N;i++) for(let k=0;k<NP-1;k++){
+      const a=i*NP+k, b=a+1, c2=a+NP, d2=c2+1; I.push(a,c2,b, b,c2,d2); }
+    const g=new T.BufferGeometry();
+    g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(Cc,3));
+    g.setAttribute('uv',new T.Float32BufferAttribute(UV,2));
+    g.setIndex(I); g.computeVertexNormals();
+    trackGroup.add(new T.Mesh(g, bm));
+  }
+  // THE FAR SHORE: a meadow ring round the outside of the pond. Its inner edge follows the
+  // course at a distance (so the pond always has a far bank to be a pond against) with a
+  // slow irregular wander; it rises gently away into the haze.
+  const BINS=180, rmax=new Float32Array(BINS);
+  for(let i=0;i<N;i++){ const sd=-inS, [x,z]=at(i, sd*(toe(i,sd)+14));
+    const a=Math.atan2(z-cz,x-cx), b=((Math.round(a/TAU*BINS)%BINS)+BINS)%BINS;
+    rmax[b]=Math.max(rmax[b], Math.hypot(x-cx,z-cz)); }
+  for(let b=0;b<BINS;b++) if(!rmax[b]) rmax[b]=rmax[(b+BINS-1)%BINS];
+  const sm=new Float32Array(BINS);
+  for(let b=0;b<BINS;b++){ let m=0; for(let k=-6;k<=6;k++) m=Math.max(m, rmax[(b+k+BINS)%BINS]); sm[b]=m; }
+  const shoreR=a=>{ const f=((a/TAU*BINS)%BINS+BINS)%BINS, b0=Math.floor(f), t=f-b0;
+    const r=sm[b0]*(1-t)+sm[(b0+1)%BINS]*t;
+    return r+26+Math.sin(a*3+0.7)*16+Math.sin(a*7+2.1)*9+Math.sin(a*13)*4; };
+  const RO=[0,6,18,50,130,300,1100], RY=[-2.8,-1.2,-0.7,-0.2,2.2,6,16];
+  const RC=[LILY.shoreLip, LILY.shoreLip, LILY.meadow, LILY.meadow, LILY.meadow, LILY.meadowFar, LILY.meadowFar];
+  { const P=[], Cc=[], I=[], SEG=240, NR=RO.length;
+    for(let a=0;a<=SEG;a++){ const th=a/SEG*TAU, r0=shoreR(th), ca=Math.cos(th), sa=Math.sin(th);
+      for(let k=0;k<NR;k++){ const rr=r0+RO[k]; P.push(cx+ca*rr, RY[k]+(k>2?Math.sin(th*5+k)*1.2:0), cz+sa*rr);
+        Cc.push(...col(RC[k], k>1?0.9+0.1*Math.sin(th*23+k):1)); } }
+    for(let a=0;a<SEG;a++) for(let k=0;k<NR-1;k++){ const p0=a*NR+k, p1=p0+1, p2=p0+NR, p3=p2+1; I.push(p0,p1,p2, p1,p3,p2); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(Cc,3)); g.setIndex(I); g.computeVertexNormals();
+    trackGroup.add(new T.Mesh(g, lilyMat(8, 0x202a28, {vc:true, dbl:true, lam:1})));
+  }
+  // THE ISLAND in the middle of the pond. The course banks UP on the outside of nearly every
+  // turn, so from the lane the outer shore hides behind its own raised verge; the infield is
+  // the low side, open across the water. So the house, and a skyline of poplars and willows,
+  // stand on an island there: seen across the pond from most of the lap, softened by haze.
+  const isR=a=>112+14*Math.sin(3*a+1)+8*Math.sin(5*a+2), isY=(r,a)=>{ const e=r/isR(a);
+    return e<=1 ? -0.8+5.8*(1-e*e) : -0.8-2.0*Math.min(1,(e-1)*8); };
+  { const P=[], Cc=[], I=[], SEG=96, RN=[0,0.35,0.65,0.85,1.0,1.07];
+    for(let a=0;a<=SEG;a++){ const th=a/SEG*TAU, R0=isR(th);
+      for(const f of RN){ const r=f*R0; P.push(cx+Math.cos(th)*r, isY(r,th), cz+Math.sin(th)*r);
+        Cc.push(...col(f>=1?LILY.shoreLip:LILY.meadow, f>=1?1:0.9+0.1*Math.sin(th*17+f*9))); } }
+    const NR=RN.length;
+    for(let a=0;a<SEG;a++) for(let k=0;k<NR-1;k++){ const p0=a*NR+k, p1=p0+1, p2=p0+NR, p3=p2+1; I.push(p0,p1,p2, p1,p3,p2); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(Cc,3)); g.setIndex(I); g.computeVertexNormals();
+    trackGroup.add(new T.Mesh(g, lilyMat(8, 0x202a28, {vc:true, dbl:true, lam:1})));
+  }
+  const shore=(x,z)=>{ const th=Math.atan2(z-cz,x-cx), rr=Math.hypot(x-cx,z-cz);
+    if(rr<isR(th)-4) return isY(rr,th);
+    const d=rr-shoreR(th);
+    if(d<6) return null;
+    for(let k=1;k<RO.length-1;k++) if(d<=RO[k+1]){ const t=(d-RO[k])/(RO[k+1]-RO[k]);
+      return RY[k]+(RY[k+1]-RY[k])*t+(k+1>2?Math.sin(th*5+k)*1.2*t:0)+(k>2?Math.sin(th*5+k)*1.2*(1-t):0); }
+    return RY[RY.length-1]; };
+  // The final word on the corridor. Everything above places by "lateral from sample i", which
+  // is not the same as lateral from the NEAREST sample on the inside of a tight bend; this
+  // re-measures against the nearest sample and each side's real wall (tunnels included).
+  const TN=(TRACKS[selTrack].tunnels||[]).map(([a,b])=>[a*N,b*N]);
+  const clear=(x,z,r,y0,y1)=>{ let bi=0,bd=1e18;
+    for(let i=0;i<N;i++){ const p=SAMP[i].p, d=(p.x-x)*(p.x-x)+(p.z-z)*(p.z-z); if(d<bd){bd=d;bi=i;} }
+    const s=SAMP[bi], lat=(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z, tn=TN.some(([a,b])=>bi>=a&&bi<=b);
+    const lim=(lat*inS>0 && !tn) ? HW*2.2 : HW*1.28;
+    if(Math.abs(lat)-r>=lim+0.5) return true;
+    const sf=s.p.y+Math.sin(s.bank||0)*lat; return y1<sf-0.3 || y0>sf+20.5; };
+  return {bankY, toe, at, shore, shoreR, isR, Wd, cx, cz, R, clear};
+}
+/* ---------------- THE JAPANESE FOOTBRIDGE (start/finish) ---------------- *
+ * Monet's green bridge, as a drum bridge carrying its wisteria trellis. It crosses the
+ * stream at the line: feet on stone footings in the pond beyond each bank, a flat-topped
+ * arch whose UNDERSIDE is at +20 or more everywhere over the corridor (-28.2..+48.4; the
+ * crest is struck 10 units toward the infield so both walls clear), crest at +28. */
+function lilyBridge(MK, inS, I0){
+  const i0=I0||3, s=SAMP[i0], ry=Math.atan2(s.t.x,s.t.z), road=s.p.y;
+  const C0=inS*10, HALF=74, BASE=-2.2, DW=15, PW=3.4;
+  const lat2=l=>C0+l;                                  // l relative to the crest line
+  // The line sits in a banked turn, so the racing surface under the bridge is NOT the
+  // centreline height: on the high side it is ~10 units up. Clearance is taken against the
+  // banked surface of every sample the deck's width covers, and the crest raised until the
+  // underside is +22 over the whole corridor (with a margin past each wall).
+  const sy=lat=>{ let m=-1e9; for(let k=-3;k<=3;k++){ const q=SAMP[(i0+k+STEPS)%STEPS]; m=Math.max(m, q.p.y+Math.sin(q.bank||0)*lat); } return m; };
+  let TOP=road+34;
+  for(let li=-(HW*1.28+2); li<=HW*2.2+2; li+=1){ const lat=li*inS, f=1-Math.pow(Math.min(1,Math.abs(lat-C0)/HALF),PW);
+    if(f>0.05) TOP=Math.max(TOP, BASE+(sy(lat)+22+1.6-BASE)/f); }
+  const deckY=l=>BASE+(TOP-BASE)*(1-Math.pow(Math.min(1,Math.abs(l)/HALF),PW));
+  const P=(lat,y,along)=>({x:s.p.x+s.n.x*lat+s.t.x*along, y, z:s.p.z+s.n.z*lat+s.t.z*along});
+  const wood=[], rail=[], stone=[], rac=[], leaf=[];
+  const NS=46;
+  for(let k=0;k<NS;k++){
+    const l0=-HALF+k/NS*HALF*2, l1=l0+HALF*2/NS, y0=deckY(l0), y1=deckY(l1), lm=(l0+l1)/2;
+    const ang=Math.atan2(y1-y0, l1-l0), len=Math.hypot(l1-l0,y1-y0)+0.15;
+    // the deck: a slab whose local x runs along n, pitched to the arch (rz about the tangent)
+    // where the arch is steep the deck becomes a flight of treads, as a drum bridge's is
+    // (shallow treads, not full-height blocks: end-on, a stack of solid blocks read as a wall)
+    if(Math.abs(y1-y0)>Math.abs(l1-l0)*0.55){ const yt=Math.max(y0,y1), yl=Math.min(y0,y1), th=Math.min(yt-yl+1.5, 3.2), q=P(lat2(lm), yt-th/2+0.05, 0);
+      wood.push({x:q.x,y:q.y,z:q.z, s:Math.abs(l1-l0)+0.6, sy:th, sz:DW, _a:0, c:LILY.bridgeDk}); }
+    else { const q=P(lat2(lm), (y0+y1)/2-0.8, 0);
+      wood.push({x:q.x,y:q.y,z:q.z, s:len, sy:1.5, sz:DW, _a:ang, c:k%2?LILY.bridge:0x1a6a48}); }
+    // posts and rails on both deck edges
+    for(const e of [-1,1]){
+      if(k%3===0){ const qp=P(lat2(lm), (y0+y1)/2+2.1, e*(DW/2-0.4)); rail.push({x:qp.x,y:qp.y,z:qp.z, s:0.7, sy:4.4, sz:0.7, ry, c:LILY.bridgeDk}); }
+      for(const hh of [4.2,2.2]){ const qr=P(lat2(lm), (y0+y1)/2+hh, e*(DW/2-0.4));
+        rail.push({x:qr.x,y:qr.y,z:qr.z, s:len, sy:0.55, sz:0.55, _a:ang, c:hh>3?0x1c6446:LILY.bridgeDk}); }
+    }
+    // the trellis: an inverted U over the deck every fourth slab, carrying the vine
+    if(k%4===2){ const yb=(y0+y1)/2;
+      for(const e of [-1,1]){ const qp=P(lat2(lm), yb+4.8, e*(DW/2-0.4)); rail.push({x:qp.x,y:qp.y,z:qp.z, s:0.6, sy:9.6, sz:0.6, ry, c:LILY.bridgeDk}); }
+      const qt=P(lat2(lm), yb+9.6, 0); rail.push({x:qt.x,y:qt.y,z:qt.z, s:0.8, sy:0.8, sz:DW, ry:ry, c:LILY.bridge, _cross:true});
+    }
+  }
+  // wisteria: a vine mass along the trellis top, racemes hanging off both deck edges.
+  // Over the corridor a raceme may reach at most to 1 unit above the +20 clearance line.
+  const R=harbRnd(0xB21D6E);
+  for(let k=0;k<340;k++){
+    const l=-HALF*0.86+R()*HALF*1.72, lat=lat2(l), yb=deckY(l), e=R()<0.5?-1:1;
+    const inCorr = lat*inS>-(HW*1.28+7) && lat*inS<HW*2.2+7;
+    const maxL = inCorr ? Math.max(0, (yb-2.2)-(sy(lat)+21)) : yb-(-2)-3;
+    if(maxL<1.2) continue;
+    const L=Math.min(maxL, inCorr ? 2+R()*4 : 3+R()*8), a=P(lat, yb-0.6, e*(DW/2+0.3+R()*1.2));
+    rac.push({x:a.x,y:a.y,z:a.z, s:0.8+R()*0.45, sy:L, ry:R()*6.28, c:LILY.wis[(R()*LILY.wis.length)|0]});
+  }
+  for(let k=0;k<130;k++){
+    const l=-HALF*0.8+R()*HALF*1.6, lat=lat2(l), yb=deckY(l)+9.6, a=P(lat, yb+0.8, (R()-0.5)*DW*1.1);
+    const vio=R()<0.5;
+    leaf.push({x:a.x,y:a.y,z:a.z, s:1.7+R()*1.5, sy:1.4+R()*1.0, sz:1.7+R()*1.5, ry:R()*6.28,
+               c:vio?LILY.wis[(R()*LILY.wis.length)|0]:LILY.wisLeaf[(R()*3)|0]});
+    if(vio && R()<0.8){ const L=2.5+R()*4.5; const top=a.y-1.2, lat3=lat;
+      const inCorr = lat3*inS>-(HW*1.28+7) && lat3*inS<HW*2.2+7;
+      if(!inCorr || top-L>sy(lat3)+21)
+        rac.push({x:a.x,y:top,z:a.z, s:0.8+R()*0.4, sy:L, ry:R()*6.28, c:LILY.wis[(R()*LILY.wis.length)|0]}); }
+  }
+  // stone footings in the water under each foot, and stepping stones on to the bank
+  for(const e of [-1,1]){ const lat=lat2(e*HALF*0.97);
+    const f=P(lat, -1.2, 0); stone.push({x:f.x,y:f.y,z:f.z, s:6, sy:2.6, sz:DW+3, ry, c:LILY.stoneDk});
+    for(let k=1;k<=3;k++){ const g=P(lat+e*(5+k*6.5), -1.6, (R()-0.5)*5);
+      stone.push({x:g.x,y:g.y,z:g.z, s:3.6+R()*1.4, sy:1.1, sz:3+R()*1.6, ry:R()*3, c:LILY.stone}); } }
+  // The slabs and rails are pitched by rotating about the tangent. Build them by hand:
+  // yaw to face along n, then roll by the local arch angle.
+  const toMesh=(list, geo, mat)=>{ const m=new T.InstancedMesh(geo, mat, list.length); m.frustumCulled=false;
+    const o=new T.Object3D(), c=new T.Color(), qy=new T.Quaternion(), qz=new T.Quaternion(), X=new T.Vector3(0,0,1);
+    list.forEach((v,i)=>{ o.position.set(v.x,v.y,v.z);
+      if(v._a!=null){ qy.setFromAxisAngle(new T.Vector3(0,1,0), ry); qz.setFromAxisAngle(X, v._a); o.quaternion.copy(qy).multiply(qz);
+        o.scale.set(v.s, v.sy, v.sz); }
+      else if(v._cross){ o.quaternion.setFromAxisAngle(new T.Vector3(0,1,0), ry); o.scale.set(v.s, v.sy, v.sz); }
+      else { o.rotation.set(0, v.ry||0, 0); o.scale.set(v.s, v.sy, v.sz); }
+      o.updateMatrix(); m.setMatrixAt(i,o.matrix); c.setHex(v.c==null?LILY.bridge:v.c).convertSRGBToLinear(); m.setColorAt(i,c); });
+    m.instanceMatrix.needsUpdate=true; m.instanceColor.needsUpdate=true; return m; };
+  trackGroup.add(toMesh(wood, new T.BoxGeometry(1,1,1), macMat(0xffffff, 40, 0x406050)));
+  trackGroup.add(toMesh(rail, new T.BoxGeometry(1,1,1), macMat(0xffffff, 20, 0x203a30)));
+  trackGroup.add(macBatch(new T.BoxGeometry(1,1,1), stone, 12, 0x302a38));
+  return {rac, leaf};
+}
+// a straight member between two points (purlins, crown segments): local y along a->b
+function lilySegs(list, mat){
+  const m=new T.InstancedMesh(new T.BoxGeometry(1,1,1), mat, list.length); m.frustumCulled=false;
+  const o=new T.Object3D(), c=new T.Color(), U=new T.Vector3(0,1,0), d=new T.Vector3();
+  list.forEach((v,i)=>{ d.set(v.b[0]-v.a[0], v.b[1]-v.a[1], v.b[2]-v.a[2]); const L=d.length(); d.normalize();
+    o.position.set((v.a[0]+v.b[0])/2,(v.a[1]+v.b[1])/2,(v.a[2]+v.b[2])/2);
+    o.quaternion.setFromUnitVectors(U,d); o.scale.set(v.w, L+v.w*0.6, v.w);
+    o.updateMatrix(); m.setMatrixAt(i,o.matrix); c.setHex(v.c).convertSRGBToLinear(); m.setColorAt(i,c); });
+  m.instanceMatrix.needsUpdate=true; m.instanceColor.needsUpdate=true; return m;
+}
+/* ---------------- STONE LANTERNS (secular garden ishidoro) ---------------- */
+function lilyLanterns(list){
+  if(!list.length) return null;
+  const B=[],Po=[],Pl=[],F=[],Rf=[],Fi=[], halo=[];
+  for(const L of list){ const k=L.sc, ry=L.ry||0, put=(arr,y,s,sy,sz,c,rr)=>arr.push({x:L.x,y:L.y+y*k,z:L.z,s:s*k,sy:sy*k,sz:sz*k,ry:ry+(rr||0),c});
+    put(B,0.6,1.9,1.2,1.9,LILY.stoneDk); put(Po,3.2,0.85,4,0.85,LILY.stone); put(Pl,5.65,3.8,0.9,3.8,LILY.stone);
+    put(F,7.5,2.6,2.8,2.6,0xfff0d8); put(Rf,10.0,3.6,2.3,3.6,LILY.stoneDk,Math.PI/4); put(Fi,11.6,0.7,0.9,0.7,LILY.stone);
+    halo.push(L.x, L.y+7.5*k, L.z); }
+  const g=new T.Group();
+  g.add(macBatch(new T.CylinderGeometry(1,1,1,6), B, 10, 0x2a2430));
+  g.add(macBatch(new T.CylinderGeometry(1,1,1,6), Po, 10, 0x2a2430));
+  g.add(macBatch(new T.BoxGeometry(1,1,1), Pl, 10, 0x2a2430));
+  const fm=macMat(0xffffff, 10, 0x000000); fm.emissive=lilyLin(LILY.lamp).multiplyScalar(0.85);
+  g.add(macInst(new T.BoxGeometry(1,1,1), F, fm));
+  g.add(macBatch(new T.ConeGeometry(1,1,4), Rf, 16, 0x3a3444));
+  g.add(macBatch(new T.SphereGeometry(1,6,4), Fi, 16, 0x3a3444));
+  const hg=new T.BufferGeometry(); hg.setAttribute('position',new T.Float32BufferAttribute(halo,3));
+  const hm=new T.PointsMaterial({map:TEX_GLOW, color:0xffb070, size:22, sizeAttenuation:true,
+    transparent:true, opacity:0.5, blending:T.AdditiveBlending, depthWrite:false});
+  const hp=new T.Points(hg,hm); hp.frustumCulled=false; g.add(hp);
+  trackGroup.add(g);
+  return {fire:fm, halo:hm, e0:fm.emissive.clone()};
+}
+/* ---------------- THE WATERLINE AND THE BANKS (edge border) ---------------- *
+ * Waterlilies massed where the bank meets the pond, cattails at the toe, irises on the
+ * shoulder, azalea drifts on the bank face. Every item clears ITS side's wall with margin:
+ * outside 28.2, infield 48.4 (29 in the tunnels, which only ever makes this looser). */
+function lilyVerge(MK, inS, G){
+  const R=harbRnd(0x7E1A5), N=STEPS;
+  const clearOK=(i,lat,r)=>{ const a=Math.abs(lat)-r; return (lat*inS>0) ? a>=HW*2.2+1 : a>=HW*1.28+1; };
+  // --- waterline lilies ---
+  for(let i=0;i<N;i+=2+((R()*5)|0)){
+    for(const sd of [-1,1]){
+      if(R()<0.28) continue;
+      const toe=MK.toe(i,sd), n=1+((R()*4)|0);
+      for(let k=0;k<n;k++){
+        const lat=sd*(toe+1.5+Math.pow(R(),1.8)*34), r=2.4+Math.pow(R(),1.6)*5.5;
+        if(!clearOK(i,lat,r)) continue;
+        const [x,z]=MK.at(i,lat), jx=(R()-0.5)*6, jz=(R()-0.5)*6;
+        G.pads.push({x:x+jx, y:-1.72, z:z+jz, s:r, sy:0.3, sz:r*(0.92+R()*0.1), ry:R()*6.28,
+                     c:R()<0.07?LILY.padRed:LILY.pad[(R()*LILY.pad.length)|0]});
+        if(R()<0.24){ const fs=1.6+Math.pow(R(),2)*3.4, a=R()*6.28, o=r*0.4*R();
+          G.flowers.push({x:x+jx+Math.cos(a)*o, y:-1.75, z:z+jz+Math.sin(a)*o, s:fs, sy:fs*(0.9+R()*0.3), ry:R()*6.28,
+                          c:LILY.lily[(R()*LILY.lily.length)|0]}); }
+      }
+    }
+  }
+  // --- cattails and reeds at the toe: clumps on an irregular cadence ---
+  const stalk=[], head=[];   // (G.stalk also collects the agapanthus stems below)
+  for(let i=(R()*9)|0;i<N;i+=6+((R()*18)|0)){
+    const sd=R()<0.5?-1:1, toe=MK.toe(i,sd), n=4+((R()*9)|0), c0=sd*(toe-1+R()*4);
+    if(!clearOK(i,c0,4)) continue;
+    for(let k=0;k<n;k++){ const lat=c0+(R()-0.5)*6, [x,z]=MK.at(i+(R()-0.5)*2,lat), y=MK.bankY(i,lat)-0.3, h=9+R()*10;
+      const rx=(R()-0.5)*0.12, rz=(R()-0.5)*0.12;
+      stalk.push({x,y,z, s:0.26, sy:h, rx, rz, c:R()<0.5?LILY.reed:0x6a9a52});
+      if(R()<0.6) head.push({x:x+rz*-h*0.84, y:y+h*0.84, z:z+rx*h*0.84, s:0.7, sy:3.2, rx, rz, c:LILY.cattail}); }
+  }
+  G.stalk.push(...stalk); G.head=head;
+  // --- rose standards along the verge edges: the Grande Allee's lollipops, a crown of
+  // roses on a clear stem, standing against the sky from the road ---
+  for(let i=(R()*20)|0;i<N;i+=16+((R()*34)|0)){
+    const sd=R()<0.6?-inS:inS, wall=(sd*inS>0?HW*2.2:HW*1.28)+1.2, n=1+((R()*3)|0);
+    for(let k=0;k<n;k++){ const ii=i+k*(5+((R()*3)|0)), lat=sd*(wall+4+R()*1.8), [x,z]=MK.at(ii,lat), y=MK.bankY(ii,lat), h=8.5+R()*3.5, r=2.6+R()*0.9;
+      G.stem.push({x,y,z, s:0.35, sy:h, c:0x3a4a2a});
+      G.roseLeaf.push({x, y:y+h, z, s:r*1.12, sy:r*0.95, sz:r*1.12, ry:R()*6.28, c:0x1f4a2e});
+      G.rose.push({x, y:y+h+0.4, z, s:r, sy:r*0.85, sz:r, ry:R()*6.28, c:[0xff5a8a,0xff8aa8,0xe8406a,0xffc0cc,0xff6a9a][(R()*5)|0]}); }
+  }
+  // --- irises on the shoulder, azaleas down the bank face ---
+  for(let i=(R()*7)|0;i<N;i+=3+((R()*7)|0)){
+    const sd=R()<0.55?-inS:inS, W=MK.Wd(sd), kind=R();
+    if(kind<0.26){          // agapanthus: blue globes on bare stalks over strap leaves
+      const c0=sd*(W+2.2+R()*2.5), n=7+((R()*7)|0);
+      if(!clearOK(i,c0,2.5)) continue;
+      for(let k=0;k<n;k++){ const lat=c0+(R()-0.5)*3.4, [x,z]=MK.at(i+(R()-0.5)*1.6,lat), y=MK.bankY(i,lat)-0.2, h=6+R()*4.5;
+        const rx=(R()-0.5)*0.16, rz=(R()-0.5)*0.16;
+        G.stalk.push({x,y,z, s:0.2, sy:h, rx, rz, c:0x4a7a3a});
+        G.aga.push({x:x-rz*h, y:y+h, z:z+rx*h, s:0.95+R()*0.4, c:[0x5a6af0,0x7a86f8,0x4a58d8,0x9aa4ff][(R()*4)|0]});
+        G.iLeaf.push({x,y,z, s:0.6, sy:3+R()*2.5, sz:0.12, ry:R()*3.14, rx:(R()-0.5)*0.9, rz:(R()-0.5)*0.9, c:LILY.irisLeaf[(R()*3)|0]}); }
+    } else if(kind<0.52){   // iris clump
+      const c0=sd*(W+1.8+R()*2.5), n=6+((R()*7)|0);
+      if(!clearOK(i,c0,2)) continue;
+      for(let k=0;k<n;k++){ const lat=c0+(R()-0.5)*3, [x,z]=MK.at(i+(R()-0.5)*1.6,lat), y=MK.bankY(i,lat)-0.2;
+        G.iLeaf.push({x,y,z, s:0.55, sy:5+R()*5, sz:0.12, ry:R()*3.14, rx:(R()-0.5)*0.5, rz:(R()-0.5)*0.5,
+                      c:LILY.irisLeaf[(R()*3)|0]}); }
+      for(let k=0;k<2+((R()*3)|0);k++){ const lat=c0+(R()-0.5)*2.4, [x,z]=MK.at(i+(R()-0.5)*1.2,lat), y=MK.bankY(i,lat)+5+R()*3;
+        G.iris.push({x,y,z, s:1.8+R()*0.6, sy:1.9, ry:R()*6.28, c:LILY.iris[(R()*LILY.iris.length)|0]}); }
+    } else {               // azalea drift: two to five mounds on the bank face
+      const n=2+((R()*4)|0);
+      for(let k=0;k<n;k++){ const toe=MK.toe(i,sd), r=3.2+R()*4.5, wall=(sd*inS>0?HW*2.2:HW*1.28)+1.2;
+        // most drifts crown the shoulder, where they stand against the sky seen from the
+        // road; the rest spill down the bank face toward the water
+        const crest=R()<0.65, lat0=crest ? W+0.6+R()*3.2 : W+2.5+r*0.8+R()*Math.max(2,(toe-W)*0.5);
+        const rr=crest ? Math.min(r, lat0-wall) : r, lat=sd*lat0;
+        if(rr<1.6 || !clearOK(i,lat,rr)) continue;
+        const [x,z]=MK.at(i+(R()-0.5)*4,lat), y=MK.bankY(i,lat), sy=rr*(crest?1.0+R()*0.35:0.55+R()*0.2);
+        G.azLeaf.push({x,y:y+sy*0.2,z, s:rr*1.08, sy:sy*0.9, sz:rr*(0.9+R()*0.2), ry:R()*6.28, c:LILY.azLeaf});
+        G.az.push({x,y:y+sy*0.5,z, s:rr*0.94, sy:sy*0.85, sz:rr*(0.8+R()*0.2), ry:R()*6.28,
+                   c:LILY.azalea[(R()*LILY.azalea.length)|0]}); }
+    }
+  }
+}
+/* ---------------- THE TUNNELS ---------------- *
+ * 1. THE WISTERIA WALK: basket-handle arches on posts standing on each verge at +-30.5
+ *    (the tunnel walls are 28.2 both sides), crowns +21..+31, racemes hanging from the
+ *    crown only as far as the +20 clearance line allows, long curtains outside the posts.
+ * 2. THE BAMBOO GROVE: culms rooted beyond 33 on the bank, leaning in no more than ~9
+ *    degrees, so they cross the 28.2 line above +20 by construction (checked per culm);
+ *    leaf sprays high over the road; stone lanterns glowing at their feet. */
+function lilyTunnels(MK, inS, G){
+  const tn=TRACKS[selTrack].tunnels||[], R=harbRnd(0x3A7B00), N=STEPS;
+  const surf=(s,lat)=>s.p.y+Math.sin(s.bank||0)*lat;
+  const segs=[];
+  tn.forEach((sg,ti)=>{
+    const i0=Math.floor(sg[0]*N), i1=Math.floor(sg[1]*N);
+    if(ti===0){
+      let prev=null;
+      for(let i=i0+1;i<=i1-1;i+=5+((R()*4)|0)){
+        const s=SAMP[i%N], LG=30.5, P=(lat,y)=>[s.p.x+s.n.x*lat, y, s.p.z+s.n.z*lat];
+        const crown=l=>surf(s,l)+22.5+9*Math.sqrt(Math.max(0,1-(l/LG)*(l/LG)));
+        const pts=[]; for(let k=0;k<=12;k++){ const l=-LG+k/12*LG*2; pts.push(P(l,crown(l))); }
+        for(let k=0;k<12;k++) segs.push({a:pts[k], b:pts[k+1], w:1.1, c:LILY.bridge});
+        for(const e of [-1,1]){ const l=e*LG; segs.push({a:P(l,MK.bankY(i,l)), b:P(l,crown(l)), w:1.3, c:LILY.bridgeDk}); }
+        const cur={i, pts, top:[-LG,-18,0,18,LG].map(l=>P(l,crown(l)))};
+        if(prev) for(let k=0;k<5;k++) segs.push({a:prev.top[k], b:cur.top[k], w:0.7, c:LILY.bridgeDk});
+        // racemes off the crown: length capped by the clearance line at that lateral
+        for(let k=0;k<34;k++){ const l=(R()-0.5)*LG*1.9, room=crown(l)-(surf(s,l)+20)-0.6;
+          if(room<1) continue; const L=Math.min(room, 2+R()*6), a=P(l,crown(l)-0.4);
+          const ds=(R()-0.5)*3;
+          G.rac.push({x:a[0]+s.t.x*ds, y:a[1], z:a[2]+s.t.z*ds, s:0.8+R()*0.45, sy:L, ry:R()*6.28, c:LILY.wis[(R()*6)|0]}); }
+        // curtains outside the posts, down toward the verge
+        for(const e of [-1,1]) for(let k=0;k<14;k++){ const l=e*(LG+0.8+R()*3.5), top=crown(e*LG)-0.5-R()*3;
+          const L=Math.max(3, Math.min(top-MK.bankY(i,l)-2, 3+R()*9)), ds=(R()-0.5)*14;
+          G.rac.push({x:s.p.x+s.n.x*l+s.t.x*ds, y:top, z:s.p.z+s.n.z*l+s.t.z*ds, s:0.85+R()*0.45, sy:L, ry:R()*6.28, c:LILY.wis[(R()*6)|0]}); }
+        // foliage riding on the crown
+        for(let k=0;k<26;k++){ const l=(R()-0.5)*LG*2.1, a=P(l, crown(Math.max(-LG,Math.min(LG,l)))+0.8);
+          const ds=(R()-0.5)*8, vio=R()<0.45;
+          G.wLeaf.push({x:a[0]+s.t.x*ds, y:a[1], z:a[2]+s.t.z*ds, s:1.6+R()*1.4, sy:1.3+R()*1.0, sz:1.6+R()*1.4, ry:R()*6.28,
+                        c:vio?LILY.wis[(R()*6)|0]:LILY.wisLeaf[(R()*3)|0]}); }
+        // racemes between arches, off the purlins
+        if(prev){ const sp=SAMP[((prev.i+i)>>1)%N];
+          for(let k=0;k<22;k++){ const l=(R()-0.5)*LG*1.4, hc=surf(sp,l)+22.5+9*Math.sqrt(Math.max(0,1-(l/LG)*(l/LG)));
+            const room=hc-(surf(sp,l)+20)-0.8; if(room<1) continue;
+            const ds=(R()-0.5)*10, L=Math.min(room, 2+R()*6);
+            G.rac.push({x:sp.p.x+sp.n.x*l+sp.t.x*ds, y:hc-0.3, z:sp.p.z+sp.n.z*l+sp.t.z*ds, s:0.8+R()*0.4, sy:L, ry:R()*6.28, c:LILY.wis[(R()*6)|0]}); } }
+        prev=cur;
+      }
+    } else {
+      for(let i=i0;i<=i1;i+=1+((R()*3)|0)){
+        const s=SAMP[((i%N)+N)%N];
+        for(const sd of [-1,1]){ if(R()<0.3) continue;
+          const n=1+((R()*3)|0);
+          for(let k=0;k<n;k++){
+            const L0=33.5+Math.pow(R(),1.3)*26, y0=MK.bankY(i,sd*L0)-0.4, H=44+R()*36, th=(0.02+R()*0.13);
+            // where does it cross the 28.2 line?
+            const yc=y0+(L0-HW*1.28)/Math.tan(th), sf=surf(s,sd*HW*1.28);
+            if(th>0.001 && yc<sf+21) continue;
+            const ds=(R()-0.5)*3, x=s.p.x+s.n.x*sd*L0+s.t.x*ds, z=s.p.z+s.n.z*sd*L0+s.t.z*ds;
+            // lean toward the road: rotate about the tangent
+            const ry=Math.atan2(s.t.x,s.t.z);
+            const r=0.9+R()*0.8;
+            G.culm.push({x,y:y0,z, s:r, sy:H, sz:r, ry, rz:sd*th, c:LILY.culm[(R()*4)|0]});
+            // leaf sprays on the upper culm
+            const nl=22+((R()*14)|0);
+            for(let q=0;q<nl;q++){ const f=0.45+R()*0.55, hh=H*f;
+              const lx=x-s.n.x*sd*Math.sin(th)*hh, lz=z-s.n.z*sd*Math.sin(th)*hh, ly=y0+Math.cos(th)*hh;
+              const a=R()*6.28, ll=6+R()*5;
+              if(!MK.clear(lx,lz,ll+1.5,ly-ll-1,ly+ll)) continue;
+              G.bLeaf.push({x:lx+Math.cos(a)*1.5, y:ly, z:lz+Math.sin(a)*1.5, s:1.3, sy:ll, sz:0.18,
+                            ry:a, rx:1.2+R()*0.9, rz:(R()-0.5)*0.6, c:LILY.bLeaf[(R()*4)|0]}); }
+          }
+        }
+        if(i>=i0 && i<=i1 && R()<0.14){ const sd=R()<0.5?-1:1, L0=32.5+R()*3;
+          G.lamps.push({x:s.p.x+s.n.x*sd*L0, y:MK.bankY(i,sd*L0)-0.2, z:s.p.z+s.n.z*sd*L0, sc:0.9+R()*0.25, ry:R()*6.28}); }
+      }
+    }
+  });
+  if(segs.length) trackGroup.add(lilySegs(segs, macMat(0xffffff, 40, 0x406050)));
+}
+/* ---------------- THE GARDEN BEYOND (scenery) ---------------- */
+function lilyFrog(sc){
+  const g=new T.Group(), skin=macMat(LILY.frog, 70, 0xd8ffc0), belly=macMat(LILY.frogBelly, 50, 0xffffe0),
+        gold=macMat(0xffc43a, 90, 0xffffff), blk=macMat(0x141018, 90, 0xffffff);
+  const add=(geo,mat,x,y,z,sx,sy,sz,rx)=>{ const m=new T.Mesh(geo,mat); m.position.set(x*sc,y*sc,z*sc); m.scale.set(sx*sc,sy*sc,sz*sc); if(rx) m.rotation.x=rx; g.add(m); return m; };
+  const S=new T.SphereGeometry(1,14,10);
+  add(S,skin, 0,3.2,-0.6, 3.6,2.9,4.4, -0.35);          // body, sitting up
+  add(S,belly,0,2.6, 1.6, 2.6,2.0,2.0);                 // throat
+  add(S,skin, 0,5.2, 2.2, 3.0,1.9,2.8);                 // head
+  for(const e of [-1,1]){
+    add(S,skin, e*1.7,6.6,2.6, 1.15,1.15,1.15);         // eye bulbs
+    add(S,gold, e*2.05,6.9,3.1, 0.62,0.62,0.62);
+    add(S,blk,  e*2.25,7.0,3.45, 0.3,0.34,0.3);
+    add(S,skin, e*3.3,1.4,-1.8, 1.6,1.3,3.4);           // haunch
+    add(S,skin, e*2.0,1.0, 3.2, 0.8,1.9,0.8);           // foreleg
+    add(S,skin, e*3.0,0.35,1.2, 1.3,0.35,2.4);          // hind foot splayed on the pad
+  }
+  return g;
+}
+function lilyScenery(MK, inS, G){
+  const R=harbRnd(0x5CE9E), N=STEPS, TAU=Math.PI*2, cx=MK.cx, cz=MK.cz;
+  const P=TRACK_PULSE.lily;
+  // --- lily rafts out on the open water: the pond as Monet painted it, islands of pads ---
+  for(let r=0;r<70;r++){
+    const i=(R()*N)|0, sd=R()<0.62?inS:-inS, toe=MK.toe(i,sd);
+    const lat=sd*(toe+14+Math.pow(R(),1.2)*(sd===inS?230:110));
+    const [x0,z0]=MK.at(i,lat);
+    if(MK.shore(x0,z0)!==null) continue;
+    const n=8+((R()*26)|0), rad=10+R()*30;
+    for(let k=0;k<n;k++){ const a=R()*TAU, d=Math.sqrt(R())*rad, x=x0+Math.cos(a)*d*1.5, z=z0+Math.sin(a)*d;
+      if(MK.shore(x,z)!==null) continue;
+      const pr=2.6+Math.pow(R(),1.5)*6;
+      G.pads.push({x, y:-1.73-R()*0.02, z, s:pr, sy:0.3, sz:pr*(0.92+R()*0.1), ry:R()*6.28,
+                   c:R()<0.06?LILY.padRed:LILY.pad[(R()*LILY.pad.length)|0]});
+      if(R()<0.2){ const fs=1.8+Math.pow(R(),2)*3.6;
+        G.flowers.push({x:x+(R()-0.5)*2, y:-1.75, z:z+(R()-0.5)*2, s:fs, sy:fs*(0.9+R()*0.3), ry:R()*6.28, c:LILY.lily[(R()*6)|0]}); }
+    }
+  }
+  // --- frogs on giant pads: the toy-scale joke, three of them, riding a slow swell ---
+  P.bob=[];
+  [[0.12,-inS,1.0],[0.47,inS,1.15],[0.87,-inS,0.9],[0.63,inS,1.0]].forEach(([u,sd,sc],k)=>{
+    const i=Math.round(u*N)%N, lat=sd*(MK.toe(i,sd)+17+k*3), [x,z]=MK.at(i,lat);
+    const g=new T.Group(); g.position.set(x,-1.9,z);
+    const pad=new T.Mesh(new T.CylinderGeometry(15*sc,15*sc,0.5,24,1,false,0.3,TAU-0.6), macMat(LILY.pad[k%3],40,0x4a6a50));
+    pad.position.y=0.15; g.add(pad);
+    const fl=new T.Mesh(G.flowerGeo, lilyMat(50,0x8a6a7a,{vc:true,dbl:true})); fl.material.color.copy(lilyLin(LILY.lily[(k*2)%6]));
+    fl.scale.setScalar(5.5*sc); fl.position.set(-8*sc,0.2,5*sc); g.add(fl);
+    const fr=lilyFrog(1.25*sc); fr.position.set(2*sc,0.4,-1*sc);
+    const s=SAMP[i]; fr.rotation.y=Math.atan2(s.p.x-x, s.p.z-z)+(R()-0.5)*0.8;    // facing the stream
+    g.add(fr); trackGroup.add(g);
+    P.bob.push({g, y0:-1.9, ph:k*2.1+R()});
+  });
+  // --- koi, rising under the pads near the banks; circling slowly ---
+  P.koi={list:[], d:new T.Object3D()};
+  for(let sch=0;sch<6;sch++){
+    const i=((sch*117+37+R()*40)|0)%N, sd=R()<0.5?-1:1, lat=sd*(MK.toe(i,sd)+18+R()*30), [x,z]=MK.at(i,lat);
+    for(let k=0;k<3+((R()*3)|0);k++)
+      P.koi.list.push({cx:x, cz:z, r:8+R()*14, w:(R()<0.5?-1:1)*(0.12+R()*0.1), ph:R()*TAU, s:1.6+R()*0.8,
+                       c:LILY.koi[(R()*LILY.koi.length)|0], c2:LILY.koi[(R()*LILY.koi.length)|0]});
+  }
+  { const L=P.koi.list, body=new T.SphereGeometry(1,10,6), tail=new T.ConeGeometry(1,1,4);
+    tail.rotateX(Math.PI/2); tail.translate(0,0,-0.5);
+    const mb=new T.InstancedMesh(body, macMat(0xffffff,90,0xfff0e0), L.length),
+          mt=new T.InstancedMesh(tail, macMat(0xffffff,60,0xffe0c0), L.length);
+    const c=new T.Color();
+    L.forEach((v,k)=>{ c.setHex(v.c).convertSRGBToLinear(); mb.setColorAt(k,c); c.setHex(v.c2).convertSRGBToLinear(); mt.setColorAt(k,c); });
+    mb.frustumCulled=mt.frustumCulled=false; trackGroup.add(mb); trackGroup.add(mt);
+    P.koi.mb=mb; P.koi.mt=mt; }
+  // --- the far shore: Monet's poplars in sinuous rows, and rounded dark trees in clumps ---
+  const pop=[], crown=[], trunk=[];
+  for(let row=0;row<9;row++){
+    const a0=row*0.698+R()*0.25, span=0.32+R()*0.3, off=18+R()*34;
+    for(let a=a0;a<a0+span;a+=(15+R()*14)/(MK.shoreR(a)+off)){
+      const rr=MK.shoreR(a)+off+Math.sin(a*9+row)*14+(R()-0.5)*6, x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr, y=MK.shore(x,z);
+      if(y===null) continue;
+      const h=55+R()*42, w=6.4+R()*2.8;
+      pop.push({x, y:y+h*0.52, z, s:w, sy:h*0.5, sz:w, ry:R()*6.28, c:LILY.tree[(R()*2)|0]});
+      trunk.push({x, y:y+2, z, s:0.8, sy:5, c:0x201a20});
+    }
+  }
+  for(let cl=0;cl<22;cl++){
+    const a=R()*TAU, rr=MK.shoreR(a)+24+R()*140, n=1+((R()*4)|0), c0=LILY.tree[(R()*4)|0];
+    for(let k=0;k<n;k++){ const x=cx+Math.cos(a)*rr+(R()-0.5)*26, z=cz+Math.sin(a)*rr+(R()-0.5)*26, y=MK.shore(x,z);
+      if(y===null) continue; const s=9+R()*9;
+      crown.push({x, y:y+s*1.7, z, s:s*1.15, sy:s*0.9, sz:s*1.1, ry:R()*6.28, c:c0});
+      trunk.push({x, y:y+s*0.55, z, s:1.3, sy:s*1.1, c:0x201a20}); }
+  }
+  // --- WEEPING WILLOWS ringing the pond: a trunk, a loose crown, and a curtain of long
+  // strands swaying down to the water. On the banks both sides (crowns clear of each wall)
+  // and along the far shore, so the pond has its frame on every stretch of the lap ---
+  const willow=(x,z,yb,H,rc,wy)=>{
+    G.trunk.push({x, y:yb+H*0.3, z, s:1.9, sy:H*0.6, c:0x2a2024});
+    const nc=7+((R()*4)|0);
+    for(let k=0;k<nc;k++){ const a=k/nc*TAU+R()*0.6, d=rc*(0.2+R()*0.5);
+      G.wCrown.push({x:x+Math.cos(a)*d, y:yb+H*(0.7+R()*0.18), z:z+Math.sin(a)*d, s:rc*(0.55+R()*0.2), sy:rc*(0.36+R()*0.12), sz:rc*(0.55+R()*0.2),
+                     ry:R()*6.28, c:[0x4a8a58,0x5a9a60,0x3f7a4c,0x6aa86a][(R()*4)|0]}); }
+    const ns=56+((R()*26)|0);
+    for(let k=0;k<ns;k++){ const a=R()*TAU, d=rc*(0.5+R()*0.55), top=yb+H*(0.62+R()*0.16);
+      const L=Math.max(4,(top-(wy+1.2))*(0.55+R()*0.45));
+      G.strand.push({x:x+Math.cos(a)*d, y:top, z:z+Math.sin(a)*d, s:0.22+R()*0.16, sy:L, ry:R()*6.28, c:[0x6aa86a,0x5a9a5a,0x7ab874,0x4a8a52][(R()*4)|0]}); }
+  };
+  const tunI=(TRACKS[selTrack].tunnels||[]).map(([a,b])=>[a*N-14,b*N+14]);
+  for(let i=70+((R()*10)|0);i<N-30;i+=16+((R()*26)|0)){
+    if(tunI.some(([a,b])=>i>=a&&i<=b)) continue;
+    const sd=R()<0.55?inS:-inS, rc=10+R()*5, wall=(sd*inS>0?HW*2.2:HW*1.28);
+    const lat0=Math.max(MK.toe(i,sd)-2, wall+rc+5)+R()*8, [x,z]=MK.at(i,sd*lat0), yb=Math.max(-2, MK.bankY(i,sd*lat0));
+    willow(x,z,yb,36+R()*18,rc,-2);
+  }
+  for(let k=0;k<16;k++){ const a=k/16*TAU+R()*0.3, rr=MK.shoreR(a)+6+R()*8, x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr, y=MK.shore(x,z);
+    if(y===null) continue; willow(x,z,y,40+R()*20,12+R()*5,-2); }
+  // --- the island's own planting: a poplar screen behind the house, willows on its rim ---
+  { const f0=Math.atan2(SAMP[0].p.z-cz, SAMP[0].p.x-cx)+Math.PI;
+    // two groves flanking the house's ends, so its long faces stay open to both halves of the lap
+    for(const e of [-1,1]) for(let a=f0+e*Math.PI/2-0.45;a<f0+e*Math.PI/2+0.45;a+=0.1+R()*0.06){ const rr=MK.isR(a)*(0.62+R()*0.16), x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr, y=MK.shore(x,z)||0, h=60+R()*40, w=6.5+R()*2.5;
+      pop.push({x, y:y+h*0.52, z, s:w, sy:h*0.5, sz:w, ry:R()*6.28, c:LILY.tree[(R()*2)|0]}); }
+    for(let k=0;k<10;k++){ const a=k/10*TAU+R()*0.4, rr=MK.isR(a)-6, x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr;
+      if(Math.abs(((a-f0+Math.PI*3)%TAU)-Math.PI)<0.35) continue;
+      willow(x,z,MK.shore(x,z)||-0.8,38+R()*16,11+R()*4,-2); } }
+  // --- the pink house with green shutters, lamps lit, across the water ---
+  { // on the island, long side toward the start straight; lit windows on both long faces
+    const hx=cx, hz=cz, hy=MK.shore(hx,hz)||0, face=Math.atan2(SAMP[0].p.x-hx, SAMP[0].p.z-hz);
+    const W=150, H=32, D=30, box=[], shut=[], win=[];
+    const loc=(lx,ly,lz)=>({x:hx+Math.cos(face)*lx+Math.sin(face)*lz, y:hy+ly, z:hz-Math.sin(face)*lx+Math.cos(face)*lz});
+    const b=loc(0,H/2,0); box.push({...b, s:W, sy:H, sz:D, ry:face, c:LILY.house});
+    const rf=loc(0,H+5,0); box.push({...rf, s:W*1.04, sy:10, sz:D*1.12, ry:face, c:LILY.roof, _roof:true});
+    for(let fl=0;fl<2;fl++) for(let k=0;k<13;k++){ const lx=-W/2+8+k*(W-16)/12, ly=8+fl*13;
+      for(const fz of [1,-1]){ const w=loc(lx,ly,fz*(D/2+0.2)); win.push({...w, s:3.6, sy:5.6, sz:0.4, ry:face, c:0xffffff}); }
+      for(const e of [-1,1]) for(const fz of [1,-1]){ const sh=loc(lx+e*3.3,ly,fz*(D/2+0.3)); shut.push({...sh, s:2.1, sy:6.0, sz:0.3, ry:face, c:LILY.shutter}); } }
+    G.house={box, shut, win, hx, hz};
+  }
+  G.pop=pop; G.crown=crown; G.trunk.push(...trunk);
+  // nothing tall stands between the house and the pond
+  if(G.house){ const hx=G.house.hx, hz=G.house.hz, off=v=>Math.hypot(v.x-hx,v.z-hz)>58;
+    for(const k of ['pop','crown','trunk','wCrown','strand']) G[k]=G[k].filter(off); }
+  // --- a pair of lanterns marks the line itself (the bridge stands up the straight) ---
+  for(const sd of [-1,1]){ const L0=MK.Wd(sd)+1.8, [x,z]=MK.at(0,sd*L0); G.lamps.push({x, y:MK.bankY(0,sd*L0)-0.2, z, sc:1.25, ry:0.4}); }
+  // --- stone lanterns along the banks, a few, on an irregular beat ---
+  for(let i=20+((R()*20)|0); i<N; i+=28+((R()*44)|0)){
+    const tnl=(TRACKS[selTrack].tunnels||[]).some(([a,b])=>i>=a*N-6&&i<=b*N+6); if(tnl) continue;
+    const sd=R()<0.5?-1:1, L0=MK.Wd(sd)+1.6+R()*1.2;
+    const [x,z]=MK.at(i,sd*L0); G.lamps.push({x, y:MK.bankY(i,sd*L0)-0.2, z, sc:0.95+R()*0.3, ry:R()*6.28});
+  }
+  // --- ON THE LANE: pads, open lilies and petal rafts carried down the stream by the
+  // current (flat on the water, below the +0.9 marking line; no collision, like Ophelia's
+  // flower chains). Advanced along the centreline in lilyTick, riding the banked surface.
+  { const D=[], FL=[], PE=[];
+    for(let k=0;k<150;k++){ const u=R()*N, lat=(R()-0.5)*2*HW*0.86, kind=R();
+      const it={u, lat, v:(0.9+R()*0.7)/3.47*(1-Math.abs(lat)/HW*0.5), sp:(R()-0.5)*0.25, a0:R()*6.28};
+      if(kind<0.5){ it.s=1.6+R()*2.6; D.push(it); }
+      else if(kind<0.68){ it.s=1.3+R()*1.1; FL.push(it); }
+      else { for(let q=0;q<3+((R()*4)|0);q++) PE.push({u:it.u+(R()-0.5)*0.9, lat:it.lat+(R()-0.5)*3, v:it.v, sp:it.sp*1.6, a0:R()*6.28, s:0.8+R()*0.5}); } }
+    const mk=(geo,list,mat,cols)=>{ const m=new T.InstancedMesh(geo,mat,list.length); m.frustumCulled=false; const c=new T.Color();
+      list.forEach((v,k)=>{ c.setHex(cols[(k*7)%cols.length]).convertSRGBToLinear(); m.setColorAt(k,c); }); trackGroup.add(m); return m; };
+    P.drift=[
+      {m:mk(new T.CylinderGeometry(1,1,1,11,1,false,0.25,TAU-0.5).translate(0,-0.5,0), D, lilyMat(46,0x5a7a66,{lam:1}), LILY.pad), list:D, sy:0.1, y:0.22},
+      {m:mk(G.flowerGeo, FL, lilyMat(50,0x8a6a7a,{vc:true,dbl:true}), LILY.lily), list:FL, sy:0.26, y:0.08},
+      {m:mk(new T.SphereGeometry(1,6,3), PE, lilyMat(30,0x6a4a5a,{lam:1}), [0xffb0d8,0xff7ab8,0xfff0f4,0xffc8e0]), list:PE, sy:0.09, y:0.12, sz:0.55} ];
+  }
+  // --- fireflies: three clusters drifting over the banks, each breathing on its own beat ---
+  P.flies=[];
+  for(let cl=0;cl<3;cl++){
+    const pts=[];
+    for(let k=0;k<260;k++){ const i=(R()*N)|0, sd=R()<0.5?-1:1, lat=sd*(MK.Wd(sd)+2+Math.pow(R(),1.6)*44), [x,z]=MK.at(i,lat);
+      pts.push(x, Math.max(-2,MK.bankY(i,lat))+2+R()*12, z); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pts,3));
+    const m=new T.PointsMaterial({map:TEX_GLOW, color:[0xffe27a,0xfff0a0,0xd8ff8a][cl], size:3.6+cl*0.9, sizeAttenuation:true,
+      transparent:true, opacity:0.6, blending:T.AdditiveBlending, depthWrite:false});
+    const pc=new T.Points(g,m); pc.frustumCulled=false; trackGroup.add(pc);
+    P.flies.push({p:pc, m, ph:cl*2.3, f:0.37+cl*0.23});
+  }
+}
+// flush the shared bags: one draw per family for the whole lap
+function lilyFlush(G, MK){
+  const add=m=>{ trackGroup.add(m); return m; };
+  const keep=(list, rf, yf)=>list.filter(v=>{ const [y0,y1]=yf(v); return MK.clear(v.x, v.z, rf(v), y0, y1); });
+  // pads and flowers too: at the hairpin before the line the banked apron dips BELOW the
+  // pond surface, so a pad lying on the water there would hang over a kart's head
+  G.pads=keep(G.pads, v=>Math.max(v.s,v.sz), v=>[v.y-v.sy, v.y]); G.flowers=keep(G.flowers, v=>v.s, v=>[v.y, v.y+v.sy]);
+  G.stalk=keep(G.stalk, v=>1, v=>[v.y, v.y+v.sy]);  G.head=keep(G.head, v=>1.5, v=>[v.y-v.sy, v.y+v.sy]);
+  G.iLeaf=keep(G.iLeaf, v=>v.sy*0.5, v=>[v.y, v.y+v.sy]); G.iris=keep(G.iris, v=>v.s*1.1, v=>[v.y-v.s, v.y+v.s]);
+  G.az=keep(G.az, v=>Math.max(v.s,v.sz)*1.25, v=>[v.y-v.sy*1.2, v.y+v.sy*1.2]);
+  G.azLeaf=keep(G.azLeaf, v=>Math.max(v.s,v.sz)*1.25, v=>[v.y-v.sy*1.2, v.y+v.sy*1.2]);
+  G.lamps=keep(G.lamps, v=>2.6*v.sc, v=>[v.y, v.y+13*v.sc]);
+  G.aga=keep(G.aga, v=>v.s, v=>[v.y-v.s, v.y+v.s]); G.stem=keep(G.stem, v=>1, v=>[v.y, v.y+v.sy]);
+  G.rose=keep(G.rose, v=>v.s*1.3, v=>[v.y-v.sy, v.y+v.sy]); G.roseLeaf=keep(G.roseLeaf, v=>v.s*1.3, v=>[v.y-v.sy, v.y+v.sy]);
+  G.wCrown=keep(G.wCrown, v=>Math.max(v.s,v.sz)*1.3, v=>[v.y-v.sy, v.y+v.sy]); G.strand=keep(G.strand, v=>v.s+1.2, v=>[v.y-v.sy, v.y]);
+  G.culm=keep(G.culm, v=>v.s+1, v=>[v.y, v.y+v.sy]).filter(v=>{   // the culm's line, sampled
+    for(let f=0;f<=1;f+=0.1){ const h=v.sy*f, dx=-Math.sin(v.rz)*h;   // rz leans toward the road about the tangent
+      const ry=v.ry, nx=Math.cos(ry), nz=-Math.sin(ry);          // local x (= n) after the yaw
+      if(!MK.clear(v.x+nx*dx, v.z+nz*dx, v.s+0.5, v.y+Math.cos(v.rz)*h-1, v.y+Math.cos(v.rz)*h+1)) return false; }
+    return true; });
+  add(lilyCells(new T.CylinderGeometry(1,1,1,9,1,false,0.25,Math.PI*2-0.5).translate(0,-0.5,0), G.pads, lilyMat(46,0x5a7a66,{lam:1}), 380));
+  add(lilyCells(G.flowerGeo, G.flowers, lilyMat(50,0x8a6a7a,{vc:true,dbl:true}), 340));
+  add(lilyCells(new T.SphereGeometry(1,6,4), G.flowers.map(f=>({x:f.x, y:f.y+f.sy*0.34, z:f.z, s:f.s*0.2, sy:f.s*0.12, c:LILY.gold})), macMat(0xffffff,80,0xffe0a0), 340));
+  if(G.stalk.length){ add(lilyCells(new T.CylinderGeometry(0.7,1,1,4).translate(0,0.5,0), G.stalk, lilyMat(20,0x2a3a2a,{sway:0.5,lam:1}), 360));
+    add(lilyCells(new T.CylinderGeometry(1,1,1,6), G.head, macMat(0xffffff,20,0x2a2020), 360)); }
+  const blade=new T.ConeGeometry(1,1,3).translate(0,0.5,0);
+  if(G.iLeaf.length) add(lilyCells(blade, G.iLeaf, lilyMat(24,0x2a4a3a,{sway:0.35,lam:1}), 360));
+  if(G.iris.length) add(lilyCells(G.irisGeo, G.iris, lilyMat(40,0x8a7aaa,{vc:true,dbl:true}), 360));
+  if(G.az.length){ add(lilyCells(G.lump, G.azLeaf, lilyMat(24,0x2a3a30,{vc:true,lam:1}), 440)); add(lilyCells(G.lump2, G.az, lilyMat(34,0x8a4a6a,{vc:true}), 440)); }
+  // a wisteria raceme: a tapering bunch, its rings pinched alternately so it reads as
+  // florets rather than as a smooth cone (smooth cones read as icicles)
+  const hang=(()=>{ const g=new T.CylinderGeometry(1,0.38,1,5,4).translate(0,-0.5,0), p=g.attributes.position;
+    for(let k=0;k<p.count;k++){ const y=p.getY(k), ring=Math.round(-y*4), a=Math.atan2(p.getZ(k),p.getX(k));
+      const f=(ring===4?0.3:ring%2?0.78:1.0)*(1+0.16*Math.sin(a*3+ring*1.7)); p.setX(k,p.getX(k)*f); p.setZ(k,p.getZ(k)*f); }
+    g.computeVertexNormals(); return lilyShade(g,(x,y)=>0.5+0.5*(1+y)); })();
+  if(G.rac.length) add(lilyCells(hang, G.rac, lilyMat(18,0x3a2a4a,{vc:true, sway:0.6, lam:1}), 430));
+  if(G.wLeaf.length) add(lilyCells(G.lump, G.wLeaf, lilyMat(24,0x3a3a4a,{vc:true,lam:1}), 450));
+  if(G.culm.length) add(lilyCells(lilyShade(new T.CylinderGeometry(1,1.12,1,6,14,true).translate(0,0.5,0),
+      (x,y)=>{ const b=(y*14)%2; return (0.55+0.45*y)*(b<0.25?1.0:0.8); }), G.culm, lilyMat(60,0x80c0a0,{vc:true}), 900));
+  if(G.bLeaf.length) add(lilyCells(blade, G.bLeaf, lilyMat(20,0x2a4a3a,{sway:0.4, dbl:true, lam:1}), 430));
+  const popG=new T.SphereGeometry(1,7,9), pp=popG.attributes.position;
+  for(let k=0;k<pp.count;k++){ const y=pp.getY(k), f=y>0?1-0.42*y*y:1-0.15*(-y); pp.setX(k,pp.getX(k)*f); pp.setZ(k,pp.getZ(k)*f); }
+  popG.computeVertexNormals(); lilyShade(popG,(x,y)=>0.6+0.4*(y+1)/2);
+  if(G.pop.length) add(lilyCells(popG, G.pop, lilyMat(4,0x101410,{vc:true,lam:1})));
+  if(G.crown.length) add(lilyCells(G.lump, G.crown, lilyMat(4,0x101410,{vc:true,lam:1})));
+  if(G.trunk.length) add(lilyCells(new T.CylinderGeometry(0.8,1,1,5), G.trunk, macMat(0xffffff,5,0x101010)));
+  if(G.aga.length) add(lilyCells(new T.SphereGeometry(1,7,5), G.aga, lilyMat(30,0x4a4a8a), 400));
+  if(G.stem.length) add(lilyCells(new T.CylinderGeometry(1,1,1,5).translate(0,0.5,0), G.stem, lilyMat(10,0,{lam:1}), 480));
+  if(G.rose.length){ add(lilyCells(G.lump, G.roseLeaf, lilyMat(20,0,{vc:true,lam:1}), 540)); add(lilyCells(G.lump2, G.rose, lilyMat(34,0x8a4a6a,{vc:true}), 540)); }
+  if(G.wCrown.length) add(lilyCells(G.lump, G.wCrown, lilyMat(10,0,{vc:true,lam:1})));
+  if(G.strand.length) add(lilyCells(new T.CylinderGeometry(1,0.55,1,5,1,true).translate(0,-0.5,0), G.strand, lilyMat(10,0,{lam:1,sway:1.1,dbl:true}), 560));
+  if(G.house){ const H=G.house;
+    add(macInst(new T.BoxGeometry(1,1,1), H.box.filter(b=>!b._roof), macMat(0xffffff,12,0x3a2a2a)));
+    add(macInst(new T.ConeGeometry(Math.SQRT1_2,1,4).rotateY(Math.PI/4), H.box.filter(b=>b._roof), macMat(0xffffff,20,0x2a2a3a)));
+    add(macInst(new T.BoxGeometry(1,1,1), H.shut, macMat(0xffffff,20,0x2a3a2a)));
+    // the lit windows ignore the haze: across 300 units of dusk the pink house dissolves into
+    // the fog, and what stays is two rows of warm lamps — the village lights, brought near
+    const wm=new T.MeshBasicMaterial({color:lilyLin(LILY.window), fog:false});
+    add(macInst(new T.BoxGeometry(1,1,1), H.win, wm)); }
+  TRACK_PULSE.lily.lamp=lilyLanterns(G.lamps);
+  TRACK_PULSE.lily.lampPos=G.lamps.map(L=>({x:L.x, y:L.y+7.5*L.sc, z:L.z}));
+}
+function lilyTick(P, tsec){
+  MAC_T.value=tsec;
+  if(P.lampPos){ const cx=camera.position.x, cz=camera.position.z, L=P.lampPos, U=LILY_U.uLamp.value;
+    // the eight nearest lanterns feed the water's reflection streaks
+    L.sort((a,b)=>((a.x-cx)**2+(a.z-cz)**2)-((b.x-cx)**2+(b.z-cz)**2));
+    const k=P.lamp?(1+0.06*Math.sin(tsec*0.9)+0.04*Math.sin(tsec*2.3+1.1)):1;
+    for(let j=0;j<8;j++){ const q=L[j]; if(q) U[j].set(q.x,q.y,q.z, 0.85*k); else U[j].set(0,-999,0,0); } }
+  if(P.cull) for(const c of P.cull){ const bs=c.m.geometry.boundingSphere;
+    c.m.visible = camera.position.distanceTo(bs.center)-bs.radius < c.near; }
+  if(P.bob) for(const b of P.bob){ b.g.position.y=b.y0+Math.sin(tsec*0.7+b.ph)*0.35;
+    b.g.rotation.z=Math.sin(tsec*0.53+b.ph)*0.018; b.g.rotation.x=Math.sin(tsec*0.41+b.ph*1.7)*0.015; }
+  if(P.koi){ const K=P.koi, d=K.d;
+    for(let k=0;k<K.list.length;k++){ const v=K.list[k], a=v.ph+tsec*v.w, sw=Math.sin(tsec*2.3+v.ph)*0.18;
+      const x=v.cx+Math.cos(a)*v.r, z=v.cz+Math.sin(a)*v.r*0.7;
+      // heading along the (squashed) circle: the derivative of the path
+      d.position.set(x, -2.15, z); d.rotation.set(0, Math.atan2(-v.r*Math.sin(a)*v.w, v.r*0.7*Math.cos(a)*v.w)+sw, 0);
+      d.scale.set(v.s*0.9, v.s*0.55, v.s*2.4); d.updateMatrix(); K.mb.setMatrixAt(k,d.matrix);
+      d.position.set(x-Math.sin(d.rotation.y)*v.s*2.1, -1.95, z-Math.cos(d.rotation.y)*v.s*2.1);
+      d.rotation.y+=sw*2.2; d.scale.set(v.s*1.3, v.s*0.25, v.s*1.8); d.updateMatrix(); K.mt.setMatrixAt(k,d.matrix); }
+    K.mb.instanceMatrix.needsUpdate=true; K.mt.instanceMatrix.needsUpdate=true; }
+  if(P.drift){ const o=P.dObj||(P.dObj={q:new T.Quaternion(), q2:new T.Quaternion(), q3:new T.Quaternion(), Y:new T.Vector3(0,1,0), Z:new T.Vector3(0,0,1), m:new T.Matrix4(), p:new T.Vector3(), sc:new T.Vector3()});
+    const N=STEPS, cx=camera.position.x, cz=camera.position.z;
+    for(const D of P.drift){ let dirty=false;
+      for(let k=0;k<D.list.length;k++){ const v=D.list[k], u=((v.u+tsec*v.v)%N+N)%N, i=Math.floor(u), f=u-i;
+        const a=SAMP[i], b=SAMP[(i+1)%N], x=a.p.x+(b.p.x-a.p.x)*f+a.n.x*v.lat, z=a.p.z+(b.p.z-a.p.z)*f+a.n.z*v.lat;
+        if((x-cx)*(x-cx)+(z-cz)*(z-cz)>250000 && v._init) continue;      // far ones keep their last pose
+        v._init=true; dirty=true;
+        const bk=(a.bank||0)+((b.bank||0)-(a.bank||0))*f, y=a.p.y+(b.p.y-a.p.y)*f+Math.sin(bk)*v.lat+D.y;
+        o.q.setFromAxisAngle(o.Y, Math.atan2(a.t.x,a.t.z)); o.q2.setFromAxisAngle(o.Z, bk); o.q3.setFromAxisAngle(o.Y, v.a0+tsec*v.sp);
+        o.q.multiply(o.q2).multiply(o.q3);
+        o.p.set(x,y,z); o.sc.set(v.s, v.s*D.sy, v.s*(D.sz||1)); o.m.compose(o.p,o.q,o.sc); D.m.setMatrixAt(k,o.m); }
+      if(dirty) D.m.instanceMatrix.needsUpdate=true; } }
+  if(P.flies) for(const f of P.flies){
+    f.m.opacity=0.62+0.26*Math.sin(tsec*f.f+f.ph)+0.1*Math.sin(tsec*f.f*2.9+f.ph*1.3);
+    f.p.position.set(Math.sin(tsec*0.11+f.ph)*3, Math.sin(tsec*0.17+f.ph)*1.2, Math.cos(tsec*0.09+f.ph)*3); }
+  if(P.lamp){ const k=1+0.06*Math.sin(tsec*0.9)+0.04*Math.sin(tsec*2.3+1.1);
+    P.lamp.fire.emissive.copy(P.lamp.e0).multiplyScalar(k); P.lamp.halo.opacity=0.46*k; }
 }
 const FELT_PAL=[0xe8e4d9,0xa9b8a0,0x5a6b84,0x1b2350,0x2438a8,0xc4207e,0xe8408c,
                 0xc11b2e,0xe23a2a,0xe86a22,0xe8b22a,0x1f6b70,0x3a1440,0x170a24];
@@ -5260,7 +6126,7 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 185 : 120)));
+  scene.fog.near = TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
   scene.fog.far  = TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
@@ -5295,6 +6161,7 @@ function buildTrack(idx){
   const dawn  =!!TRACKS[idx].dawn;       // ...and on Aurora, the felt valley in negative
   const oph   =!!TRACKS[idx].ophelia;    // ...or as Millais' stream in high summer
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
+  let MK=null;                           // Lily's ground oracle + prop bag, likewise
   applyTrackLighting(bead, pool, coil, paint, felt, macro);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   if(oph) applyOpheliaLighting();        // likewise: every light re-set
@@ -5316,7 +6183,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph;
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro;   // Lily lays its own pond
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -5495,11 +6362,15 @@ function buildTrack(idx){
       skyDome.add(stars);
       TRACK_PULSE.macroLights.push({m:sm2, f1:0.9, f2:3.1, ph:1.1, a1:0.10, a2:0.06, base:0.72});
     }
-    // the pond bed: one thick smeared mint clay slab carrying the water — crown kept well
-    // below the roadbed (r=13 lowered 22), the propagated lesson from Marina and friends
-    const bed=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,10,loop),
-      macMat(MAC.mintDeep, 30, 0x2a4a44));
-    bed.position.y-=22; trackGroup.add(bed);
+    // The pond, the embankment the stream runs along, and the far meadow — and the
+    // placement oracle (bank heights, waterline) every later Lily section stands things on.
+    TRACK_PULSE.lily={};
+    MK=lilyGround(innerSign, ccx, ccz);
+    MK.G={pads:[],flowers:[],stalk:[],head:[],iLeaf:[],iris:[],az:[],azLeaf:[],rac:[],wLeaf:[],
+          culm:[],bLeaf:[],lamps:[],pop:[],crown:[],trunk:[],aga:[],stem:[],rose:[],roseLeaf:[],wCrown:[],strand:[],
+          flowerGeo:lilyFlowerGeo([[8,1.0,0.12,0.25,0.30,0],[7,0.82,0.5,0.35,0.28,0.5],[5,0.55,0.95,0.2,0.24,0.25]],0.08),
+          irisGeo:lilyFlowerGeo([[3,1.0,-0.35,-0.4,0.42,0],[3,0.85,1.25,-0.15,0.3,0.5]],0.05),
+          lump:lilyLumpGeo(1.3), lump2:lilyLumpGeo(2.7,0.36)};
   } else if(pool){
     const wallTex=poolWallTex();
     const basin=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,12,loop),
@@ -5927,22 +6798,26 @@ function buildTrack(idx){
     for(let i=0;i<520;i++) rg.fillRect(Math.random()*64, Math.random()*256, 1+Math.random()*2, 1);
     rg.globalAlpha=1;
   } else if(macro){
-    // POND WATER. Depth comes from the canvas — wobbling bands of deep violet-blue — and
-    // wet comes from the material's white specular, not from painted highlights. The
-    // streaks run ALONG the lane (v) as long thin reflection smears: cyan and white from
-    // the room, one or two pink from the tendrils, mint off the pads.
+    // THE STREAM. A deep indigo channel down the middle and lighter violet-teal shallows
+    // toward each glazed lip, so the lane has a section rather than one flat value; dark
+    // waterweed streaming along the current in the channel; a few pale reflection smears.
+    // The sky's reflection, the far shore and the lanterns are painted on top in the shader
+    // (lilyWaterPatch) because they depend on where you are looking from, not on the lane.
     for(let y=0;y<256;y++){
-      const w2=Math.sin(y*0.045)*7+Math.sin(y*0.013+1.4)*12;
-      const f=(Math.sin((y+w2)*0.055)+1)/2;
-      const r0=0x23+((0x31-0x23)*f|0), g0=0x23+((0x31-0x23)*f|0), b0=0x66+((0x8a-0x66)*f|0);
-      rg.fillStyle='rgb('+r0+','+g0+','+b0+')'; rg.fillRect(0,y,64,1);
+      const w2=Math.sin(y*0.045)*7+Math.sin(y*0.013+1.4)*12, f=(Math.sin((y+w2)*0.055)+1)/2;
+      for(let x=0;x<64;x+=2){
+        const m=Math.min(1,Math.max(0,(Math.abs(x+1-32)/32-0.42)/0.58)), mm=m*m*(3-2*m);
+        const r0=0x1e+(0x0a*f)+mm*(0x5a-0x1e), g0=0x1c+(0x0a*f)+mm*(0x6c-0x1c), b0=0x5c+(0x1c*f)+mm*(0xaa-0x5c);
+        rg.fillStyle='rgb('+(r0|0)+','+(g0|0)+','+(b0|0)+')'; rg.fillRect(x,y,2,1);
+      }
     }
-    const SM=[['rgba(143,224,248,',11],['rgba(255,255,255,',5],['rgba(255,79,184,',5],['rgba(156,255,214,',6]];
+    const SM=[['rgba(30,96,84,',16],['rgba(22,70,70,',10],['rgba(143,224,248,',6],['rgba(255,255,255,',3],['rgba(255,120,190,',4]];
     for(const [col,n2] of SM) for(let i=0;i<n2;i++){
-      const sx=((i*173+col.length*37)%56)+4, sy0=(i*997+col.length*61)%256;
-      const ln=30+((i*211)%70), al=0.14+((i*53)%20)/100;
+      const weed=col.indexOf('(30,')>0||col.indexOf('(22,')>0;
+      const sx=weed ? 14+((i*173+col.length*37)%36) : ((i*173+col.length*37)%56)+4, sy0=(i*997+col.length*61)%256;
+      const ln=weed ? 50+((i*211)%90) : 30+((i*211)%70), al=weed ? 0.35+((i*53)%25)/100 : 0.12+((i*53)%16)/100;
       rg.fillStyle=col+al+')';
-      for(let yy=0;yy<ln;yy++) rg.fillRect(sx+Math.sin((sy0+yy)*0.09)*1.6, (sy0+yy)%256, 1.6, 1);
+      for(let yy=0;yy<ln;yy++) rg.fillRect(sx+Math.sin((sy0+yy)*(weed?0.05:0.09))*(weed?3:1.6), (sy0+yy)%256, weed?2.4:1.6, 1);
     }
   } else if(pool){
     /* the pool floor is drawn by poolTileTex(); nothing to paint into rc here */
@@ -6146,8 +7021,10 @@ function buildTrack(idx){
     : macro
     // wet is a hard WHITE specular (the natatorium lesson); slight violet emissive keeps
     // the water from going black where the key misses it
-    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d0d2a,
-        shininess:140,specular:0xffffff,side:T.DoubleSide})
+    // Lily: the sun's specular was the loudest thing in the frame; the wet now comes from
+    // the painted sky reflection (lilyWaterPatch), so the key's glint is kept small and dim
+    ? lilyWaterPatch(new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d0d2a,
+        shininess:90,specular:0x40344e,side:T.DoubleSide}), 1.0)
     : coil
     // matte, opaque, untinted: the banded texture IS the surface here
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:0,specular:0x000000,
@@ -6193,7 +7070,7 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt && !oph) for(const side of [HW,-HW]){
+  if(!felt && !oph && !macro) for(const side of [HW,-HW]){   // Lily: the glazed lip is its edge
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
     const eg=new T.BufferGeometry(); eg.setAttribute('position',new T.Float32BufferAttribute(ep,3));
@@ -6308,7 +7185,7 @@ function buildTrack(idx){
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  TRACK_PULSE.motesDim=oph?0.45:paint?0.16:felt?0.42:pool?0.55:0;
+  TRACK_PULSE.motesDim=oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -6383,6 +7260,11 @@ function buildTrack(idx){
     trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), natMat(0xffffff,20,0x303030), hb));
     const gl=glowSprite(0xffa040, 70); gl.material.opacity=0.35;
     gl.position.set(sb.p.x, by, sb.p.z); trackGroup.add(gl);
+  } else if(macro){
+    // Monet's green footbridge carries the line, wisteria and all (see lilyBridge)
+    // up the straight at sample 60 — where the bank passes through zero, so the arch needs
+    // no extra height — far enough ahead that the grid's chase camera sees the whole of it
+    const bw=lilyBridge(MK, innerSign, 60); MK.G.rac.push(...bw.rac); MK.G.wLeaf.push(...bw.leaf);
   } else {
   const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
   bar.position.copy(s0.p).add(new T.Vector3(0,14,0)); trackGroup.add(bar);
@@ -6511,37 +7393,8 @@ function buildTrack(idx){
       trackGroup.add(harbBatch(new T.CylinderGeometry(1,1,1,9), harbMat(0xffffff), cans));
     }
   } else if(macro){
-    // LILY PADS lapping both edges — flattened irregular clay discs on the mint ladder,
-    // each at ITS OWN side's wall (28.2 outer / 48.4 infield — the Iris guardrail lesson),
-    // overlapping sizes on an irregular cadence so the shoreline never tiles.
-    const pads=[];
-    for(let i=0;i<STEPS;i+=4){
-      const sp=SAMP[i];
-      for(const side of [-1,1]){
-        if((i/4 + (side>0?0:2)) % 5 === 4) continue;             // gaps — water shows through
-        const infld = side*innerSign>0;
-        const out=(infld ? HW*2.30 : HW*1.36) + ((i*13+(side>0?0:7))%22);
-        const r=5.5+((i*17+(side>0?3:0))%17)*0.55;
-        pads.push({x:sp.p.x+sp.n.x*side*out, y:-1.3-((i*7)%8)*0.12,
-                   z:sp.p.z+sp.n.z*side*out,
-                   s:r, sy:0.9+((i*11)%10)*0.09, sz:r*(0.78+((i*29)%40)*0.01),
-                   ry:((i*31)%628)/100, rz:(((i*23)%12)-6)/100,
-                   c:[MAC.mint,MAC.mintHi,MAC.teal,MAC.mintDeep][(i/4|0)%4]});
-      }
-    }
-    trackGroup.add(macBatch(new T.CylinderGeometry(1,0.92,1,9), pads, 46, 0x6a5a76));
-    // blossoms on roughly every sixth pad — the hot saturated accent that keeps the near
-    // field chromatic while the distance cools into the dusk haze
-    const petals=[], stamens=[];
-    pads.forEach((pd,k2)=>{
-      if(k2%6!==2) return;
-      const bs=1.5+((k2*13)%9)*0.14;
-      petals.push({x:pd.x, y:pd.y+pd.sy*0.5+bs*0.42, z:pd.z,
-                   s:bs, sy:bs*0.62, sz:bs, ry:((k2*31)%628)/100, c:MAC.blossom});
-      stamens.push({x:pd.x, y:pd.y+pd.sy*0.5+bs*0.78, z:pd.z, s:bs*0.34, c:MAC.stamen});
-    });
-    trackGroup.add(macBatch(new T.SphereGeometry(1,8,6), petals, 60, 0x8a4a6a));
-    trackGroup.add(macBatch(new T.SphereGeometry(1,7,5), stamens, 90, 0xaa8a3a));
+    // waterlilies at the waterline, cattails at the toe, irises and azaleas on the bank
+    lilyVerge(MK, innerSign, MK.G);
   } else if(pool){
     // Pale stone coping running the whole rim, the way a pool deck edges the water.
     // ONE CONTINUOUS EXTRUSION on the banked road plane. As instanced boxes it could not
@@ -6769,32 +7622,8 @@ function buildTrack(idx){
       }
     }
   } else if(macro){
-    // THE THICKET: giant houseplant blades leaning in from both verges and crossing
-    // overhead — an open colonnade with sky between the leaves (the felt-tunnel lesson:
-    // enclosure is what makes a tunnel unreadable). rz=-side*lean arcs the blade ACROSS
-    // the road once ry has aligned local z with the tangent.
-    const blades=[];
-    for(const sg of tun){
-      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
-      for(let i=i0;i<=i1;i+=7+((i*13)%5)){
-        const sp=SAMP[i%STEPS], yaw=Math.atan2(sp.t.x,sp.t.z);
-        for(const side of [-1,1]){
-          const out=HW*1.55+((i*11+(side>0?0:5))%10);
-          // rooted in the POND and sized from the deck's own height, so the blade both
-          // stands on something and still clears the road wherever the circuit has climbed
-          const h=(sp.p.y+2)+34+((i*17+(side>0?7:0))%18);
-          const lean=Math.asin(Math.min(0.62, out/h));
-          // deep greens ONLY in the tunnel: the acid edge on a blade this close catches
-          // the low gold key and fog and reads as a pale wall sliding past at 140
-          blades.push({x:sp.p.x+sp.n.x*side*out, y:-2.2+h*0.44,
-                       z:sp.p.z+sp.n.z*side*out,
-                       s:1.6+((i*7)%8)*0.11, sy:h, sz:0.72,
-                       ry:yaw, rz:-side*lean,
-                       c:(i/7|0)%2 ? MAC.leaf : MAC.leafDeep});
-        }
-      }
-    }
-    trackGroup.add(macBatch(new T.ConeGeometry(1,1,5), blades, 22, 0x2a3a2a));
+    // the wisteria walk and the bamboo grove (see lilyTunnels)
+    lilyTunnels(MK, innerSign, MK.G);
   } else if(felt){
     /* THE REED. The old tunnel was a CLOSED torus every three samples, each one wearing
        the same marbled strata map — which is precisely how you build "an unreadable
@@ -6971,7 +7800,8 @@ function buildTrack(idx){
   // ---- inner barrier: a faint glowing membrane set DEEP inside the loop so there's an
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
-  if(loop && !cross && !oph){
+  // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
+  if(loop && !cross && !oph && !TRACKS[idx].macro){
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -7370,77 +8200,10 @@ function buildTrack(idx){
     // one emissive channel for the whole fleet, driven off the ambient beat in frame().
     TRACK_PULSE.push({mat:sailMat, base:0x14110a, amp:0.55});
   } else if(macro){
-    /* THE POND'S CAST, three families:
-       SNAKE PLANTS — clumps of striped blades towering like trees, the scale-flip cue.
-       RUBBER DUCKS — three big landmark ducks (real Groups, so they can bob in frame())
-         plus a scatter of static ducklings. The duck is the image's whole joke: a bath
-         toy taller than you are.
-       LICORICE CURLS — pink open-torus tendrils rising near the plants.
-       All placement side-aware and clear of each side's wall. */
-    const blades=[], curls=[];
-    const stations=[0.04,0.15,0.24,0.38,0.47,0.58,0.63,0.78,0.90,0.96];
-    stations.forEach((u,k)=>{
-      const i2=(Math.round(u*STEPS)+((k*37)%23)-11+STEPS)%STEPS, sp=SAMP[i2];
-      const side=(k%3===1)?1:-1;
-      const infld=side*innerSign>0;
-      const base=(infld ? HW*2.55 : HW*1.55)+((k*29)%50);
-      const bx=sp.p.x+sp.n.x*side*base, bz=sp.p.z+sp.n.z*side*base;
-      const giant=(k===3)?1.8:1;                      // one hero clump, the Iris giant lesson
-      const nB=5+((k*7)%5);
-      for(let b2=0;b2<nB;b2++){
-        const a=b2/nB*Math.PI*2+((k*11)%10)*0.1, rr=(2.5+((b2*13+k)%5))*giant;
-        const h=(30+((b2*17+k*23)%36))*giant;
-        // WIDE and THIN — a sansevieria is a strap, and a narrow round cone is a conifer,
-        // which is the exact mistake the felt sails documented. Acid edge every third.
-        blades.push({x:bx+Math.cos(a)*rr, y:-2.2+h*0.5, z:bz+Math.sin(a)*rr,
-                     s:(3.3+((b2*7)%5)*0.4)*giant, sy:h, sz:0.68*giant,
-                     rx:(((b2*19+k)%14)-7)*0.014, rz:(((b2*23+k)%14)-7)*0.016,
-                     ry:a,
-                     c:b2%3===2 ? MAC.leafEdge : (b2%2 ? MAC.leaf : 0x3fae62)});
-      }
-      const nC=2+(k%3);
-      for(let t2=0;t2<nC;t2++){
-        curls.push({x:bx+((t2*31+k*7)%30)-15, y:-2+((t2*13)%9)*0.6,
-                    z:bz+((t2*17+k*11)%30)-15,
-                    s:5+((t2*23+k)%9), sy:5+((t2*19+k)%9), sz:5+((t2*23+k)%9),
-                    ry:((t2*41+k*13)%628)/100, rz:((t2*29)%628)/100,
-                    c:t2%2 ? MAC.pink : MAC.tendril});
-      }
-    });
-    trackGroup.add(macBatch(new T.ConeGeometry(1,1,5), blades, 22, 0x2a3a2a));
-    trackGroup.add(macBatch(new T.TorusGeometry(1,0.13,6,14,4.3), curls, 70, 0x8a4a5a));
-    // ducks: three landmark Groups that bob, plus static ducklings in one batch
-    TRACK_PULSE.macroDucks=[];
-    [[0.12,1],[0.50,-1],[0.83,1]].forEach(([u,side],k)=>{
-      const i2=Math.round(u*STEPS)%STEPS, sp=SAMP[i2];
-      const infld=side*innerSign>0;
-      const out=(infld ? HW*3.1 : HW*1.9)+k*14;
-      const dx=sp.p.x+sp.n.x*side*out, dz=sp.p.z+sp.n.z*side*out, dy=-1.0;   // afloat on the pond
-      const g2=new T.Group(); g2.position.set(dx,dy,dz);
-      g2.rotation.y=Math.atan2(sp.p.x-dx, sp.p.z-dz);      // faces the road
-      const sc=1+k*0.12;
-      const body=new T.Mesh(new T.SphereGeometry(9*sc,12,10), macMat(MAC.duck,80,0xfff2c0));
-      body.scale.set(1,0.8,1.15); g2.add(body);
-      const head=new T.Mesh(new T.SphereGeometry(5.2*sc,10,8), macMat(MAC.duck,80,0xfff2c0));
-      head.position.set(0,8.5*sc,6.2*sc); g2.add(head);
-      const beak=new T.Mesh(new T.ConeGeometry(2.1*sc,4*sc,8), macMat(MAC.beak,60,0xffd0a0));
-      beak.rotation.x=1.35; beak.position.set(0,7.8*sc,10.6*sc); g2.add(beak);
-      const tail2=new T.Mesh(new T.ConeGeometry(3*sc,6*sc,6), macMat(MAC.duck,80,0xfff2c0));
-      tail2.rotation.x=-1.1; tail2.position.set(0,3.5*sc,-8.5*sc); g2.add(tail2);
-      trackGroup.add(g2);
-      TRACK_PULSE.macroDucks.push({g:g2, y0:dy, ph:k*2.1});
-    });
-    const lings=[];
-    for(let k2=0;k2<9;k2++){
-      const i3=(k2*79)%STEPS, sp2=SAMP[i3];
-      const side2=(k2%2)?1:-1, infld2=side2*innerSign>0;
-      const out2=(infld2 ? HW*2.7 : HW*1.7)+((k2*43)%60);
-      lings.push({x:sp2.p.x+sp2.n.x*side2*out2, y:-0.6,
-                  z:sp2.p.z+sp2.n.z*side2*out2,
-                  s:2.6+((k2*17)%12)*0.2, sy:2.2+((k2*13)%10)*0.18, sz:3.1+((k2*17)%12)*0.2,
-                  ry:((k2*57)%628)/100, c:MAC.duck});
-    }
-    trackGroup.add(macBatch(new T.SphereGeometry(1,9,7), lings, 80, 0xfff2c0));
+    // lily rafts, frogs, koi, the far shore's poplars and the house, lanterns, fireflies;
+    // then every bag the Lily sections filled is flushed as one batch per family
+    lilyScenery(MK, innerSign, MK.G);
+    lilyFlush(MK.G, MK);
   } else if(pool){
     /* THE HALL FLOOR. The old dressing was a comb of identical crimson slabs on a fixed
        14-sample beat; the room they stood in (walls, roof, deck) is now built in the
@@ -12204,18 +12967,14 @@ function frame(now){
   if(TRACK_PULSE.dawnLake) TRACK_PULSE.dawnLake.uniforms.uTime.value=tsec;
   if(TRACK_PULSE.dawnDew) for(const d of TRACK_PULSE.dawnDew)
     d.m.opacity=0.25+0.4*Math.max(0,Math.sin(tsec*1.3+d.ph));
-  // rubber ducks ride a slow swell — the one background motion on the pond, kept at the
-  // edge of noticing
+  // village lights flicker in three phases; stars scintillate more gently
   if(TRACK_PULSE.macroLights) for(const L2 of TRACK_PULSE.macroLights){
     L2.m.opacity=Math.max(0.18, Math.min(1,
       (L2.base||0.55)+(L2.a1||0.26)*Math.sin(tsec*L2.f1+L2.ph)
                      +(L2.a2||0.14)*Math.sin(tsec*L2.f2+L2.ph*1.7)));
   }
-  if(TRACK_PULSE.macroDucks) for(const d2 of TRACK_PULSE.macroDucks){
-    d2.g.position.y=d2.y0+Math.sin(tsec*0.8+d2.ph)*0.9;
-    d2.g.rotation.z=Math.sin(tsec*0.63+d2.ph)*0.05;
-    d2.g.rotation.x=Math.sin(tsec*0.51+d2.ph*1.7)*0.04;
-  }
+  // Lily: frogs ride the swell, koi circle, fireflies breathe, lanterns flicker, wisteria sways
+  if(TRACK_PULSE.lily) lilyTick(TRACK_PULSE.lily, tsec);
   /* Marina. Caustics crawl, ropes ride the swell, the sun shafts breathe as cloud passes
      the low sun, pennants stir in the air-handling draft, pace clocks sweep once a
      minute, and the steam drifts. Every one of these is on a long irrational period and
