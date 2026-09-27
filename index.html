@@ -12799,8 +12799,9 @@ function updateScarf(g, r, now){
 }
 /* ============== LUCK DRAGON KIT (Ryū Kenji, Tony Dragone) ============== *
  * Two racers re-imagined as luck dragons: long, furred, serpentine flyers with a friendly
- * dog-like face, a soft muzzle, big kind eyes, a mane that runs the length of the spine,
- * four small paws tucked under the body and no wings. They glide rather than flap: the
+ * dog-like face on a long mammal muzzle with a hinged jaw, big kind eyes under a brow
+ * ridge, a mane that runs the length of the spine, two clawed forelimbs and two hind legs
+ * that paddle as they fly, and no wings. They glide rather than flap: the
  * body rolls through slow S-waves like a ribbon in the air. Same build-then-dress contract
  * as the woodblock and paper treatments: the base character (Kenji's kabuto, Guido's chain)
  * is built untouched, then dressRyuKenji()/dressTonyDragone() turn him into a dragon
@@ -12851,9 +12852,12 @@ function dragonTextures(){
   // body, then the soft belly band is laid across the underside in normal space.
   const body=(base,edge,hi,belly,seam)=>mk(64,128,(x,w,h)=>{
     x.setTransform(0,1,1,0,0,0); scales(x,h,w,14,base,edge,hi); x.setTransform(1,0,0,1,0,0);
-    x.fillStyle=belly; x.fillRect(0,h*0.25-18,w,36);
-    x.fillStyle=seam; for(let i=0;i<w;i+=8) x.fillRect(i,h*0.25-18,2,36);
-    x.fillRect(0,h*0.25-19,w,2); x.fillRect(0,h*0.25+17,w,2);
+    // belly plates: each one lit at its leading edge and shaded where it tucks under the
+    // next, so the underside reads as overlapping plates rather than a painted stripe
+    for(let i=0;i<w;i+=8){ const gr=x.createLinearGradient(i,0,i+8,0);
+      gr.addColorStop(0,'#fff4d6'); gr.addColorStop(0.25,belly); gr.addColorStop(0.8,belly); gr.addColorStop(1,seam);
+      x.fillStyle=gr; x.fillRect(i,h*0.25-18,8,36); }
+    x.fillStyle=seam; x.fillRect(0,h*0.25-19,w,2); x.fillRect(0,h*0.25+17,w,2);
   },7,1);
   _dragonTex={
     ryuSkin:skin('#3aa68c','#155246','#9ae6cc'),
@@ -12911,25 +12915,45 @@ function dragonQuiffGeo(){
   g.translate(0,0,-0.17); g.rotateY(Math.PI/2);
   return g;
 }
-// A short foreleg with a round paw, growing out along +y from the body (paws are tucked
-// back under the belly by the rig). Toes are three bumps on the paw.
-function dragonLegGeo(){
-  const parts=[];
-  const limb=new T.CylinderGeometry(0.42,0.34,1.5,8); limb.translate(0,0.75,0); parts.push(limb);
-  const paw=new T.SphereGeometry(0.56,10,8); paw.scale(1,0.62,1.25); paw.translate(0,1.55,0.18); parts.push(paw);
-  for(const dx of [-0.3,0,0.3]){ const toe=new T.SphereGeometry(0.2,6,5); toe.translate(dx,1.62,0.78); parts.push(toe); }
-  return dragonMerge(parts);
+// ---- limbs ---------------------------------------------------------------------------
+// Two forelimbs behind the head and two hind legs further down the chain. Each is an upper
+// arm, a forearm and a clawed paw, three instanced draws (one instance per limb) plus the
+// claws and an ink shell for each, all seated on the body chain like the mane so they
+// follow it round a corner. Every part is built along +y from its joint with +z toward the
+// head, so a positive swing reaches forward: the rig just composes shoulder -> elbow ->
+// wrist rotations on top of the seat matrix.
+const LD_L1=1.5, LD_L2=1.35;
+function dragonLimbGeos(claws){
+  const up=[], lo=[], paw=[], cl=[];
+  up.push(new T.SphereGeometry(0.55,10,8));
+  const u=new T.CylinderGeometry(0.34,0.46,LD_L1,9); u.translate(0,LD_L1/2,0); up.push(u);
+  lo.push(new T.SphereGeometry(0.4,9,7));
+  const l=new T.CylinderGeometry(0.27,0.36,LD_L2,9); l.translate(0,LD_L2/2,0); lo.push(l);
+  const p=new T.SphereGeometry(0.52,10,8); p.scale(1.1,0.6,1.2); p.translate(0,0.22,0.16); paw.push(p);
+  const spread=claws>3?1.0:0.75;
+  for(let k=0;k<claws;k++){ const f=k/(claws-1)-0.5;
+    const c=new T.ConeGeometry(0.13,0.62,6); c.translate(0,0.31,0); c.rotateX(0.75);
+    c.rotateZ(-f*spread*0.9); c.translate(f*0.95, 0.3, 0.62); cl.push(c); }
+  const G={up:dragonMerge(up), lo:dragonMerge(lo), paw:dragonMerge(paw), claw:dragonMerge(cl)};
+  const hull=(geos,w)=>{ const pts=[], I=new T.Matrix4(); for(const g of geos) ukiyoHullInto(g,I,w,pts);
+    const o=new T.BufferGeometry(); o.setAttribute('position',new T.Float32BufferAttribute(pts,3)); return o; };
+  G.upO=hull([G.up],0.13); G.loO=hull([G.lo],0.12); G.pawO=hull([G.paw,G.claw],0.08);
+  return G;
 }
 const _dgO=new T.Object3D();
-const _ldM=new T.Matrix4(), _ldI=new T.Matrix4(), _ldR=new T.Matrix4(), _ldQ=new T.Matrix4();
+const _ldM=new T.Matrix4(), _ldI=new T.Matrix4(), _ldR=new T.Matrix4(), _ldQ=new T.Matrix4(),
+  _ldMb=new T.Matrix4(), _ldL1=new T.Matrix4(), _ldL2=new T.Matrix4(), _ldL3=new T.Matrix4();
 const _ldV=new T.Vector3(), _ldT=new T.Vector3(), _ldB=new T.Vector3(), _ldU=new T.Vector3(),
-  _ldD=new T.Vector3(), _ldX=new T.Vector3(), _ldZ=new T.Vector3(), _ldS=new T.Vector3(), _ldUp=new T.Vector3(0,1,0);
+  _ldD=new T.Vector3(), _ldX=new T.Vector3(), _ldZ=new T.Vector3(), _ldS=new T.Vector3(), _ldUp=new T.Vector3(0,1,0),
+  _ldW=new T.Vector3(), _ldC=new T.Vector3();
+const _ldQb=new T.Quaternion(), _ldQh=new T.Quaternion(), _ldE=new T.Euler();
 const LD_N=40, LD_S=12, LD_Y=3.2;   // spine links, sides round the tube, spine height (the head's centre)
 const LD_COS=new Float32Array(LD_S+1), LD_SIN=new Float32Array(LD_S+1);
 for(let j=0;j<=LD_S;j++){ LD_COS[j]=Math.cos(j/LD_S*Math.PI*2); LD_SIN[j]=Math.sin(j/LD_S*Math.PI*2); }
 const ldSmooth=(a,b,t)=>{ const k=Math.max(0,Math.min(1,(t-a)/(b-a))); return k*k*(3-2*k); };
+const ldClamp=(v,a,b)=>v<a?a:(v>b?b:v);
 // Build the long body: one tube + its ink outline (same topology, radius offset by the
-// constant outline width), plus the riders the dresser hands in (mane, legs, tail tuft).
+// constant outline width), plus the riders the dresser hands in (mane, limbs, tail tuft).
 // The sperm tail is taken off the model and wiggleTail() is disarmed for it.
 function dragonBody(g, o){
   const ud=g.userData, N=LD_N, S=LD_S, nv=(N+1)*(S+1);
@@ -12947,34 +12971,46 @@ function dragonBody(g, o){
   mesh.frustumCulled=out.frustumCulled=false; g.add(mesh); g.add(out);
   ud.tailMesh=mesh;                     // the body stands in for the tail (textured: no recolour)
   const rad=new Float32Array(N+1); for(let i=0;i<=N;i++) rad[i]=o.rFn(i/N);
-  for(const m of [o.mane,o.legs]) if(m){ m.frustumCulled=false; g.add(m); }
+  if(o.mane){ o.mane.frustumCulled=false; g.add(o.mane); }
   if(o.tip){ o.tip.matrixAutoUpdate=false; g.add(o.tip); }
+  let limbs=null;
+  if(o.limbs){
+    const G=o.limbs.geos, n=o.limbs.list.length, ink=new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide});
+    const mk=(geo,mat)=>{ const m=new T.InstancedMesh(geo,mat,n); m.frustumCulled=false; g.add(m); return m; };
+    limbs={list:o.limbs.list, up:mk(G.up,o.limbs.mat), lo:mk(G.lo,o.limbs.mat), paw:mk(G.paw,o.limbs.mat),
+      claw:mk(G.claw,o.limbs.clawMat), upO:mk(G.upO,ink), loO:mk(G.loO,ink), pawO:mk(G.pawO,ink),
+      pose:o.limbs.list.map(l=>({a1:l.front?-0.7:-0.9, a2:-0.9, a3:0.5, ab:0.1})), elbow:o.limbs.elbow||null};
+    if(limbs.elbow){ limbs.elbow.frustumCulled=false; g.add(limbs.elbow); }
+  }
   const b={N,S,len:o.len,seg:o.len/N,rad,pos,nor,opos,geo,ogeo,
     sp:new Float32Array((N+1)*3), fr:new Float32Array((N+1)*9), rest:new Float32Array((N+1)*3),
-    cw:null, coil:0, ph:1.3, side:o.side||1, mane:o.mane, maneList:o.maneList||[],
-    legs:o.legs, legList:o.legList||[], tip:o.tip, flame:ud.flame, lx:0, ly:0, lz:0};
+    xa:new Float32Array(N+1), xl:new Float32Array(N+1),     // per-link extra bend / lift (whip, wiggle, coil)
+    cw:null, coil:0, coilAmp:0.55, ph:1.3, side:o.side||1, mane:o.mane, maneList:o.maneList||[],
+    maneRip:0.12, bristle:0, breath:0, pull:0, lph:0, limbs, tip:o.tip, flame:ud.flame, lx:0, ly:0, lz:0};
   // a still pose for everything that never races (previews, turntables): cruising, mid-wave
   dragonRest(b,0); b.sp.set(b.rest); dragonWave(b,0.6,1); dragonSkin(b,0.6);
   return b;
 }
-// The rest pose, in model space at the model's origin (road level): straight out behind
-// the head, or, with `coil`, a lazy S to one side, built by bending a fixed-length chain so
-// the body keeps its length however much it curls.
+// The rest pose, in body space at the model's origin (road level): straight out behind the
+// head or, with `coil`, a lazy S to one side, built by bending a fixed-length chain so the
+// body keeps its length however much it curls. b.xa adds a per-link heading on top (the
+// whip lash, the happy wiggle, the victory coil), so every move keeps the body's length.
 function dragonRest(b, coil){
-  const {N,seg,rest}=b; let x=0,z=0; rest[0]=rest[1]=rest[2]=0;
+  const {N,seg,rest,xa}=b; let x=0,z=0; rest[0]=rest[1]=rest[2]=0;
   for(let i=1;i<=N;i++){
-    const t=(i-0.5)/N, th=coil*b.side*1.2*Math.sin(Math.PI*1.6*t);
+    const t=(i-0.5)/N, th=coil*b.side*b.coilAmp*Math.sin(Math.PI*1.6*t) + xa[i];
     x+=Math.sin(th)*seg; z-=Math.cos(th)*seg; rest[i*3]=x; rest[i*3+1]=0; rest[i*3+2]=z;
   }
 }
 // The travelling wave on top of the path: a vertical roll that only ever lifts the body
 // (0..A), kept low for the first stretch behind the head so the neck never hides the face
-// from the chase camera, plus a little side-to-side swim toward the tail.
+// from the chase camera, plus a little side-to-side swim toward the tail and b.xl, the
+// rig's own lift (the tail raised for a whip, the victory helix).
 function dragonWave(b, sf, damp){
-  const {N,sp,ph}=b, A=(1.8+1.0*sf)*damp;
+  const {N,sp,ph,xl}=b, A=(1.8+1.0*sf)*damp;
   for(let i=0;i<=N;i++){
     const t=i/N, env=A*ldSmooth(0.05,0.4,t)*(1-0.55*t), w=ph - t*Math.PI*2*1.3;
-    sp[i*3+1]+=LD_Y + env*(0.5-0.5*Math.cos(w));
+    sp[i*3+1]+=LD_Y + env*(0.5-0.5*Math.cos(w)) + xl[i];
     sp[i*3]+=(0.2+0.5*sf)*t*Math.sin(w*0.7+0.8);
   }
 }
@@ -13013,7 +13049,9 @@ function dragonSkin(b, sf){
     _ldU.crossVectors(_ldB,_ldT).normalize();
     const f=i*9; fr[f]=_ldT.x; fr[f+1]=_ldT.y; fr[f+2]=_ldT.z; fr[f+3]=_ldB.x; fr[f+4]=_ldB.y; fr[f+5]=_ldB.z;
     fr[f+6]=_ldU.x; fr[f+7]=_ldU.y; fr[f+8]=_ldU.z;
-    const r=rad[i], ro=r+W, cx=sp[i*3], cy=sp[i*3+1], cz=sp[i*3+2];
+    // the chest rises and falls with the breath (the rig's b.breath), the rest of the body holds
+    const t=i/N, r=rad[i]*(1+b.breath*ldSmooth(0,0.08,t)*(1-ldSmooth(0.2,0.42,t))), ro=r+W,
+      cx=sp[i*3], cy=sp[i*3+1], cz=sp[i*3+2];
     for(let j=0;j<=S;j++){
       const co=LD_COS[j], si=LD_SIN[j], k=(i*(S+1)+j)*3;
       const dx=co*_ldB.x+si*_ldU.x, dy=co*_ldB.y+si*_ldU.y, dz=co*_ldB.z+si*_ldU.z;
@@ -13025,39 +13063,56 @@ function dragonSkin(b, sf){
   b.geo.attributes.position.needsUpdate=true; b.geo.attributes.normal.needsUpdate=true;
   b.ogeo.attributes.position.needsUpdate=true;
   if(b.mane){
-    b.maneList.forEach((m,k)=>{ dragonSeat(b,m.t,m.roll,m.lift,m.s,_ldQ,m.tilt); b.mane.setMatrixAt(k,_ldQ); });
+    // the mane streams back with speed and ripples along the spine; bristles when startled
+    const rip=b.maneRip, bs=1+0.35*b.bristle, st=-0.35*sf;
+    b.maneList.forEach((m,k)=>{
+      const tl=(m.tilt||0)+st+rip*Math.sin(b.ph*2.4 - m.t*13 + m.roll)+0.5*b.bristle;
+      dragonSeat(b,m.t,m.roll,m.lift,m.s*bs,_ldQ,tl); b.mane.setMatrixAt(k,_ldQ); });
     b.mane.instanceMatrix.needsUpdate=true;
   }
-  if(b.legs){
-    // paws paddle gently, tucked further back as the speed builds
-    b.legList.forEach((l,k)=>{
-      const tuck=-(0.5+0.7*sf) + Math.sin(b.ph*1.2 + l.side*1.6 + l.t*5)*(0.2+0.15*(1-sf));
-      dragonSeat(b,l.t,l.side*(Math.PI/2+0.6),0.55,l.s||1,_ldQ,tuck); b.legs.setMatrixAt(k,_ldQ);
-    });
-    b.legs.instanceMatrix.needsUpdate=true;
-  }
+  if(b.limbs) dragonLimbs(b);
   if(b.tip){ dragonSeat(b,1,0,0,1,b.tip.matrix); b.tip.matrixWorldNeedsUpdate=true; }
-  if(b.extra) dragonSkinExtra(b);
   if(b.flame){ dragonAt(b,1);                 // the boost flame streams off the tail tip
     b.flame[0].position.copy(_ldV).addScaledVector(_ldT,1.8);
     b.flame[1].position.copy(_ldV).addScaledVector(_ldT,4.5); }
 }
+// Seat each limb: shoulder on the body, then elbow and wrist down the chain of joints.
+// The pose (swing a1, elbow a2, wrist a3, splay ab) is written by the rig every frame.
+function dragonLimbs(b){
+  const L=b.limbs;
+  L.list.forEach((l,k)=>{
+    const p=L.pose[k];
+    dragonSeat(b,l.t,l.side*(Math.PI/2+0.95-p.ab),0.45,l.s||1,_ldL1);
+    _ldL1.multiply(_ldR.makeRotationX(p.a1));
+    L.up.setMatrixAt(k,_ldL1); L.upO.setMatrixAt(k,_ldL1);
+    _ldL2.copy(_ldL1).multiply(_ldR.makeTranslation(0,LD_L1,0)).multiply(_ldQ.makeRotationX(p.a2));
+    L.lo.setMatrixAt(k,_ldL2); L.loO.setMatrixAt(k,_ldL2);
+    _ldL3.copy(_ldL2).multiply(_ldR.makeTranslation(0,LD_L2,0)).multiply(_ldQ.makeRotationX(p.a3));
+    L.paw.setMatrixAt(k,_ldL3); L.claw.setMatrixAt(k,_ldL3); L.pawO.setMatrixAt(k,_ldL3);
+    if(L.elbow){   // Kenji's vermilion flame tufts stream off the elbows
+      _ldL3.copy(_ldL2).multiply(_ldQ.makeRotationX(-2.3)).multiply(_ldR.makeScale(0.8,0.8,0.8));
+      L.elbow.setMatrixAt(k,_ldL3); }
+  });
+  for(const m of [L.up,L.lo,L.paw,L.claw,L.upO,L.loO,L.pawO,L.elbow]) if(m) m.instanceMatrix.needsUpdate=true;
+}
 // Drag the world-space chain behind the head (see the kit header), then bring it back into
-// model space for skinning.
-function dragonChase(b, o, r, dt){
+// model space for skinning. The rest pose is laid out in the BODY frame (Qb: the heading
+// before the head turns to look at something), so a glance turns the head on its neck
+// instead of swinging the whole body round with it.
+function dragonChase(b, o, r, dt, Qb){
   const N=b.N, sc=o.scale.x||1, seg=b.seg*sc, spd=Math.abs(r.spd||0), cw0=b.cw;
-  _ldM.compose(o.position,o.quaternion,o.scale);
-  b.coil+=(Math.max(0,Math.min(1,1-spd/35))*0.85-b.coil)*Math.min(1,dt*1.5);
+  _ldM.compose(o.position,o.quaternion,o.scale); _ldMb.compose(o.position,Qb||o.quaternion,o.scale);
+  b.coil+=((b.coilT!=null?b.coilT:Math.max(0,Math.min(1,1-spd/35))*0.85)-b.coil)*Math.min(1,dt*1.5);
   dragonRest(b,b.coil);
   const rest=b.rest, jump=!cw0 || Math.hypot(o.position.x-b.lx,o.position.y-b.ly,o.position.z-b.lz)>40*sc;
   const cw=b.cw||(b.cw=new Float32Array((N+1)*3));
-  if(jump) for(let i=0;i<=N;i++){ _ldV.fromArray(rest,i*3).applyMatrix4(_ldM); _ldV.toArray(cw,i*3); }
+  if(jump) for(let i=0;i<=N;i++){ _ldV.fromArray(rest,i*3).applyMatrix4(_ldMb); _ldV.toArray(cw,i*3); }
   b.lx=cw[0]=o.position.x; b.ly=cw[1]=o.position.y; b.lz=cw[2]=o.position.z;
-  const base=0.25+2.2*b.coil, neck=r.spinT>0?0:7;
+  const base=0.25+2.2*b.coil+b.pull, neck=r.spinT>0?0:7;
   for(let i=1;i<=N;i++){
     const t=i/N, k=1-Math.exp(-(base+neck*Math.pow(1-t,4))*dt), q=i*3;
     // horizontal pull toward the rest pose: heights stay those of the path
-    _ldV.fromArray(rest,q).applyMatrix4(_ldM);
+    _ldV.fromArray(rest,q).applyMatrix4(_ldMb);
     cw[q]+=(_ldV.x-cw[q])*k; cw[q+2]+=(_ldV.z-cw[q+2])*k;
     // follow the leader: hold the link length
     let dx=cw[q]-cw[q-3], dy=cw[q+1]-cw[q-2], dz=cw[q+2]-cw[q-1], d=Math.hypot(dx,dy,dz);
@@ -13067,38 +13122,454 @@ function dragonChase(b, o, r, dt){
   _ldI.copy(_ldM).invert();
   for(let i=0;i<=N;i++){ _ldV.fromArray(cw,i*3).applyMatrix4(_ldI); _ldV.toArray(b.sp,i*3); }
 }
-// per-frame rig: the lingering body for both, Tony's nostril smoke
-function updateDragon(o, r, now, dt){
-  const dr=o.userData.dragonRig; dt=dt||0;
-  if(dr.body){
-    const b=dr.body, sf=Math.min(1,Math.abs(r.spd||0)/140);
-    const tun=(typeof tunnelAt==='function' && r.prog!=null && tunnelAt(r.prog)) ? 0.45 : 1;
-    b.ph+=dt*(1.5+2.0*sf+(r.boostT>0?2.2:0));
-    dragonChase(b,o,r,dt); dragonWave(b,sf,tun); dragonSkin(b,sf);
+/* ---- THE RIG: a mind on top of the body ------------------------------------------------
+ * Everything below is derived locally from the racer's own state (speed, boost, spin, air,
+ * finish, the whip clock, where the others are), so it plays the same for the player, the
+ * AI and a remote human driven from network snapshots, and nothing extra goes on the wire
+ * but a whip counter. Per frame the rig:
+ *   - reads EVENTS off state edges: a boost starting, a spin starting, a racer crossing its
+ *     line of travel (it passed them / they passed it), the finish;
+ *   - picks someone to LOOK at: the nearest racer in reach that is not straight behind
+ *     (a neck cannot turn that far), held with a little stickiness; the head turns on a
+ *     spring with a hard limit, the pupils do the rest;
+ *   - plays at most one GESTURE (flinch > taunt/double-take > joy), the WHIP, the idle
+ *     (breath, blinks, a bob, a curious tilt on the grid) and the VICTORY roar and coil;
+ *   - poses the head (yaw/pitch/roll about its own centre), the jaw, brows, ears/fins,
+ *     eyelids and pupils, the limbs, the mane, and the extra bend/lift on the body chain.
+ * ---------------------------------------------------------------------------------------- */
+const WHIP_DUR=1.0;
+// the lash, per link (s = seconds since the whip began, less that link's delay): coil away
+// (anticipation), whip across (strike), overshoot and settle (follow-through)
+function ldWhipAng(s){
+  if(s<=0) return 0;
+  if(s<0.22) return -0.7*ldSmooth(0,0.22,s);
+  if(s<0.4){ const u=(s-0.22)/0.18, e=u<0.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2; return -0.7+2.4*e; }
+  return 1.7*Math.exp(-(s-0.4)*5.5)*Math.cos((s-0.4)*7)*(1-ldSmooth(0.6,0.86,s));
+}
+function ldWhipLift(s){
+  if(s<=0) return 0;
+  if(s<0.22) return ldSmooth(0,0.22,s);
+  if(s<0.42) return 1-0.8*ldSmooth(0.22,0.42,s);
+  return 0.2*(1-ldSmooth(0.42,0.8,s));
+}
+function dragonGest(an,k,dur,q,side){
+  const pri={joy:1, taunt:2, double:2, flinch:4};
+  if(an.g && pri[an.g.k]>pri[k]) return;
+  if((k==='taunt'||k==='double')){ if(an.t-an.gcd<2.6) return; an.gcd=an.t; }
+  an.g={k, t:0, dur, q:q||null, side:side>=0?1:-1, fx:false};
+}
+function dragonMind(o, r, dr, an, dt){
+  const b=dr.body, sc=o.scale.x||1, N=b.N, xa=b.xa, xl=b.xl;
+  const st=(typeof state!=='undefined')?state:'race', counting=st==='count';
+  const list=(typeof racers!=='undefined' && racers.indexOf(r)>=0) ? racers : null;
+  an.t+=dt;
+  // ---- events
+  if(r.spinT>0 && !an.pSpin) dragonGest(an,'flinch',0.85,null,Math.random()-0.5);
+  if(r.boostT>0 && !an.pBoost) dragonGest(an,'joy',1.15);
+  an.pSpin=r.spinT>0; an.pBoost=r.boostT>0;
+  // ---- who is around: passes, and the one to look at
+  const h=r.head+(r.slip||0), fx=Math.sin(h), fz=Math.cos(h);
+  let best=null, bs=1e9, ba=0;
+  if(list) for(const q of list){ if(q===r) continue;
+    const dx=q.x-r.x, dz=q.z-r.z, d=Math.hypot(dx,dz), lon=dx*fx+dz*fz, lat=dx*fz-dz*fx;
+    if(d<26*sc && !counting && !r.finished){
+      // which side of our shoulders they are on, with a dead band so running level
+      // doesn't flicker: a flip is a pass
+      const was=an.lon.get(q), now=lon>2?1:(lon<-2?-1:(was||0));
+      if(was && now!==was && Math.abs(lat)<18*sc){
+        if(now<0) dragonGest(an,'taunt',1.5,q,lat);        // we just passed them
+        else dragonGest(an,'double',1.05,q,lat);           // they just passed us
+      }
+      an.lon.set(q,now);
+    } else an.lon.delete(q);
+    if(d>30*sc) continue;
+    const a=Math.atan2(lat,lon);
+    if(Math.abs(a)>2.45) continue;           // straight behind: the neck can't turn that far
+    let s=d*(1.3-0.6*Math.abs(Math.sin(a))); if(q===an.look) s*=0.72;
+    if(s<bs){ bs=s; best=q; ba=a; }
   }
-  if(dr.puffs){
-    const rate=r.boostT>0?2.6:0.9;
-    dr.pt=(dr.pt||0)+dt*rate;
-    for(const q of dr.puffs){
-      const k=(dr.pt+q.off)%1;
-      q.m.position.copy(q.base).addScaledVector(q.dir,k*2.2); q.m.position.y+=k*k*1.2;
-      q.m.scale.setScalar(0.22+1.0*k); q.m.material.opacity=0.62*(1-k)*(1-k);
+  an.look=best;
+  let lookYaw=0, eyeT=0, eyeP=0;
+  if(counting){ lookYaw=ldClamp((r._glance||0)*1.05,-1.1,1.1); eyeT=lookYaw*0.35; }
+  else if(best){
+    const d=Math.hypot(best.x-r.x,best.z-r.z), w=1-ldSmooth(14*sc,30*sc,d);
+    lookYaw=ldClamp(ba,-1.05,1.05)*w; eyeT=ldClamp(ba-an.yaw,-0.55,0.55)*Math.min(1,w*2);
+  } else eyeT=ldClamp(-(r.slip||0)*0.8,-0.4,0.4);          // otherwise the eyes lead the slide
+  // ---- idle life
+  const sf=Math.min(1,Math.abs(r.spd||0)/140), grid=counting||Math.abs(r.spd||0)<6;
+  let gy=0, gp=0, gr=0, jaw=0, brow=0, ear=0, wide=1, snap=false, pull=0, rip=0.12+0.2*sf, bristle=0;
+  b.breath=(grid?0.05:0.025)*Math.sin(an.t*(grid?2.1:3.2));
+  gp+=(grid?0.05:0.025)*Math.sin(an.t*(grid?2.1:3.2)+0.6);           // the head rides the breath
+  if(grid){ gr+=-0.26*lookYaw*(0.65+0.35*Math.sin(an.t*0.9)); ear+=0.35; }   // a curious tilt at the rival
+  else gp+=0.03*Math.sin(b.ph*1.5);
+  an.blinkT-=dt;
+  if(an.blinkT<=0){ an.blinkS=0.15; an.blinkT=Math.random()<0.18?0.3:2.2+Math.random()*3.4; }
+  let blink=1; if(an.blinkS>0){ an.blinkS-=dt; blink=0.08+0.92*Math.abs(Math.cos((1-an.blinkS/0.15)*Math.PI)); }
+  xa.fill(0); xl.fill(0);
+  // ---- limbs: paddle while flying (faster with speed), tuck in a drift, splay in the air,
+  // knead on the grid
+  b.lph+=dt*(2.2+6*sf+(r.air?7:0));
+  const LM=b.limbs;
+  let mode=r.air?'air':(r.drift===1?'tuck':(grid?'idle':'swim'));
+  // ---- the gesture on top
+  const G=an.g;
+  if(G){
+    G.t+=dt; const u=G.t/G.dur, env=Math.sin(Math.min(1,u)*Math.PI);
+    if(G.k==='flinch'){
+      const hit=ldSmooth(0,0.08,G.t)*(1-ldSmooth(0.25,1,u));
+      gp-=0.42*hit; gy+=0.3*Math.sin(G.t*32)*(1-u)*G.side; jaw=Math.max(jaw,0.55*hit);
+      brow-=1.0*hit; ear-=1.2*hit; wide=1-0.55*hit; bristle=hit; mode='flail';
+      for(let i=0;i<=N;i++) xa[i]+=0.3*Math.sin(G.t*24-i*0.3)*(1-u)*(i/N);
+      pull+=6*(1-u);
+    } else if(G.k==='joy'){
+      for(let i=0;i<=N;i++){ const t=i/N; xa[i]+=0.3*env*Math.sin(an.t*13-t*11)*ldSmooth(0.04,0.3,t); }
+      pull+=12*env; rip=0.55*env+rip; gp+=0.09*Math.sin(an.t*15)*env; jaw=Math.max(jaw,0.32*env);
+      ear+=1.0*env; wide=1+0.12*env; brow+=0.5*env;
+    } else if(G.k==='taunt' && G.q){
+      // a look back over the shoulder at who it just passed, a grin, and a signature flourish
+      const q=G.q, a=Math.atan2((q.x-r.x)*fz-(q.z-r.z)*fx,(q.x-r.x)*fx+(q.z-r.z)*fz);
+      const hold=ldSmooth(0,0.15,u)*(1-ldSmooth(0.62,0.9,u));
+      gy+=ldClamp(a,-1.1,1.1)*hold; eyeT=ldClamp(a-an.yaw,-0.55,0.55)*hold+eyeT*(1-hold);
+      gr+=0.22*G.side*hold; jaw=Math.max(jaw,0.36*hold); brow+=0.8*hold; ear+=0.6*hold;
+      dr.flick=hold; dr.smug=hold;
+    } else if(G.k==='double' && G.q){
+      // the double-take: glance at the passer, away, then snap back wide-eyed
+      const q=G.q, a=ldClamp(Math.atan2((q.x-r.x)*fz-(q.z-r.z)*fx,(q.x-r.x)*fx+(q.z-r.z)*fz),-1.05,1.05);
+      const k=u<0.16?1:(u<0.34?0.05:(u<0.85?1:1-ldSmooth(0.85,1,u)));
+      gy+=a*k; snap=true; eyeT=ldClamp(a-an.yaw,-0.55,0.55)*k;
+      const late=u>0.34?ldSmooth(0.34,0.42,u)*(1-ldSmooth(0.8,1,u)):0;
+      wide=1+0.35*late; brow+=1.2*late; jaw=Math.max(jaw,0.25*late); ear+=0.9*late;
+    }
+    if(u>=1) an.g=null;
+  }
+  // ---- the whip (see whipStart / whipTick for the trigger and the hit)
+  const Wh=r._wh;
+  if(Wh){
+    const s=Wh.t, side=Wh.side;
+    gy+=side*0.62*ldSmooth(0,0.12,s)*(1-ldSmooth(0.62,1,s));                     // head turns to the side
+    gp+=0.16*ldSmooth(0,0.2,s)*(1-ldSmooth(0.22,0.3,s)) - 0.14*ldSmooth(0.26,0.34,s)*(1-ldSmooth(0.5,0.85,s));
+    const strike=ldSmooth(0.22,0.3,s)*(1-ldSmooth(0.55,0.8,s));
+    jaw=Math.max(jaw,0.42*strike); brow-=0.9*ldSmooth(0,0.15,s)*(1-ldSmooth(0.6,0.9,s)); ear-=0.7*strike;
+    for(let i=0;i<=N;i++){ const t=i/N, s2=s-0.14*t;
+      xa[i]+=side*ldWhipAng(s2)*ldSmooth(0.04,0.5,t)*(0.65+0.75*t);
+      xl[i]+=ldSmooth(0.3,1,t)*ldWhipLift(s2)*3.4; }
+    pull=Math.max(pull,18); mode='brace'; rip+=0.4*strike; bristle=Math.max(bristle,0.6*strike);
+  }
+  // ---- the finish: a roar, then a triumphant coil with the tail twirled overhead
+  if(r.celebT>0){
+    const ph=6-r.celebT, roar=ldSmooth(0,0.15,ph)*(1-ldSmooth(0.9,1.3,ph));
+    const coil=ldSmooth(0.7,1.8,ph)*(1-ldSmooth(5.2,6,ph));
+    gp-=0.5*roar; jaw=Math.max(jaw,0.95*roar); brow-=0.6*roar; ear-=0.8*roar; wide=Math.min(wide,1-0.4*roar);
+    for(let i=0;i<=N;i++){ const t=i/N;
+      xa[i]+=an.cside*coil*(3.2*Math.pow(t,1.2)+0.7*ldSmooth(0.55,1,t)*Math.sin(an.t*5.5-t*3));
+      xl[i]+=coil*(4.5*Math.pow(t,1.5)+1.4*ldSmooth(0.55,1,t)*Math.cos(an.t*5.5-t*3)); }
+    pull=Math.max(pull,5); mode='cheer'; rip=Math.max(rip,0.5); bristle=Math.max(bristle,0.5*roar);
+    if(!an.pCel){ an.pCel=true; an.roarFx=0; }
+  } else { an.pCel=false; an.cside=(b.side||1); }
+  // ---- grid neighbours: coil away from the nearest racer whose head is behind ours
+  if(counting && list && !an.gridSide){
+    let s=0; for(const q of list){ if(q===r) continue; const dx=q.x-r.x, dz=q.z-r.z, d=Math.hypot(dx,dz);
+      if(d<24 && dx*fx+dz*fz<2) s+=(dx*fz-dz*fx)/(d*d); }
+    an.gridSide=s>0?-1:1; b.side=an.gridSide;
+  }
+  // ---- head spring
+  const ty=ldClamp(lookYaw+gy,-1.2,1.2), kk=snap?300:70, cc=2*Math.sqrt(kk);
+  an.yv+=(kk*(ty-an.yaw)-cc*an.yv)*dt; an.yaw+=an.yv*dt;
+  an.pitch+=(ldClamp(gp,-0.6,0.4)-an.pitch)*Math.min(1,dt*12);
+  an.roll+=(ldClamp(gr,-0.4,0.4)-an.roll)*Math.min(1,dt*6);
+  an.ey+=(eyeT-an.ey)*Math.min(1,dt*(snap?30:16)); an.ep+=(eyeP-an.ep)*Math.min(1,dt*10);
+  an.jaw+=(jaw-an.jaw)*Math.min(1,dt*14); an.brow+=(brow-an.brow)*Math.min(1,dt*12);
+  an.ear+=(ldClamp(ear,-1.2,1.2)-an.ear)*Math.min(1,dt*10); an.wide+=(wide-an.wide)*Math.min(1,dt*16);
+  an.blink=blink;
+  b.pull=Math.max(pull,b.pull*Math.exp(-dt*3));
+  b.maneRip+=(rip-b.maneRip)*Math.min(1,dt*6); b.bristle+=(bristle-b.bristle)*Math.min(1,dt*10);
+  // ---- limb pose targets, eased
+  if(LM) LM.list.forEach((l,k)=>{
+    const P=LM.pose[k], ph=b.lph+(l.side>0?0:Math.PI)+(l.front?0:Math.PI), s=Math.sin(ph), c=Math.cos(ph);
+    let a1,a2,a3,ab;
+    if(mode==='air'){ a1=0.15+0.85*s; a2=-0.55-0.55*c; a3=0.2+0.3*s; ab=0.8; }
+    else if(mode==='tuck'){ a1=-1.5; a2=-1.35; a3=0.3; ab=-0.1; }
+    else if(mode==='idle'){ a1=(l.front?0.45:0.2)+0.12*Math.sin(an.t*2+k); a2=-0.5-0.1*Math.sin(an.t*2+k+1); a3=0.75; ab=0.1; }
+    else if(mode==='flail'){ a1=0.4+0.9*Math.sin(an.t*26+k*1.7); a2=-0.4-0.5*Math.cos(an.t*22+k); a3=0.1; ab=0.9; }
+    else if(mode==='brace'){ a1=l.front?0.35:-0.2; a2=-0.9; a3=0.9; ab=0.55; }
+    else if(mode==='cheer'){ if(l.front){ a1=1.5+0.35*Math.sin(an.t*11+k*Math.PI); a2=-0.25; a3=-0.3; ab=0.7; }
+      else { a1=0.3+0.5*s; a2=-0.7-0.4*c; a3=0.3; ab=0.4; } }
+    else { const A=0.38+0.14*(1-sf); a1=-0.55-0.5*sf+A*s; a2=-0.85-0.45*c; a3=0.45+0.3*s; ab=0.12; }
+    const e=Math.min(1,dt*(mode==='flail'?20:9));
+    P.a1+=(a1-P.a1)*e; P.a2+=(a2-P.a2)*e; P.a3+=(a3-P.a3)*e; P.ab+=(ab-P.ab)*e;
+  });
+}
+// Head pose, about the head's own centre (so a nod does not slide the face around).
+function dragonHead(o, an){
+  const sc=o.scale.x||1;
+  _ldQb.copy(o.quaternion);
+  _ldE.set(an.pitch, an.yaw, an.roll, 'YXZ'); _ldQh.setFromEuler(_ldE);
+  o.quaternion.multiply(_ldQh);
+  _ldC.set(0,HEAD_CY*sc,0).applyQuaternion(_ldQb); _ldW.set(0,HEAD_CY*sc,0).applyQuaternion(o.quaternion);
+  o.position.add(_ldC).sub(_ldW);
+}
+// Face: jaw, lids, pupils, brows, ears/fins, Kenji's whiskers.
+function dragonFace(o, r, dr, an){
+  const F=dr.face, ud=o.userData; if(!F) return;
+  // the stock expression system (syncObjects scales the mouth) also opens the jaw: its
+  // shocked "O", the boost grin and the celebration WOO all read on the real jaw now
+  const mo=ud.mouth, mb=ud.mouthBase;
+  const ex=(mo&&mb&&mb.y)?ldClamp((mo.scale.y/mb.y-1)*0.45,0,0.6):0;
+  F.jaw.rotation.x=Math.max(an.jaw,ex)*0.62+0.02*(1+Math.sin(an.t*2.1));
+  F.cav.scale.y=0.15+2.6*Math.max(an.jaw,ex);
+  F.cav.rotation.x=F.jaw.rotation.x*0.5;
+  for(let i=0;i<2;i++){
+    const L=F.lids[i]; L.scale.y=an.blink*an.wide; L.scale.x=1+(an.wide-1)*0.5;
+    F.gaze[i].rotation.set(an.ep, an.ey, 0);
+  }
+  for(const B of F.brows){ B.o.position.y=B.y+an.brow*0.22; B.o.rotation.z=B.rz+B.sx*an.brow*-0.18; }
+  for(const E of F.ears) E.set(an.ear);
+  if(dr.flick>0.01 && ud.sway) for(const s of ud.sway)
+    if(s.whisker){ s.o.rotation.z+=dr.flick*0.5*Math.sin(an.t*26+s.ph); s.o.rotation.x-=dr.flick*0.45; }
+  dr.flick*=0.9;
+}
+// Particles for the whip, the taunt and the roar, in world space through the model matrix.
+function dragonFx(o, r, dr, an, dt){
+  if(typeof emit!=='function') return;
+  const b=dr.body, sc=o.scale.x||1, M=_ldM, ryu=dr.kind==='ryu';
+  const near=r.you || (typeof camera!=='undefined' && camera.position.distanceToSquared(o.position)<260*260);
+  if(!near) return;
+  const Wh=r._wh;
+  if(Wh){
+    const s=Wh.t;
+    if(s>0.2 && s<0.72){   // a streak off the tail tip through the whole arc
+      for(let k=0;k<2;k++){
+        const tt=0.93+0.035*k; dragonAt(b,tt); _ldW.copy(_ldV).applyMatrix4(M);
+        if(ryu) emit(_ldW.x,_ldW.y,_ldW.z,{color:k?0xdff6ff:0x8fd8ff, life:0.55, vx:(Math.random()-0.5)*14, vy:6+Math.random()*10,
+          vz:(Math.random()-0.5)*14, s0:2.4*sc, s1:0.6*sc, grav:46, op:0.85});
+        else emit(_ldW.x,_ldW.y,_ldW.z,{color:k?0x9a8e86:0xff8a2a, life:k?0.8:0.45, vx:(Math.random()-0.5)*10, vy:k?5:12+Math.random()*8,
+          vz:(Math.random()-0.5)*10, s0:(k?3.2:1.6)*sc, s1:(k?7:0.2)*sc, grav:k?-4:30, op:k?0.45:0.95});
+      }
+    }
+    if(s>=0.24 && !Wh.snd){ Wh.snd=true; if(r.you && typeof SFX!=='undefined') SFX.whip(); }
+    if(s>=0.52 && !Wh.crack){ Wh.crack=true;   // the crack at the tip
+      dragonAt(b,1); _ldW.copy(_ldV).applyMatrix4(M);
+      if(ryu){ burst(_ldW.x,_ldW.y,_ldW.z,0xbfe9ff,16,50,0.7,3*sc); burst(_ldW.x,_ldW.y,_ldW.z,0xffffff,6,30,0.4,2*sc); }
+      else { burst(_ldW.x,_ldW.y,_ldW.z,0xff9a3a,14,55,0.55,2.4*sc); burst(_ldW.x,_ldW.y,_ldW.z,0x8a8078,8,24,0.9,6*sc); }
+      if(r.you && typeof kickShake==='function') kickShake(0.35);
     }
   }
+  // the taunt: Tony blows a smoke ring's worth out of both nostrils, Kenji shakes a little
+  // rain shimmer off his whiskers
+  const G=an.g;
+  if(G && G.k==='taunt' && G.t>0.15 && G.t<0.9 && dr.face){
+    _ldW.copy(dr.face.nose).applyMatrix4(M);
+    if(ryu){ if(Math.random()<0.7) emit(_ldW.x+(Math.random()-0.5)*9*sc,_ldW.y+4*sc+Math.random()*3*sc,_ldW.z+(Math.random()-0.5)*9*sc,
+      {color:0xbfe9ff, life:0.7, vx:0, vy:-18, vz:0, s0:1.8*sc, s1:0.4*sc, grav:10, op:0.9}); }
+    else if(!G.fx){ G.fx=true; for(let k=0;k<10;k++) emit(_ldW.x,_ldW.y,_ldW.z,{color:0xb8b0a8, life:1.1,
+      vx:(Math.random()-0.5)*16, vy:6+Math.random()*6, vz:(Math.random()-0.5)*16, s0:2*sc, s1:8*sc, grav:-3, op:0.35}); }
+  }
+  // the roar: embers (Tony) or a burst of spray (Kenji) out of the open jaw
+  if(r.celebT>0 && dr.face){ const ph=6-r.celebT;
+    if(ph>0.15 && ph<0.95){ _ldW.copy(dr.face.nose).applyMatrix4(M);
+      _ldD.set(0,0.25,1).applyQuaternion(o.quaternion);
+      emit(_ldW.x,_ldW.y-0.5*sc,_ldW.z,{color:ryu?(Math.random()<0.5?0x9fe4ff:0xffffff):(Math.random()<0.6?0xff8a2a:0xffd24a),
+        life:0.6, vx:_ldD.x*40+(Math.random()-0.5)*14, vy:_ldD.y*40+Math.random()*8, vz:_ldD.z*40+(Math.random()-0.5)*14,
+        s0:2.6*sc, s1:0.4*sc, grav:ryu?40:10, op:0.9}); } }
 }
-// The soft dog muzzle both dragons share: a rounded snout under the eyes, a nose pad on
-// the tip, and the stock mouth moved onto its front as a smile (expressions keep working:
-// they only scale it). Returns the nose position (for nostrils, whiskers and smoke).
-function dragonMuzzle(g, mat, padMat){
+// The long shadow: soft blobs along the chain, each dropped onto the road right beneath
+// its point of the body (the course samples near the racer, banking included), shrinking
+// and fading with height so the whole body reads as hovering over the road, and on a jump
+// the shadow stays on the ground. One instanced draw; alpha rides the instance colour.
+const LD_SH=10;
+function dragonShadow(o, r, dr){
+  if(!r.shadow || !r.shadow.parent) return;
+  const b=dr.body, sc=o.scale.x||1;
+  if(!dr.shadow){
+    const g=new T.PlaneGeometry(1,1); g.rotateX(-Math.PI/2);
+    const m=new T.MeshBasicMaterial({map:TEX_SHADOW, color:0x000000, transparent:true, depthWrite:false});
+    m.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n#ifdef USE_INSTANCING_COLOR\n\tdiffuseColor.a *= vColor.r;\n#endif'); };
+    const im=new T.InstancedMesh(g,m,LD_SH); im.frustumCulled=false;
+    for(let k=0;k<LD_SH;k++) im.setColorAt(k,new T.Color(1,1,1));
+    r.shadow.parent.add(im); dr.shadow=im; r._dshadow=im;
+  }
+  const im=dr.shadow, local=!r.remote && typeof SAMP!=='undefined' && SAMP.length;
+  let hint=r.idx||0;
+  for(let k=0;k<LD_SH;k++){
+    const t=0.06+k*0.094, rad=dragonAt(b,t);
+    _ldW.copy(_ldV).applyMatrix4(_ldM);                      // world point on the spine
+    _ldD.copy(_ldT).transformDirection(_ldM);
+    let gy;
+    if(local){
+      let bi=hint, bd=1e18;
+      for(let j=-9;j<=3;j++){ let i=hint+j; if(trackLoop) i=(i+STEPS)%STEPS; else i=Math.max(0,Math.min(STEPS-1,i));
+        const p=SAMP[i].p, d=(p.x-_ldW.x)*(p.x-_ldW.x)+(p.z-_ldW.z)*(p.z-_ldW.z); if(d<bd){ bd=d; bi=i; } }
+      hint=bi; const s=SAMP[bi], lat=(_ldW.x-s.p.x)*s.n.x+(_ldW.z-s.p.z)*s.n.z;
+      gy=s.p.y+Math.sin(s.bank||0)*lat;
+    } else gy=(r.surfY!=null?r.surfY:r.y-HOVER_H);
+    const hgt=Math.max(0,_ldW.y-gy), f=ldClamp(1-hgt/(80*sc),0.3,1);
+    const w=(2.2*rad+1.4)*sc*(0.6+0.4*f);
+    _dgO.position.set(_ldW.x, gy+0.13, _ldW.z);
+    _dgO.rotation.set(0,Math.atan2(_ldD.x,_ldD.z),0);
+    _dgO.scale.set(w,1,w*1.7); _dgO.updateMatrix(); im.setMatrixAt(k,_dgO.matrix);
+    im.instanceColor.setXYZ(k,0.62*f,0,0);
+  }
+  im.instanceMatrix.needsUpdate=true; im.instanceColor.needsUpdate=true;
+}
+function dragonAnimState(){
+  return {t:0, yaw:0, yv:0, pitch:0, roll:0, ey:0, ep:0, jaw:0, brow:0, ear:0, wide:1, blink:1,
+    blinkT:1.5+Math.random()*2, blinkS:0, g:null, gcd:-9, lon:new Map(), look:null,
+    pBoost:false, pSpin:false, pCel:false, cside:1, gridSide:0};
+}
+// per-frame rig: the mind, the head, the lingering body, the face, fx, shadow, smoke
+function updateDragon(o, r, now, dt){
+  const dr=o.userData.dragonRig; dt=dt||0;
+  const an=dr.an||(dr.an=dragonAnimState());
+  if(r._wh){ r._wh.t+=dt; if(r._wh.t>=WHIP_DUR) r._wh=null; }
+  if(typeof state!=='undefined' && state!=='count') an.gridSide=0;
+  const b=dr.body;
+  dragonMind(o,r,dr,an,dt);
+  dragonHead(o,an);
+  const sf=Math.min(1,Math.abs(r.spd||0)/140);
+  const tun=(typeof tunnelAt==='function' && r.prog!=null && tunnelAt(r.prog)) ? 0.45 : 1;
+  // Inside a berm tube the chase camera closes in to 19 behind the head, which is inside a
+  // 20-unit body: the player's own dragon rides a gentle S there so its tail stays in frame
+  // instead of filling it.
+  const tube=r.you && typeof TRACKS!=='undefined' && typeof selTrack!=='undefined' && TRACKS[selTrack] && TRACKS[selTrack].berm && tun<1;
+  b.coilT=tube?0.8:null; b.coilAmp=tube?1.0:0.55; if(tube) b.pull=Math.max(b.pull,9);
+  b.ph+=dt*(1.5+2.0*sf+(r.boostT>0?2.2:0));
+  dragonChase(b,o,r,dt,_ldQb); dragonWave(b,sf,tun); dragonSkin(b,sf);
+  dragonFace(o,r,dr,an);
+  dragonFx(o,r,dr,an,dt);
+  dragonShadow(o,r,dr);
+  if(dr.puffs){
+    const rate=(r.boostT>0?2.6:0.9)+(dr.smug||0)*3;
+    dr.pt=(dr.pt||0)+dt*rate;
+    for(const q of dr.puffs){
+      const k=(dr.pt+q.off)%1, big=1+(dr.smug||0)*0.8;
+      q.m.position.copy(q.base).addScaledVector(q.dir,k*2.2*big); q.m.position.y+=k*k*1.2;
+      q.m.scale.setScalar((0.22+1.0*k)*big); q.m.material.opacity=0.62*(1-k)*(1-k);
+    }
+    dr.smug=(dr.smug||0)*0.9;
+  }
+}
+// ---- the skull -------------------------------------------------------------------------
+// A long mammal muzzle instead of a ball on an egg: a tapered snout that runs from under
+// the eyes (the stop) forward to a rounded nose, with a hinged lower jaw under it, a dark
+// mouth that shows when the jaw drops, a tongue, fangs, and ink lines on both. The stock
+// mouth stays on the front as the lip line, so every expression keeps working; the rig
+// ALSO opens the jaw off it (and off its own gestures).
+function dragonTaper(Z0,Z1,W0,W1,top,bot,ZC){
+  return gridGeo(24,18,(u,v)=>{
+    const z=Z0+(Z1-Z0)*v, cap=v>ZC?Math.sqrt(Math.max(0,1-Math.pow((v-ZC)/(1-ZC),2))):1;
+    const W=(W0+(W1-W0)*v)*cap, t0=top(v), b0=bot(v), yc=(t0+b0)/2, hh=(t0-b0)/2*cap;
+    const a=-u*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+    const px=Math.sign(ca)*Math.pow(Math.abs(ca),0.75), py=Math.sign(sa)*Math.pow(Math.abs(sa),sa<0?0.55:0.8);
+    return [W*px, yc+hh*py, z];
+  });
+}
+function dragonInk(mesh, w){
+  const pts=[]; ukiyoHullInto(mesh.geometry, new T.Matrix4(), w, pts);
+  const kg=new T.BufferGeometry(); kg.setAttribute('position', new T.Float32BufferAttribute(pts,3));
+  const k=new T.Mesh(kg, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); k.userData.isOutline=true;
+  mesh.add(k); return k;
+}
+function dragonSnout(g, o){
   const ud=g.userData;
-  const m=new T.Mesh(new T.SphereGeometry(1,20,14), mat);
-  m.position.set(0,2.05,5.05); m.scale.set(1.85,1.15,1.95); g.add(m);
-  const pad=new T.Mesh(new T.SphereGeometry(1,14,10), padMat);
-  pad.position.set(0,2.78,6.7); pad.scale.set(0.62,0.36,0.42); pad.rotation.x=-0.35; g.add(pad);
+  const snout=new T.Mesh(dragonTaper(2.2,8.4,2.05,1.2, v=>3.2-0.32*v+0.12*Math.sin(Math.PI*v), v=>1.8+0.1*v, 0.8), o.mat);
+  g.add(snout); dragonInk(snout,0.09);
+  const pad=new T.Mesh(new T.SphereGeometry(1,14,10), o.pad);
+  pad.position.set(0,2.74,8.12); pad.scale.set(0.6,0.34,0.36); pad.rotation.x=-0.5; g.add(pad);
+  // the jaw hangs from a hinge under the cheeks
+  const jaw=new T.Group(); jaw.position.set(0,1.86,2.6); g.add(jaw);
+  const jm=new T.Mesh(dragonTaper(0.2,5.5,1.85,1.0, ()=>0.06, v=>-0.85+0.3*v, 0.7), o.mat);
+  jaw.add(jm); dragonInk(jm,0.08);
+  const tongue=new T.Mesh(new T.SphereGeometry(1,12,8), o.tongue);
+  tongue.position.set(0,0.02,3.0); tongue.scale.set(0.78,0.2,1.8); jaw.add(tongue);
+  // the mouth: a dark cavity between the jaws, opened with them (half the jaw's angle)
+  const cav=new T.Group(); cav.position.copy(jaw.position); g.add(cav);
+  const cm=new T.Mesh(new T.SphereGeometry(1,14,8), o.gum);
+  cm.position.set(0,0,2.9); cm.scale.set(1.3,0.36,2.55); cav.add(cm);
+  const fangs=[];
+  for(const sx of [-1,1]){
+    if(!(o.noFang===sx)){ const f=new T.Mesh(new T.ConeGeometry(0.16,0.6,6), o.fang);
+      f.position.set(sx*0.72,1.62,7.42); f.rotation.x=Math.PI; g.add(f); fangs.push(f); }
+    const lf=new T.Mesh(new T.ConeGeometry(0.12,0.42,6), o.fang);
+    lf.position.set(sx*0.95,0.2,4.2); jaw.add(lf);
+  }
+  // the stock mouth rides the front of the muzzle as the smiling lip line
   const mo=ud.mouth;
-  mo.position.set(0,2.5,6.95); mo.rotation.set(0.2,0,Math.PI*1.075);
-  mo.scale.x*=0.76;                     // narrower: the muzzle front is rounder than the face
-  return new T.Vector3(0,2.8,7.08);
+  mo.position.set(0,2.02,8.05); mo.rotation.set(0.45,0,Math.PI*1.075);
+  mo.scale.x*=0.5; mo.scale.y*=0.5;
+  return {nose:new T.Vector3(0,2.85,8.3), jaw, cav, snout, fangs};
+}
+// The eyes go into a lid pivot each (blinks, a widened stare), with the pupil in a gaze
+// pivot inside it (so the look rolls the pupil round the eyeball) and the catch-light on
+// the lid (it blinks with the eye but stays where the light is).
+function dragonEyeRig(g){
+  const ud=g.userData, lids=[], gaze=[];
+  const shines=g.children.filter(c=>c.isMesh && c.geometry.type==='SphereGeometry' &&
+    c.geometry.parameters.radius===0.24 && c.material.isMeshBasicMaterial);
+  ud.eyes.forEach((e,i)=>{
+    const lid=new T.Group(); lid.position.copy(e.position); g.add(lid);
+    e.position.set(0,0,0); lid.add(e);
+    const gz=new T.Group(); lid.add(gz);
+    const p=ud.pupils[i]; p.position.sub(lid.position); gz.add(p);
+    for(const s of shines) if(s.parent===g && s.position.distanceTo(lid.position)<2.2){ s.position.sub(lid.position); lid.add(s); }
+    lids.push(lid); gaze.push(gz);
+  });
+  return {lids, gaze};
+}
+// A heavy scaled ridge arched over each eye: the brow a real skull has. Each sits in its
+// own pivot at the eye so it can lift (surprise) or knit (the whip, a flinch).
+function dragonBrows(g, mat, k){
+  const out=[];
+  g.userData.eyes.forEach(e=>{
+    const c=e.parent.position, sx=Math.sign(c.x)||1;
+    const piv=new T.Group(); piv.position.copy(c); g.add(piv);
+    const P=(x,y,z)=>new T.Vector3(sx*x*k,y*k,z);
+    const curve=new T.CatmullRomCurve3([P(1.55,0.45,0.1),P(1.05,1.3,0.45),P(0.1,1.52,0.62),P(-0.8,1.1,0.72)]);
+    const m=new T.Mesh(taperTube(curve,14,6,t=>(0.1+0.24*Math.sin(Math.PI*Math.min(1,t*1.15)))*k), mat);
+    piv.add(m);
+    out.push({o:piv, y:c.y, rz:0, sx});
+  });
+  return out;
+}
+// Tony's ears: a luck dragon's soft dog ears, bronze outside and pink in, that perk up,
+// swivel and flatten back. One of Guido's gold hoops hangs off each.
+function dragonEars(g, outMat, inMat){
+  const out=[];
+  for(const sx of [-1,1]){
+    const piv=new T.Group(); piv.position.set(sx*3.0,4.3,-1.3); g.add(piv);
+    const a=new T.ConeGeometry(0.85,2.7,10); a.scale(1,1,0.42); a.translate(0,1.35,0);
+    const m=new T.Mesh(a,outMat); piv.add(m); dragonInk(m,0.07);
+    const b=new T.ConeGeometry(0.6,2.0,10); b.scale(1,1,0.22); b.translate(0,1.15,0.2);
+    piv.add(new T.Mesh(b,inMat));
+    const hoop=g.children.find(c=>c.isMesh && c.geometry.type==='TorusGeometry' && c.geometry.parameters.radius===0.55 && Math.sign(c.position.x)===sx);
+    if(hoop){ piv.add(hoop); hoop.position.set(0,0.55,0.3); hoop.rotation.set(0,0,Math.PI/2); }
+    out.push({set(e){ const back=Math.max(0,-e), perk=Math.max(0,e);
+      piv.rotation.set(-0.45-0.8*back+0.25*perk, 0, -sx*(1.0-0.38*perk+0.3*back)); }});
+    out[out.length-1].set(0);
+  }
+  return out;
+}
+// Kenji's fin-ears: a Japanese dragon's webbed cheek fins, three gold rays in a jade
+// membrane, that fan out when he's curious and fold flat back when he strikes or flinches.
+function dragonFins(g, memMat, rayMat){
+  const s=new T.Shape();
+  s.moveTo(0,0.4); s.lineTo(2.5,1.6); s.quadraticCurveTo(2.2,0.95,3.0,0.5);
+  s.quadraticCurveTo(2.35,-0.05,2.5,-0.95); s.quadraticCurveTo(1.2,-0.55,0,-0.4); s.lineTo(0,0.4);
+  const mem=new T.ExtrudeGeometry(s,{depth:0.08, bevelEnabled:false, curveSegments:6}); mem.translate(0,0,-0.04);
+  const rays=[];
+  for(const [x,y] of [[2.5,1.6],[3.0,0.5],[2.5,-0.95]]){
+    const L=Math.hypot(x,y), c=new T.CylinderGeometry(0.04,0.13,L,5); c.translate(0,L/2,0);
+    c.rotateZ(-Math.atan2(x,y)); rays.push(c); }
+  const rayGeo=dragonMerge(rays), out=[];
+  for(const sx of [-1,1]){
+    const piv=new T.Group(); piv.position.set(sx*3.05,3.05,0.7); g.add(piv);
+    const m=new T.Mesh(mem,memMat); piv.add(m); dragonInk(m,0.06);
+    piv.add(new T.Mesh(rayGeo,rayMat));
+    const base=Math.atan2(0.83,sx*0.55);
+    out.push({set(e){ piv.rotation.set(0, base+sx*(-e)*0.42, sx*0.12*e - 0.08); }});
+    out[out.length-1].set(0);
+  }
+  return out;
 }
 
 // ---- Ryū Kenji ------------------------------------------------------------------------
@@ -13110,8 +13581,13 @@ function dressRyuKenji(g){
   const flameGold=new T.MeshPhongMaterial({color:0xf2b83a, emissive:0x4a2a04, shininess:30, side:T.DoubleSide});
   const cream=new T.MeshPhongMaterial({color:0xf4e4b4, emissive:0x3a3018, shininess:30, side:T.DoubleSide});
   const whisk=new T.MeshPhongMaterial({color:0xf4e4b4, emissive:0x3a3018, shininess:40});
+  const ivory=new T.MeshPhongMaterial({color:0xfbf3dc, emissive:0x3a3428, shininess:80});
   const jade=new T.MeshPhongMaterial({color:0x3aa68c, emissive:0x061e18, shininess:60});
+  const jadeDk=new T.MeshPhongMaterial({color:0x237a64, emissive:0x04140f, shininess:60});
   const muzzle=new T.MeshPhongMaterial({color:0x9fdcc4, emissive:0x0c2a20, shininess:30});
+  const fin=new T.MeshPhongMaterial({color:0x8fd6bc, emissive:0x0c2a20, shininess:50, side:T.DoubleSide});
+  const gum=new T.MeshPhongMaterial({color:0x5a1418, emissive:0x1a0404});
+  const tongue=new T.MeshPhongMaterial({color:0xd8687a, emissive:0x2a0a0e, shininess:40});
   const dark=new T.MeshPhongMaterial({color:0x0c2a24, emissive:0x020806});
   const FACE=Math.PI/2, V=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k));
   // --- the crescent maedate comes off; its gold grows back as a pair of antlers, rooted in
@@ -13136,20 +13612,24 @@ function dressRyuKenji(g){
   const round=new T.SphereGeometry(0.8,14,10); round.scale(1,0.42,1);   // flat disc after the pupil's x-turn
   const iris=new T.MeshPhongMaterial({color:0x1e140c, emissive:0x0a0604, shininess:80});
   for(const p of ud.pupils){ p.geometry=round; p.material=iris; }
-  // --- the soft muzzle, with barbels off its sides streaming back past the helmet. Hung
-  // from pivots on the sway rig, so they lift with speed and swing out in a slide.
-  const nose=dragonMuzzle(g, muzzle, jade);
+  // --- the long muzzle and jaw, jade nose, ivory fangs; barbels off the sides of the
+  // muzzle streaming back past the helmet, hung from pivots on the sway rig (they lift with
+  // speed, swing out in a slide and flick when he shows off)
+  const F=dragonSnout(g,{mat:muzzle, pad:jade, gum, tongue, fang:ivory});
   const sway=ud.sway||(ud.sway=[]);
   for(const sx of [-1,1]){
-    const piv=new T.Group(); piv.position.set(sx*1.35,2.55,6.2); g.add(piv);
+    const piv=new T.Group(); piv.position.set(sx*1.0,2.4,7.3); g.add(piv);
     const c=new T.CatmullRomCurve3([new T.Vector3(0,0,0),new T.Vector3(sx*1.4,-0.25,-0.1),
       new T.Vector3(sx*3.2,-0.7,-1.5),new T.Vector3(sx*4.5,-0.5,-3.8),new T.Vector3(sx*5.1,0.2,-6.2),
       new T.Vector3(sx*5.0,0.9,-7.8)]);
     piv.add(new T.Mesh(taperTube(c,28,5,t=>0.17*(1-t)+0.04), whisk));
-    sway.push({o:piv, bx:0, bz:0, amp:0.07, f:1.6+0.2*sx, ph:sx*1.3, drag:0.5, side:0.6});
+    sway.push({o:piv, bx:0, bz:0, amp:0.07, f:1.6+0.2*sx, ph:sx*1.3, drag:0.5, side:0.6, whisker:true});
     const q=new T.Mesh(new T.SphereGeometry(0.2,8,6), dark);
-    q.position.copy(nose).add(new T.Vector3(sx*0.38,0.02,-0.1)); q.scale.set(1.3,0.8,0.6); g.add(q);
+    q.position.copy(F.nose).add(new T.Vector3(sx*0.36,-0.02,-0.12)); q.scale.set(1.3,0.8,0.6); g.add(q);
   }
+  Object.assign(F, dragonEyeRig(g));
+  F.brows=dragonBrows(g, jadeDk, 0.82);
+  F.ears=dragonFins(g, fin, gold);
   // --- head mane: vermilion flame tufts licking out from under the back of the shikoro,
   // the lacing's red carried on into the dragon. One instanced draw.
   const flame=dragonFlameGeo();
@@ -13163,36 +13643,25 @@ function dressRyuKenji(g){
     _dgO.rotateX(-0.5); _dgO.scale.setScalar(1.25); _dgO.updateMatrix(); hm.setMatrixAt(i,_dgO.matrix);
   });
   hm.frustumCulled=false; g.add(hm);
-  // --- the long body: jade scales over a gold belly, a cream mane flowing the length of
-  // the spine (two rows in a V, so it reads from dead astern), vermilion flame tufts at the
-  // elbows, four jade paws and a vermilion-and-gold tuft at the tip
+  // --- the long body: jade scales over gold belly plates, a cream mane flowing the length
+  // of the spine (two rows in a V, so it reads from dead astern), jade forelimbs and hind
+  // legs with three ivory claws each (a Japanese dragon's count), vermilion flame tufts at
+  // the elbows, and a vermilion-and-gold tuft at the tip
   const maneList=[];
   for(let k=0;k<16;k++){ const t=0.06+k*0.057, s=1.55-1.1*t;
     for(const sx of [-1,1]) maneList.push({t, roll:sx*0.36, lift:0.78, s}); }
-  const legList=[{t:0.2,side:-1},{t:0.2,side:1},{t:0.64,side:-1,s:0.85},{t:0.64,side:1,s:0.85}];
-  const tufts=[];
-  for(const l of legList) tufts.push({t:l.t+0.02, roll:l.side*1.85, lift:0.8, s:0.95*(l.s||1)});
+  const list=[{t:0.27,side:-1,front:1,s:1.45},{t:0.27,side:1,front:1,s:1.45},{t:0.55,side:-1,s:1.05},{t:0.55,side:1,s:1.05}];
   const mane=new T.InstancedMesh(flame, cream, maneList.length);
-  const elbow=new T.InstancedMesh(flame, verm, tufts.length);
   const tuft=[];
   for(const roll of [0,1.25,-1.25,2.5,-2.5]){ const f=flame.clone();
     f.rotateX(-0.9); f.translate(0,0.1,0.2); f.rotateZ(roll); f.scale(1.5,1.5,1.5); tuft.push(f); }
   const tip=new T.Mesh(dragonMerge(tuft), flameGold);
-  const legs=new T.InstancedMesh(dragonLegGeo(), jade, legList.length);
   const b=dragonBody(g,{len:22, map:TX.ryuBody, emissive:0x061e18, side:1,
     rFn:t=>0.26+1.62*Math.pow(1-ldSmooth(0.12,1,t),1.25)*(1+0.08*Math.sin(t*9)),
-    mane, maneList, legs, legList, tip});
-  // the elbow tufts ride the same body: a second rider list on its own draw
-  b.extra={mesh:elbow, list:tufts}; elbow.frustumCulled=false; g.add(elbow);
-  ud.dragonRig={body:b};
-  dragonSkinExtra(b);
+    mane, maneList, tip,
+    limbs:{list, geos:dragonLimbGeos(3), mat:jade, clawMat:ivory, elbow:new T.InstancedMesh(flame, verm, list.length)}});
+  ud.dragonRig={body:b, face:F, kind:'ryu'};
   return true;
-}
-// a second instanced rider list (Kenji's elbow flames), seated like the mane
-function dragonSkinExtra(b){
-  const e=b.extra; if(!e) return;
-  e.list.forEach((m,k)=>{ dragonSeat(b,m.t,m.roll,m.lift,m.s,_ldQ); e.mesh.setMatrixAt(k,_ldQ); });
-  e.mesh.instanceMatrix.needsUpdate=true;
 }
 
 // ---- Tony Dragone ---------------------------------------------------------------------
@@ -13201,8 +13670,12 @@ function dressTonyDragone(g){
   head.material.color.setHex(0xffffff); head.material.map=TX.tonySkin; head.material.emissive.setHex(0x2a1404);
   const ivory=new T.MeshPhongMaterial({color:0xf2e6c8, emissive:0x3a3020, shininess:50});
   const bronze=new T.MeshPhongMaterial({color:0xc98a3e, emissive:0x2a1404, shininess:50});
+  const bronzeDk=new T.MeshPhongMaterial({color:0x9a6428, emissive:0x1e0c02, shininess:50});
   const muzzle=new T.MeshPhongMaterial({color:0xf0c688, emissive:0x2a1a08, shininess:30});
+  const earIn=new T.MeshPhongMaterial({color:0xf0a890, emissive:0x2a1008, shininess:20});
   const slick=new T.MeshPhongMaterial({color:0x1c1c1c, emissive:0x0c0c0c, shininess:90});
+  const gum=new T.MeshPhongMaterial({color:0x5a1418, emissive:0x1a0404});
+  const tongue=new T.MeshPhongMaterial({color:0xd8687a, emissive:0x2a0a0e, shininess:40});
   const dark=new T.MeshPhongMaterial({color:0x3a1a0a, emissive:0x0a0402});
   // --- the eyes keep Guido's star pupils; the whites go warm gold
   ud.eyes[0].material.color.setHex(0xffe9a8); ud.eyes[0].material.emissive.setHex(0x3a2a00);
@@ -13213,15 +13686,18 @@ function dressTonyDragone(g){
     const c=new T.CatmullRomCurve3([P(0,0,0),P(0.9,0.55,-0.1),P(1.6,1.5,-0.5),P(1.55,2.5,-1.2),P(1.1,3.0,-1.9)]);
     g.add(new T.Mesh(taperTube(c,16,8,t=>0.62*(1-t)+0.09), ivory));
   }
-  // --- the soft muzzle, with the grin on its front and the gold tooth in it
-  const nose=dragonMuzzle(g, muzzle, dark);
-  ud.mouth.scale.set(0.8,0.8,1);
-  K.tooth.position.set(0.45,1.28,6.5); K.tooth.rotation.x=0.5;
+  // --- the long muzzle with the grin on its front, and the gold tooth as his right fang
+  const F=dragonSnout(g,{mat:muzzle, pad:dark, gum, tongue, fang:ivory, noFang:1});
+  ud.mouth.scale.set(ud.mouth.scale.x*0.8*1.25,ud.mouth.scale.y*0.8*1.25,1);
+  K.tooth.position.set(0.72,1.55,7.42); K.tooth.rotation.set(0.15,0,0); K.tooth.scale.set(0.8,1.5,1);
+  Object.assign(F, dragonEyeRig(g));
+  F.brows=dragonBrows(g, bronzeDk, 1.0);
+  F.ears=dragonEars(g, bronze, earIn);
   // --- two flared nostrils, and a smoke puff drifting out of each
-  const dr={puffs:[]}; ud.dragonRig=dr;
+  const dr={puffs:[], face:F, kind:'tony'}; ud.dragonRig=dr;
   for(const sx of [-1,1]){
     const q=new T.Mesh(new T.SphereGeometry(0.2,8,6), slick);
-    const np=nose.clone().add(new T.Vector3(sx*0.4,0.02,-0.1));
+    const np=F.nose.clone().add(new T.Vector3(sx*0.38,-0.02,-0.12));
     q.position.copy(np); q.scale.set(1.3,0.8,0.6); g.add(q);
     for(let k=0;k<2;k++){
       const m=new T.Mesh(new T.SphereGeometry(0.55,10,8),
@@ -13233,20 +13709,20 @@ function dressTonyDragone(g){
   // --- the chain gets a medallion to match the neck, hung clear of the muzzle
   K.medal.scale.set(1.55,1.3,1.55); K.medal.position.y-=0.5; K.link.scale.y=1.4; K.link.position.y-=0.2;
   // --- the long body: bronze scales over cream belly plates, a crest of slicked black
-  // quiffs (the pompadour, carried on down the back) and a quiff tuft at the tip
+  // quiffs (the pompadour, carried on down the back), bronze limbs with four ivory claws
+  // and a quiff tuft at the tip
   const quiff=dragonQuiffGeo();
   const maneList=[];
   for(let k=0;k<14;k++){ const t=0.04+k*0.066, s=1.75-1.05*t;
     maneList.push({t, roll:0, lift:0.8, s:s*1.1}); if(k%2===0) for(const sx of [-1,1]) maneList.push({t:t+0.02, roll:sx*0.6, lift:0.8, s:s*0.8}); }
-  const legList=[{t:0.2,side:-1},{t:0.2,side:1},{t:0.62,side:-1,s:0.85},{t:0.62,side:1,s:0.85}];
+  const list=[{t:0.27,side:-1,front:1,s:1.45},{t:0.27,side:1,front:1,s:1.45},{t:0.55,side:-1,s:1.1},{t:0.55,side:1,s:1.1}];
   const mane=new T.InstancedMesh(quiff, slick, maneList.length);
   const tuft=[];
   for(const roll of [0,1.1,-1.1]){ const f=quiff.clone(); f.rotateX(-0.9); f.translate(0,0.1,0.2); f.rotateZ(roll); f.scale(1.3,1.3,1.3); tuft.push(f); }
   const tip=new T.Mesh(dragonMerge(tuft), slick);
-  const legs=new T.InstancedMesh(dragonLegGeo(), bronze, legList.length);
   dr.body=dragonBody(g,{len:20, map:TX.tonyBody, emissive:0x2a1404, side:-1,
     rFn:t=>0.28+1.72*Math.pow(1-ldSmooth(0.15,1,t),1.2),
-    mane, maneList, legs, legList, tip});
+    mane, maneList, tip, limbs:{list, geos:dragonLimbGeos(4), mat:bronze, clawMat:ivory}});
   return true;
 }
 let _chTex=null;
@@ -14845,9 +15321,10 @@ function updateRacer(r,dt){
     fire = keys.has(' ')||keys.has('l')||touch.fire;
     if(fire&&!firePrev)useItem(r); firePrev=fire;
     if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
-    // tail-whip on demand when a rival is in range
+    // tail-whip on demand, any time (a short cooldown stops spamming): the move always
+    // plays; it only lands on a rival it actually reaches (see whipStart)
     const whip = keys.has('j')||touch.whip;
-    if(whip && !whipPrev && whipReady && whipTarget && (performance.now()-(r._whip||0))>700) doWhip(r,whipTarget);
+    if(whip && !whipPrev && !r._wh && (performance.now()-(r._whip||0))>WHIP_CD) whipStart(r, whipTarget);
     whipPrev=whip;
   } else {
     // AI steer toward lookahead centerline point (clamp at the end on open courses)
@@ -15195,6 +15672,60 @@ function doWhip(atk,vic){
     }
   }
 }
+/* THE WHIP, for everyone. It can be thrown any time, near a rival or not, with a short
+ * cooldown; it always plays its move and its sound, and only HITS a rival it reaches.
+ *  - most racers flick the tail at once: it lands on the nearest rival within 13 (the old
+ *    "in range" radius), otherwise it is a swish at the tail and nothing more;
+ *  - the luck dragons (anything carrying a dragonRig body) throw a full-body lash that
+ *    takes a second: wind-up, strike, follow-through. The hit is tested every frame of the
+ *    strike against the tail's actual world path (whipTick), so a rival is hit when the
+ *    tail sweeps through them and not otherwise.
+ * The speed kick only comes with a hit, so whipping at nothing is never worth spamming.
+ * AI keep their old rule (whip only when a rival is close) and pass that rival as `lock`,
+ * which a dragon AI's strike also counts as reached if it is still close — the same
+ * guarantee they had before, just delivered by the tail. */
+const WHIP_CD=700;
+function isDragonRacer(r){ const u=r&&r.obj&&r.obj.userData; return !!(u&&u.dragonRig&&u.dragonRig.body); }
+// which way to lash: toward the nearest rival, else the way it's sliding, else alternate
+function whipSide(r){
+  const fx=Math.sin(r.head), fz=Math.cos(r.head); let best=34, side=0;
+  for(const o of racers){ if(o===r||o.finished) continue; const dx=o.x-r.x, dz=o.z-r.z, d=Math.hypot(dx,dz);
+    if(d<best){ best=d; side=(dx*fz-dz*fx)>=0?1:-1; } }
+  if(!side && Math.abs(r.slip||0)>0.05) side=r.slip>0?-1:1;
+  if(!side) side=r._wside=-(r._wside||-1);
+  return side;
+}
+function whipStart(r, lock){
+  r._whip=performance.now(); r._whipN=(r._whipN||0)+1;
+  if(isDragonRacer(r)){
+    r._wh={t:0, side:whipSide(r), hit:[], lock:r.you?null:(lock||null)};
+    return;
+  }
+  const v=(lock && !lock.finished && lock.spinT<=0 && Math.hypot(lock.x-r.x,lock.z-r.z)<13) ? lock : null;
+  if(v) doWhip(r,v);
+  else {                                          // a whip at thin air: a swish off the tail
+    const hx=Math.sin(r.head), hz=Math.cos(r.head);
+    burst(r.x-hx*10, r.y+2.5, r.z-hz*10, 0xffe08a, r.you?8:4, 30, 0.35, 3);
+    if(r.you){ SFX.whip(); kickShake(0.15); }
+  }
+}
+// a dragon's strike: hit whoever the tail sweeps through (a generous reach round each
+// link from the shoulders back), plus the AI's locked rival if it is still close
+function whipTick(r){
+  const w=r._wh; if(!w || w.net || w.t<0.28 || w.t>0.64 || r.finished) return;
+  const b=r.obj.userData.dragonRig.body, cw=b.cw; if(!cw) return;
+  const sc=r.obj.scale.x||1;
+  for(const o of racers){
+    if(o===r || o.finished || o.spinT>0 || w.hit.includes(o)) continue;
+    // reach round each link: body radius + a rival's + a little grace, widest at the
+    // shoulders where the coil throws its weight, narrowing to the tip
+    const base=(o.megaT>0?8:5.5)+1.5*(sc-1);
+    let hit = w.lock===o && Math.hypot(o.x-r.x,o.z-r.z)<16*sc;
+    for(let i=Math.floor(b.N*0.15); !hit && i<=b.N; i+=2)
+      if(Math.hypot(o.x-cw[i*3], o.z-cw[i*3+2])<base+3*sc*(1-i/b.N) && Math.abs(o.y-cw[i*3+1])<12*sc) hit=true;
+    if(hit){ w.hit.push(o); doWhip(r,o); }
+  }
+}
 function collide(){
   whipReady=false; whipTarget=null;
   // player whip availability: any rival within range (generous), regardless of speed
@@ -15203,6 +15734,14 @@ function collide(){
     let nd=1e9,nr=null;
     for(const o of racers){ if(o===me||o.finished)continue; const dd=Math.hypot(o.x-me.x,o.z-me.z); if(dd<nd){nd=dd;nr=o;} }
     if(nr && nd<13 && nr.spinT<=0){ whipReady=true; whipTarget=nr; }
+    // a dragon's lash sweeps the flanks and the space behind, not the road ahead: its cue
+    // is a rival beside or behind within the tail's reach
+    if(isDragonRacer(me)){
+      whipReady=false;
+      const fx=Math.sin(me.head), fz=Math.cos(me.head);
+      for(const o of racers){ if(o===me||o.finished||o.spinT>0) continue;
+        const dx=o.x-me.x, dz=o.z-me.z; if(Math.hypot(dx,dz)<20*(me.obj.scale.x||1) && dx*fx+dz*fz<2){ whipReady=true; break; } }
+    }
   }
   // kart-kart soft separation + AI auto-whip
   for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
@@ -15236,7 +15775,7 @@ function collide(){
       }
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
-      if(!atk.you && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) doWhip(atk,vic); // AI auto whip
+      if(!atk.you && !atk._wh && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) whipStart(atk,vic); // AI auto whip
     }
   }
   // item pickup
@@ -15400,7 +15939,7 @@ function syncObjects(dt,now){
     // before — ordinary road superelevation and the berm wall-ride lean both already flow
     // into r._bank), then derive an orthonormal right/up so the model banks relative to its
     // own direction of travel, matching the road surface underneath it.
-    const headAngle=r.head + r.slip + r._glance;
+    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance);   // dragons turn their own heads
     const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
@@ -15805,6 +16344,7 @@ function frame(now){
     netTick(dt);
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
+    for(const r of racers) if(r._wh) whipTick(r);
     // once YOU'RE done, don't leave the winner floating in dead air while AI stragglers
     // dribble home — give it a few seconds of orbit-cam glory, then call the race,
     // projecting unfinished AI times from their remaining distance (order preserved)
@@ -16280,7 +16820,7 @@ function netTick(dt){
     if(me) netSend({t:'s', x:+me.x.toFixed(2), y:+me.y.toFixed(2), z:+me.z.toFixed(2),
       h:+me.head.toFixed(3), sp:+me.spd.toFixed(1), sl:+(me.slip||0).toFixed(3),
       bk:+(me._bank||0).toFixed(3), lap:me.lap, tot:+me.total.toFixed(3), prog:+me.prog.toFixed(4),
-      bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0});
+      bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0, wh:me._whipN||0});
   }
 }
 
@@ -16299,6 +16839,10 @@ function netApplySnap(r, dt){
   r.spd=s.sp; r.slip=s.sl; r._bank=s.bk;
   r.lap=s.lap; r.total=s.tot; r.prog=s.prog;
   r.boostT=s.bo?0.6:0; r.drift=s.dr;
+  // a whip thrown on their machine: play the lash here (its hit is settled over there)
+  if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen && isDragonRacer(r))
+    r._wh={t:0, side:whipSide(r), hit:[], lock:null, net:true};
+    r._whipSeen=s.wh; }
   if(s.fin && !r.finished){ r.finished=true; r.finishT=raceTime; }
 }
 
@@ -16665,7 +17209,7 @@ buildRacers = function(){
   // rings live on the scene, not on the racer group, so they have to be removed by hand or
   // they accumulate one set per race
   for(const r of racers){ if(r._ring) scene.remove(r._ring); }
-  for(const r of racers){ if(r.obj)scene.remove(r.obj); if(r.shadow)scene.remove(r.shadow); }
+  for(const r of racers){ if(r.obj)scene.remove(r.obj); if(r.shadow)scene.remove(r.shadow); if(r._dshadow)scene.remove(r._dshadow); }
   for(const it of items) scene.remove(it.mesh);
   for(const h of hazards) scene.remove(h.mesh);
   for(const p of projectiles) scene.remove(p.mesh);
