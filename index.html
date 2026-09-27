@@ -3187,41 +3187,52 @@ function arcFlush(F){
 
 /* THE MARQUEE. The start line as the top of an arcade cabinet: a lit sign with the course
    name, score and world number, hung from a beam of bricks and question blocks on two
-   brick towers. Towers are outside both walls (34.5 outside, 55 infield), the sign's
-   underside 21 over the deck, and a chase of bulbs runs round its edge. */
+   brick towers. Towers are outside both walls (34.5 outside, 55 infield), and a chase of
+   bulbs runs round the sign's edge.
+   FRAMING. The line sits on a 0.36 bank, so a LEVEL sign had to clear the high edge of the
+   road and hung 33-49 over the centreline: from the start-grid chase camera only its bulbs
+   showed along the top of the frame. The sign and its beam now lie parallel to the banked
+   deck (rolled by the bank, like the chequered line under them), at 0.75 scale, so their
+   underside — bulbs included — clears the road by 20+ across its whole width
+   (the camera rides 13-18 over it) and the whole face sits in frame at the start. */
 function arcGantry(F, inS){
-  const B=F.B, s=SAMP[0], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+  const B=F.B, s=SAMP[0], ry=Math.atan2(s.t.x,s.t.z), bk=s.bank||0, cb=Math.cos(bk), tb=Math.tan(bk);
   const at=lat=>({x:s.p.x+s.n.x*lat, z:s.p.z+s.n.z*lat});
-  const by=s.p.y+Math.abs(sb)*32+29.5, beamY=by+11;
+  const BW=48, BH=12;                                    // the face is 256x64, so keep 4:1
+  const by=22+BH/(2*cb);                                 // board centre over the deck (vertical)
+  const beamC=by+BH/(2*cb)+3+2.5/cb;                     // beam brick centres, 3 over the board
+  const deckY=lat=>s.p.y+tb*lat;                         // the banked deck, as the road mesh lays it
+  const beamBot=lat=>deckY(lat)+beamC-2.5/cb;
   const towerLat=sd=>{ let l=sd===inS?55:34.5; while(F.clear(s.p.x+s.n.x*sd*l, s.p.z+s.n.z*sd*l, 7.1)<1 && l<90) l+=2.5; return sd*l; };
   const Lo=towerLat(-inS), Li=towerLat(inS);
   for(const lat of [Lo, Li]){
     for(const [da,dt] of [[-2.5,-2.5],[2.5,-2.5],[-2.5,2.5],[2.5,2.5]]){
       const x=s.p.x+s.n.x*(lat+da)+s.t.x*dt, z=s.p.z+s.n.z*(lat+da)+s.t.z*dt;
-      const g=F.footAt(x,z,2.5);
-      for(let y=g; y<beamY-2.5; y+=5) B.brick.push({x, y:y+2.5, z, s:5, sz:5, ry, c:0xc86a50});
+      const g=F.footAt(x,z,2.5), top=beamBot(lat+da);
+      for(let y=g; y<top-2.5; y+=5) B.brick.push({x, y:y+2.5, z, s:5, sz:5, ry, c:0xc86a50});
     }
   }
   let k=0;
   for(let lat=Lo-inS*2.5; inS>0 ? lat<=Li+2.6 : lat>=Li-2.6; lat+=inS*5, k++){
     const p=at(lat), q=(k%4===2);
-    (q?B.q:B.brick).push({x:p.x, y:beamY+2.5, z:p.z, s:5, sz:5.4, ry, c:q?0xffffff:0xc86a50});
+    (q?B.q:B.brick).push({x:p.x, y:deckY(lat)+beamC, z:p.z, s:5/cb, sy:5, sz:5.4, ry, rz:bk, c:q?0xffffff:0xc86a50});
   }
   const face=arcPatch(new T.MeshBasicMaterial({map:arcMarqueeTex()}), 'marq');
   const rimM=arcMat('marqrim');
   rimM.color.setHex(0x2a1a3a);
-  const board=new T.Mesh(new T.BoxGeometry(64,16,2.4), [rimM,rimM,rimM,rimM,face,face]);
-  board.position.set(s.p.x, by, s.p.z); board.rotation.y=ry; trackGroup.add(board);
-  for(const lat of [-24,24]){ const p=at(lat);
-    B.plain.push({x:p.x, y:(by+8+beamY)/2, z:p.z, s:0.7, sy:beamY-(by+8), ry, c:0x3a2a2a}); }
+  const board=new T.Mesh(new T.BoxGeometry(BW,BH,2.4), [rimM,rimM,rimM,rimM,face,face]);
+  board.position.set(s.p.x, s.p.y+by, s.p.z); board.rotation.set(0,ry,bk); trackGroup.add(board);
+  board.updateMatrix();
+  for(const lat of [-16,16]){ const p=at(lat), y0=deckY(lat)+by+BH/(2*cb), y1=beamBot(lat);
+    B.plain.push({x:p.x, y:(y0+y1)/2, z:p.z, s:0.7, sy:y1-y0, ry, c:0x3a2a2a}); }
   const bulbs=[], bm=arcPatch(new T.MeshBasicMaterial({color:0xffffff}), 'bulb');
-  for(const fz of [-1.35,1.35]) for(const fy of [-8.4,8.4]) for(let u=-30;u<=30;u+=3){
-    const lx=u, x=s.p.x+s.n.x*(-lx)+s.t.x*fz, z=s.p.z+s.n.z*(-lx)+s.t.z*fz;
-    bulbs.push({x, y:by+fy, z});
+  for(const fz of [-1.35,1.35]) for(const fy of [-(BH/2+0.4),BH/2+0.4]) for(let u=-BW/2+2;u<=BW/2-2;u+=3){
+    const v=new T.Vector3(-u,fy,fz).applyMatrix4(board.matrix);
+    bulbs.push({x:v.x, y:v.y, z:v.z});
   }
   const bi=new T.InstancedMesh(new T.BoxGeometry(1.3,1.3,1.3), bm, bulbs.length); bi.frustumCulled=false;
   const d=new T.Object3D(), c=new T.Color(0x8a6a30);
-  bulbs.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,ry,0); d.updateMatrix(); bi.setMatrixAt(i,d.matrix); bi.setColorAt(i,c); });
+  bulbs.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,ry,bk); d.updateMatrix(); bi.setMatrixAt(i,d.matrix); bi.setColorAt(i,c); });
   bi.instanceMatrix.needsUpdate=true; if(bi.instanceColor) bi.instanceColor.needsUpdate=true;
   trackGroup.add(bi);
   // chequered flag line painted across the deck
