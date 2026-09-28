@@ -687,9 +687,10 @@ const HAPTIC={
    as, not just which circuit you picked. */
 let musicGain=null, musicTimer=null, musicStep=0, musicOn=true, musicRoot=0, curStyle=null;
 // characters with one or more selectable alt "stations" — tuned live via the in-race radio
-// icon, cycling home -> alt1 -> alt2 -> ... -> home. Guido has two: a house remix of his own
-// PD folk hooks, and an original party anthem.
-const ALT_MAP={guido:['guidoAlt','guidoParty'], chad:['chadAlt'],
+// icon, cycling home -> alt1 -> alt2 -> ... -> home. Guido's home is now a produced record
+// (Gold Chain Tarantella); his three grid stations stay on the dial: the house remix of his
+// PD folk hooks (his old home), the tarantella brass band, and an original party anthem.
+const ALT_MAP={guido:['guidoClub','guidoAlt','guidoParty'], chad:['chadAlt'],
   king:['kingCash','kingLounge'], rick:['rickMothership','rickDisco'],
   rastaDragon:['rasta']};   // the luck dragon can still tune back to Winston's One Drop FM
 const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
@@ -699,24 +700,33 @@ const MUSIC_STYLES={
   // tempoMul = relative to the track's own tempo (<1 = faster, >1 = slower/spacious)
   // guido/irish/latin/hillbilly/sailor carry REAL traditional melodies (all public
   // domain folk tunes), encoded as even eighth-notes; null = rest/held note
-  // Guido's HOME station is now "Club Mix" (was his alt) — a house/techno-style REMIX of two
+  /* Guido Tony's HOME station — PRODUCED (see "Gold Chain Tarantella" in the SONG ENGINE):
+     Italo-disco with a mandolin-and-accordion tarantella in its breakdowns. As with the luck
+     dragon, `engine` hands the station to SONG_ENGINE; the grid fields are what the shared
+     code that reads every style (the victory fanfare, srNet) reads, so they keep his hooks. */
+  guido:    { engine:'goldChain', inst:'house', melWave:'square', bassWave:'square', station:'96.9 BOARDWALK DISCO',
+              drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]},
+              bass:[0,0,0,0], hihat:0, beatGroup:4, tempoMul:0.42,
+              mel:[0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3],
+              melB:[7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,null,null] },
+  // Guido's old home station "Club Mix", now his first alt — a house/techno-style REMIX of two
   // public-domain hooks (Tarantella's ascending leap 0-3-7-12, Funiculì's opening 7-4-0-4-7-9),
   // looped as short 16-step stab riffs the way house tracks loop a hook, instead of an
   // unrelated made-up tune — recognizable AND genre-appropriate, still fully PD-sourced.
   // Real house/techno drum language: four-on-the-floor kick every beat, backbeat snare,
   // OPEN hi-hats on the off-beat 8ths (drums.openhat, a new pattern type — that off-beat
   // "chick" is what actually reads as house/techno; the old track had none of it).
-  guido:    { inst:'house', melWave:'square', bassWave:'square', station:'101.7 Club Mix',
+  guidoClub:{ inst:'house', melWave:'square', bassWave:'square', station:'101.7 Club Mix',
               drums:{kick:[0,4,8,12],snare:[4,12],openhat:[2,6,10,14]},
               bass:[0,0,0,0], hihat:0, beatGroup:4, tempoMul:0.42,
               mel:[0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3, 0,3,7,12,7,3,0,3],   // Tarantella hook, looped
               melB:[7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,7,4, 7,4,0,4,7,9,null,null] }, // Funiculì hook, looped
-  // Guido's first alt station (was his home station) — the original Tarantella/Funiculì
+  // Guido's second alt station (his home station before Club Mix) — the original Tarantella/Funiculì
   // brass arrangement, straight public-domain folk melody, no remix.
   guidoAlt: { inst:'brass', melWave:'square',   bassWave:'square', drums:{kick:[0,3,6,9],snare:[6]},                    bass:[0,0,5,7],   hihat:1, beatGroup:3, tempoMul:0.55, station:'94.5 Tarantella FM',
               mel:[0,3,7,12,7,3, 0,3,7,12,7,3, -2,2,5,10,5,2, 0,3,7,12,7,3],                            // Tarantella Napoletana (trad.)
               melB:[7,4,0,4,7,9, 7,null,9,5,2,5, 9,11,9,null,12,11, 9,7,9,11,12,null] },                 // B: Funiculì Funiculà refrain (1880, PD)
-  // Guido's third station: an ORIGINAL party-anthem composition (not a transcription of any
+  // Guido's fourth station: an ORIGINAL party-anthem composition (not a transcription of any
   // existing song) — requested as a "Party Boy"-style track, but the actual song by that name
   // isn't something we have rights or reliable source material for, so this is a from-scratch
   // piece built to the same brief: big, chanty, fist-pump energy. Deliberately simple, wide
@@ -1822,6 +1832,7 @@ const SONG_ENGINE=(function(){
     opts=opts||{};
     const bus=buildBus(ctx,song.mix,!!opts.lite), noise=noiseBuffer(ctx,2.5), live=[];
     const V=makeVoices(ctx,bus,noise,live,!!opts.lite);
+    if(song.voices) Object.assign(V, song.voices(ctx,bus,noise,live,!!opts.lite));   // a song may bring its own instruments
     const level=opts.level!=null?opts.level:0.9;
     let key=0, tempoScale=1, running=false, timer=null, gen=0, connected=false;
     let bar=0, barT=0, sd=0.2, plan=null, idx=0, planInfo=null, disconnectTimer=null, lastPump=0, lookAhead=0.3;
@@ -2213,6 +2224,464 @@ SONG_ENGINE.songs.sevenScales=(function(){
         perc:  {level:0.7,  pan:-0.22, echo:0.05, spring:0.12, chain:[['hp',55]]},
         fx:    {level:0.55, pan:0.2,   echo:0.7,  spring:0.3,  chain:[['hp',200]]},
       } },
+  };
+})();
+/* "GOLD CHAIN TARANTELLA" — Guido Tony's record, an original Italo-disco instrumental in
+   A minor at 122 bpm (no borrowed melody; the tarantella's 0-3-7-12 leap turns up once on
+   the mandolin as a wink). Italo-disco is the Italian end of the disco boom, which makes it
+   the right place for a Jersey-Italian kid with a gold chain: four-on-the-floor kick and a
+   gated clap, an octave-bouncing synth bass, a ping-pong arpeggio, string pads that pump
+   with the kick and orchestra stabs on the off-beats — then the old country walks in. A
+   mandolin with real tremolo and a musette-tuned accordion play a tarantella in 12/8 over
+   the disco kit, so the triplets rub against the straight sixteenths (the 6/8-over-4/4 of
+   the breakdowns). The melody is a crooner's: a vocoder-ish "voice" with formant vowels,
+   scoops and slides sings the verse; a brassy Italo synth lead takes the chorus.
+
+   FORM (bars of 1.97s, 84 bars = 2:45, then loops to the groove — the intro plays once):
+     0 Intro (8)            the boardwalk at night: sea, arp through a resonant filter opening,
+                            a mandolin line; kick and bass at bar 4, a Simmons fill in
+     8 Groove (8)           Am-F-C-G-Am-F-Dm-E, everything but a lead, string-stab hook
+    16 Verse (8)            the vocoder croons
+    24 Build (4)            Dm-Dm-E-E7, snare roll tightening, whole mix high-passed, a riser,
+                            a beat of silence
+    28 Chorus (8)           Am-Dm-G-C-F-Bø-E-E7 (the circle of fifths), synth-brass hook
+    36 Tarantella (8)       i-V in 12/8: mandolin, accordion oom-pa-pa, tambourine triplets;
+                            the disco kit comes back under it at bar 4 (3 against 4)
+    44 Verse 2 (8)          gallop bass, tambourine, the mandolin answers the singer
+    52 Breakdown (8)        F-G-Em-Am-F-G-Esus-E: pads, sea, the singer and the mandolin
+                            trading; then kick back, high-pass build, snare roll, silence
+    60 Chorus 2 (8)         mandolin doubles the hook, choir "aah"s, ends on F#7 ...
+    68 Key-change chorus (8)... so the last chorus goes UP A TONE, crooner-style; everything in
+    76 Tarantella coda (8)  the mandolin's tarantella arpeggios over the disco groove, a filter
+                            dive and rise back into the groove
+   Every bar draws from a seeded RNG keyed to its absolute bar number and the planner reads
+   the pass count, so the hats, bass cells, fills, arp shapes, who sings the second verse
+   and which tarantella strain comes first all differ the second time round. */
+SONG_ENGINE.songs.goldChain=(function(){
+  const CH={Am:[0,'m'],F:[8,'M'],C:[3,'M'],G:[10,'M'],Dm:[5,'m'],E:[7,'M'],E7:[7,'7'],Bo:[2,'o'],Em:[7,'m'],
+            Esus:[7,'s'],Fs7:[9,'7'],D7:[5,'7']};
+  const QU={m:[0,3,7],M:[0,4,7],'7':[0,4,7,10],o:[0,3,6,10],s:[0,5,7]};
+  const near=(x,c)=>{ while(x<c-6)x+=12; while(x>=c+6)x-=12; return x; };
+  const chordNotes=(chd,c)=>{ const [r,q]=CH[chd]; return QU[q].map(i=>near(r+i,c)).sort((a,b)=>a-b); };
+  const bassRoot=(chd)=>((CH[chd][0]+5)%12)-5;           // E1..D#2 (the bass sounds two octaves under)
+  // [step, semitone over A3, length in steps]
+  const VERSE=[
+    [[0,12,3],[3,15,3],[6,19,6],[12,17,2],[14,15,2]],
+    [[0,12,6],[6,15,2],[8,12,4],[12,8,4]],
+    [[2,7,2],[4,10,2],[6,15,4],[10,14,2],[12,15,4]],
+    [[0,14,8],[8,10,2],[10,12,2],[12,14,4]],
+    [[0,15,3],[3,19,3],[6,24,6],[12,22,2],[14,20,2]],
+    [[0,19,6],[6,17,2],[8,15,4],[12,12,4]],
+    [[0,17,4],[4,15,2],[6,14,2],[8,12,4],[12,8,2],[14,11,2]],
+    [[0,11,8],[8,14,2],[10,12,2],[12,11,4]]];
+  const VERSE_ALT=[                                       // second-pass answer for bars 5-8
+    [[0,24,6],[6,22,2],[8,19,4],[12,15,2],[14,17,2]],
+    [[0,19,4],[4,17,2],[6,15,2],[8,12,8]],
+    [[0,17,3],[3,20,3],[6,24,6],[12,22,2],[14,20,2]],
+    [[0,23,10],[10,20,2],[12,19,2],[14,17,2]]];
+  const CHORUS=[
+    [[0,24,2],[2,24,1],[3,22,2],[5,19,3],[8,24,2],[10,22,2],[12,19,2],[14,15,2]],
+    [[0,17,3],[3,17,1],[4,20,2],[6,17,2],[8,15,4],[12,12,4]],
+    [[0,14,2],[2,14,1],[3,17,2],[5,14,3],[8,19,2],[10,17,2],[12,14,2],[14,10,2]],
+    [[0,15,6],[6,19,2],[8,22,8]],
+    [[0,24,2],[2,24,1],[3,22,2],[5,20,3],[8,24,2],[10,22,2],[12,20,2],[14,17,2]],
+    [[0,17,3],[3,17,1],[4,20,2],[6,17,2],[8,14,4],[12,12,4]],
+    [[0,11,2],[2,14,2],[4,19,2],[6,23,6],[12,20,2],[14,19,2]],
+    [[0,19,4],[4,17,2],[6,14,2],[8,11,4],[12,14,1],[13,17,1],[14,20,1],[15,23,1]]];
+  const BUILD_VOX=[[[0,17,16]],[[0,20,16]],[[0,23,16]],[[0,26,12]]];
+  const BRK_VOX=[
+    [[0,12,6],[6,15,2],[8,19,8]],
+    [[0,17,6],[6,14,2],[8,10,8]],
+    [[0,19,6],[6,17,2],[8,14,4],[12,10,4]],
+    [[0,12,12],[12,7,4]],
+    [[0,12,4],[4,15,4],[8,19,4],[12,24,4]],
+    [[0,22,4],[4,26,4],[8,22,4],[12,26,4]],
+    [[0,24,16]],
+    [[0,23,8]]];
+  const BRK_MANDO=[[[8,24,8]],[[8,26,8]],[[8,26,8]],[[8,24,8]]];
+  const INTRO_MANDO=[[[4,24,12]],[[0,20,16]],[[0,19,16]],[[0,17,12],[12,14,4]]];
+  const MANDO_ANS=[null,null,null,null,[[0,27,8],[8,24,8]],[[0,24,8],[8,20,8]],[[0,29,8],[8,24,8]],[[0,23,16]]];
+  // the tarantella: 12 triplet eighths a bar, null = the note before rings on (tremolo)
+  const TARAN=[
+    [12,15,19, 24,19,15, 12,15,19, 24,null,null],
+    [27,26,24, 23,24,26, 24,null,null, 19,null,null],
+    [23,null,null, 26,24,23, 20,null,null, 23,null,null],
+    [26,24,23, 20,23,20, 19,null,null, 14,17,19],
+    [24,null,null, 24,27,24, 19,null,null, 19,24,19],
+    [15,null,null, 15,19,15, 12,15,19, 24,27,31],
+    [31,null,null, 29,26,23, 26,23,20, 23,20,17],
+    [19,null,null, 12,null,null, 24,null,null, null,null,null]];
+  const PROG={I:['Am','F','C','G'], V:['Am','F','C','G','Am','F','Dm','E'], B:['Dm','Dm','E','E7'],
+              C:['Am','Dm','G','C','F','Bo','E','E7'], C2:['Am','Dm','G','C','F','Bo','E','Fs7'],
+              T:['Am','Am','E7','E7','Am','Am','E7','Am'], D:['F','G','Em','Am','F','G','Esus','E'],
+              M:['Am','Dm','G','C','F','Bo','E','D7'], O:['Am','F','C','G','Am','F','Dm','E']};
+  const FORM=[
+    {id:'intro',   name:'Intro (boardwalk)',  bars:8, prog:'I'},
+    {id:'groove',  name:'Groove',             bars:8, prog:'V'},
+    {id:'verse',   name:'Verse',              bars:8, prog:'V'},
+    {id:'build',   name:'Build',              bars:4, prog:'B'},
+    {id:'chorus',  name:'Chorus',             bars:8, prog:'C'},
+    {id:'taran',   name:'Tarantella break',   bars:8, prog:'T'},
+    {id:'verse2',  name:'Verse 2',            bars:8, prog:'V'},
+    {id:'brk',     name:'Breakdown',          bars:8, prog:'D'},
+    {id:'chorus2', name:'Chorus 2',           bars:8, prog:'C2'},
+    {id:'modch',   name:'Key-change chorus',  bars:8, prog:'M'},
+    {id:'outro',   name:'Tarantella coda',    bars:8, prog:'O'}];
+  let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
+  const TOTAL=acc, LOOP=8;
+  function locate(n){ let pos=n, pass=0;
+    if(n>=TOTAL){ const L=TOTAL-LOOP; pass=1+Math.floor((n-TOTAL)/L); pos=LOOP+(n-TOTAL)%L; }
+    const sec=FORM.find(s=>pos>=s.start&&pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
+  function chordAt(n){ const L=locate(n), P=PROG[L.sec.prog]; return P[L.b%P.length]; }
+  const trAt=(n)=>locate(n).sec.id==='modch'?2:0;       // the last chorus sounds a tone up
+  const ARPS={up:[0,1,2,3],ud:[0,1,2,3,4,3,2,1],bn:[0,3,1,3,2,3,1,3],br:[0,2,1,3,2,4,3,1]};
+  const CELLS={a:[[0,0,1.6],[2,12,1.6]], g:[[0,0,1],[1,0,1],[2,12,1.6]], h:[[0,0,1.6],[2,12,1],[3,12,1]], s:[[1,0,1],[2,12,1],[3,0,1]]};
+  const ENERGY={intro:0.72, groove:0.95, verse:0.86, build:0.95, chorus:1.08, taran:0.9, verse2:0.9, brk:0.6, chorus2:1.1, modch:1.16, outro:0.92};
+
+  function plan(n,R,env){
+    const lite=!!(env&&env.lite);
+    const {pos,pass,sec,b}=locate(n), ev=[], id=sec.id;
+    const E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
+    const chord=chordAt(n), next=chordAt(n+1), last=b===sec.bars-1, tr=trAt(n);
+    const M={kick:1,drums:1,hats:1,perc:1,bass:1,arp:1,pad:1,stab:1,lead:1,vox:1,mando:1,acc:1,fx:1};
+    const hum=(v)=>v*(0.88+R()*0.24);
+    const ALL=['kick','drums','hats','perc','bass','arp','pad','stab','lead','mando','acc'];
+    // ---- building blocks
+    const kit=(o)=>{ o=o||{};
+      if(o.four!==false) for(const s of [0,4,8,12]) E(s,'dkick',{v:(s===0?1:0.93)*(o.v||1)});
+      if(o.clap) for(const s of [4,12]) E(s,'clap',{v:hum(o.clap)});
+      if(o.snare) for(const s of [4,12]) E(s,'snare',{v:hum(o.snare)});
+      if(o.hat) for(let s=0;s<16;s++){
+        if(s%4===2 && o.open){ E(s,'hat',{v:hum(0.36*o.hat),o:1}); continue; }
+        if(s%2===1 && (lite || R()<(o.skip||0.12))) continue;
+        E(s,'hat',{v:hum([0.5,0.2,0.36,0.26][s%4]*o.hat)}); }
+      if(o.tamb16) for(let s=0;s<16;s++){ if(s%2 && (lite || R()<0.55)) continue; E(s,'tamb',{v:hum((s%4===2?0.9:s%2?0.35:0.55)*o.tamb16)}); }
+      if(o.tamb3) for(let i=0;i<12;i++){ if((lite&&i%3===2) || (i%3!==0 && R()<0.14)) continue; E(i*4/3,'tamb',{v:hum((i%6===0?1:i%3===0?0.75:0.42)*o.tamb3)}); }
+    };
+    const fill=(k)=>{ switch(k%4){
+      case 0: [12,13,14,15].forEach((s,i)=>E(s,'snare',{v:0.4+i*0.16})); break;
+      case 1: [[8,190],[10,150],[12,118],[14,92]].forEach(([s,f])=>E(s,'simtom',{f,v:hum(0.85)})); break;       // Simmons toms down
+      case 2: E(8,'clap',{v:0.6}); E(10,'clap',{v:0.7}); [[12,200],[13,168],[14,140],[15,112]].forEach(([s,f])=>E(s,'simtom',{f,v:0.8})); break;
+      case 3: [210,180,158,138,118,100].forEach((f,i)=>E(8+i*4/3,'simtom',{f,v:0.78})); break; } };          // tom triplets: the tarantella poking through
+    const nextRoot=()=>{ const r=bassRoot(chord); let ap=bassRoot(next)+trAt(n+1)-tr; ap-=1; if(Math.abs(ap-r)>7) ap+=ap<r?12:-12; return ap; };
+    const octBass=(o)=>{ o=o||{}; const r=bassRoot(chord), cells=o.cells||'aaaa', v=o.v||1;
+      for(let q=0;q<4;q++){ let c=cells[q];
+        if(o.vary && q>0 && R()<o.vary) c='ghs'[Math.floor(R()*3)];
+        if(q===3 && (next!==chord||trAt(n+1)!==tr) && R()<0.75){                // walk up into the next chord
+          E(12,'ibass',{n:r,l:1.6,v:hum(v)}); E(14,'ibass',{n:r+12,l:1,v:hum(0.8*v)}); E(15,'ibass',{n:nextRoot(),l:1,v:hum(0.9*v)}); continue; }
+        for(const [s,d,l] of CELLS[c]) E(q*4+s,'ibass',{n:r+d,l,v:hum(s===0?v:0.85*v)}); } };
+    const arp=(o)=>{ o=o||{}; const cn=chordNotes(chord,o.c||14), tones=[cn[0],cn[1],cn[2],cn[0]+12,cn[1]+12], pat=ARPS[o.pat||'up'];
+      const oct=(o.oct||0)+(R()<0.12&&!o.oct?12:0);                            // now and then a bar jumps the octave
+      for(let s=0;s<16;s++){ if(lite && s%2) continue;
+        E(s,'arp',{n:tones[pat[s%pat.length]]+oct, v:hum((s%4===0?1:0.72)*(o.v||1)), side:s&1}); } };
+    const stab=(steps,o)=>{ o=o||{}; const ns=chordNotes(chord,o.c||15); for(const s of steps) E(s,'stab',{ns,v:hum(o.v||1),throw:o.throw||0}); };
+    const pad=(o)=>{ o=o||{}; E(0,'pad',{ns:chordNotes(chord,o.c||8),l:16,v:o.v||1,pump:o.pump!==false,cut:o.cut,a:o.a}); };
+    const line=(voice,L,o)=>{ o=o||{}; if(!L) return; let prev=null, prevEnd=-9;
+      for(const [s,nn,l] of L){ const n0=nn+(o.oct||0), p={n:n0,l,v:hum(o.v||1),throw:o.throw||0,one:o.one};
+        if(o.glide!==false && prev!=null && Math.abs(s-prevEnd)<0.01 && Math.abs(n0-prev)<=5 && R()<0.7) p.g=prev;   // a slide
+        else if(o.scoop && l>=3 && R()<0.6) p.sc=1;                                                             // a crooner's scoop
+        if(voice==='vox'){ p.vw=o.vw!=null?o.vw:Math.floor(R()*3); p.vw2=l>=4?(R()<0.5?1:3):p.vw; }
+        E(s,voice,p); prev=n0; prevEnd=s+l; } };
+    const tri=(voice,arr,o)=>{ o=o||{};
+      for(let i=0;i<12;i++){ const x=arr[i]; if(x==null) continue; let len=1; while(i+len<12 && arr[i+len]==null) len++;
+        E(i*4/3,voice,{n:x+(o.oct||0),l:len*4/3,v:hum((i%3===0?1:0.8)*(o.v||1)),throw:o.throw||0}); } };
+    const tarArp=(up)=>{ const cn=chordNotes(chord,19), t=[cn[0],cn[1],cn[2],cn[0]+12]; const P=up?[0,1,2,3,2,1]:[3,2,1,0,1,2];
+      return P.concat(P).map(i=>t[i]); };
+    const oompa=(o)=>{ o=o||{}; const v=o.v||1, bn=near(CH[chord][0],-7), cn=chordNotes(chord,5);
+      for(let q=0;q<4;q++){ const s=q*4;
+        if(!o.noBass) E(s,'acc',{ns:[q%2?(bn+7>-1?bn-5:bn+7):bn],l:1,v:hum(0.75*v)});
+        E(s+4/3,'acc',{ns:cn,l:0.9,v:hum(0.6*v)});
+        if(!lite) E(s+8/3,'acc',{ns:cn,l:0.8,v:hum(0.45*v)}); } };
+    const stopAt=(s)=>{ for(const c of ALL) A(s,{a:'lvl',ch:c,v:0,tc:0.006}); };
+
+    // ---- the sections
+    if(id==='intro'){
+      Object.assign(M,{kick:b>=4?1:0, drums:b>=6?1:0, hats:b>=6?1:0, bass:b>=4?1:0, stab:b>=6?1:0, lead:0, vox:0, acc:0, perc:0});
+      if(b===0){ A(0,{a:'lp',from:320,f:4200,l:64,q:5}); E(0,'sea',{l:128,v:1}); }
+      if(b===4){ A(0,{a:'lp',from:4200,f:19000,l:64,q:1.2}); E(0,'sub',{v:0.7}); }
+      arp({pat:'up',v:0.9});
+      pad({v:b<4?0.7:0.85, pump:b>=4, a:b===0?1.6:0.25});
+      line('mando',INTRO_MANDO[b%4],{v:b<4?0.8:0.6, oct:b>=4?12:0, throw:0.25});
+      if(b>=4){ kit({hat:b>=6?0.8:0, clap:b>=6?0.8:0}); octBass({}); }
+      if(b>=6) stab([3,6,14],{v:0.7});
+      if(b===6) E(0,'riser',{l:32,v:0.8});
+      if(b===7) fill(1+pass);
+    }
+    else if(id==='groove'){
+      if(b===0){ E(0,'crash',{v:0.9}); A(0,{a:'lp',f:20000,q:0.9,tc:0.01}); A(0,{a:'hp',f:20,tc:0.01}); }
+      kit({hat:1, open:true, clap:1, skip:0.15});
+      octBass({vary:pass?0.3:0.15});
+      arp({pat:pass%2?'bn':'up', v:0.8});
+      pad({v:0.8});
+      stab(b%4===3?[3,6,10,12,14]:[3,6,14],{v:0.9, throw:b%4===3?0.3:0});
+      if(b===7) [[8,11],[9+1/3,12],[10+2/3,14],[12,17],[13+1/3,20],[14+2/3,23]].forEach(([s,x])=>E(s,'acc',{ns:[x],l:1.2,v:0.75}));  // harmonic-minor run
+      if(b===3 && pass>0) line('mando',[[8,22,2],[10,19,2],[12,14,4]],{v:0.6,throw:0.3});
+      if(last) fill(pass);
+    }
+    else if(id==='verse' || id==='verse2'){
+      const v2=id==='verse2', swap=v2 && pass%2===1;
+      kit({hat:v2?1:0.9, open:!(b%4===0&&!v2), clap:0.9, skip:0.25, tamb16:v2&&b>=4?0.4:0});
+      octBass({cells:v2?'agah':'aaaa', vary:v2?0.3:0.12});
+      arp({pat:v2?'br':'ud', v:0.6, c:v2?17:14});
+      pad({v:0.7, cut:1800});
+      stab(b%2?[6,14]:[14],{v:0.6});
+      const L=(v2 && b>=4 && pass>0)?VERSE_ALT[b-4]:VERSE[b];
+      if(!swap) line('vox',L,{v:1,scoop:true,throw:b%4===3?0.35:0.06});
+      else { line('lead',L,{v:0.85,scoop:true,throw:0.15});                                 // repeats: the synth takes the tune,
+             if(b%2===0) E(0,'vox',{n:chordNotes(chord,10)[1],l:28,v:0.55,vw:3,vw2:1}); }     // the singer goes "ooh" underneath
+      if(v2) line('mando',MANDO_ANS[b],{v:0.6,throw:0.2});
+      if(last) fill(pass+(v2?2:1));
+    }
+    else if(id==='build'){
+      if(b===0){ A(0,{a:'hp',from:20,f:380,l:64}); E(0,'riser',{l:64,v:1}); }
+      kit({hat:0.8, open:b>=2, clap:0.7});
+      const div=[4,2,1,1][b]; for(let s=0;s<16;s+=div) E(s,'snare',{v:0.25+0.5*(b*16+s)/64});
+      const r=bassRoot(chord); for(let s=0;s<16;s+=(b===3?1:2)) E(s,'ibass',{n:r+(s%4===2&&b<3?12:0),l:1,v:hum(0.9)});
+      arp({pat:'up',v:0.7+b*0.1, oct:b>=2?12:0});
+      pad({v:0.8});
+      stab(b>=2?[0,4,8,12]:[6,14],{v:0.8});
+      line('vox',BUILD_VOX[b],{v:1,vw:0,throw:b===3?0.7:0.1});
+      if(b===3) stopAt(12);                                                    // a beat of nothing but echo
+    }
+    else if(id==='chorus' || id==='chorus2' || id==='modch'){
+      const c2=id!=='chorus', mod=id==='modch';
+      if(b===0){ E(0,'crash',{v:1}); E(0,'sub',{v:0.9}); A(0,{a:'hp',f:20,tc:0.004}); A(0,{a:'lp',f:20000,q:0.9,tc:0.004}); }
+      if(b===4) E(0,'crash',{v:0.7});
+      kit({hat:1, open:true, clap:1, snare:0.35, skip:0.1, tamb16:mod?0.6:c2?0.45:0});
+      octBass({cells:b%2?'agaa':'aaga', vary:0.25});
+      arp({pat:['up','bn','ud'][(b+pass)%3], v:0.55, c:17});
+      pad({v:0.85});
+      stab(b%4===3?[6,10,14]:[6,14],{v:0.85});
+      const off=(id==='chorus2'&&b===7)?2:(mod&&b===7)?-2:0;               // bar 8 re-aimed at the new key, then home
+      line('lead',CHORUS[b],{v:1, oct:off, throw:(b%4===3)?0.3:0.1, scoop:true});
+      if(c2) line('mando',CHORUS[b],{v:0.55, oct:off+(mod?12:0), glide:false, one:true});
+            if(c2 && b%2===0) E(0,'vox',{n:chordNotes(chord,12)[1],l:15,v:0.5,vw:0,vw2:1});
+      if(id==='chorus2' && b===6) E(0,'riser',{l:32,v:0.9});
+      if(last) fill(pass+(mod?3:c2?2:1));
+    }
+    else if(id==='taran'){
+      const disco=b>=4, T=TARAN[pass%2 && b%4<2 ? (b+4)%8 : b];
+      if(b===0){ E(0,'crash',{v:0.6}); A(0,{a:'lp',f:20000,q:0.9,tc:0.01}); }
+      if(!disco){
+        Object.assign(M,{hats:0, arp:0, stab:0, pad:0.6});
+        E(0,'dkick',{v:0.9}); E(8,'dkick',{v:0.8}); if(R()<0.45) E(14+2/3,'dkick',{v:0.45});
+        const r=bassRoot(chord), fi=r+7>9?r-5:r+7;
+        E(0,'ibass',{n:r,l:3,v:1}); E(4,'ibass',{n:fi,l:2,v:0.8}); E(8,'ibass',{n:r,l:3,v:0.95}); E(12,'ibass',{n:fi,l:2,v:0.8});
+        pad({v:0.7,pump:false,c:7});
+        if(b===3) fill(3);
+      } else {
+        if(b===4){ E(0,'crash',{v:0.8}); E(0,'sub',{v:0.8}); }
+        kit({hat:0.7, open:true, clap:0.9, skip:0.3}); octBass({vary:0.2}); arp({pat:'bn',v:0.4,c:17}); pad({v:0.7});
+        if(!lite) tri('acc',T,{v:0.45,oct:-12});
+        if(last) fill(pass+2);
+      }
+      kit({four:false, tamb3:disco?0.8:1});
+      oompa({v:disco?0.75:1, noBass:disco});
+      tri('mando',T,{v:1, oct:pass>=2&&b%4===1?-12:0, throw:b%4===3?0.3:0.05});
+    }
+    else if(id==='brk'){
+      const up=b>=4;
+      Object.assign(M,{hats:up?1:0.5, drums:up?1:0, kick:up?1:0, stab:0, lead:0, perc:0});
+      if(b===0){ E(0,'sea',{l:64,v:0.8}); E(0,'crash',{v:0.5}); }
+      pad({v:0.9, pump:up, a:b===0?0.8:0.2, cut:up?2600:1500});
+      arp({pat:'ud', v:up?0.6:0.45, c:up?17:12});
+      if(!up){ E(0,'ibass',{n:bassRoot(chord),l:12,v:0.42,bright:4}); for(let s=2;s<16;s+=4) if(R()<0.7) E(s,'hat',{v:0.12+R()*0.1}); }
+      else {
+        kit({hat:b>=5?0.7:0.4, open:b>=6, clap:b>=5?0.8:0}); octBass({vary:0.1});
+        if(b===4){ A(0,{a:'hp',from:20,f:420,l:64}); E(0,'riser',{l:64,v:1}); }
+        if(b>=6){ const div=b===6?2:1; for(let s=0;s<16;s+=div) E(s,'snare',{v:0.3+0.45*((b-6)*16+s)/32}); }
+        if(b===7) stopAt(12);
+      }
+      line('vox',BRK_VOX[b],{v:1, throw:b%2?0.4:0.2, scoop:true});
+      if(!up) line('mando',BRK_MANDO[b],{v:0.7, throw:0.3});
+    }
+    else if(id==='outro'){
+      if(b===0){ E(0,'crash',{v:0.8}); A(0,{a:'hp',f:20,tc:0.004}); A(0,{a:'lp',f:20000,q:0.9,tc:0.004}); }
+      kit({hat:1, open:true, clap:1, skip:0.2, tamb3:b<4?0.6:0});
+      octBass({vary:0.3});
+      pad({v:0.8});
+      if(b<4){ tri('mando',tarArp((b+pass)%2===0),{v:0.85}); oompa({v:0.55,noBass:true}); }
+      else { arp({pat:'up',v:0.75}); line('vox',CHORUS[[0,4,1,6][b-4]],{v:0.8,vw:1,throw:0.3}); }
+      stab(b>=4?[3,6,14]:[14],{v:0.8});
+      if(b===4) A(0,{a:'lp',from:20000,f:650,l:32,q:4});
+      if(b===6){ A(0,{a:'lp',from:650,f:20000,l:32,q:1}); E(0,'riser',{l:32,v:0.8}); }
+      if(last) fill(pass+3);
+    }
+    if(tr) for(const e of ev){ if(e.p.n!=null) e.p.n+=tr; if(e.p.g!=null) e.p.g+=tr; if(e.p.ns) e.p.ns=e.p.ns.map(x=>x+tr); }
+    A(-0.2,{a:'mix',m:M,tc:0.008});
+    return {ev, label:sec.name, sec:id, pos, pass, energy:ENERGY[id]};
+  }
+
+  /* ---- the instruments. Built once per station by the engine's `voices` hook; every source
+     goes on the engine's `live` list, so stop() silences them and nothing outlives a note.
+     Also here: a plate/hall reverb, because a spring tank is a dub sound and this record
+     wants a ballroom. It is fed post-fader from each channel's strip (`hall` in the mix). */
+  function hallIR(ctx,sec){
+    const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), R=SONG_ENGINE.rngOf(4242);
+    for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch); let lp=0, e=0;
+      for(let i=0;i<len;i++){ const t=i/sr, fc=1300+8500*Math.exp(-t*1.6), a=1-Math.exp(-2*Math.PI*fc/sr);
+        lp+=a*((R()*2-1)*Math.exp(-6.9*t/sec)*(1-Math.exp(-t/0.014))-lp); d[i]=lp; }
+      for(const [tt,g] of [[0.009,0.5],[0.017,-0.38],[0.026,0.33],[0.037,-0.26],[0.051,0.2],[0.064,-0.15]]){ const i=Math.floor((tt*(ch?1.07:0.95))*sr); d[i]+=g*0.06; }
+      for(let i=0;i<len;i++) e+=d[i]*d[i]; const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k; }
+    return buf;
+  }
+  function voices(ctx,bus,noise,live,lite){
+    const C=bus.ch;
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    function O(type,f,t,end,to,det,f0){ const o=ctx.createOscillator();
+      if(typeof type==='string') o.type=type; else o.setPeriodicWave(type);
+      if(f0){ o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(f,t+0.07); } else o.frequency.setValueAtTime(f,t);
+      if(det) o.detune.setValueAtTime(det,t);
+      o.connect(to); o.start(t); o.stop(end); live.push([o,end]); return o; }
+    function N(t,dur,to,loop){ const s=ctx.createBufferSource(); s.buffer=noise; s.connect(to);
+      if(loop){ s.loop=true; s.start(t,Math.random()*2); s.stop(t+dur+0.02); }
+      else s.start(t,Math.random()*(noise.duration-dur-0.1),dur+0.02);
+      live.push([s,t+dur+0.03]); return s; }
+    const AD=(g,t,a,pk,d)=>{ g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,pk),t+a);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+a+d); };
+    const ASR=(g,t,a,pk,hold,r)=>{ const h=Math.max(a+0.005,hold); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(pk,t+a);
+      g.gain.setValueAtTime(pk,t+h); g.gain.exponentialRampToValueAtTime(0.0001,t+h+r); };
+    const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); } };
+    const vib=(t,dur,end,rate,depth)=>{ if(dur<=0.3) return null; const lfo=ctx.createOscillator(), lg=G(0); lfo.frequency.value=rate; lfo.connect(lg);
+      lg.gain.setValueAtTime(0,t+0.18); lg.gain.linearRampToValueAtTime(depth,t+Math.min(dur,0.55)+0.05); lfo.start(t); lfo.stop(end); live.push([lfo,end]); return lg; };
+    // accordion reed: odd-heavy with a nasal 3rd-6th hump (same recipe as the engine's melodica reed)
+    const ra=[]; for(let h=1;h<=24;h++) ra.push((1/h)*(h%2?1:0.55)*(h>=3&&h<=6?1.5:1));
+    const re=new Float32Array(ra.length+1), im=new Float32Array(ra.length+1); ra.forEach((a,i)=>{ im[i+1]=a; });
+    const REED=ctx.createPeriodicWave(re,im);
+    // formants (Hz) and their levels for a, o, e, u
+    const VOW=[[800,1150,2900,1,0.5,0.28],[450,800,2830,1,0.4,0.12],[400,1700,2600,1,0.35,0.22],[330,720,2500,1,0.22,0.1]];
+    // ---- the hall
+    const pre=ctx.createDelay(0.1); pre.delayTime.value=0.024;
+    const hall=ctx.createConvolver(); hall.normalize=false; hall.buffer=hallIR(ctx,lite?1.7:2.5);
+    const hHP=F('highpass',240,0.6), hLP=F('lowpass',8000,0.6), hRet=G(MIX.hallRet);
+    pre.connect(hall); hall.connect(hHP); hHP.connect(hLP); hLP.connect(hRet); hRet.connect(bus.mix);
+    for(const name in C){ const a=C[name].base.hall; if(a){ const s=G(a); C[name].dry.connect(s); s.connect(pre); } }
+    return {
+      dkick(t,p){ const v=p.v||1, g=G(0), o=O('sine',155,t,t+0.42,g);
+        o.frequency.exponentialRampToValueAtTime(56,t+0.05); o.frequency.exponentialRampToValueAtTime(45,t+0.32);
+        AD(g,t,0.0025,v,0.3); g.connect(C.kick.in);
+        const cg=G(0), hp=F('highpass',2500,0.8); N(t,0.015,hp); hp.connect(cg); AD(cg,t,0.001,0.22*v,0.012); cg.connect(C.kick.in); },
+      // the gated clap: three hands, then a burst of room that is slammed shut
+      clap(t,p){ const v=p.v||1, g=G(0), bp=F('bandpass',1250,0.9), gate=p.gate||0.13, P=g.gain, pk=0.9*v;
+        N(t,0.06+gate,bp); bp.connect(g); P.setValueAtTime(0.0001,t);
+        const hits=lite?[0,0.012]:[0,0.009,0.019];
+        for(const d of hits){ P.setValueAtTime(pk,t+d); P.exponentialRampToValueAtTime(pk*0.12,t+d+0.008); }
+        const t2=t+hits[hits.length-1]+0.01;
+        P.setValueAtTime(pk*0.55,t2); P.linearRampToValueAtTime(pk*0.38,t2+gate); P.linearRampToValueAtTime(0,t2+gate+0.014);
+        const b=G(0); O('triangle',185,t,t+0.08,b); AD(b,t,0.001,0.3*v,0.05);
+        const out=G(1); g.connect(out); b.connect(out); out.connect(C.drums.in); sends(out,p,C.drums); },
+      simtom(t,p){ const v=p.v||1, f=p.f||140, g=G(0), o=O('sine',f*2.1,t,t+0.5,g);
+        o.frequency.exponentialRampToValueAtTime(f,t+0.06); o.frequency.exponentialRampToValueAtTime(f*0.86,t+0.45);
+        AD(g,t,0.001,0.8*v,0.4);
+        const s=G(0), bp=F('bandpass',f*9,0.8); N(t,0.04,bp); bp.connect(s); AD(s,t,0.001,0.3*v,0.035); s.connect(g);
+        g.connect(C.drums.in); sends(g,p,C.drums); },
+      tamb(t,p){ const v=p.v||1, g=G(0), bp=F('bandpass',8500,1.3), d=p.d||0.07, P=g.gain;
+        N(t,d+0.03,bp); bp.connect(g);
+        P.setValueAtTime(0.0001,t); P.exponentialRampToValueAtTime(0.3*v,t+0.002); P.exponentialRampToValueAtTime(0.06*v,t+0.014);
+        P.exponentialRampToValueAtTime(0.16*v,t+0.02); P.exponentialRampToValueAtTime(0.0001,t+0.02+d);
+        g.connect(C.perc.in); },
+      crash(t,p){ const v=p.v||1, g=G(0), hp=F('highpass',3600,0.7), pk=F('peaking',6200,2); pk.gain.value=5;
+        N(t,1.9,hp); hp.connect(pk); pk.connect(g); AD(g,t,0.002,0.5*v,1.8); g.connect(C.hats.in); },
+      riser(t,p,sd){ const v=p.v||1, dur=p.l*sd, g=G(0), bp=F('bandpass',p.f0||350,2.2);
+        N(t,dur,bp,true); bp.frequency.setValueAtTime(p.f0||350,t); bp.frequency.exponentialRampToValueAtTime(p.f1||7500,t+dur);
+        g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.5*v,t+dur); g.gain.linearRampToValueAtTime(0,t+dur+0.02);
+        bp.connect(g); g.connect(C.fx.in); },
+      sea(t,p,sd){ const v=p.v||1, dur=p.l*sd, g=G(0), lp=F('lowpass',400,0.6), W=32*sd;
+        N(t,dur,lp,true); lp.frequency.setValueAtTime(400,t); g.gain.setValueAtTime(0,t);
+        for(let k=0,tk=t; tk<t+dur-W*0.5; k++, tk+=W){ const pk=(0.5+0.2*Math.sin(k*2.1))*v*0.5;
+          g.gain.linearRampToValueAtTime(pk,tk+W*0.45); g.gain.linearRampToValueAtTime(pk*0.25,tk+W);
+          lp.frequency.linearRampToValueAtTime(1300,tk+W*0.45); lp.frequency.linearRampToValueAtTime(450,tk+W); }
+        g.gain.linearRampToValueAtTime(0,t+dur); lp.connect(g); g.connect(C.fx.in); },
+      // Italo bass: saw + square through a resonant lowpass that snaps shut on every note
+      ibass(t,p,sd,hz){ const v=p.v||1, f=hz(p.n-24), dur=Math.max(0.05,p.l*sd*0.82), end=t+dur+0.1;
+        const lp=F('lowpass',100,lite?3:5), g=G(0), top=Math.min(4200,f*(p.bright||16)), bot=Math.max(170,f*2.6);
+        O('sawtooth',f,t,end,lp,-5);
+        if(!lite){ const sq=G(0.55); O('square',f,t,end,sq,6); sq.connect(lp); }
+        lp.frequency.setValueAtTime(top,t); lp.frequency.exponentialRampToValueAtTime(bot,t+0.1+dur*0.25);
+        lp.connect(g); ASR(g,t,0.003,0.9*v,dur,0.03); g.connect(C.bass.in); },
+      // arpeggio: a short square blip, alternating hard left/right (one oscillator: sixteen of these a bar)
+      arp(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), end=t+0.18, lp=F('lowpass',100,2.5), g=G(0);
+        O('square',f,t,end,lp,0);
+        lp.frequency.setValueAtTime(Math.min(9000,f*9),t); lp.frequency.exponentialRampToValueAtTime(Math.max(400,f*1.5),t+0.11);
+        lp.connect(g); AD(g,t,0.002,0.2*v,0.16); g.connect(p.side?C.arp.R:C.arp.L); sends(g,p,C.arp); },
+      // string pad: the chord's saws dealt alternately left and right, detuned against each
+      // other, the whole section ducking under every kick (the pump)
+      pad(t,p,sd,hz){ const v=p.v||1, dur=p.l*sd, end=t+dur+0.6, att=p.a||0.25;
+        for(const [det,to,side] of (lite?[[0,C.pad.in,-1]]:[[-10,C.pad.L,0],[10,C.pad.R,1]])){
+          const lp=F('lowpass',p.cut||2400,0.6), g=G(0), pg=G(1);
+          p.ns.forEach((n,i)=>{ if(side<0||i%2===side) O('sawtooth',hz(n),t,end,lp,det+(Math.random()-0.5)*4); });
+          if(side===1) O('sawtooth',hz(p.ns[0]+12),t,end,lp,det);   // the root doubled up top, so the right side is never thin
+          lp.connect(g); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.1*v,t+att);
+          g.gain.setValueAtTime(0.1*v,t+Math.max(att,dur)); g.gain.linearRampToValueAtTime(0,t+Math.max(att,dur)+0.5);
+          g.connect(pg); pg.connect(to);
+          if(p.pump) for(let tb=t; tb<t+dur+0.3; tb+=4*sd){ pg.gain.setValueAtTime(1,tb); pg.gain.linearRampToValueAtTime(0.35,tb+0.012); pg.gain.linearRampToValueAtTime(1,tb+Math.min(0.3,3*sd)); } } },
+      // orchestra stab: a chord of saws with a bowed scrape, the filter slamming down
+      stab(t,p,sd,hz){ const v=p.v||1, d=p.d||0.2, end=t+d+0.12, lp=F('lowpass',100,1.1), g=G(0);
+        p.ns.forEach((n,i)=>O('sawtooth',hz(n),t,end,lp,i%2?11:-11));
+        if(!lite) O('square',hz(p.ns[0]-12),t,end,lp,0);
+        lp.frequency.setValueAtTime(7000,t); lp.frequency.exponentialRampToValueAtTime(1300,t+d*0.8);
+        lp.connect(g); AD(g,t,0.003,0.18*v,d);
+        const ng=G(0), bp=F('bandpass',3200,0.9); N(t,0.03,bp); bp.connect(ng); AD(ng,t,0.001,0.12*v,0.03); ng.connect(g);
+        g.connect(C.stab.in); sends(g,p,C.stab); },
+      // the Italo synth-brass lead: two saws and a sub square, filter blip, slides and scoops
+      lead(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.07,p.l*sd-0.015), end=t+dur+0.25;
+        const f0=p.g!=null?hz(p.g):(p.sc?f*0.97:0), lp=F('lowpass',100,1.6), g=G(0), cut=Math.min(7500,f*9);
+        const lg=lite?null:vib(t,dur,end,5.6,15);
+        for(const d of lite?[0]:[-8,8]){ const o=O('sawtooth',f,t,end,lp,d,f0); if(lg) lg.connect(o.detune); }
+        lp.frequency.setValueAtTime(cut*0.3,t); lp.frequency.exponentialRampToValueAtTime(cut,t+0.035); lp.frequency.exponentialRampToValueAtTime(cut*0.55,t+0.35);
+        lp.connect(g); ASR(g,t,0.01,0.17*v,dur,0.09); g.connect(C.lead.in); sends(g,p,C.lead); },
+      // the crooner: saws through three formant bands whose vowel morphs across the note
+      vox(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,p.l*sd-0.02), end=t+dur+0.3;
+        const f0=p.g!=null?hz(p.g):(p.sc?f*0.96:0), src=G(1), g=G(0), lg=vib(t,dur,end,5.1,lite?9:13);
+        for(const d of lite?[0]:[-5,5]){ const o=O('sawtooth',f,t,end,src,d,f0); if(lg) lg.connect(o.detune); }
+        const A0=VOW[p.vw|0], A1=VOW[p.vw2!=null?p.vw2:(p.vw|0)];
+        for(let k=0;k<(lite?2:3);k++){ const bp=F('bandpass',A0[k],k?11:7), fg=G(A0[k+3]*(k?5:3.5));
+          if(A1!==A0){ bp.frequency.setValueAtTime(A0[k],t+0.05); bp.frequency.linearRampToValueAtTime(A1[k],t+Math.max(0.1,dur*0.8)); }
+          src.connect(bp); bp.connect(fg); fg.connect(g); }
+        const body=F('lowpass',700,0.7), bg=G(0.2); src.connect(body); body.connect(bg); bg.connect(g);
+        ASR(g,t,0.035,0.2*v,dur,0.14);
+        if(p.g==null){ const ng=G(0), hp=F('highpass',5500,0.7); N(t,0.06,hp); hp.connect(ng); AD(ng,t,0.004,0.05*v,0.05); ng.connect(g); }
+        g.connect(C.vox.in); sends(g,p,C.vox); },
+      // mandolin: a doubled course plucked once, or tremolo-picked (sextuplet strokes) on long notes
+      mando(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=p.l*sd, trem=dur>=0.3, end=t+dur+(trem?0.12:0.38);
+        const lp=F('lowpass',3000,1.2), g=G(0), hi=Math.min(9000,f*12), lo=Math.min(3000,f*3.2), P=g.gain, Fq=lp.frequency, pk=0.17*v;
+        O('sawtooth',f,t,end,lp,-4); if(!lite && !p.one) O('sawtooth',f,t,end,lp,5);   // one string when it is only doubling
+        if(trem){ const tp=sd*2/3; let k=0;
+          for(let ts=t; ts<t+dur-0.01; ts+=tp, k++){ const a=pk*(k&1?0.72:1)*(0.9+Math.random()*0.2);
+            P.setValueAtTime(a,ts); P.exponentialRampToValueAtTime(a*0.28,ts+tp*0.92);
+            Fq.setValueAtTime(hi,ts); Fq.exponentialRampToValueAtTime(lo,ts+tp*0.9); }
+          P.setValueAtTime(pk*0.3,t+dur); P.exponentialRampToValueAtTime(0.0001,t+dur+0.1);
+        } else { P.setValueAtTime(pk,t); P.exponentialRampToValueAtTime(pk*0.3,t+0.08); P.exponentialRampToValueAtTime(0.0001,t+0.37);
+          Fq.setValueAtTime(hi,t); Fq.exponentialRampToValueAtTime(lo*0.7,t+0.2); }
+        lp.connect(g); g.connect(C.mando.in); sends(g,p,C.mando); },
+      // accordion, musette-tuned: a second reed 16 cents sharp, the wet Italian beat
+      acc(t,p,sd,hz){ const v=p.v||1, ns=p.ns||[p.n], dur=Math.max(0.06,(p.l||1)*sd-0.01), end=t+dur+0.1, lp=F('lowpass',p.cut||3200,0.7), g=G(0);
+        for(const n of ns){ O(REED,hz(n),t,end,lp,0); if(!lite) O(REED,hz(n),t,end,lp,16); }
+        lp.connect(g); ASR(g,t,p.a||0.012,0.11*v/Math.sqrt(ns.length),dur,0.05); g.connect(C.acc.in); sends(g,p,C.acc); },
+    };
+  }
+  const MIX={ makeup:0.6, echoFb:0.3, echoRet:0.6, springRet:0.1, lowMid:-2.5, air:5, hallRet:0.9,
+    channels:{
+      kick:  {level:0.95, pan:0,     echo:0,    spring:0, hall:0.02, chain:[['hp',28],['peak',58,3,1.1],['peak',3500,2,1],['lp',9000]]},
+      drums: {level:1.05, pan:0.04,  echo:0.04, spring:0, hall:0.3,  chain:[['hp',160],['peak',1600,2,1],['hshelf',6000,2]]},
+      hats:  {level:1.6,  pan:0.26,  echo:0.02, spring:0, hall:0.05, chain:[['hp',3500]]},
+      perc:  {level:2.8,  pan:-0.3,  echo:0.05, spring:0, hall:0.1,  chain:[['hp',4000]]},
+      bass:  {level:0.9,  pan:0,     echo:0,    spring:0, hall:0,    chain:[['hp',32],['drive',1.6],['peak',90,2,1],['peak',300,-3,1],['lp',5000],['trim',0.2]]},
+      arp:   {level:1.1,  pan:0, spread:0.55, echo:0.12, spring:0, hall:0.12, chain:[['hp',300],['peak',2500,2,1]]},
+      pad:   {level:0.7,  pan:0, spread:0.6,  echo:0,    spring:0, hall:0.35, chain:[['hp',220],['lshelf',400,-3]]},
+      stab:  {level:1.2,  pan:-0.1,  echo:0.1,  spring:0, hall:0.25, chain:[['hp',200],['peak',2200,2,1]]},
+      lead:  {level:0.7,  pan:0.05,  echo:0.18, spring:0, hall:0.2,  chain:[['hp',180],['peak',1800,2,1]]},
+      vox:   {level:0.4,  pan:-0.05, echo:0.22, spring:0, hall:0.3,  chain:[['hp',240],['peak',520,-3,1],['peak',3000,5,1],['hshelf',6500,3]]},
+      mando: {level:1.3,  pan:0.35,  echo:0.1,  spring:0, hall:0.25, chain:[['hp',350],['peak',2600,3,1.2],['peak',800,-2,1]]},
+      acc:   {level:1.0,  pan:-0.38, echo:0.06, spring:0, hall:0.2,  chain:[['hp',150],['peak',1200,1.5,1]]},
+      fx:    {level:0.6,  pan:0,     echo:0.3,  spring:0, hall:0.4,  chain:[['hp',150]]},
+    } };
+  return {
+    title:'Gold Chain Tarantella', bpm:122, key:0, swing:0.05, echoSteps:3,
+    lag:{vox:0.01, lead:0.004, mando:0.003, acc:0.005, stab:0.002},
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan, voices, mix:MIX,
+    courseNote:'deferred: produced station keeps its own tune, in the course key',
   };
 })();
 /* ==== /SONG ENGINE ==== */
@@ -18742,7 +19211,7 @@ window.srNet={
   get music(){ if(!curStyle) return {playing:false};
     if(curStyle.engine){ const h=producedStations[curStyle.engine];
       return {playing:!!(h&&h.running), station:curStyle.station||null, song:curStyle.songName,
-        engine:curStyle.engine, courseSong:curStyle.courseSong?curStyle.courseSong+' (deferred: produced station keeps its own riddim, in the course key)':null,
+        engine:curStyle.engine, courseSong:curStyle.courseSong?curStyle.courseSong+' ('+((SONG_ENGINE.songs[curStyle.engine]||{}).courseNote||'deferred: produced station keeps its own riddim, in the course key')+')':null,
         now:h?h.info():null}; }
     return {playing:!!musicTimer, station:curStyle.station||null,
       song:curStyle.songName||'(character tune)',
