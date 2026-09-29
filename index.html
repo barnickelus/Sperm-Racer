@@ -38408,7 +38408,88 @@ function flashFx(amt,color){
 }
 
 /* camera chases player */
+// The branches below only place the lens where the shot wants it. Nothing in them knows about
+// the other racers, so a rival coasting through the finish orbit, or the start pack around the
+// chase cam, ended up with the lens INSIDE a head or a dragon's body. The wrapper strips last
+// frame's clearance push, lets the branch do its usual thing, then pushes the lens clear of
+// every racer (dragons as their whole chain) and re-aims — an overlay on the ideal position,
+// so the branch's own lerps never see it and the framing is untouched when nothing is close.
+const _camPush=new T.Vector3(), _camPushed=new T.Vector3(), _camLook=new T.Vector3(),
+      _cpP=new T.Vector3(), _cpD=new T.Vector3();
+let _camRoll=0, _camPushOn=false;
+function camAim(x,y,z){ _camLook.set(x,y,z); camera.lookAt(_camLook); }
+const CAM_CLEAR=3;                    // how far the lens stays off any racer's skin
+function camPushOut(dt){
+  const p=_cpP.copy(camera.position);
+  let hitO=null;
+  // one sphere test: move p out to radius R round (cx,cy,cz) if it is inside
+  const clr=(o,cx,cy,cz,R)=>{
+    let dx=p.x-cx, dy=p.y-cy, dz=p.z-cz; const d2=dx*dx+dy*dy+dz*dz;
+    if(d2>=R*R) return false;
+    const d=Math.sqrt(d2); if(d<1e-4){ dx=0; dy=1; dz=0; } else { dx/=d; dy/=d; dz/=d; }
+    p.set(cx+dx*R, cy+dy*R, cz+dz*R); hitO=o; return true;
+  };
+  const test=()=>{
+    let any=false;
+    for(const r of racers){
+      const o=r.obj; if(!o||!o.visible) continue;
+      const sc=o.scale.x||1, ox=o.position.x, oy=o.position.y, oz=o.position.z;
+      const dr=o.userData.dragonRig, b=dr&&dr.body;
+      if(b&&b.cw){
+        // the head, then every third link of the chain (links sit half a unit apart)
+        const cw=b.cw;
+        for(let i=0;i<=b.N;i+=(i<3?1:3)){
+          const R=(i<3?6*sc:Math.max(2.5, b.rad[i]*sc+2))+CAM_CLEAR;
+          if(clr(o, cw[i*3], cw[i*3+1]+LD_Y*sc, cw[i*3+2], R)) any=true;
+        }
+      } else {
+        // head and hat, then the body and tail streaming out behind
+        const fx=Math.sin(r.head), fz=Math.cos(r.head);
+        if(clr(o, ox, oy+3*sc, oz, 5.5*sc+CAM_CLEAR)) any=true;
+        if(clr(o, ox-fx*5*sc, oy+2.5*sc, oz-fz*5*sc, 4*sc+CAM_CLEAR)) any=true;
+        if(clr(o, ox-fx*10*sc, oy+2.5*sc, oz-fz*10*sc, 3*sc+CAM_CLEAR)) any=true;
+      }
+    }
+    return any;
+  };
+  let still=false;
+  for(let pass=0;pass<3;pass++){ if(!test()){ still=false; break; } still=(pass===2); }
+  // no sideways way out (boxed in between bodies): go over the top instead
+  if(still && hitO) p.y=Math.max(p.y, hitO.position.y+12*(hitO.scale.x||1));
+  _cpD.copy(p).sub(camera.position);
+  // grow at once (the lens must never sit inside a body), relax gently so it doesn't pop
+  if(_cpD.lengthSq()>=_camPush.lengthSq()) _camPush.copy(_cpD);
+  else _camPush.lerp(_cpD, Math.min(1,6*dt));
+}
 function updateCamera(dt){
+  // a push left from last frame is only ours to strip if nothing else has moved the lens
+  if(_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6) camera.position.sub(_camPush);
+  else _camPush.set(0,0,0);
+  _camPushOn=false; _camRoll=0;
+  updateCameraCore(dt);
+  if(state==='count'||state==='race'){
+    camPushOut(dt);
+    if(_camPush.lengthSq()>1e-6){
+      camera.position.add(_camPush); camera.lookAt(_camLook);
+      if(_camRoll) camera.rotateZ(_camRoll);
+      _camPushed.copy(camera.position); _camPushOn=true;
+    }
+  } else _camPush.set(0,0,0);
+}
+// how far the camera holds up and back while the start pack (or a finishing rival) is on top
+// of the chase position: 1 through the countdown, fading out over the first two seconds
+function camHold(me){
+  if(state==='count') return 1;
+  if(state!=='race') return 0;
+  let k=raceTime<0.6?1:Math.max(0,1-(raceTime-0.6)/1.4); k=k*k*(3-2*k);
+  if(finishPunchT>0){
+    // the punch only needs the room when a rival is right behind to run through the shot
+    let near=false; for(const o of racers) if(o!==me && Math.hypot(o.x-me.x,o.z-me.z)<60){ near=true; break; }
+    if(near) k=Math.max(k, Math.min(1,(1.2-finishPunchT)/0.2));
+  }
+  return k;
+}
+function updateCameraCore(dt){
   const me=racers.find(r=>r.you); if(!me)return;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
   // Grid intro: HOLD ON THE FACE, then pull back to the driving view.
@@ -38443,12 +38524,31 @@ function updateCamera(dt){
     // ease toward the chase position as the pull-back completes, so 'GO!' hands over
     // to the driving camera without a cut
     if(settle>0) want.lerp(new T.Vector3(me.x,me.y,me.z)
-      .add(fwd.clone().multiplyScalar(-30)).add(new T.Vector3(0,13,0)), settle*0.9);
+      .add(fwd.clone().multiplyScalar(-36)).add(new T.Vector3(0,19,0)), settle*0.9);   // the held-back GO view, see camHold
+    // The player always starts in the far-left slot, 3 units from the road edge, and the lens
+    // sits 17 out at the same offset: over the kerb, only 4.6 above the kart, so on a banked
+    // or verged road the surface ends up ABOVE it and the frame fills with slab. Where the
+    // lens would be under the surface (plus a margin), slide it toward the road centre — the
+    // portrait is untouched wherever it already clears — then never let it drop below it.
+    {
+      const N=SAMP.length, i0=me.idx|0; let bi=i0, bd=1e18;
+      for(let k=-40;k<=40;k++){ const s=SAMP[((i0+k)%N+N)%N]; const dx=s.p.x-want.x, dz=s.p.z-want.z, d=dx*dx+dz*dz; if(d<bd){bd=d;bi=((i0+k)%N+N)%N;} }
+      const s=SAMP[bi], nx=s.n.x, nz=s.n.z;
+      const latOf=()=>(want.x-s.p.x)*nx+(want.z-s.p.z)*nz;
+      const surf=()=>s.p.y+Math.sin(s.bank||0)*latOf();
+      const need=surf()+3.2+1.5-want.y;
+      if(need>0){
+        const lat=latOf(), to=Math.sign(lat)*Math.min(Math.abs(lat),10);
+        const f=Math.min(1,need/2.5);
+        want.x+=nx*(to-lat)*f; want.z+=nz*(to-lat)*f;
+      }
+      want.y=Math.max(want.y, surf()+3.2);
+    }
     // snap the first frame outright: lerping in from wherever the menu camera sat drags
     // the lens straight through the grid
     if(me._cdT<=dt*1.5) camera.position.copy(want);
     else camera.position.lerp(want, Math.min(1, 4*dt));
-    camera.lookAt(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, settle), me.z);  // level with the face
+    camAim(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, settle), me.z);  // level with the face
     camera.fov += (T.MathUtils.lerp(46, 62, ease)-camera.fov)*Math.min(1,4*dt);
     camera.updateProjectionMatrix();
     return;
@@ -38472,9 +38572,19 @@ function updateCamera(dt){
     // filled up with ground.
     const floorY=(me.surfY!==undefined?me.surfY:me.y)+3.2;
     const camY=Math.max(floorY, me.y + 4.0 + Math.min(3.2, me._orbT*0.9) + Math.sin(me._orbT*1.1)*0.9);
-    camera.position.lerp(new T.Vector3(
-      me.x - Math.sin(heroA)*dist, camY, me.z - Math.cos(heroA)*dist), Math.min(1,5*dt));
-    camera.lookAt(me.x, me.y+4.4, me.z);   // slightly up, so a wide brim doesn't mask the face
+    // Fly there in polar coordinates round the racer, not in a straight line: the chase cam
+    // leaves the lens 30 BEHIND, and a straight lerp to a point in front of the face passes
+    // through the head and hat (and a dragon's horns and body) on the way. Bearing goes the
+    // short way round, radius and height ease, and the radius never drops below the model.
+    const tgtAz=heroA+Math.PI, tgtR=dist*Math.max(1,me.obj.scale.x||1), ok=Math.min(1,5*dt);
+    if(!me._orbP){ const dx=camera.position.x-me.x, dz=camera.position.z-me.z;
+      me._orbP={az:Math.atan2(dx,dz), r:Math.hypot(dx,dz), h:camera.position.y-me.y}; }
+    const P=me._orbP;
+    let da=(tgtAz-P.az)%(Math.PI*2); if(da>Math.PI) da-=Math.PI*2; else if(da<-Math.PI) da+=Math.PI*2;
+    P.az+=da*ok; P.r+=(tgtR-P.r)*ok; P.h+=(camY-me.y-P.h)*ok;
+    P.r=Math.max(P.r, 12*Math.max(1,me.obj.scale.x||1));
+    camera.position.set(me.x+Math.sin(P.az)*P.r, Math.max(floorY, me.y+P.h), me.z+Math.cos(P.az)*P.r);
+    camAim(me.x, me.y+4.4, me.z);   // slightly up, so a wide brim doesn't mask the face
     camera.fov += (43-camera.fov)*Math.min(1,3*dt);               // tighter, portrait-ish
     // keep the party going instead of one pop at the line: ribbons off the winner, timed
     // to the orbit so they read as thrown rather than sprayed
@@ -38498,8 +38608,9 @@ function updateCamera(dt){
   // mega: pull the camera back and up so growing 1.8x actually READS as huge,
   // plus a constant low rumble while it lasts
   if(mega) camShake=Math.max(camShake,0.09);
-  const back=fwd.clone().multiplyScalar(mega?-42:(tube?-19:(boost?-27:-30)));
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,mega?18:(tube?8.5:(boost?11.5:13)),0));
+  const hold=camHold(me);   // up and back while the start pack / a finishing rival is on top of the chase spot
+  const back=fwd.clone().multiplyScalar((mega?-42:(tube?-19:(boost?-27:-30)))-6*hold);
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(mega?18:(tube?8.5:(boost?11.5:13)))+6*hold,0));
   camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
     camera.position.x += (Math.random()*2-1)*camShake;
@@ -38508,8 +38619,8 @@ function updateCamera(dt){
     camShake=Math.max(0,camShake-dt*5);
   }
   const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(18)).add(new T.Vector3(0,4,0));
-  camera.lookAt(look);
-  if(tube && me._bank) camera.rotateZ(-me._bank*0.28);   // lens rolls with the berm bank
+  camAim(look.x,look.y,look.z);
+  if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
   const fovWant = finishPunchT>0 ? 98 : (tube?70:(boost?74:64));   // finish punch > tube squeeze > boost
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
