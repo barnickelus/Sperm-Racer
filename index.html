@@ -31290,11 +31290,17 @@ function buildTrack(idx){
   } else if(hana){
     hanaStartBridge(HK, innerSign, 36);  // the timber arch and its cartouche, ahead of the grid
   } else {
+  // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
+  // it parallels the road at 14 up instead of cutting across it level; each post stands from
+  // the road height at ITS lateral, so on a banked start neither floats nor buries.
   const bar=new T.Mesh(new T.BoxGeometry(HW*2+8,2,2),new T.MeshPhongMaterial({color:0xeafff8,emissive:0x224,flatShading:true}));
-  bar.position.copy(s0.p).add(new T.Vector3(0,14,0)); trackGroup.add(bar);
+  const gF=new T.Vector3(s0.t.x,0,s0.t.z).normalize(), gU=new T.Vector3(0,1,0).applyAxisAngle(gF, s0.bank||0);
+  const gR=new T.Vector3().crossVectors(gU,gF).normalize(), gT=new T.Vector3().crossVectors(gF,gR).normalize();
+  bar.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(gR,gT,gF));
+  bar.position.copy(s0.p).addScaledVector(gT,14); trackGroup.add(bar);
   for(const side of [-1,1]){
     const post=new T.Mesh(new T.CylinderGeometry(1.4,1.4,16,8),new T.MeshPhongMaterial({color:0x2b6e66,flatShading:true}));
-    post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6,0)); trackGroup.add(post);
+    post.position.copy(s0.p).addScaledVector(s0.n,side*(HW+3)).add(new T.Vector3(0,6+Math.sin(s0.bank||0)*side*(HW+3),0)); trackGroup.add(post);
   }
   }
 
@@ -31876,8 +31882,13 @@ function buildTrack(idx){
     const pad=new T.Mesh(new T.PlaneGeometry(HW*1.3,18),
       new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
     pad.geometry.rotateX(-Math.PI/2);
-    pad.position.copy(s.p).add(new T.Vector3(0,0.3,0));
-    pad.rotation.y=Math.atan2(s.t.x,s.t.z);
+    // road basis (heading, roll by bank) plus the slope, so the strip lies ON the banked road
+    const pF=new T.Vector3(s.t.x,0,s.t.z).normalize(), pU=new T.Vector3(0,1,0).applyAxisAngle(pF, s.bank||0);
+    const pR=new T.Vector3().crossVectors(pU,pF).normalize(), pT=new T.Vector3().crossVectors(pF,pR).normalize();
+    pad.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(pR,pT,pF));
+    pad.rotateX(-Math.atan2(s.t.y,Math.hypot(s.t.x,s.t.z)));
+    pad.position.copy(s.p).addScaledVector(pT,0.3);
+    pad.material.polygonOffset=true; pad.material.polygonOffsetFactor=-2; pad.material.polygonOffsetUnits=-2;
     // Hana: an additive glow on pale paper is invisible — print the chevrons in vermilion
     if(hana){ pad.material.blending=T.NormalBlending; pad.material.color.set(hanaLin(0xd0482c)); }
     trackGroup.add(pad);
@@ -32995,7 +33006,7 @@ function buildTrack(idx){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
       const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
       const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out;
-      const by=oph ? s.p.y+Math.sin(s.bank||0)*side*out+0.5 : s.p.y+2.2;   // posies float ON the banked water
+      const by=s.p.y+Math.sin(s.bank||0)*side*out+(oph?0.5:2.2);   // ride the banked road edge (posies float ON the water)
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
       const m = felt
@@ -37651,6 +37662,13 @@ function giveItem(r){
   else r.item='clap';       // rarest — it's the wildest one, hits everyone nearby at once
   if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
+// Road surface height under a dropped hazard: the racer's own sample, extended across the
+// banking and along the slope to where the item lands (r.y sits HOVER_H above the road).
+function hazardSurfY(r,x,z){
+  const sp=SAMP[r.idx]; if(!sp) return r.surfY!=null?r.surfY:r.y-HOVER_H;
+  const dx=x-sp.p.x, dz=z-sp.p.z, hl=Math.hypot(sp.t.x,sp.t.z)||1;
+  return sp.p.y + Math.sin(sp.bank||0)*(dx*sp.n.x+dz*sp.n.z) + sp.t.y/hl*(dx*sp.t.x+dz*sp.t.z)/hl;
+}
 function useItem(r){
   if(r.you && r._roll>0) return;   // can't fire mid-roulette
   if(!r.item)return;
@@ -37673,7 +37691,7 @@ function useItem(r){
     const m=new T.Mesh(new T.IcosahedronGeometry(3,0),
       new T.MeshPhongMaterial({color:0xb06dff,emissive:0x3a1a66,flatShading:true}));
     const bx=r.x-Math.sin(r.head)*8, bz=r.z-Math.cos(r.head)*8;
-    m.position.set(bx,r.y+2.5,bz); scene.add(m);
+    m.position.set(bx,hazardSurfY(r,bx,bz)+3,bz); scene.add(m);
     hazards.push({mesh:m,x:bx,z:bz,life:14,owner:r,arm:0.6});
   } else if(r.item==='shield'){
     // pure counterplay item: no offense, just blocks the next few seconds of spore/cyst/slick
@@ -37688,7 +37706,12 @@ function useItem(r){
     const m=new T.Mesh(new T.CylinderGeometry(6,6,0.3,16),
       new T.MeshPhongMaterial({color:0x3ab0ff,emissive:0x0a3a5a,transparent:true,opacity:0.75,flatShading:true}));
     const bx=r.x+Math.sin(r.head)*14, bz=r.z+Math.cos(r.head)*14;
-    m.position.set(bx,r.y+0.3,bz); scene.add(m);
+    m.position.set(bx,hazardSurfY(r,bx,bz)+0.15,bz);
+    { const sp=SAMP[r.idx]; if(sp&&sp.bank){   // lie in the banked road, not level across it
+        const f=new T.Vector3(sp.t.x,0,sp.t.z).normalize(), u=new T.Vector3(0,1,0).applyAxisAngle(f,sp.bank);
+        const rt=new T.Vector3().crossVectors(u,f).normalize(), tu=new T.Vector3().crossVectors(f,rt).normalize();
+        m.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(rt,tu,f)); } }
+    scene.add(m);
     hazards.push({mesh:m,x:bx,z:bz,life:9,owner:r,arm:0.4,slick:true});
   } else if(r.item==='clap'){
     // instant AoE shockwave, no travel time and no dropped hazard — hits EVERYONE nearby
