@@ -27488,7 +27488,7 @@ function feltStrataTex(){
 }
 // Matte, unlit-ish fibre. Felt has no specular at all — that is most of the look.
 function feltMat(hex, map){
-  return new T.MeshLambertMaterial({color:hex, map:map||null, flatShading:true});
+  return new T.MeshLambertMaterial({color:hex, map:map||null});
 }
 // Batch a list of {x,y,z,s,sy,c,rx,ry,rz} tufts (or any geometry) into one draw.
 function feltBatch(geo, list){
@@ -27687,7 +27687,7 @@ function feltTerrain(inner){
   }
   g.setAttribute('color', new T.BufferAttribute(col,3));
   g.computeVertexNormals(); g.userData.feltTerrain=true;
-  const m=new T.Mesh(g, new T.MeshLambertMaterial({vertexColors:true, flatShading:true}));
+  const m=new T.Mesh(g, new T.MeshLambertMaterial({vertexColors:true}));
   m.frustumCulled=false;
   return m;
 }
@@ -27933,7 +27933,7 @@ function dawnBalloon(k){
   }
   env.setAttribute('color', new T.Float32BufferAttribute(col,3));
   env.computeVertexNormals();
-  g.add(new T.Mesh(env, new T.MeshLambertMaterial({vertexColors:true, flatShading:true})));
+  g.add(new T.Mesh(env, new T.MeshLambertMaterial({vertexColors:true})));
   const basket=new T.Mesh(new T.CylinderGeometry(2.3,1.9,2.6,8), feltMat(0x8a6238));
   basket.position.y=-9.5; g.add(basket);
   const cord=[];
@@ -28862,7 +28862,7 @@ function paintMatFrom(old, hsl){
   // conversion turned a 10%-opacity wall into something that wrote depth for everything
   // behind it. Invisible in a still, and the reason a raycast sweep reported the apron
   // barrier as solid scenery.
-  return new T.MeshLambertMaterial({ color:col, map:old.map||paintCanvas(), flatShading:true,
+  return new T.MeshLambertMaterial({ color:col, map:old.map||paintCanvas(),
     emissive: old.emissive ? old.emissive.clone().multiplyScalar(0.12) : new T.Color(0x000000),
     side:old.side, transparent:faint, opacity:faint?old.opacity:1,
     depthWrite:old.depthWrite, depthTest:old.depthTest });
@@ -29018,7 +29018,7 @@ function paintTooth(){ if(!PAINT_TOOTH) PAINT_TOOTH=paintTex('#e2ddcd',
   ['#cbc5af','#f0ebda','#cccbbf','#e4d8b8','#c2c7c5','#dcc4a8']); return PAINT_TOOTH; }
 function harbMat(hex, opt){
   const o=opt||{};
-  const m=new T.MeshLambertMaterial({color:hex, flatShading:true,
+  const m=new T.MeshLambertMaterial({color:hex,
     map:(o.map===false ? null : paintTooth()),
     side:T.DoubleSide,                       // hand-built hulls: never fight winding order
     transparent:o.opacity!=null, opacity:o.opacity!=null?o.opacity:1,
@@ -29077,7 +29077,7 @@ function harbSmearTex(){
   HARB_SMEAR=t; return t;
 }
 function harbSmearMat(op){
-  const m=new T.MeshLambertMaterial({color:0xffffff, map:harbSmearTex(), flatShading:true,
+  const m=new T.MeshLambertMaterial({color:0xffffff, map:harbSmearTex(),
     transparent:true, opacity:op, depthWrite:false, side:T.DoubleSide});
   m.userData.noPaint=true; return m;
 }
@@ -29963,12 +29963,23 @@ function ophTick(P, tsec){
 }
 
 // Build (or rebuild) the whole track world for TRACKS[idx]
+// Free the GPU side of everything under o: geometry, material AND every texture slot.
+// Dropping a mesh from the scene alone leaks all of it. Shared/cached textures and
+// geometries are safe to dispose: three re-uploads them on next use, only the GPU copy goes.
+function disposeObject(o){
+  if(!o) return;
+  const seen=new Set();
+  const freeMat=m=>{ if(!m||seen.has(m)) return; seen.add(m);
+    for(const k in m){ const v=m[k]; if(v&&v.isTexture) v.dispose(); }
+    m.dispose(); };
+  o.traverse(c=>{ if(c.geometry) c.geometry.dispose();
+    if(c.material) (Array.isArray(c.material)?c.material:[c.material]).forEach(freeMat); });
+}
 function buildTrack(idx){
   selTrack=idx;
   if(trackGroup){
     scene.remove(trackGroup);
-    trackGroup.traverse(o=>{ if(o.geometry)o.geometry.dispose();
-      if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());} });
+    disposeObject(trackGroup);
   }
   trackGroup=new T.Group(); scene.add(trackGroup);
   TRACK_PULSE=[]; skyDome=null;
@@ -30152,7 +30163,7 @@ function buildTrack(idx){
     // scene and it sits directly under the lightest large plane, which is the one place a
     // painting can put its maximum value contrast and have it mean something structural.
     const hull=new T.Mesh(new T.TubeGeometry(curve,STEPS,12,10,loop),
-      new T.MeshLambertMaterial({map:paintCanvas(),color:0x3c3629,flatShading:true}));
+      new T.MeshLambertMaterial({map:paintCanvas(),color:0x3c3629}));
     hull.position.y-=20; trackGroup.add(hull);      // r=12: crown was +2, hid 13.3 of the 44-unit road
 
     /* PILINGS. Everything sits on something, and that has to include the road: a deck
@@ -33351,7 +33362,7 @@ function feltify(g){
     col.getHSL(hsl);
     col.setHSL(hsl.h, Math.min(0.55,hsl.s*0.75), Math.max(0.10,Math.min(0.52,hsl.l*0.62)));
     const faint = old.transparent && old.opacity<0.6;
-    o.material=new T.MeshLambertMaterial({ color:col, map:old.map||null, flatShading:true,
+    o.material=new T.MeshLambertMaterial({ color:col, map:old.map||null,
       emissive: old.emissive ? old.emissive.clone().multiplyScalar(0.20) : new T.Color(0x000000),
       side:old.side, transparent:faint, opacity:faint?old.opacity:1 });
   });
@@ -37339,10 +37350,10 @@ function makeItemBox(u){
   return {mesh:m, halo, core, base:m.position.clone(), live:true, respawn:0};
 }
 function buildRacers(){
-  for(const r of racers){ if(r.obj)scene.remove(r.obj); if(r._drings)scene.remove(r._drings); }
-  for(const it of items) scene.remove(it.mesh);
-  for(const h of hazards) scene.remove(h.mesh);
-  for(const p of projectiles) scene.remove(p.mesh);
+  for(const r of racers){ if(r.obj){scene.remove(r.obj);disposeObject(r.obj);} if(r._drings){scene.remove(r._drings);disposeObject(r._drings);} }
+  for(const it of items){ scene.remove(it.mesh); disposeObject(it.mesh); }
+  for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
+  for(const p of projectiles){ scene.remove(p.mesh); disposeObject(p.mesh); }
   hazards=[]; projectiles=[];
   items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
 
@@ -38647,7 +38658,7 @@ function frame(now){
   const tsec=now/1000;
   { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
   if(state==='race'){
-    raceTime=(now-tStart)/1000;
+    raceTime+=dt;   // accumulate the capped dt: a backgrounded tab / stalled frame must not inflate the clock
     netTick(dt);
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
@@ -39267,11 +39278,12 @@ function countdown(){
   const tick=()=>{ n--;
     if(n>0){$('count').textContent=n;setTimeout(tick,750);}
     else if(n===0){$('count').textContent='GO!';setTimeout(tick,750);}
-    else{$('cd').classList.add('hidden');state='race';tStart=performance.now();last=performance.now();}
+    else{$('cd').classList.add('hidden');state='race';tStart=performance.now();last=performance.now();raceTime=0;}
   };
   setTimeout(tick,750);
 }
 function endRace(){
+  const wasUnlocked=!!localStorage.getItem('sr_gp_done');
   state='done'; stopEngine(); unlockOrient(); stopMusic();
   document.body.classList.remove('final-lap');   // stop the red pulse on the results screen
   $('throttle').style.display='none';
@@ -39336,6 +39348,8 @@ function endRace(){
     }
   }
   $('finish').classList.remove('hidden');
+  if(NET.on) netLeave();   // the room is over once everyone is home; solo races after it must not see it
+  if(!wasUnlocked && localStorage.getItem('sr_gp_done')) setupSelect(true);   // rebuild cards so the unlock shows without a reload
 }
 // start a Grand Prix: lock the lineup, race every circuit in order, tally points
 function startGP(){
@@ -39346,7 +39360,8 @@ function startGP(){
   $('finish').classList.add('hidden'); countdown();
 }
 // ============== CHARACTER SELECT LOGIC ==============
-function setupSelect(){
+function setupSelect(keepPick){
+  const keep=keepPick?chosenType:null;
   const grid = $('sperm-grid');
   grid.innerHTML = '';
   let selectedEl = null;
@@ -39367,7 +39382,7 @@ function setupSelect(){
       ${cardVisual[t.id] || `<div style="width:54px;height:54px;border-radius:50%;background:hsl(${t.hue} 85% 62%);box-shadow:0 0 18px hsl(${t.hue} 85% 55%);margin-bottom:6px;border:3px solid #eafff8;"></div>`}
       <div class="opname" style="color:var(--bone);font-size:15px;">${t.name}</div>
       <div class="opdesc" style="font-size:11.5px;color:var(--bone);margin-top:3px;line-height:1.3;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.55);">${t.desc}</div>
-      ${locked?`<div class="oplock">🔒 Win a Grand Prix to unlock</div>`:''}
+      ${locked?`<div class="oplock">🔒 Finish a Grand Prix or 3 podiums</div>`:''}
     `;
     card.onclick = () => {
       if(locked){
@@ -39383,7 +39398,7 @@ function setupSelect(){
       if(window.netAnnouncePick) netAnnouncePick();
     };
     // default select first (Guido) — and enable Lock-in immediately
-    if(idx === 0){
+    if(keep ? (t.id===keep.id && !locked) : idx === 0){
       card.style.borderColor = 'var(--signal)';
       selectedEl = card;
       chosenType = t;
@@ -39404,6 +39419,7 @@ function setupSelect(){
       return;
     }
     initAudio();
+    if(NET.on) netLeave();                 // a solo race must not inherit a stale room
     $('select').classList.add('hidden');
     if(pendingGP){ pendingGP=false; startGP(); } else countdown();
   };
@@ -39412,6 +39428,7 @@ function setupSelect(){
 // Update countdown to apply chosen sperm to player
 const _origCountdown = countdown;
 countdown = function(){
+  if(state==='count') return;   // double-tap on Lock in: one build, one tick chain
   initAudio();
   buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
@@ -39425,7 +39442,7 @@ countdown = function(){
     if(n>0){cd.textContent=n;pulse();SFX.count(false);setTimeout(tick,750);}
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
     else{
-      $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now();
+      $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now(); raceTime=0;
       startEngine(); lockOrient(); startMusic();
       if(sliderMode){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; }
       // rocket start: reward holding the throttle/stick the instant the lights go
@@ -39518,11 +39535,11 @@ const _origBuildRacers = buildRacers;
 buildRacers = function(){
   // rings live on the scene, not on the racer group, so they have to be removed by hand or
   // they accumulate one set per race
-  for(const r of racers){ if(r._ring) scene.remove(r._ring); }
-  for(const r of racers){ if(r.obj)scene.remove(r.obj); if(r.shadow)scene.remove(r.shadow); if(r._dshadow)scene.remove(r._dshadow); if(r._drings)scene.remove(r._drings); }
-  for(const it of items) scene.remove(it.mesh);
-  for(const h of hazards) scene.remove(h.mesh);
-  for(const p of projectiles) scene.remove(p.mesh);
+  for(const r of racers){ if(r._ring){ scene.remove(r._ring); disposeObject(r._ring); } }
+  for(const r of racers){ if(r.obj){scene.remove(r.obj);disposeObject(r.obj);} if(r.shadow){scene.remove(r.shadow);disposeObject(r.shadow);} if(r._dshadow){scene.remove(r._dshadow);disposeObject(r._dshadow);} if(r._drings){scene.remove(r._drings);disposeObject(r._drings);} }
+  for(const it of items){ scene.remove(it.mesh); disposeObject(it.mesh); }
+  for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
+  for(const p of projectiles){ scene.remove(p.mesh); disposeObject(p.mesh); }
   hazards=[]; projectiles=[];
   items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
 
@@ -39904,11 +39921,11 @@ $('startbtn').onclick = () => {
   updateScrollHint();
 };
 $('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; $('start').classList.add('hidden'); $('select').classList.remove('hidden'); updateScrollHint(); };
-$('againbtn').onclick=()=>{ gpActive=false; countdown(); };
-$('changebtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; updateScrollHint(); };
+$('againbtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); countdown(); };
+$('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; updateScrollHint(); };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
-$('mainbtn').onclick=()=>{ gpActive=false; stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
+$('mainbtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
 
 // mid-race quit — tap-to-arm, tap again within 2.5s to confirm (no accidental race loss)
 let quitArm=false, quitTimer=null;
@@ -39921,7 +39938,7 @@ $('quitbtn').onclick=()=>{
   }
   clearTimeout(quitTimer); quitArm=false;
   $('quitbtn').textContent='✕'; $('quitbtn').classList.remove('armed');
-  gpActive=false; state='menu'; stopEngine(); stopMusic(); unlockOrient();
+  gpActive=false; state='menu'; if(NET.on) netLeave(); stopEngine(); stopMusic(); unlockOrient();
   document.body.classList.remove('final-lap');
   $('throttle').style.display='none';
   $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
