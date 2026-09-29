@@ -33035,7 +33035,8 @@ function addOutline(mesh,k){
 }
 // Smoothly wiggle the single tapering tail tube by displacing its spine in x.
 const TAIL_OUTLINE_W=0.32;   // constant absolute width — tapers with the tube, doesn't flare
-function wiggleTail(g, phase, amp){
+function wiggleTail(g, phase, amp, lift){
+  lift=lift||0;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -33047,7 +33048,7 @@ function wiggleTail(g, phase, amp){
       const sway=Math.sin(phase - rg.ph)*amp*rg.t*rg.t, z=-2 - rg.t*20;
       for(let j=0;j<rg.n;j++){
         const u=j/rg.n*Math.PI*2;
-        dummy.position.set(sway+Math.cos(u)*rg.r, 3.2+Math.sin(u)*rg.r, z);
+        dummy.position.set(sway+Math.cos(u)*rg.r, 3.2+lift*rg.t*rg.t+Math.sin(u)*rg.r, z);
         dummy.scale.setScalar(rg.s);
         dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
       }
@@ -33059,7 +33060,7 @@ function wiggleTail(g, phase, amp){
   // longitudinal spines between them, which is what makes a tube out of pure edges.
   const wt=g.userData.wireTail;
   if(wt){
-    const {mesh,pos,R,S,cx,cz,cr}=wt;
+    const {mesh,pos,R,S,cx,cz,cr}=wt, ly=i=>3.2+lift*(i/(R-1))*(i/(R-1));
     for(let i=0;i<R;i++){
       const t=i/(R-1);
       cx[i]=Math.sin(phase - i*0.55*(20/R))*amp*t*t;
@@ -33069,14 +33070,14 @@ function wiggleTail(g, phase, amp){
     let p=0;
     for(let i=0;i<R;i++) for(let s=0;s<S;s++){
       const a=s/S*Math.PI*2, b=(s+1)/S*Math.PI*2;
-      pos[p++]=cx[i]+Math.cos(a)*cr[i]; pos[p++]=3.2+Math.sin(a)*cr[i]; pos[p++]=cz[i];
-      pos[p++]=cx[i]+Math.cos(b)*cr[i]; pos[p++]=3.2+Math.sin(b)*cr[i]; pos[p++]=cz[i];
+      pos[p++]=cx[i]+Math.cos(a)*cr[i]; pos[p++]=ly(i)+Math.sin(a)*cr[i]; pos[p++]=cz[i];
+      pos[p++]=cx[i]+Math.cos(b)*cr[i]; pos[p++]=ly(i)+Math.sin(b)*cr[i]; pos[p++]=cz[i];
     }
     for(let s=0;s<S;s++){
       const a=s/S*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
       for(let i=0;i<R-1;i++){
-        pos[p++]=cx[i]+ca*cr[i];     pos[p++]=3.2+sa*cr[i];     pos[p++]=cz[i];
-        pos[p++]=cx[i+1]+ca*cr[i+1]; pos[p++]=3.2+sa*cr[i+1];   pos[p++]=cz[i+1];
+        pos[p++]=cx[i]+ca*cr[i];     pos[p++]=ly(i)+sa*cr[i];     pos[p++]=cz[i];
+        pos[p++]=cx[i+1]+ca*cr[i+1]; pos[p++]=ly(i+1)+sa*cr[i+1];   pos[p++]=cz[i+1];
       }
     }
     mesh.geometry.attributes.position.needsUpdate=true;
@@ -33089,7 +33090,7 @@ function wiggleTail(g, phase, amp){
     for(const r of rings){
       const sway=Math.sin(phase - r.ph)*amp*r.t*r.t, z=-2 - r.t*20;
       for(const o of r.offs){
-        dummy.position.set(sway+o[0], 3.2+o[1], z);
+        dummy.position.set(sway+o[0], 3.2+lift*r.t*r.t+o[1], z);
         dummy.scale.set(o[2],o[2],o[2]);
         dummy.rotation.set(0, sway*0.12, 0);
         dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
@@ -33108,7 +33109,7 @@ function wiggleTail(g, phase, amp){
     for(let j=0;j<=sides;j++){
       const ang=j/sides*Math.PI*2, c=Math.cos(ang), s=Math.sin(ang);
       pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
-      pos[p]=y+s*r;  outlinePos[p]=y+s*ro;  p++;
+      pos[p]=y+lift*t*t+s*r;  outlinePos[p]=y+lift*t*t+s*ro;  p++;
       pos[p]=cz;     outlinePos[p]=cz;      p++;
     }
   }
@@ -33905,7 +33906,7 @@ function bndStacheThick(t){ return (1 - Math.pow(t,3.1))*0.46 + 0.090; }
 function bndStachePoint(sx, t, s, out){
   const stream = s.stream + s.leanStream*sx;
   const x = sx*(0.26 + t*3.90*s.spread);
-  const y = 2.20 - Math.sin(Math.pow(t,0.85)*Math.PI*0.88)*0.70*s.dip
+  const y = 2.10 - Math.sin(Math.pow(t,0.85)*Math.PI*0.88)*0.70*s.dip
                  + Math.pow(t,2.9)*1.55*s.hook;
   // Floor the surface term instead of letting it fall to zero. Past the silhouette the
   // bare solve collapses z to the group origin, which teleports the tips back to the
@@ -33936,7 +33937,7 @@ function bndPoseStache(rig){
    two writers on one channel just fight. Tilt, pupil dilation, hat and body carry it. */
 const BND_MOODS = {
   neutral  : {dip:1.00, hook:1.00, spread:1.00, tilt: 0.00, pupil:1.00, hat: 0.00, pitch: 0.00},
-  happy    : {dip:0.50, hook:1.75, spread:1.08, tilt:-0.16, pupil:1.14, hat:-0.09, pitch:-0.05},
+  happy    : {dip:0.50, hook:1.40, spread:1.08, tilt:-0.16, pupil:1.14, hat:-0.09, pitch:-0.05},
   surprised: {dip:1.30, hook:0.30, spread:0.84, tilt: 0.00, pupil:0.50, hat: 0.22, pitch:-0.13},
   angry    : {dip:1.45, hook:0.28, spread:1.06, tilt: 0.46, pupil:0.78, hat:-0.16, pitch: 0.11},
   sad      : {dip:1.70, hook:-0.50,spread:0.86, tilt:-0.36, pupil:1.18, hat: 0.14, pitch: 0.16},
@@ -34140,7 +34141,9 @@ function updateBandido(o, r, dt){
   rig.hatPitch = mix(rig.hatPitch, Math.max(-0.19, Math.min(0.19, -rig.kick*0.62)), 6);
   const hat = rig.hat;
   hat.rotation.z = (bodyRoll - rig.hatLean)*1.9;
-  hat.rotation.x = m.hat + rig.hatPitch + flow*0.10;
+  // capped: the surprised tip (+0.22) plus a braking kick (+0.19) drove the brim 24 degrees
+  // down across the eyes on a spinout; a little forward pitch is the most the face allows
+  hat.rotation.x = Math.min(0.15, m.hat + rig.hatPitch + flow*0.10);
   hat.rotation.y = -lean*0.12;
   hat.position.y = 5.45 + Math.abs(hat.rotation.z)*0.30;
   hat.position.z = -flow*0.28;
@@ -34878,7 +34881,7 @@ const _ldM=new T.Matrix4(), _ldI=new T.Matrix4(), _ldR=new T.Matrix4(), _ldQ=new
   _ldMb=new T.Matrix4(), _ldL1=new T.Matrix4(), _ldL2=new T.Matrix4(), _ldL3=new T.Matrix4();
 const _ldV=new T.Vector3(), _ldT=new T.Vector3(), _ldB=new T.Vector3(), _ldU=new T.Vector3(),
   _ldD=new T.Vector3(), _ldX=new T.Vector3(), _ldZ=new T.Vector3(), _ldS=new T.Vector3(), _ldUp=new T.Vector3(0,1,0),
-  _ldW=new T.Vector3(), _ldC=new T.Vector3();
+  _ldW=new T.Vector3(), _ldC=new T.Vector3(), _ldN=new T.Vector3(), _ldF=new T.Vector3();
 const _ldQb=new T.Quaternion(), _ldQh=new T.Quaternion(), _ldE=new T.Euler();
 const LD_N=40, LD_S=12, LD_Y=3.2;   // spine links, sides round the tube, spine height (the head's centre)
 const LD_COS=new Float32Array(LD_S+1), LD_SIN=new Float32Array(LD_S+1);
@@ -35345,6 +35348,19 @@ function dragonFx(o, r, dr, an, dt){
 // and fading with height so the whole body reads as hovering over the road, and on a jump
 // the shadow stays on the ground. One instanced draw; alpha rides the instance colour.
 const LD_SH=10;
+// Road-surface frame under a point: writes the road's up-normal into `n` (it rises sin(bank)
+// per unit of lateral, same as the height terms, and by the sample-to-sample grade along the
+// road) and returns how much of a
+// blob shadow should show: 1 on the pavement, fading to 0 over the 3 units past its edge so
+// nothing hangs in mid-air beside a road that has no ground there.
+const _shN=new T.Vector3(), _shZ=new T.Vector3(0,0,1);
+function roadShadowFrame(i, x, z, n){
+  const s=SAMP[i], s2=SAMP[(i+1)%SAMP.length], lat=(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z, sb=Math.sin(s.bank||0);
+  const dx=s2.p.x-s.p.x, dz=s2.p.z-s.p.z, dl=Math.hypot(dx,dz), gr=dl>0.5 ? (s2.p.y-s.p.y)/dl : 0;
+  const gx=dl>0.5?dx/dl:s.t.x, gz=dl>0.5?dz/dl:s.t.z;
+  n.set(-sb*s.n.x-gr*gx, 1, -sb*s.n.z-gr*gz).normalize();
+  return ldClamp((HW+3-Math.abs(lat))/3, 0, 1);
+}
 function dragonShadow(o, r, dr){
   if(!r.shadow || !r.shadow.parent) return;
   const b=dr.body, sc=o.scale.x||1;
@@ -35363,20 +35379,25 @@ function dragonShadow(o, r, dr){
     const t=0.06+k*0.094, rad=dragonAt(b,t);
     _ldW.copy(_ldV).applyMatrix4(_ldM);                      // world point on the spine
     _ldD.copy(_ldT).transformDirection(_ldM);
-    let gy;
+    let gy, sfade=1; _ldN.set(0,1,0);
     if(local){
       let bi=hint, bd=1e18;
       for(let j=-9;j<=3;j++){ let i=hint+j; if(trackLoop) i=(i+STEPS)%STEPS; else i=Math.max(0,Math.min(STEPS-1,i));
         const p=SAMP[i].p, d=(p.x-_ldW.x)*(p.x-_ldW.x)+(p.z-_ldW.z)*(p.z-_ldW.z); if(d<bd){ bd=d; bi=i; } }
       hint=bi; const s=SAMP[bi], lat=(_ldW.x-s.p.x)*s.n.x+(_ldW.z-s.p.z)*s.n.z;
       gy=s.p.y+Math.sin(s.bank||0)*lat;
+      sfade=roadShadowFrame(bi,_ldW.x,_ldW.z,_ldN);
     } else gy=(r.surfY!=null?r.surfY:r.y-HOVER_H);
     const hgt=Math.max(0,_ldW.y-gy), f=ldClamp(1-hgt/(80*sc),0.3,1);
     const w=(2.2*rad+1.4)*sc*(0.6+0.4*f);
-    _dgO.position.set(_ldW.x, gy+0.13, _ldW.z);
-    _dgO.rotation.set(0,Math.atan2(_ldD.x,_ldD.z),0);
+    _dgO.position.set(_ldW.x+_ldN.x*0.13, gy+_ldN.y*0.13, _ldW.z+_ldN.z*0.13);
+    // lie in the banked road: up = road normal, forward = the spine's heading projected onto it
+    _ldF.set(Math.sin(Math.atan2(_ldD.x,_ldD.z)),0,Math.cos(Math.atan2(_ldD.x,_ldD.z)));
+    _ldF.addScaledVector(_ldN,-_ldF.dot(_ldN)).normalize();
+    _ldX.crossVectors(_ldN,_ldF);
+    _ldQ.makeBasis(_ldX,_ldN,_ldF); _dgO.quaternion.setFromRotationMatrix(_ldQ);
     _dgO.scale.set(w,1,w*1.7); _dgO.updateMatrix(); im.setMatrixAt(k,_dgO.matrix);
-    im.instanceColor.setXYZ(k,0.62*f,0,0);
+    im.instanceColor.setXYZ(k,0.62*f*sfade,0,0);
   }
   im.instanceMatrix.needsUpdate=true; im.instanceColor.needsUpdate=true;
 }
@@ -36326,12 +36347,12 @@ function makeCell(hue, typeId){
     const muMat = new T.MeshPhongMaterial({color:0x080808, emissive:0x000000});  // true black
     // central body: a downward-bowing arc (smile shape) sitting just under the nose on the face surface
     const stache = new T.Mesh(new T.TorusGeometry(1.55,0.4,10,20, Math.PI), muMat);
-    seatOnFace(stache, 0, 3.35, 0.06); stache.rotation.x = 1.55; g.add(stache);
+    seatOnFace(stache, 0, 3.05, 0.06); stache.rotation.x = 1.55; g.add(stache);
     // curled-up handlebar tips that grow CONTINUOUSLY from the ends of the body (connected, not detached)
     for(const sx of [-1,1]){
       const tip=new T.Mesh(new T.TorusGeometry(0.78,0.34,10,16, Math.PI*1.3), muMat);
       // anchored at the body's end (~x=±1.55) and curling UP & outward toward the cheek
-      tip.position.set(sx*1.7,3.65,3.95); tip.rotation.set(1.55,0,sx*-1.5); g.add(tip);
+      tip.position.set(sx*1.7,3.35,3.95); tip.rotation.set(1.55,0,sx*-1.5); g.add(tip);
     }
     // small gold stud earrings on the sides — enlarged slightly and dropped lower & further back (clear of the
     // sombrero brim and collar) so each reads from the side/back; subtle bling
@@ -38260,15 +38281,35 @@ function syncObjects(dt,now){
       // would rise right along with the character and the hover would read as nothing
       // (no visible gap = no sense of floating), instead of a car-style hover-with-cast-
       // shadow look. Also darkened a touch so the separation actually reads as a shadow.
-      r.shadow.position.set(r.x, (r.surfY!==undefined?r.surfY:r.y)+0.12, r.z);
+      // The disc lies IN the banked road (normal from the sample's bank, lifted 0.12 along it)
+      // instead of level, where it sank up to 1.5 units into a banked corner and got sliced by
+      // the road plane; and it fades out past the pavement edge so it never hangs over the void.
+      let sfade=1; _shN.set(0,1,0);
+      if(typeof SAMP!=='undefined' && SAMP.length && r.idx!==undefined) sfade=roadShadowFrame(r.idx, r.x, r.z, _shN);
+      const sy=(r.surfY!==undefined?r.surfY:r.y);
+      r.shadow.position.set(r.x+_shN.x*0.12, sy+_shN.y*0.12, r.z+_shN.z*0.12);
+      r.shadow.quaternion.setFromUnitVectors(_shZ, _shN);
       const sc=1 - Math.min(0.4, lift*0.1);
       r.shadow.scale.setScalar(sc);
-      r.shadow.material.opacity=0.82*sc;
+      r.shadow.material.opacity=0.82*sc*sfade;
     }
     // tail wiggle scaled by speed (smooth per-vertex, no segments)
     r.phase += dt*(4+Math.abs(r.spd)*0.06);
     const amp=2.4 + Math.min(4.5,Math.abs(r.spd)*0.035);
-    wiggleTail(r.obj, r.phase, amp);
+    // the tail is rigid in the racer's level frame, so where the road climbs behind the kart (a
+    // descent, the far side of a crest) its tip ended up to 3.5 units under the tarmac. Lift the
+    // tip by however much the road under it is higher than the kart can clear; flat and gently
+    // sloped road reads as before.
+    let tl=0;
+    if(!r.air && !r.obj.userData.dragonRig && typeof SAMP!=='undefined' && SAMP.length && r.idx!==undefined && r.surfY!==undefined){
+      const s0=SAMP[r.idx], s1=SAMP[r.idx>0 ? r.idx-1 : 1];
+      const k=Math.max(1,Math.round(22/Math.max(1,s0.p.distanceTo(s1.p))));
+      let bi=r.idx-k; bi=trackLoop ? (bi%STEPS+STEPS)%STEPS : Math.max(0,bi);
+      const sb=SAMP[bi], latT=(r.x-sb.p.x)*sb.n.x+(r.z-sb.p.z)*sb.n.z;
+      tl=Math.min(8, Math.max(0, sb.p.y+Math.sin(sb.bank||0)*latT - r.surfY - 2.0));
+    }
+    r._tailLift=(r._tailLift||0)+(tl-(r._tailLift||0))*Math.min(1,8*dt);
+    wiggleTail(r.obj, r.phase, amp, r._tailLift);
     // boost flush on head + halo — brighten the character's OWN stored base emissive
     // (captured in makeCell after every typeId skin-tone override) rather than recomputing
     // a fresh color from r.hue every frame, which used to silently overwrite any
@@ -38286,10 +38327,14 @@ function syncObjects(dt,now){
         // celebration gesture SEQUENCE, keyed off the celebT countdown (starts at 6):
         // big grin -> wink -> open-mouthed "WOO" cheer -> grin again
         const ph=6-r.celebT;
-        if(ph<1.4){ fx=1.9; fy=1.8; }               // huge grin
+        // fy is capped near 1.3: the arc grows upward from its own origin, so the old
+        // 1.8/2.2 pushed its crown up across the eyes on the finish orbit. The dragons keep
+        // the full range because their jaw opens off this same scale.
+        const big=r.obj.userData.dragonRig;
+        if(ph<1.4){ fx=1.9; fy=big?1.8:1.3; }       // huge grin
         else if(ph<2.6){ fx=1.7; fy=1.2; }          // grin tightens for the wink
-        else if(ph<3.8){ fx=0.8; fy=2.2; }          // mouth pops open — "WOO!"
-        else { fx=1.9; fy=1.8; }                    // back to the grin
+        else if(ph<3.8){ fx=0.8; fy=big?2.2:1.4; }  // mouth pops open — "WOO!"
+        else { fx=1.9; fy=big?1.8:1.3; }            // back to the grin
       }
       else if(r.spinT>0){ fx=0.55; fy=1.6; }        // shocked "O"
       else if(boosting){ fx=1.5; fy=1.4; }          // wide excited grin
@@ -39628,7 +39673,8 @@ buildRacers = function(){
     scene.add(obj);
     // soft ground shadow disc that grounds the racer
     const shadow=new T.Mesh(new T.PlaneGeometry(9,9),
-      new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0.7}));
+      new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0.7,
+        polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2}));   // wins depth ties with the road
     shadow.rotation.x=-Math.PI/2; scene.add(shadow);
     return {you, id:t.id, name:(np&&np.name)||t.name, hue:t.hue, obj, shadow,
       netId: np ? np.id : null,
