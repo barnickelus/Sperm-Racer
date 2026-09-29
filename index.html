@@ -34927,6 +34927,8 @@ const _ldV=new T.Vector3(), _ldT=new T.Vector3(), _ldB=new T.Vector3(), _ldU=new
   _ldD=new T.Vector3(), _ldX=new T.Vector3(), _ldZ=new T.Vector3(), _ldS=new T.Vector3(), _ldUp=new T.Vector3(0,1,0),
   _ldW=new T.Vector3(), _ldC=new T.Vector3();
 const _ldQb=new T.Quaternion(), _ldQh=new T.Quaternion(), _ldE=new T.Euler();
+const _ldQr=new T.Quaternion(), _ldQs=new T.Quaternion(), _ldYax=new T.Vector3(0,1,0);
+const _ldOb=new Float32Array(8*4), _ldOd=new Array(8).fill(null);   // dragonChase's neighbours: x,y,z,hull radius, and their chain
 const LD_N=40, LD_S=12, LD_Y=3.2;   // spine links, sides round the tube, spine height (the head's centre)
 const LD_COS=new Float32Array(LD_S+1), LD_SIN=new Float32Array(LD_S+1);
 for(let j=0;j<=LD_S;j++){ LD_COS[j]=Math.cos(j/LD_S*Math.PI*2); LD_SIN[j]=Math.sin(j/LD_S*Math.PI*2); }
@@ -35090,15 +35092,37 @@ function dragonLimbs(b){
 // before the head turns to look at something), so a glance turns the head on its neck
 // instead of swinging the whole body round with it.
 function dragonChase(b, o, r, dt, Qb){
-  const N=b.N, sc=o.scale.x||1, seg=b.seg*sc, spd=Math.abs(r.spd||0), cw0=b.cw;
-  _ldM.compose(o.position,o.quaternion,o.scale); _ldMb.compose(o.position,Qb||o.quaternion,o.scale);
+  const N=b.N, sc=o.scale.x||1, seg=b.seg*sc, spd=Math.abs(r.spd||0), cw0=b.cw, rad=b.rad;
+  // A spin turns the head 16 rad/s on the spot: lay the rest pose out on the heading held from
+  // just before the spin (only the head turns), and, backing up, swing it to one side so the
+  // head does not reverse into the links trailing behind it.
+  const spin=r.spinT>0, back=(r.spd||0)<-3 && !spin;
+  if(!b.qHold) b.qHold=new T.Quaternion();
+  if(spin) b.spinFade=1;
+  else if(b.spinFade>0){ b.spinFade-=dt/1.2; b.qHold.slerp(Qb||o.quaternion,Math.min(1,dt*2.5)); }   // ease round to the new heading
+  else b.qHold.copy(Qb||o.quaternion);
+  b.rv=(b.rv||0)+((back?Math.min(1,-(r.spd)/25):0)-(b.rv||0))*Math.min(1,dt*6);
+  let Qh=(spin||b.spinFade>0)?b.qHold:(Qb||o.quaternion);
+  if(b.rv>0.01){ _ldQs.setFromAxisAngle(_ldYax,b.side*1.5*b.rv); Qh=_ldQr.copy(_ldQs).multiply(Qh); }
+  _ldM.compose(o.position,o.quaternion,o.scale); _ldMb.compose(o.position,Qh,o.scale);
   b.coil+=((b.coilT!=null?b.coilT:Math.max(0,Math.min(1,1-spd/35))*0.85)-b.coil)*Math.min(1,dt*1.5);
   dragonRest(b,b.coil);
   const rest=b.rest, jump=!cw0 || Math.hypot(o.position.x-b.lx,o.position.y-b.ly,o.position.z-b.lz)>40*sc;
   const cw=b.cw||(b.cw=new Float32Array((N+1)*3));
   if(jump) for(let i=0;i<=N;i++){ _ldV.fromArray(rest,i*3).applyMatrix4(_ldMb); _ldV.toArray(cw,i*3); }
   b.lx=cw[0]=o.position.x; b.ly=cw[1]=o.position.y; b.lz=cw[2]=o.position.z;
-  const base=0.25+2.2*b.coil+b.pull, neck=r.spinT>0?0:7;
+  // who is close enough to be in the way (visual only: nothing here touches a racer's position)
+  let nob=0;
+  if(!jump && typeof racers!=='undefined') for(let k=0;k<racers.length&&nob<8;k++){
+    const q=racers[k], qo=q.obj; if(!qo||qo===o) continue;
+    const qs=qo.scale.x||1, rg=qo.userData.dragonRig, lim=(25+22*qs)*Math.max(sc,1);
+    if(Math.abs(qo.position.x-o.position.x)>lim||Math.abs(qo.position.z-o.position.z)>lim) continue;
+    const h=q.head+(q.slip||0), fw=(rg?2.5:1.5)*qs, q3=nob*4;
+    _ldOb[q3]=qo.position.x+Math.sin(h)*fw; _ldOb[q3+1]=qo.position.y; _ldOb[q3+2]=qo.position.z+Math.cos(h)*fw;
+    _ldOb[q3+3]=(rg?6.4:5.0)*qs; _ldOd[nob]=rg&&rg.body.cw&&rg.body.cw.length?rg.body:null; nob++;
+  }
+  const rev=b.rv>0.3;
+  const base=0.25+2.2*b.coil+b.pull+(rev?2*b.rv:0), neck=7;
   for(let i=1;i<=N;i++){
     const t=i/N, k=1-Math.exp(-(base+neck*Math.pow(1-t,4))*dt), q=i*3;
     // horizontal pull toward the rest pose: heights stay those of the path
@@ -35107,8 +35131,36 @@ function dragonChase(b, o, r, dt, Qb){
     // follow the leader: hold the link length
     let dx=cw[q]-cw[q-3], dy=cw[q+1]-cw[q-2], dz=cw[q+2]-cw[q-1], d=Math.hypot(dx,dy,dz);
     if(d<1e-5){ dx=_ldV.x-cw[q-3]; dy=0; dz=_ldV.z-cw[q-1]; d=Math.hypot(dx,dz)||1; }
-    const f=seg/d; cw[q]=cw[q-3]+dx*f; cw[q+1]=cw[q-2]+dy*f; cw[q+2]=cw[q-1]+dz*f;
+    let f=seg/d; cw[q]=cw[q-3]+dx*f; cw[q+1]=cw[q-2]+dy*f; cw[q+2]=cw[q-1]+dz*f;
+    // yield to anyone whose hull this link is inside: shoved sideways (a little up) by the
+    // overlap, more the further down the tail (the neck stays on the head), then the link
+    // length is held again so the tail bends round them instead of stretching
+    const w=Math.min(1,i/5)*0.8, rq=rad[i]*sc; let hit=false;
+    for(let m=0;m<=nob;m++){
+      let ox,oy,oz,R;
+      if(m<nob){ const m4=m*4; ox=_ldOb[m4]; oy=_ldOb[m4+1]; oz=_ldOb[m4+2]; R=_ldOb[m4+3]+rq; }
+      else if((rev||spin||b.spinFade>0)&&i>2){ ox=o.position.x; oy=o.position.y; oz=o.position.z; R=3.6*sc+rq; }   // our own head, backing up or spinning
+      else break;
+      let ex=cw[q]-ox, ey=cw[q+1]-oy, ez=cw[q+2]-oz, e=Math.hypot(ex,ey,ez);
+      if(e<R){
+        if(e<1e-3){ ex=cw[q+2]-cw[q-1]; ez=-(cw[q]-cw[q-3]); ey=0; e=Math.hypot(ex,ez)||1; }
+        const push=(R-e)*w/e; cw[q]+=ex*push; cw[q+1]+=ey*push*0.5; cw[q+2]+=ez*push; hit=true;
+      }
+      // dragon against dragon: the other body's links too, at twice the ring radius plus a margin
+      const ob=(m<nob)?_ldOd[m]:null;
+      if(ob){ const c2=ob.cw, s2=ob.lsc||1;
+        for(let j=2;j<=N;j+=2){ const j3=j*3, R2=rq+ob.rad[j]*s2+1;
+          const fx=cw[q]-c2[j3], fy=cw[q+1]-c2[j3+1], fz=cw[q+2]-c2[j3+2];
+          if(Math.abs(fx)>R2||Math.abs(fz)>R2) continue;
+          let fe=Math.hypot(fx,fy,fz);
+          if(fe<R2){ if(fe<1e-3){ fe=1; } const pu=(R2-fe)*w/fe; cw[q]+=fx*pu; cw[q+1]+=fy*pu*0.5; cw[q+2]+=fz*pu; hit=true; }
+        }
+      }
+    }
+    if(hit){ dx=cw[q]-cw[q-3]; dy=cw[q+1]-cw[q-2]; dz=cw[q+2]-cw[q-1]; d=Math.hypot(dx,dy,dz)||1;
+      f=seg/d; cw[q]=cw[q-3]+dx*f; cw[q+1]=cw[q-2]+dy*f; cw[q+2]=cw[q-1]+dz*f; }
   }
+  b.lsc=sc;
   _ldI.copy(_ldM).invert();
   for(let i=0;i<=N;i++){ _ldV.fromArray(cw,i*3).applyMatrix4(_ldI); _ldV.toArray(b.sp,i*3); }
 }
@@ -38266,10 +38318,10 @@ function syncObjects(dt,now){
     const wantSc=r.megaT>0?1.8:1;
     if(Math.abs((o.scale.x||1)-wantSc)>0.01){ const ns=o.scale.x+(wantSc-o.scale.x)*Math.min(1,6*dt); o.scale.setScalar(ns); }
     // glance over at rivals who are pulling alongside / about to pass — turn the head to look
-    let near=null,nd=1e9;
+    let near=null,nd=1e9,minD=1e9;
     const GR=24;
     for(const o2 of racers){ if(o2===r)continue;
-      const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd>GR)continue;
+      const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd<minD)minD=dd; if(dd>GR)continue;
       // weight toward rivals that are roughly beside you (the ones you'd actually look at)
       let df=Math.atan2(o2.x-r.x,o2.z-r.z)-r.head; while(df>Math.PI)df-=6.2832; while(df<-Math.PI)df+=6.2832;
       const sideness=Math.abs(Math.sin(df));            // 1 = directly to the side
@@ -38293,7 +38345,10 @@ function syncObjects(dt,now){
     // before — ordinary road superelevation and the berm wall-ride lean both already flow
     // into r._bank), then derive an orthonormal right/up so the model banks relative to its
     // own direction of travel, matching the road surface underneath it.
-    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance);   // dragons turn their own heads
+    // the glance swings the whole model, tail and hat with it: on the grid and with a rival
+    // close alongside that would fan it across the neighbour's slot, so it is kept small there
+    const gcap=state==='count'?0.25:0.25+0.85*ldSmooth(14,20,minD);
+    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : ldClamp(r._glance,-gcap,gcap));   // dragons turn their own heads
     const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
