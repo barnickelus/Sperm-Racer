@@ -37588,8 +37588,20 @@ function updateRacer(r,dt){
     // ...but it also returned before the road-following code, so the winner kept whatever
     // height it crossed the line at while sliding on. On any course that climbs or drops
     // past the finish that means sinking through the road during the entire celebration.
+    // Coast ALONG the road: steer for the centreline lookahead, re-find the nearest sample and
+    // keep the usual lateral clamp, so the pack stays on the tarmac in front of the finish
+    // camera instead of sailing off on a frozen heading over an extrapolated banked plane.
+    // (Only runs after r.finished, so finishing order and times are untouched.)
+    { r.idx=nearest(r.x,r.z,r.y);
+      const lk=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
+      const dF=angDiff(Math.atan2(lk.p.x-r.x, lk.p.z-r.z), r.head);
+      r.head+=Math.max(-1,Math.min(1,dF*1.8))*TURN*dt*Math.min(1,r.spd/60);
+      const s0=SAMP[r.idx], lt=(r.x-s0.p.x)*s0.n.x + (r.z-s0.p.z)*s0.n.z;
+      const inS=innerSign, lim=(lt*inS>0)?HW*2.2:HW*1.28;
+      if(Math.abs(lt)>lim){ const ex=lt-Math.sign(lt)*lim; r.x-=s0.n.x*ex; r.z-=s0.n.z*ex; } }
     const sF=SAMP[r.idx];
     const latF=(r.x-sF.p.x)*sF.n.x + (r.z-sF.p.z)*sF.n.z;
+    r.air=false; r.vy=0;
     r.surfY = sF.p.y + Math.sin(sF.bank||0)*latF;
     r.y += ((r.surfY+HOVER_H) - r.y)*Math.min(1, 5*dt);
     return;
@@ -38664,7 +38676,8 @@ function frame(now){
     else if(meF && meF.finished){
       meF._wrapT=(meF._wrapT===undefined?4.5:meF._wrapT)-dt;   // long enough for the hero shot to land
       if(meF._wrapT<=0){
-        for(const r of racers) if(!r.finished){ r.finished=true; r.finishT=raceTime+(LAPS-r.total)*12; }
+        for(const r of racers) if(!r.finished){ r.finished=true; r.finishT=raceTime+(LAPS-r.total)*12;
+          r.air=false; r.vy=0; if(r.surfY!=null) r.y=r.surfY+HOVER_H; }   // no freezing mid-jump
         endRace();
       }
     }
@@ -39624,6 +39637,11 @@ buildRacers = function(){
     while(back<want && (wrap || g>0)){ const q=(g-1+STEPS)%STEPS; back+=SAMP[g].p.distanceTo(SAMP[q].p); g=q; }
     const sg=SAMP[g];
     const pos=sg.p.clone().addScaledVector(sg.n,lane).addScaledVector(sg.t,-Math.max(0,want-back));
+    // sit ON the tilted road, not on the flat plane through its centreline: on a banked
+    // grid the low lanes started inside the road/water and the high ones hovered
+    // (same expression placeOnTrack solves once the race is running)
+    const gSurf=sg.p.y + Math.sin(sg.bank||0)*lane;
+    pos.y=gSurf+HOVER_H;
     obj.position.copy(pos);
     scene.add(obj);
     // soft ground shadow disc that grounds the racer
@@ -39634,7 +39652,7 @@ buildRacers = function(){
       netId: np ? np.id : null,
       remote: !!(np && np.id!==NET.self),
       human: !!np,
-      x:pos.x, z:pos.z, y:pos.y,
+      x:pos.x, z:pos.z, y:pos.y, surfY:gSurf, _bank:-(sg.bank||0)/0.85,
       head:Math.atan2(sg.t.x,sg.t.z),    // facing along the road where it stands
       spd:0, idx:2, prog:s.u, lap:0, total:0,
       drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
