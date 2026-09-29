@@ -705,7 +705,8 @@ const ALT_MAP={guido:['guidoClub','guidoAlt','guidoParty'], chad:['chadClassic',
   nerd:['nerdClassic'],            // Norbert can still dial back to Slide Rule FM
   samurai:['samuraiClassic'],      // Kenji can still dial back to Sakura FM
   wall:['wallClassic'],             // Daryl can still dial back to Big Board FM
-  korean:['koreanClassic']};         // Mr. Park can still dial back to Arirang FM
+  korean:['koreanClassic'],         // Mr. Park can still dial back to Arirang FM
+  kingVox:['kingVoxClassic']};     // 64-Bit Darius can still dial back to 64.0 KING FM
 const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
@@ -1000,9 +1001,18 @@ const MUSIC_STYLES={
               stab:{inst:'pluck', wave:'square', note:12, steps:[6,14], dur:0.1, vol:0.18},
               mel:[0,7,12,7,3,10,7,3], melB:[12,15,19,15,12,10,7,5], bass:[0,0,5,7],
               station:'8.0 BIT FM' },
+  /* 64-Bit Darius's HOME station is now produced: "Coronation Drift (64-Bit Boss Mix)" (see
+     SONG_ENGINE), Darius King's record remixed as a 16/64-bit console soundtrack. The grid
+     fields are only for the shared code that reads every style (the victory fanfare). */
+  kingVox:  { engine:'coronationKingVox', inst:'synthwave', melWave:'square', bassWave:'sine', bassInst:'808',
+              volMul:1.3, drumVol:1.4,
+              drums:{kick:[0,2,3,6,10,11],snare:[8,12]}, bass:[0,0,3,5],
+              hihat:2, beatGroup:4, tempoMul:0.66, station:'64.64 THRONE ROM',
+              mel:[7,7,7,8,7,3,null,null], melB:[8,8,8,12,8,3,null,null] },
+  // ...and 64.0 KING FM, his old home station, stays on the dial one click over (ALT_MAP).
   // 64-Bit Darius: his trap beat kept intact, but voiced with a big detuned saw lead over
   // the 808 instead of a raw square — the audio equivalent of the resolution bump.
-  kingVox:  { inst:'synthwave', melWave:'square', bassWave:'sine', bassInst:'808',
+  kingVoxClassic:{ inst:'synthwave', melWave:'square', bassWave:'sine', bassInst:'808',
               volMul:1.3, drumVol:1.4,
               stab:{inst:'brass', wave:'square', note:7, steps:[2,10], dur:0.18, vol:0.26},
               drums:{kick:[0,2,3,6,10,11],snare:[8,12]}, bass:[0,0,3,5],
@@ -12911,6 +12921,685 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
         lead:  {level:0.85, pan:-0.08, echo:0.08, spring:0.22, chain:[['hp',220],['peak',1300,2,1]]},
         vox:   {level:1.0,  pan:0, spread:0.4, echo:0.08, spring:0.32, chain:[['hp',150],['peak',2800,2,1]]},
       } },
+  };
+})();
+/* "CORONATION DRIFT (64-BIT BOSS MIX)" — 64-Bit Darius's record: a remix of Darius King's
+   "Coronation Drift" (above), re-voiced as a 16/64-bit console soundtrack — the final boss's
+   victory lap. The composition is the original's and a player should know it in a bar: the
+   same hook over Fm-Db-Bbm-C / Fm-Db-Eb-C, the 3-3-2 piano ostinato, the verse string line,
+   the half-step-down beat switch with its bell tune, the soul breakdown and the speed-up back
+   into the last hook (the note data is copied into this block; `coronation` is untouched).
+   What changes is the medium: everything plays out of a cartridge's sound RAM.
+
+   New instruments (song.voices), all rendered once per station into tiny low-rate buffers the
+   way a SNES or N64 sound driver holds its samples — short word lengths (8 to 10 bits), 16 to
+   32 kHz, looped multi-samples one octave apart pitched by playback speed (so the formants
+   move with the pitch, as they did), hardware-style envelopes:
+     sampled orchestra: legato/spiccato strings, a formant choir ("aah"/"ooh"), a solo voice
+       that morphs between the two, pizzicato, piano (stretched partials that decay at their
+       own rates), timpani, and THE orchestra hit, fired in parallel on the melody
+     FM (a YM-style 2-operator chip): a brass section that blares with the breath, a slap
+       bass, tubular bells, a tine electric piano with auto-pan, an overdriven lead for the
+       victory lap with glides and vibrato
+     PSG: pulse-wave arpeggios (12.5/25/50% duty) whose volume steps down once a frame
+     crunchy drum samples: a pitched 8-bit 808 (glides are playback-rate slides), trap and
+       dusty kicks and snares, a four-hand clap, a snap, metallic hats that roll up in pitch
+       like a sample does, crash and its reverse, and the character touches as samples: the
+       champagne cork and fizz, and a cash register's ka-ching for the verse's beat stop.
+   They play into a generated late-90s digital reverb (a damped comb/allpass network, the
+   metallic hall of an N64 game) on the spring sends, and the engine's echo as the SNES echo.
+
+   FORM (140 bpm bars are 1.71 s; 93 bars, ~2:53; loops to the Hook, the boot plays once):
+     0 Boot (4)               0:00  the console chime, a choir pad through an opening filter,
+                                    the piano "sample", timpani, PRESS START arps; the cork
+     4 Hook (8)               0:07  orchestra hits on the repeated-note motif, choir/strings
+                                    on the long notes, 808 samples and the crunchy trap kit
+    12 Verse (piano) (16)     0:21  3-3-2 piano ostinato, choir "ooh"s, the string line; the
+                                    beat stops for the ka-ching, triplet hat flows
+    28 Hook (FM brass) (8)    0:48  FM brass answers, then doubles the hook; slap bass drives
+    36 Pause (1)              1:02  the game pauses: the chord slows down with the clock
+    37 Boss phase 2 (16)      1:04  E minor, 128: bells, pizz, glide 808s, triplet hats; the
+                                    slap bass in 16ths and brass hits for the second half
+    53 Hook, flipped (8)      1:34  the hook on the new beat, bells and PSG triplets over it
+    61 Save point (8)         1:49  86 bpm soul breakdown: FM e-piano, the sampled singer,
+                                    filtered like a sample until the boom-bap comes in
+    69 Continue? (4)          2:11  speeding back up 101->134 bpm, timpani and snare rolls,
+                                    the high-pass rising, a PSG sweep, the cork again
+    73 Victory lap (16)       2:19  the hook with brass answers, then (at 144) brass on the tune,
+                                    the FM lead over it, choir an octave up, 32nd-note arps
+    89 Staff roll (4)         2:46  piano motif, the cork, a brass fall, the final tutti and a
+                                    stage-clear fanfare on the PSG
+   Each bar draws from an RNG keyed to its absolute bar number and the planner reads the pass
+   count (808 patterns, hat rolls, fills, arp shapes and duty cycles, who doubles the hook,
+   where the verse stops, the lead's octave), so a three-lap race never repeats a bar. */
+SONG_ENGINE.songs.coronationKingVox=(function(){
+  function voices(ctx,bus,noise,live,lite){
+    const C=bus.ch, SR=ctx.sampleRate, RNG=SONG_ENGINE.rngOf, TAU=2*Math.PI;
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    function O(w,f,t,end,to,det){ const o=ctx.createOscillator();
+      if(typeof w==='string') o.type=w; else o.setPeriodicWave(w);
+      o.frequency.setValueAtTime(f,t); if(det) o.detune.setValueAtTime(det,t);
+      o.connect(to); o.start(t); o.stop(end); live.push([o,end]); return o; }
+    // play a sample from sound RAM at `rate` (pitch = speed); looped samples loop their whole body
+    function S(smp,t,end,to,rate,off){ const s=ctx.createBufferSource(); s.buffer=smp.buf; s.playbackRate.setValueAtTime(rate,t);
+      if(smp.loop){ s.loop=true; s.loopStart=0; s.loopEnd=smp.buf.duration; }
+      s.connect(to); s.start(t,off||0); s.stop(end); live.push([s,end]); return s; }
+    const LFO=(t,end,rate)=>{ const o=ctx.createOscillator(); o.frequency.value=rate; o.start(t); o.stop(end); live.push([o,end]); return o; };
+    // a delayed vibrato: the LFO fades in over the note; scale it per destination
+    const vibOut=(t,end,dur,rate)=>{ const l=LFO(t,end,rate), g=G(0); l.connect(g);
+      g.gain.setValueAtTime(0,t+0.12); g.gain.linearRampToValueAtTime(1,t+Math.min(0.6,dur)+0.12); return g; };
+    const AD=(g,t,a,pk,d)=>{ g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,pk),t+a);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+a+d); };
+    const ASR=(g,t,a,pk,hold,r)=>{ const h=Math.max(a+0.005,hold); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(pk,t+a);
+      g.gain.setValueAtTime(pk,t+h); g.gain.exponentialRampToValueAtTime(0.0001,t+h+r); };
+    const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); }
+      if(p.spr){ const s=G(p.spr); node.connect(s); s.connect(c.thrS); } };
+
+    /* ---- sound RAM. Every sample is computed once, peak-normalised and then truncated to a
+       short word: that truncation (and the low rate, and the resampling when it is pitched)
+       is the grain of the whole record. */
+    const mk=(sec,rate,bits,fn)=>{ const len=Math.max(32,Math.floor(sec*rate)), b=ctx.createBuffer(1,len,rate), d=b.getChannelData(0);
+      fn(d,rate,len); let pk=0; for(let i=0;i<len;i++) pk=Math.max(pk,Math.abs(d[i]));
+      const k=pk>0?0.95/pk:1, s=Math.pow(2,bits-1)-1; for(let i=0;i<len;i++) d[i]=Math.round(d[i]*k*s)/s; return b; };
+    const RAM=32000;
+    // a sine added by a rotating phasor (no Math.sin per sample), optionally decaying by dk a sample
+    const addSine=(d,w,ph,a,dk,i0)=>{ let x=Math.cos(ph)*a, y=Math.sin(ph)*a; const c=Math.cos(w), sn=Math.sin(w), k=dk||1;
+      for(let i=i0||0;i<d.length;i++){ d[i]+=y; const nx=(x*c-y*sn)*k; y=(x*sn+y*c)*k; x=nx; } };
+    /* looped multi-sample: a whole number of periods, so the loop cannot click; each partial
+       breathes a little (a whole number of cycles per loop) so a held note is not a buzz */
+    const loopTone=(f0,spec,bits,seed)=>{ const P=Math.max(8,Math.round(RAM/f0)), fr=RAM/P, cyc=Math.max(8,Math.round((lite?0.25:0.3)*fr)), L=P*cyc, R=RNG(seed);
+      const hs=[]; for(let h=1; h*fr<RAM*0.42 && h<=(lite?16:28); h++){ const a=spec(h,h*fr); if(a>0.004) hs.push([h,a,R()*TAU,1+Math.floor(R()*2),0.3*R()]); }
+      // a*(1+m*sin(wm*i+ph))*sin(w*i+ph), written as three plain sines
+      const buf=mk(L/RAM,RAM,bits,(d)=>{ for(const [h,a,ph,j,m] of hs){ const w=TAU*h/P, wm=TAU*j/L;
+          addSine(d,w,ph,a); addSine(d,w-wm,Math.PI/2,a*m/2); addSine(d,w+wm,2*ph-Math.PI/2,a*m/2); } });
+      return {buf,f0:fr,loop:true}; };
+    const ZONES=[110,220,440,880];
+    const bank=(spec,bits,seed)=>ZONES.map((f,i)=>loopTone(f,spec,bits,seed+i));
+    const zone=(Z,f)=>{ let best=Z[0], bd=99; for(const z of Z){ const d=Math.abs(Math.log(f/z.f0)); if(d<bd){ bd=d; best=z; } } return best; };
+    const vowel=(FM)=>(h,f)=>{ let a=0.25*Math.exp(-f/380); for(const [Fq,lv,bw] of FM) a+=lv*Math.exp(-Math.pow((f-Fq)/bw,2)); return (a+0.02)/Math.pow(h,0.55); };
+    const STR=bank((h,f)=>(1/h)*(1+1.3*Math.exp(-Math.pow((f-1150)/650,2)))*(f>4200?Math.exp(-(f-4200)/1800):1),10,100);
+    const CHA=bank(vowel([[730,1,110],[1090,0.5,120],[2440,0.3,170],[3300,0.1,240]]),10,200);
+    const CHO=bank(vowel([[480,1,90],[850,0.45,110],[2800,0.12,180]]),10,300);
+    // plucked and struck samples, one per octave
+    const PNO=[110,220,440,880,1760].map((f0,zi)=>{ const sec=lite?1.2:[2.2,1.9,1.6,1.3,1][zi], R=RNG(900+zi);
+      return {f0, buf:mk(sec,RAM,10,(d,rate,len)=>{
+        for(let k=1;k<=(lite?6:10);k++){ const fk=f0*k*Math.sqrt(1+0.00035*k*k); if(fk>rate*0.44) break;
+          const a=Math.pow(0.6,k-1)*(k===1?0.8:1), tau=Math.min(2.6,1.1*Math.sqrt(262/f0)+0.3)/Math.pow(k,0.75), ph=R()*TAU;
+          for(const dt of (k<=2&&!lite)?[-0.35,0.35]:[0]) addSine(d,TAU*(fk+dt)/rate,ph,a,Math.exp(-1/(rate*tau))); }
+        let y=0; for(let i=0;i<rate*0.02;i++){ y+=0.35*((R()*2-1)-y); d[i]+=0.45*y*Math.exp(-i/rate/0.004); }
+        for(let i=0;i<rate*0.002;i++) d[i]*=i/(rate*0.002); })}; });
+    const PIZ=[110,220,440].map((f0,zi)=>({f0, buf:mk(0.6,RAM,10,(d,rate,len)=>{ const R=RNG(700+zi);
+      for(let k=1;k<=16;k++){ const fk=f0*k; if(fk>rate*0.44) break; addSine(d,TAU*fk/rate,R()*TAU,(1/k)*Math.exp(-fk/2600),Math.exp(-1/(rate*0.3/Math.sqrt(k)))); }
+      for(let i=0;i<rate*0.003;i++) d[i]*=i/(rate*0.003); })}));
+    const TIMP={f0:87.31, buf:mk(1.8,22050,10,(d,rate,len)=>{ const R=RNG(501);
+      for(const [m,a,tau] of [[1,0.6,0.8],[1.5,0.45,0.6],[1.98,0.3,0.45],[2.44,0.18,0.3],[2.9,0.1,0.22]]){ let ph=R()*TAU;
+        const w=TAU*87.31*m/rate, kg=Math.exp(-1/(rate*0.05)), ke=Math.exp(-1/(rate*tau)); let gl=0.035, e=a;
+        for(let i=0;i<len;i++){ ph+=w*(1+gl); gl*=kg; d[i]+=e*Math.sin(ph); e*=ke; } }
+      let y=0; for(let i=0;i<rate*0.05;i++){ y+=0.12*((R()*2-1)-y); d[i]+=2.6*y*Math.exp(-i/rate/0.015); } })};
+    // THE orchestra hit: brass and strings in octaves, a timpani thump and a splash, one chord
+    const HIT={f0:174.61, buf:mk(0.9,22050,8,(d,rate,len)=>{ const R=RNG(1990), f0=174.61;
+      for(const [mul,lv] of [[0.5,0.7],[1,1],[2,0.75],[4,0.25]]){ const f=f0*mul;
+        for(let h=1; h*f<rate*0.45 && h<=(lite?8:14); h++){ const a=lv/h, ph=R()*TAU, w=TAU*f*h*(1+(R()-0.5)*0.003)/rate;
+          addSine(d,w,ph,0.8*a,Math.exp(-1/(rate*0.11))); addSine(d,w,ph,0.2*a,Math.exp(-1/(rate*0.4))); } }
+      let ph=0; for(let i=0;i<len;i++){ const t=i/rate; ph+=TAU*f0*0.25*(1+0.4*Math.exp(-t/0.02))/rate; d[i]+=1.3*Math.sin(ph)*Math.exp(-t/0.22); }
+      let px=0; for(let i=0;i<rate*0.25;i++){ const x=R()*2-1; d[i]+=0.5*(x-px)*Math.exp(-i/rate/0.06); px=x; }
+      for(let i=0;i<rate*0.002;i++) d[i]*=i/(rate*0.002); })};
+    // the 808, sampled: a few cycles of a slightly dirty sine, looped
+    const SUB=(()=>{ const P=291, L=P*24; return {f0:16000/P, loop:true, buf:mk(L/16000,16000,8,(d)=>{
+      for(let i=0;i<L;i++){ const x=TAU*i/P; d[i]=Math.sin(x)+0.16*Math.sin(2*x)+0.07*Math.sin(3*x); } })}; })();
+    // drums
+    const D=(sec,rate,bits,fn)=>({f0:1, buf:mk(sec,rate,bits,fn)});
+    const KICK=D(0.42,22050,8,(d,rate,len)=>{ const R=RNG(11); let ph=0;
+      for(let i=0;i<len;i++){ const t=i/rate; ph+=TAU*(47+160*Math.exp(-t/0.028))/rate;
+        d[i]=Math.tanh(1.5*Math.sin(ph)*Math.exp(-t/0.13))+(t<0.004?(R()*2-1)*0.7*(1-t/0.004):0); } });
+    const KICKD=D(0.36,16000,8,(d,rate,len)=>{ const R=RNG(12); let ph=0, y=0;
+      for(let i=0;i<len;i++){ const t=i/rate; ph+=TAU*(47+100*Math.exp(-t/0.04))/rate; y+=0.2*((R()*2-1)-y);
+        d[i]=Math.sin(ph)*Math.exp(-t/0.2)+(t<0.01?y*0.8*(1-t/0.01):0); } });
+    const SNR=D(0.3,22050,8,(d,rate,len)=>{ const R=RNG(13); let ph=0, px=0;
+      for(let i=0;i<len;i++){ const t=i/rate, x=R()*2-1; ph+=TAU*(185+70*Math.exp(-t/0.015))/rate;
+        d[i]=0.75*Math.sin(ph)*Math.exp(-t/0.06)+0.9*(x-px)*Math.exp(-t/0.09); px=x; } });
+    const SNRD=D(0.3,16000,8,(d,rate,len)=>{ const R=RNG(14); let ph=0, lp=0, bp=0; const f=2*Math.sin(Math.PI*2200/rate);
+      for(let i=0;i<len;i++){ const t=i/rate, x=R()*2-1; lp+=f*bp; const hp=x-lp-bp/1.2; bp+=f*hp; ph+=TAU*(165+40*Math.exp(-t/0.02))/rate;
+        d[i]=0.7*Math.sin(ph)*Math.exp(-t/0.07)+0.8*bp*Math.exp(-t/0.13); } });
+    const CLAP=D(0.42,22050,8,(d,rate,len)=>{ const R=RNG(15); let lp=0, bp=0; const f=2*Math.sin(Math.PI*1350/rate);
+      for(let i=0;i<len;i++){ const t=i/rate, x=R()*2-1; lp+=f*bp; const hp=x-lp-bp/1.6; bp+=f*hp;
+        let e=0; for(const o of [0,0.009,0.018,0.027]) if(t>=o) e=Math.max(e,Math.exp(-(t-o)/0.005)); if(t>0.03) e=Math.max(e,0.6*Math.exp(-(t-0.03)/0.12));
+        d[i]=bp*e+0.35*hp*Math.exp(-t/0.05); } });
+    const SNAP=D(0.08,22050,8,(d,rate,len)=>{ const R=RNG(16); let lp=0, bp=0; const f=2*Math.sin(Math.PI*2300/rate);
+      for(let i=0;i<len;i++){ const x=R()*2-1; lp+=f*bp; const hp=x-lp-bp/3; bp+=f*hp; d[i]=bp*Math.exp(-i/rate/0.012); } });
+    const metal=(sec,tau,seed,att)=>D(sec,RAM,8,(d,rate,len)=>{ const R=RNG(seed), inc=[205.3,304.4,369.6,522.7,540,800].map(x=>x*1.62/rate), ph=inc.map(()=>R());
+      const ke=Math.exp(-1/(rate*tau)), na=att?Math.floor(att*rate):0; let p1=0, p2=0, e=1;
+      for(let i=0;i<len;i++){ let s=0; for(let j=0;j<6;j++){ let q=ph[j]+inc[j]; if(q>=1) q-=1; ph[j]=q; s+=q<0.5?1:-1; }
+        const x=s*0.12+(R()*2-1)*0.6, h1=x-p1; p1=x; const h2=h1-p2; p2=h1;
+        d[i]=h2*e*(i<na?i/na:1); e*=ke; } });
+    const HATC=metal(0.1,0.018,17), HATO=metal(0.5,0.15,18), CRASH=metal(lite?1.5:2,0.75,19,0.003);
+    const REV=(()=>{ const src=CRASH.buf.getChannelData(0), n=Math.min(src.length,Math.floor(RAM*1.8)), b=ctx.createBuffer(1,n,RAM), d=b.getChannelData(0);
+      for(let i=0;i<n;i++) d[i]=src[n-1-i]; return {f0:1,buf:b}; })();
+    const NZ={f0:1, loop:true, buf:mk(1,16000,6,(d,rate,len)=>{ const R=RNG(20); for(let i=0;i<len;i++) d[i]=R()*2-1; })};
+    // the character touches: the cork (and the glass fizzing), and a till's ka-ching
+    const POP=D(2.4,22050,8,(d,rate,len)=>{ const R=RNG(21); let ph=0;
+      for(let i=0;i<rate*0.07;i++){ const t=i/rate; ph+=TAU*(380+870*(1-Math.exp(-t/0.006)))/rate; d[i]+=0.7*Math.sin(ph)*Math.exp(-t/0.02); }
+      let y=0; for(let i=0;i<rate*0.05;i++){ y+=0.5*((R()*2-1)-y); d[i]+=0.9*y*Math.exp(-i/rate/0.012); }
+      const w=Math.floor(rate*0.003);
+      for(let k=0;k<(lite?500:1100);k++){ const t0=0.03+2.2*Math.pow(R(),1.8), i0=Math.floor(t0*rate), fq=2500+R()*5500, a=0.25*R()*Math.exp(-t0/1.1);
+        for(let j=0;j<w&&i0+j<len;j++) d[i0+j]+=a*Math.sin(TAU*fq*j/rate)*Math.exp(-j/(w*0.3)); } });
+    const CASH=D(1.2,22050,8,(d,rate,len)=>{ const R=RNG(22); let y=0;
+      for(const t0 of [0,0.055]){ const i0=Math.floor(t0*rate); for(let j=0;j<rate*0.02;j++){ y+=0.6*((R()*2-1)-y); d[i0+j]+=0.8*y*Math.exp(-j/rate/0.004); } }
+      for(const [fq,a,tau] of [[2093,0.6,0.5],[2637,0.5,0.45],[5780,0.2,0.15],[7270,0.12,0.1]]){ const i0=Math.floor(0.09*rate);
+        addSine(d,TAU*fq/rate,0,a,Math.exp(-1/(rate*tau)),i0); }
+      const i1=Math.floor(0.3*rate); for(let j=0;j<rate*0.12;j++){ const t=j/rate; d[i1+j]+=0.5*Math.sin(TAU*120*t)*Math.exp(-t/0.03); } });
+    // PSG pulse waves
+    const pulse=(Dy)=>{ const N=40, re=new Float32Array(N), im=new Float32Array(N); for(let n=1;n<N;n++) re[n]=2*Math.sin(Math.PI*n*Dy)/(Math.PI*n); return ctx.createPeriodicWave(re,im); };
+    const PW={12:pulse(0.125), 25:pulse(0.25), 50:pulse(0.5)};
+
+    /* ---- the hall: a late-90s digital reverb — six damped combs into three allpasses,
+       metallic and a little grainy, rendered to an impulse once. It replaces the spring. */
+    const hallIR=(sec,rt)=>{ const len=Math.floor(SR*sec), buf=ctx.createBuffer(2,len,SR);
+      for(let ch=0;ch<2;ch++){ const x=new Float32Array(len);
+        for(const ms of [29.7,37.1,41.1,43.7,50.3,57.1]){ const Dl=Math.round(ms/1000*(ch?1.043:1)*SR), g=Math.pow(10,-3*Dl/SR/rt), line=new Float32Array(Dl); let k=0, lp=0;
+          for(let i=0;i<len;i++){ const o=line[k]; lp+=0.45*(o-lp); line[k]=lp*g+(i?0:1); x[i]+=o; if(++k===Dl) k=0; } }
+        let y=x; for(const ms of [5.0,1.7,0.9]){ const Dl=Math.round(ms/1000*SR), o=new Float32Array(len);
+          for(let i=0;i<len;i++){ const xd=i>=Dl?y[i-Dl]:0, od=i>=Dl?o[i-Dl]:0; o[i]=-0.7*y[i]+xd+0.7*od; } y=o; }
+        const d=buf.getChannelData(ch); let e=0; for(let i=0;i<len;i++){ d[i]=y[i]; e+=y[i]*y[i]; }
+        const k=1/Math.sqrt(e||1), f0=Math.floor(len*0.75); for(let i=0;i<len;i++) d[i]*=k*(i<f0?1:(len-i)/(len-f0)); }
+      return buf; };
+    const hHP=F('highpass',200,0.6), hall=ctx.createConvolver(), hLP=F('lowpass',7200,0.6), hRet=G(MIX.hallRet);
+    hall.normalize=false; hall.buffer=hallIR(lite?1.4:1.8,lite?1.5:2);
+    try{ bus.springIn.disconnect(); }catch(e){}
+    bus.springIn.connect(hHP); hHP.connect(hall); hall.connect(hLP); hLP.connect(hRet); hRet.connect(bus.mix);
+
+    return {
+      /* The 808, from sound RAM: glides are playback-rate slides (`g` = from, `path` = later
+         glides), a punch of pitch on the attack when it does not glide in. */
+      s808(t,p,sd,hz){ const v=p.v||1, dur=Math.max(0.08,p.l*sd), end=t+dur+0.14, soft=!!p.soft;
+        const lift=hz(-24)<36?2:1, f=hz(p.n-24)*lift, g=G(0), r=(x)=>x/SUB.f0, s=S(SUB,t,end,g,r(f)), q=s.playbackRate;
+        if(p.g!=null){ q.setValueAtTime(r(hz(p.g-24)*lift),t); q.exponentialRampToValueAtTime(r(f),t+Math.max(0.03,(p.gt||1)*sd)); }
+        else { q.setValueAtTime(r(f)*(soft?1.12:1.9),t); q.exponentialRampToValueAtTime(r(f),t+(soft?0.02:0.035)); }
+        let pv=f; if(p.path) for(const [ds,nn,gl] of p.path){ const tt=t+ds*sd, nf=hz(nn-24)*lift;
+          q.setValueAtTime(r(pv),tt); q.exponentialRampToValueAtTime(r(nf),tt+Math.max(0.03,(gl||1)*sd)); pv=nf; }
+        const pk=(soft?0.7:0.95)*v;
+        g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(pk,t+(soft?0.012:0.004));
+        g.gain.exponentialRampToValueAtTime(pk*(soft?0.35:0.5),t+dur); g.gain.exponentialRampToValueAtTime(0.0001,t+dur+0.1);
+        g.connect(C.sub.in); },
+      kick(t,p){ const v=p.v||1, g=G(0.6*v), dd=p.d||0.4; S(p.dusty?KICKD:KICK,t,t+dd+0.06,g,p.pr||1); g.gain.setTargetAtTime(0,t+dd,0.02); g.connect(C.kick.in); },
+      clap(t,p){ const v=p.v||1, g=G(0.85*v); S(CLAP,t,t+0.45,g,p.pr||1); g.connect(C.drums.in); sends(g,p,C.drums); },
+      snare(t,p){ const v=p.v||1, g=G(0.75*v); S(p.dusty?SNRD:SNR,t,t+0.32,g,p.pr||1); g.connect(C.drums.in); sends(g,p,C.drums); },
+      snap(t,p){ const v=p.v||1, g=G(0.8*v); S(SNAP,t,t+0.09,g,1); g.connect(C.drums.in); sends(g,p,C.drums); },
+      // hats: a roll pitches the sample up (`tone`), the open ones sit on the perc strip
+      hat(t,p){ const v=p.v||1, op=!!p.o, g=G((op?0.55:0.5)*v), dd=op?(p.d||0.3):0.1; S(op?HATO:HATC,t,t+dd+0.05,g,p.tone||1);
+        if(op) g.gain.setTargetAtTime(0,t+dd,0.04); g.connect(op?C.perc.in:C.hats.in); },
+      crash(t,p){ const v=p.v||1, g=G(0.5*v); S(CRASH,t,t+CRASH.buf.duration,g,1); g.connect(C.perc.in); },
+      rev(t,p,sd){ const v=p.v||1, dur=Math.min(p.l*sd,REV.buf.duration), g=G(0.55*v); S(REV,t,t+dur,g,1,REV.buf.duration-dur); g.connect(C.perc.in); },
+      timp(t,p,sd,hz){ const v=p.v||1, dd=p.d||1.3, g=G(0.32*v); S(TIMP,t,t+Math.min(dd,1.7)+0.1,g,hz(p.n)/TIMP.f0); g.gain.setTargetAtTime(0,t+dd*0.7,0.12);
+        g.connect(C.orch.in); sends(g,p,C.orch); },
+      boom(t,p){ const v=p.v||1, g=G(0), s=S(SUB,t,t+1.9,g,95/SUB.f0); s.playbackRate.exponentialRampToValueAtTime(31/SUB.f0,t+1.5);
+        AD(g,t,0.008,0.85*v,1.7); g.connect(C.kick.in); },
+      // the orchestra hit, fired on every note of the voicing in parallel, the 90s way
+      hit(t,p,sd,hz){ const ns=p.ns||[p.n], v=(p.v||1)/Math.sqrt(ns.length), g=G(0.55*v);
+        ns.forEach((n,i)=>{ const x=G(i===ns.length-1?1:0.75); S(HIT,t,t+0.9,x,hz(n)/HIT.f0); x.connect(g); });
+        if(p.cut) g.gain.setTargetAtTime(0,t+p.cut*sd,0.05); g.connect(C.orch.in); sends(g,p,C.orch); },
+      /* choir: looped formant multi-samples, two copies detuned against each other (left and
+         right), a delayed vibrato on the playback rate, `sc` = a scoop into the note */
+      choir(t,p,sd,hz){ const ns=p.ns, v=(p.v||1)/Math.sqrt(ns.length), dur=Math.max(0.1,p.l*sd), a=p.a!=null?p.a:0.06, rel=p.r||0.45, end=t+dur+rel+0.05;
+        const Z=(p.vw==='o'||p.vw==='u')?CHO:CHA, vib=(!lite&&dur>0.35)?vibOut(t,end,dur,5.1):null;
+        ns.forEach((n,i)=>{ const f=hz(n), z=zone(Z,f), rt=f/z.f0, env=G(0), to=lite?C.choir.in:(i%2?C.choir.R:C.choir.L);
+          for(const dc of lite?[0]:[-8,8]){ const r0=rt*Math.pow(2,dc/1200), s=S(z,t,end,env,r0,Math.random()*z.buf.duration);
+            if(p.sc){ s.playbackRate.setValueAtTime(r0*0.968,t); s.playbackRate.linearRampToValueAtTime(r0,t+0.09); }
+            if(vib){ const vg=G(r0*0.0055); vib.connect(vg); vg.connect(s.playbackRate); } }
+          ASR(env,t,a,0.2*v,dur,rel); env.connect(to); }); },
+      // strings: legato (two desks, detuned) or spiccato (`stac`), notes dealt left and right
+      strings(t,p,sd,hz){ const ns=p.ns||[p.n], v=(p.v||1)/Math.sqrt(ns.length), dur=Math.max(0.06,(p.l||1)*sd), stac=!!p.stac;
+        const a=stac?0.004:(p.a!=null?p.a:0.16), rel=stac?0.07:(p.r||0.35), end=t+dur+rel+0.05;
+        ns.forEach((n,i)=>{ const f=hz(n), z=zone(STR,f), rt=f/z.f0, g=G(0), to=lite?C.strings.in:(i%2?C.strings.R:C.strings.L);
+          for(const dc of (lite||stac)?[0]:[-7,7]) S(z,t,end,g,rt*Math.pow(2,dc/1200),Math.random()*z.buf.duration);
+          if(stac) AD(g,t,a,0.3*v,Math.max(0.07,Math.min(0.18,dur))); else ASR(g,t,a,0.13*v,dur,rel);
+          g.connect(to); }); },
+      pizz(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), z=zone(PIZ,f), g=G(0.32*v); S(z,t,t+0.55,g,f/z.f0); g.gain.setTargetAtTime(0,t+0.3,0.05);
+        g.connect(p.side?C.strings.R:C.strings.L); },
+      piano(t,p,sd,hz){ const ns=p.ns||[p.n], v=(p.v||1)/Math.sqrt(ns.length), hold=Math.max(0.1,(p.l||2)*sd), out=G(1); out.connect(C.piano.in); sends(out,p,C.piano);
+        for(const n of ns){ const f=hz(n), z=zone(PNO,f), g=G(0.36*v); S(z,t,Math.min(t+hold+0.35,t+z.buf.duration*z.f0/f+0.02),g,f/z.f0);
+          g.gain.setTargetAtTime(0,t+hold,0.07); g.connect(out); } },
+      /* FM brass section: carrier and modulator at 1:1 (two pairs a part, detuned), the index
+         following the breath — a blare on the attack that settles — a lip scoop, and `fall` */
+      brass(t,p,sd,hz){ const ns=p.ns||[p.n], v=(p.v||1)/Math.sqrt(ns.length), dur=Math.max(0.06,(p.l||1)*sd-0.02), rel=p.fall?0.32:0.09, end=t+dur+rel+0.05;
+        const vib=(!lite&&dur>0.5)?vibOut(t,end,dur,5.5):null, vg=vib?G(13):null; if(vib) vib.connect(vg);
+        ns.forEach((n,i)=>{ const f=hz(n), g=G(0), to=lite?C.brass.in:(i%2?C.brass.R:C.brass.L), I=(p.bright||1)*2.4;
+          for(const d of lite?[0]:[-5,5]){ const mg=G(0), m=O('sine',f,t,end,mg), c=O('sine',f,t,end,g); mg.connect(c.frequency);
+            mg.gain.setValueAtTime(0,t); mg.gain.linearRampToValueAtTime(f*I,t+0.04); mg.gain.setTargetAtTime(f*I*0.55,t+0.045,0.12);
+            mg.gain.setTargetAtTime(f*0.2,t+dur,rel*0.35);
+            for(const o of [m,c]){ const dt=o.detune; dt.setValueAtTime(d-45,t); dt.linearRampToValueAtTime(d,t+0.05);
+              if(p.fall){ dt.setValueAtTime(d,t+dur); dt.linearRampToValueAtTime(d-p.fall*100,t+dur+rel); }
+              if(vg) vg.connect(dt); } }
+          ASR(g,t,0.016,0.11*v,dur,rel); g.connect(to); sends(g,p,C.brass); }); },
+      // FM slap bass: a hard index transient (and a 3:1 pick) that closes into a round note
+      fmb(t,p,sd,hz){ const v=p.v||1, f=hz(p.n-24), dur=Math.max(0.05,(p.l||1)*sd-0.015), end=t+dur+0.08;
+        const g=G(0), mg=G(0), c=O('sine',f,t,end,g); O('sine',f,t,end,mg); mg.connect(c.frequency);
+        mg.gain.setValueAtTime(f*(p.slap?6:4),t); mg.gain.setTargetAtTime(f*0.8,t,0.05);
+        if(!lite){ const pg=G(0); O('sine',f*3,t,t+0.08,pg); pg.gain.setValueAtTime(f*1.6,t); pg.gain.setTargetAtTime(0,t,0.018); pg.connect(c.frequency); }
+        ASR(g,t,0.003,0.3*v,dur,0.05); g.connect(C.fmb.in); },
+      // FM tubular bell: 3.5:1, the index dying away; a brighter partial on the strike
+      bell(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), d=p.d||1.5, end=t+d+0.05, g=G(0), mg=G(0);
+        const c=O('sine',f,t,end,g); O('sine',f*3.5,t,end,mg); mg.connect(c.frequency);
+        mg.gain.setValueAtTime(f*2.6,t); mg.gain.setTargetAtTime(f*0.1,t,d*0.18);
+        AD(g,t,0.002,0.17*v,d);
+        if(!lite){ const g2=G(0), m2=G(0), c2=O('sine',f*2,t,t+0.6,g2); O('sine',f*2.82,t,t+0.6,m2); m2.connect(c2.frequency);
+          m2.gain.setValueAtTime(f*1.1,t); m2.gain.setTargetAtTime(0,t,0.07); AD(g2,t,0.001,0.05*v,0.5); g2.connect(C.bell.in); }
+        g.connect(C.bell.in); sends(g,p,C.bell); },
+      // FM tine piano: a 1:1 body and a 14:1 tine that clanks and dies, auto-panned
+      keys(t,p,sd,hz){ const ns=p.ns, v=(p.v||1)/Math.sqrt(ns.length), hold=Math.max(0.15,(p.l||4)*sd), end=t+hold+0.45, out=G(1), vel=Math.min(1,p.v||1);
+        if(!lite && ctx.createStereoPanner){ const pn=ctx.createStereoPanner(), l=LFO(t,end,p.rate||4.4), lg=G(0.5); l.connect(lg); lg.connect(pn.pan); out.connect(pn); pn.connect(C.keys.in); }
+        else out.connect(C.keys.in);
+        for(const n of ns){ const f=hz(n), g=G(0), mg=G(0), c=O('sine',f,t,end,g); O('sine',f,t,end,mg); mg.connect(c.frequency);
+          mg.gain.setValueAtTime(f*(0.5+1.3*vel),t); mg.gain.setTargetAtTime(f*0.22,t,0.35);
+          if(!lite){ const tg=G(0); O('sine',f*14,t,t+0.25,tg); tg.connect(c.frequency); tg.gain.setValueAtTime(f*2*vel,t); tg.gain.setTargetAtTime(0,t,0.022); }
+          g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.2*v,t+0.003); g.gain.setTargetAtTime(0.065*v,t+0.003,0.7);
+          g.gain.setTargetAtTime(0,t+hold,0.1); g.connect(out); } },
+      /* the singer: one voice from the choir RAM, crossfading "a" into "o" across the note,
+         a scoop, vibrato; `chop` slams the gate the way a sampler pad does */
+      vox(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,(p.l||2)*sd-0.01), rel=p.chop?0.02:0.15, end=t+dur+rel+0.05;
+        const g=G(0), vib=(!lite&&dur>0.3)?vibOut(t,end,dur,5.3):null;
+        const one=(Z,l0,l1)=>{ const z=zone(Z,f), r0=f/z.f0, x=G(l0), s=S(z,t,end,x,p.sc?r0*0.94:r0,Math.random()*z.buf.duration);
+          if(p.sc) s.playbackRate.exponentialRampToValueAtTime(r0,t+0.08);
+          if(vib){ const vg=G(r0*0.009); vib.connect(vg); vg.connect(s.playbackRate); }
+          if(l1!==l0){ x.gain.setValueAtTime(l0,t+0.04); x.gain.linearRampToValueAtTime(l1,t+Math.max(0.1,dur*0.85)); }
+          x.connect(g); };
+        const a0=(p.vw||'a')==='a', a1=(p.vw2||p.vw||'a')==='a';
+        if(a0===a1||lite) one(a0?CHA:CHO,1,1); else { one(CHA,a0?1:0,a0?0:1); one(CHO,a0?0:1,a0?1:0); }
+        ASR(g,t,0.02,0.34*v,dur,rel); g.connect(C.vox.in); sends(g,p,C.vox); },
+      // PSG pulse: no attack, the volume register stepping down once a frame (1/60 s)
+      psg(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.03,(p.l||1)*sd*(p.gate||0.8)), end=t+dur+0.03, g=G(0), o=O(PW[p.d||25],f,t,end,g);
+        if(p.g!=null){ o.frequency.setValueAtTime(hz(p.g),t); o.frequency.exponentialRampToValueAtTime(f,t+(p.gt||1)*sd); }
+        const pk=0.11*v, fr=1/60, st=Math.min(24,Math.floor(dur/fr));
+        g.gain.setValueAtTime(pk,t); for(let k=1;k<=st;k++) g.gain.setValueAtTime(pk*Math.pow(10,-k*(p.dec||0.8)/20),t+k*fr);
+        g.gain.setValueAtTime(0,t+dur); g.connect(C.psg.in); sends(g,p,C.psg); },
+      /* the FM lead: 1:1 with a hot index (and an octave carrier on the same modulator),
+         a glide from the note before (`g`), a bend up (`bend`), delayed vibrato; the
+         channel's drive makes it the overdriven boss lead */
+      lead(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.06,(p.l||1)*sd-0.015), end=t+dur+0.14, g=G(0), mg=G(0);
+        const c=O('sine',f,t,end,g), m=O('sine',f,t,end,mg), os=[c,m]; mg.connect(c.frequency);
+        mg.gain.setValueAtTime(f*2.8,t); mg.gain.setTargetAtTime(f*1.6,t,0.15);
+        if(!lite){ const g2=G(0.3), c2=O('sine',f*2,t,end,g2); mg.connect(c2.frequency); g2.connect(g); os.push(c2); }
+        if(p.g!=null){ const r=hz(p.g)/f; for(const o of os){ const fq=o.frequency, b=fq.value; fq.setValueAtTime(b*r,t); fq.exponentialRampToValueAtTime(b,t+0.07); } }
+        if(p.bend) for(const o of os){ o.detune.setValueAtTime(-p.bend*100,t); o.detune.linearRampToValueAtTime(0,t+0.11); }
+        if(!lite && dur>0.3){ const vib=vibOut(t,end,dur,5.8), vg=G(24); vib.connect(vg); for(const o of os) vg.connect(o.detune); }
+        ASR(g,t,0.008,0.12*v,dur,0.1); g.connect(C.lead.in); sends(g,p,C.lead); },
+      // slowdown / rewind: a string chord dragged by the playback rate
+      spin(t,p,sd,hz){ const ns=p.ns, v=(p.v||1)/Math.sqrt(ns.length), dur=p.l*sd, end=t+dur+0.05, g=G(0), up=(p.to||0.06)>1;
+        for(const n of ns){ const f=hz(n), z=zone(STR,f), r1=f/z.f0, r0=r1*(p.from||1), s=S(z,t,end,g,r0,0), q=s.playbackRate;
+          q.setValueAtTime(r0,t+dur*0.08); if(up) q.exponentialRampToValueAtTime(r1*p.to,t+dur); else q.linearRampToValueAtTime(r1*(p.to||0.06),t+dur); }
+        g.gain.setValueAtTime(up?0.03*v:0.2*v,t); if(up) g.gain.exponentialRampToValueAtTime(0.2*v,t+dur*0.9); else g.gain.setValueAtTime(0.2*v,t+dur*0.45);
+        g.gain.linearRampToValueAtTime(0,t+dur); g.connect(C.fx.in); },
+      // riser: the 6-bit noise sample, sped up through a sweeping band-pass (and a PSG sweep)
+      riser(t,p,sd,hz){ const v=p.v||1, dur=p.l*sd, g=G(0), bp=F('bandpass',p.f0||400,2.2), s=S(NZ,t,t+dur+0.05,bp,0.5);
+        s.playbackRate.exponentialRampToValueAtTime(2,t+dur); bp.frequency.exponentialRampToValueAtTime(p.f1||8000,t+dur);
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.45*v,t+dur); g.gain.linearRampToValueAtTime(0,t+dur+0.03);
+        bp.connect(g); g.connect(C.fx.in);
+        if(!lite){ const pg=G(0), o=O(PW[12],180,t,t+dur,pg); o.frequency.exponentialRampToValueAtTime(1800,t+dur);
+          pg.gain.setValueAtTime(0,t); pg.gain.linearRampToValueAtTime(0.03*v,t+dur); pg.gain.setValueAtTime(0,t+dur-0.005); pg.connect(C.fx.in); } },
+      pop(t,p){ const v=p.v||1, g=G(0.9*v), fz=p.fizz||2.2; S(POP,t,t+Math.min(2.4,fz+0.1),g,1); g.gain.setValueAtTime(0.9*v,t+fz*0.6); g.gain.linearRampToValueAtTime(0,t+fz);
+        g.connect(C.fx.in); sends(g,p,C.fx); },
+      cash(t,p){ const v=p.v||1, g=G(0.7*v); S(CASH,t,t+1.2,g,1); g.connect(C.fx.in); sends(g,p,C.fx); },
+    };
+  }
+
+  // ---- harmony (semitones over F; the station is keyed so 0 sounds as F3) — Coronation's
+  const CH={Fm:[0,'m'],Db:[8,'M'],Bbm:[5,'m'],C:[7,'M'],Eb:[10,'M'],Gb:[1,'M'],Csus:[7,'s'],
+            Dbmaj7:[8,'M7'],Cm7:[7,'m7'],Fm9:[0,'m9'],Bbm9:[5,'m9'],C7b9:[7,'7b9']};
+  const QU={m:[0,3,7],M:[0,4,7],s:[0,5,7],M7:[0,4,7,11],m7:[0,3,7,10],m9:[0,3,7,10,14],'7b9':[0,4,7,10,13]};
+  const pc=(x)=>((x%12)+12)%12;
+  const near=(x,c)=>{ while(x<c-6)x+=12; while(x>=c+6)x-=12; return x; };
+  const isCT=(x,chd)=>QU[CH[chd][1]].some(i=>pc(CH[chd][0]+i)===pc(x));
+  const chordNotes=(chd,c)=>{ const [r,q]=CH[chd]; const a=[]; for(const i of QU[q].slice(0,4)){ const x=near(r+i,c); if(!a.includes(x)) a.push(x); } return a.sort((p,q)=>p-q); };
+  const root808=(chd)=>{ let r=pc(CH[chd][0]); if(r>7) r-=12; return r; };
+  const stack=(nn,chd,k)=>{ const out=[nn]; for(let x=nn-1; x>nn-13 && out.length<(k||3); x--) if(isCT(x,chd) && !out.some(y=>pc(y)===pc(x))) out.push(x); return out.sort((a,b)=>a-b); };
+  const SOULV={Dbmaj7:[8,12,15,19], Cm7:[7,10,14,17], Fm9:[3,7,10,14], Bbm9:[5,8,12,15], C7b9:[11,14,17,20]};
+
+  // ---- the tunes (Coronation Drift's): [step, semitone over F3, length in steps] ----
+  const HOOK=[
+    [[0,19,2],[3,19,2],[6,19,2],[8,20,3],[11,19,1],[12,15,4]],
+    [[0,20,2],[3,20,2],[6,20,2],[8,24,3],[11,20,1],[12,15,4]],
+    [[0,17,2],[3,17,2],[6,20,2],[8,24,4],[12,29,4]],
+    [[0,23,6],[6,19,2],[8,14,4],[12,19,2],[14,23,2]],
+    [[0,24,3],[3,24,3],[6,24,2],[8,27,3],[11,24,1],[12,19,4]],
+    [[0,20,3],[3,20,3],[6,20,2],[8,24,3],[11,22,1],[12,20,4]],
+    [[0,22,3],[3,26,3],[6,29,6],[12,27,2],[14,26,2]],
+    [[0,23,6],[6,26,2],[8,31,8]]];
+  const PIANO=[
+    [[0,19],[3,20],[6,19],[8,15],[11,12],[14,15]],
+    [[0,19],[3,20],[6,22],[8,24],[11,22],[14,20]],
+    [[0,20],[3,17],[6,20],[8,24],[11,20],[14,17]],
+    [[0,19],[3,14],[6,19],[8,23],[11,19],[14,11]],
+    [[0,24],[3,20],[6,19],[8,15],[11,19],[14,15]],
+    [[0,19],[3,20],[6,22],[8,24],[11,27],[14,24]],
+    [[0,20],[3,17],[6,20],[8,24],[11,20],[14,17]],
+    [[0,19],[3,14],[6,19],[8,23],[10,19],[12,23],[14,26]]];
+  const VSTR=[[[0,12,16]],[[0,15,8],[8,19,8]],[[0,17,16]],[[0,19,8],[8,23,8]],
+              [[0,24,16]],[[0,27,8],[8,24,8]],[[0,20,16]],[[0,19,8],[8,23,6],[14,26,2]]];
+  const BELLS=[
+    [[0,19,3],[3,20,3],[6,19,2],[8,15,4],[12,12,4]],
+    [[0,20,3],[3,22,3],[6,20,2],[8,17,4],[12,13,4]],
+    [[0,24,3],[3,20,3],[6,15,2],[8,17,2],[10,15,2],[12,12,4]],
+    [[0,19,6],[6,23,2],[8,26,4],[12,23,4]],
+    [[0,24,2],[2,19,2],[4,24,2],[6,27,4],[10,24,2],[12,20,4]],
+    [[0,25,4],[4,22,4],[8,20,4],[12,17,4]],
+    [[0,20,3],[3,17,3],[6,24,2],[8,20,4],[12,17,4]],
+    [[0,23,4],[4,19,4],[8,14,4],[12,23,4]]];
+  const SOUL=[
+    [[0,24,4],[4,24,2],[6,20,6],[12,19,4]],
+    [[0,22,6],[6,19,2],[8,17,8]],
+    [[2,15,2],[4,19,2],[6,22,4],[10,26,6]],
+    [[0,24,8],[8,22,4],[12,19,4]],
+    [[0,24,4],[4,27,4],[8,24,4],[12,20,4]],
+    [[0,22,8],[8,19,8]],
+    [[0,20,4],[4,24,4],[8,19,8]],
+    [[0,23,6],[6,22,2],[8,23,8]]];
+  const PROG={I:['Fm','Db','Bbm','C'], H:['Fm','Db','Bbm','C','Fm','Db','Eb','C'], V:['Fm','Fm','Db','C','Fm','Fm','Bbm','C'],
+              S:['C'], W:['Fm','Gb','Db','C','Fm','Gb','Bbm','C'], O:['Dbmaj7','Cm7','Fm9','Fm9','Dbmaj7','Cm7','Bbm9','C7b9'],
+              B:['Db','Eb','Csus','C'], E:['Fm','Db','C','Fm']};
+  const FORM=[
+    {id:'intro',  name:'Boot (title screen)',       bars:4,  prog:'I'},
+    {id:'hook',   name:'Hook',                      bars:8,  prog:'H'},
+    {id:'verse',  name:'Verse (piano)',             bars:16, prog:'V'},
+    {id:'hook2',  name:'Hook (FM brass)',           bars:8,  prog:'H'},
+    {id:'stop',   name:'Pause (slowdown)',          bars:1,  prog:'S'},
+    {id:'switch', name:'Boss phase 2 (E minor)',    bars:16, prog:'W'},
+    {id:'flip',   name:'Hook, flipped',             bars:8,  prog:'H'},
+    {id:'soul',   name:'Save point (soul breakdown)',bars:8, prog:'O'},
+    {id:'build',  name:'Continue? (build)',         bars:4,  prog:'B'},
+    {id:'final',  name:'Victory lap (final boss)',  bars:16, prog:'H'},
+    {id:'outro',  name:'Staff roll',                bars:4,  prog:'E'}];
+  let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
+  const TOTAL=acc, LOOP=4;
+  function locate(n){ let pos=n, pass=0;
+    if(n>=TOTAL){ const L=TOTAL-LOOP; pass=1+Math.floor((n-TOTAL)/L); pos=LOOP+(n-TOTAL)%L; }
+    const sec=FORM.find(s=>pos>=s.start&&pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
+  function chordAt(n){ const L=locate(n), P=PROG[L.sec.prog]; return P[L.b%P.length]; }
+  const KX={switch:-1, flip:-1};                         // the boss phase lands a half step down
+  const TEMPO={switch:128/140, flip:128/140, soul:86/140, stop:0.94};
+  const ENERGY={intro:0.8, hook:1, verse:0.9, hook2:1.03, stop:0.95, switch:0.96, flip:1.04, soul:0.8, build:1.08, final:1.1, outro:0.96};
+  const ALL=['kick','sub','fmb','drums','hats','perc','choir','strings','brass','piano','bell','keys','vox','orch','lead','psg'];
+  const ARP=[[0,1,2,3,2,1,2,3],[0,2,1,3,0,2,1,3],[3,2,1,0,1,2,3,2],[0,1,2,3,3,2,1,0],[0,3,1,3,2,3,1,3]];
+  const DRV=[                                            // slap-bass cells: [step, interval, slap]
+    [[0,0,1],[2,12,0],[3,0,0],[4,0,1],[6,12,0],[7,0,0],[8,0,1],[10,12,0],[11,7,0],[12,0,1],[14,12,0],[15,10,0]],
+    [[0,0,1],[1,0,0],[2,12,0],[4,0,1],[5,0,0],[6,7,0],[8,0,1],[9,0,0],[10,12,0],[12,0,1],[13,7,0],[14,12,0]],
+    [[0,0,1],[3,12,0],[4,0,0],[6,0,1],[8,12,0],[10,0,1],[11,7,0],[12,12,0],[14,0,1]]];
+
+  function plan(n,R,env){
+    const lite=!!(env&&env.lite);
+    const {pos,pass,sec,b}=locate(n), id=sec.id, ev=[];
+    const E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
+    const hum=(x)=>x*(0.88+R()*0.24), pick=(a)=>a[Math.floor(R()*a.length)];
+    const chord=chordAt(n), nxt=chordAt(n+1), kx=KX[id]||0, last=b===sec.bars-1;
+    const M={kick:1,sub:1,fmb:1,drums:1,hats:1,perc:1,choir:1,strings:1,brass:1,piano:1,bell:1,keys:1,vox:1,orch:1,lead:1,psg:1,fx:1};
+    const r=root808(chord), o8=r+12, tn=near(CH[chord][0],-9);
+    let nr=root808(nxt)+(KX[locate(n+1).sec.id]||0)-kx; while(nr-r>6) nr-=12; while(r-nr>6) nr+=12;
+    let tempo=TEMPO[id]||1;
+    const stopAt=(s,keep)=>{ for(const c of ALL) if(!(keep||[]).includes(c)) A(s,{a:'lvl',ch:c,v:0,tc:0.006}); };
+    const reset=()=>{ A(0,{a:'hp',f:20,tc:0.004}); A(0,{a:'lp',f:20000,q:0.9,tc:0.004}); A(0,{a:'fb',v:MIX.echoFb,tc:0.05}); };
+
+    // ---- drums
+    const hats=(o)=>{ o=o||{}; const v=o.v||1, rp=o.roll!=null?o.roll:0.3;
+      for(let q=0;q<4;q++){ const s0=q*4;
+        if(R()<((q&1)?rp:rp*0.35)){ const k=pick(lite?['32','tr']:['32','tr','64','tr','32','six']);
+          if(k==='six'){ for(let i=0;i<6;i++) E(s0+i*2/3,'hat',{v:hum((i%3===0?0.9:0.55)*v)}); continue; }
+          E(s0,'hat',{v:hum(0.95*v)}); if((o.rate||2)===1) E(s0+1,'hat',{v:hum(0.45*v)});
+          const pts=k==='32'?[2,2.5,3,3.5]:k==='tr'?[2,2+2/3,2+4/3]:[2,2.25,2.5,2.75,3,3.25,3.5,3.75];
+          pts.forEach((x,i)=>E(s0+x,'hat',{v:hum((0.42+0.5*i/pts.length)*v),tone:k==='64'?1+0.4*i/pts.length:k==='tr'?1+0.06*i:1})); }
+        else if(o.trip) for(let i=0;i<3;i++) E(s0+i*4/3,'hat',{v:hum((i?0.6:0.95)*v)});
+        else for(let x=0;x<4;x+=(o.rate||2)) E(s0+x,'hat',{v:hum((x===0?0.95:x===2?0.7:0.45)*v)}); }
+      if(o.open) for(const s of o.open) E(s,'hat',{o:1,v:hum(0.75*v)}); };
+    const clap=(o)=>{ o=o||{}; E(8,'clap',{v:hum(o.v||1),throw:o.throw||0});
+      if(o.ghost && R()<o.ghost) E(pick([13,14.5,15]),'snare',{v:0.22+R()*0.14}); };
+    // 808 lines: [step, note, length, extras]; k = the kick doubles that hit
+    const sub=(line,o)=>{ o=o||{}; for(const [s,nn,l,x] of line){ const p=Object.assign({n:nn,l,v:hum(o.v||1)},x||{}); delete p.k;
+        if(o.soft) p.soft=1; E(s,'s808',p);
+        if(x && x.k && o.kick!==false) E(s,'kick',{v:hum(s===0?1:0.82)*(o.kv||1)}); } };
+    const f5=r+7>9?r-5:r+7;
+    const T_HOOK=[
+      [[0,r,7,{k:1}],[7,r,3,{k:1}],[10,r,6,{k:1,path:[[4,o8,1.2]]}]],
+      [[0,r,10,{k:1}],[10,r,2,{k:1}],[12,o8,4,{g:r,gt:1}]],
+      [[0,r,3,{k:1}],[3,r,5,{k:1}],[11,r,5,{k:1,path:[[3,nr,1]]}]],
+      [[0,r,6,{k:1}],[6,r,1],[7,o8,3,{g:r,gt:0.6}],[10,r,6,{k:1,g:o8,gt:0.6}]],
+      [[0,r,12,{k:1}],[12,r,4,{k:1,path:[[2,nr,1.5]]}]],
+      [[0,r,4,{k:1}],[4,r,2,{k:1}],[6,o8,2,{g:r,gt:0.5}],[8,r,5,{k:1}],[14,r,2,{k:1,path:[[1,nr,0.8]]}]]];
+    const T_VERSE=[
+      [[0,r,12,{k:1}],[14,r,2,{k:1}]],
+      [[0,r,6,{k:1}],[10,r,6,{k:1,path:[[3,o8,1]]}]],
+      [[0,r,3,{k:1}],[3,o8,5,{g:r,gt:0.7}],[10,r,6,{k:1}]],
+      [[0,r,16,{k:1,path:[[12,nr,2]]}]]];
+    const T_SWITCH=[
+      [[0,r,3,{k:1}],[3,r,3,{k:1}],[6,o8,2,{g:r,gt:0.5}],[8,r,4,{g:o8,gt:0.5}],[12,f5,4,{k:1,path:[[2,r,1]]}]],
+      [[0,r,5,{k:1}],[5,r,2,{k:1}],[7,o8,3,{g:r,gt:0.4}],[10,r,3,{k:1,g:o8,gt:0.4}],[13,r,3,{k:1,path:[[1.5,nr,1]]}]],
+      [[0,r,8,{k:1,path:[[5,o8,0.6],[6.5,r,0.6]]}],[10,r,3,{k:1}],[13,o8,3,{g:r,gt:1}]],
+      [[0,r,2,{k:1}],[2,r,4,{k:1}],[6,f5,4,{g:r,gt:0.5}],[10,r,6,{k:1,g:f5,gt:0.5,path:[[4,o8,1]]}]]];
+    const T_SOUL=[
+      [[0,r,5],[6,o8,1],[7,r,3],[10,f5,2],[12,r,3],[15,nr-1,1]],
+      [[0,r,3],[3,r,2],[6,f5,2],[8,r,6],[14,nr+1,2]]];
+    const fill=(k)=>{ switch(k%5){
+      case 0: for(let i=0;i<8;i++) E(12+i*0.5,'snare',{v:0.3+i*0.08}); break;
+      case 1: for(let i=0;i<6;i++) E(12+i*2/3,'snare',{v:0.35+i*0.1}); E(12,'timp',{n:tn,v:0.7,d:0.5}); E(14,'timp',{n:tn+7,v:0.8,d:0.5}); break;
+      case 2: { const st=chordNotes(chord,17); E(12,'hit',{ns:st,v:0.7,cut:1.5}); E(14,'hit',{ns:st,v:0.8,cut:1}); E(15,'hit',{ns:st,v:0.95,throw:0.4}); break; }   // orchestra-hit fill
+      case 3: for(let i=0;i<12;i++) E(12+i/3,'snare',{v:0.25+i*0.055,pr:1+i*0.02}); break;    // a roll that tunes up, the sampler way
+      case 4: E(12,'clap',{v:0.6}); E(14,'clap',{v:0.75}); E(15,'clap',{v:0.9,throw:0.5}); break; } };
+    const timpRoll=(s0,s1,step,v0,v1)=>{ for(let s=s0;s<s1-1e-6;s+=step) E(s,'timp',{n:tn,v:v0+(v1-v0)*(s-s0)/(s1-s0),d:0.45}); };
+    // ---- the orchestra: short melody notes are orchestra hits over spiccato strings, long
+    // ones the choir holding the block chord over legato strings
+    const orch=(line,o)=>{ o=o||{}; const vo=o.v||1;
+      for(const [s,nn,l] of line){ const m=nn+(o.oct||0), st=stack(m,chord,3);
+        if(l<=3 && o.hits!==false){ E(s,'hit',{ns:st.slice(-2),v:hum(0.8*vo),cut:Math.max(1,l)}); }
+        else if(o.choir!==false) E(s,'choir',{ns:st,l:Math.max(1.5,l-0.3),v:hum(vo),a:0.02,r:l>=4?0.5:0.25,vw:o.vw||'a'});
+        if(o.str!==false) E(s,'strings',l<=2?{ns:st,l:1,stac:1,v:hum(0.9*vo)}:{ns:st.concat([st[0]-12]),l,a:0.03,v:hum(0.75*vo)});
+        if(o.brass) E(s,'brass',{ns:o.brass==='top'?[m]:st,l:Math.max(1,l-0.5),v:hum(0.95*vo),fall:(o.fall&&l>=4&&R()<0.5)?3:0});
+        if(o.piano) E(s,'piano',{n:m+12,l:Math.min(l,3),v:hum(0.5*vo)});
+        if(o.bell) E(s,'bell',{n:m,v:hum(0.45*vo),d:1.1}); } };
+    const hit=(s,o)=>{ o=o||{}; const st=chordNotes(chord,17);
+      E(s,'brass',{ns:st,l:o.l||2,v:o.v||1,fall:o.fall||0}); E(s,'hit',{ns:st,v:1}); E(s,'strings',{ns:st.concat([st[0]-12]),l:1,stac:1,v:1});
+      E(s,'choir',{ns:st.map(x=>x+12),l:o.l||2,v:0.8,a:0.01,r:0.5}); E(s,'timp',{n:tn,v:1});
+      if(o.crash) E(s,'crash',{v:o.crash}); };
+    const piano=(bb,o)=>{ o=o||{}; const P=PIANO[bb];
+      P.forEach(([s,nn],i)=>{ if(o.to!=null && s>=o.to) return; const nx=P[i+1]?P[i+1][0]:16; E(s,'piano',{n:nn+(o.oct||0),l:nx-s,v:hum((s%8===0?0.85:0.62)*(o.v||1))}); });
+      if(o.lh!==false){ const lr=near(CH[chord][0],-8); E(0,'piano',{ns:[lr,lr+12],l:8,v:hum(0.5*(o.v||1))}); } };
+    // PSG arpeggios on the chord tones: pattern and duty cycle turn with the bar and the pass
+    const arp=(o)=>{ o=o||{}; const cn=chordNotes(chord,o.c||27), tones=[cn[0],cn[1],cn[2],cn[0]+12], pat=ARP[o.pat!=null?o.pat:((n+pass)%ARP.length)];
+      const st=o.rate||1, du=o.d||[25,12,50][(b+pass)%3];
+      for(let s=o.from||0, i=0; s<(o.to||16)-1e-6; s+=st*(lite?2:1), i++) E(s,'psg',{n:tones[pat[i%8]]+(o.oct||0),l:st,v:hum((i%4===0?1:0.7)*(o.v||1)),d:du,gate:0.75}); };
+    // the slap bass driving under the 808, an octave up
+    const drive=(o)=>{ o=o||{}; const cell=DRV[o.k!=null?o.k:(b+pass)%DRV.length];
+      for(const [s,iv,sl] of cell){ if(o.to!=null && s>=o.to) continue; E(s,'fmb',{n:o8+(iv===10&&CH[chord][1]!=='m'?7:iv),l:1,v:hum((sl?1:0.72)*(o.v||1)),slap:sl}); } };
+
+    // ---- the sections
+    if(id==='intro'){
+      Object.assign(M,{kick:0,sub:0,fmb:0,drums:b===3?1:0,hats:b>=2?1:0,brass:0,orch:1});
+      if(b===0){ A(0,{a:'lp',from:900,f:18000,l:44,q:1.6});
+        // the boot chime: a PSG run up the tonic, landing on two FM bells
+        [12,19,24,27,31,36].forEach((x,i)=>E(i*0.5,'psg',{n:x,l:0.5,v:0.9,d:12,gate:1}));
+        E(3,'bell',{n:24,v:0.9,d:2.4,spr:0.5}); E(3,'bell',{n:31,v:0.55,d:2.4}); E(3,'psg',{n:36,l:4,v:0.6,d:50,dec:1.2,throw:0.5}); }
+      E(0,'choir',{ns:chordNotes(chord,15),l:16,v:0.75,a:b===0?0.5:0.15,vw:b%2?'o':'a'});
+      if(b===1) piano(2,{v:0.9}); else if(b===2) piano(6,{v:0.9}); else if(b===3) piano(3,{v:0.9,to:12});
+      if(b>=1) E(0,'strings',{ns:chordNotes(chord,4),l:b===3?12:16,v:0.6,a:0.4});
+      if(b===1) timpRoll(8,16,2,0.2,0.5);
+      if(b===2){ hats({rate:2,roll:0,v:0.55}); timpRoll(0,16,2,0.3,0.7); arp({c:31,rate:2,v:0.55,pat:0,d:25}); }   // PRESS START
+      if(b===3){ hats({rate:1,roll:0,v:0.75}); for(let s=0;s<12;s++) E(s,'snare',{v:0.15+s*0.05});
+        E(0,'hit',{ns:chordNotes(chord,17),v:0.9}); E(0,'riser',{l:12,v:0.8}); E(0,'timp',{n:tn,v:1}); stopAt(12); E(12.5,'pop',{v:1,fizz:1.6,spr:0.4}); }
+    }
+    else if(id==='hook'||id==='hook2'||id==='final'||id==='flip'){
+      const h2=id==='hook2', fin=id==='final', flip=id==='flip', vic=fin&&b>=8, bb=b%8, swap=pass%2===1;
+      const L=HOOK[bb];
+      if(vic) tempo=144/140;                              // the victory lap pushes
+      if(b===0||(fin&&b===8)){ E(0,'crash',{v:1}); E(0,'boom',{v:fin||flip?1:0.85}); reset(); }
+      else if(bb===4) E(0,'crash',{v:0.55});
+      if(flip){ M.piano=0; sub(T_SWITCH[(bb+pass*3+(R()<0.3?1:0))%T_SWITCH.length]); hats({trip:true,roll:0.4,v:0.9,open:bb%2?[14]:null}); }
+      else { sub(T_HOOK[(bb+pass*2+(R()<0.3?1:0))%T_HOOK.length]); hats({rate:(vic||(h2&&bb>=4))?1:2,roll:0.35,open:bb%2?[14]:null}); }
+      clap({ghost:0.3,throw:bb===7?0.4:0});
+      if(vic){                                            // the victory lap: brass on the tune, the FM lead over it
+        orch(L,{brass:true,choir:false,str:false,hits:false,v:1.05,fall:true});
+        const lo=((pass+Math.floor(b/4))%2)?12:0;
+        L.forEach(([s,nn,l],i)=>E(s,'lead',{n:nn+lo,l,v:hum(0.9),g:(i&&R()<0.35)?L[i-1][1]+lo:null,bend:(!i&&l>=3&&R()<0.5)?2:0,throw:l>=4?0.3:0}));
+        E(0,'choir',{ns:chordNotes(chord,27),l:15,v:0.75,a:0.2,vw:'a'});
+        if(bb%4===0) E(0,'hit',{ns:chordNotes(chord,17),v:0.8});
+        const ar=chordNotes(chord,24), seq=[0,1,2,3,2,1,2,3];
+        for(let s=0;s<16;s+=(lite?2:1)) E(s,'strings',{n:ar[seq[s%8]%ar.length]+(s>=8&&bb%2?12:0),l:1,stac:1,v:hum(s%4===0?0.7:0.45)});
+        arp({c:34,rate:0.5,v:0.7});
+        drive({v:0.8});
+        E(0,'timp',{n:tn,v:0.9}); E(8,'timp',{n:tn,v:0.6});
+        if(bb===3||bb===7) timpRoll(12,16,0.5,0.4,0.9);
+      } else {
+        orch(L,{v:1, brass:(h2&&bb>=4)||(swap&&!flip&&id!=='hook')?'top':false, piano:!flip&&((bb>=4)!==swap), bell:flip, oct:flip&&swap&&bb>=4?12:0, hits:!flip||swap});
+        if(h2||fin){                                      // the brass answers under the long notes
+          const top=chordNotes(chord,19); const pat=pick([[[13,1],[14,2]],[[14,1],[15,1]],[[12.5,1],[14,2]]]);
+          if(bb!==7) for(const [s,l] of pat) E(s,'brass',{ns:top,l,v:hum(0.85),fall:l>=2&&R()<0.4?2:0});
+          if(bb===3) E(8,'brass',{ns:stack(19,chord),l:3,v:0.8,fall:4});
+          if(bb>=4) drive({v:fin?0.85:0.7}); }
+        if(!flip && !h2 && !fin && bb>=4) E(0,'choir',{ns:chordNotes(chord,10),l:16,v:0.45,a:0.3,vw:'o'});
+        if(!flip && !h2 && (pass>0||bb>=4)) arp({c:31,rate:pass%2?1:2,v:0.4});
+        if(fin && bb>=4) arp({c:31,rate:1,v:0.45});
+        if(flip){ const pt=chordNotes(chord,5); for(let s=0;s<16;s+=2) if(!lite||s%4===0) E(s,'pizz',{n:pt[[0,1,2,1][(s/2)%4]],side:(s/2)%2,v:hum(0.55)});
+          if(bb>=4||swap) arp({c:31,rate:4/3,v:0.4,d:12}); }
+      }
+      if(last){
+        if(id==='hook') { fill(pass); E(8,'rev',{l:8,v:0.7}); }
+        else if(h2){ fill(pass+1); E(14,'crash',{v:0.4}); }
+        else if(flip){ stopAt(12,['vox']); E(12,'spin',{ns:stack(23,chord).map(x=>x-12),l:4,from:0.5,to:2.4,v:0.9}); }
+        else { fill(pass+2); E(8,'rev',{l:8,v:0.8}); }
+      }
+    }
+    else if(id==='verse'){
+      const bb=b%8, half=b>=8, up=pass%2===1, drop=(b===7&&!up)||(b===11&&up);
+      Object.assign(M,{brass:0,bell:0,orch:0,fmb:0,lead:0});
+      if(b===0){ reset(); E(0,'crash',{v:0.4}); }
+      piano(bb,{oct:(up&&half)?12:0, v:b<2&&!pass?1:0.9});
+      sub(T_VERSE[(b+pass)%T_VERSE.length]);
+      if(b>=2||pass>0) clap({v:0.95,ghost:0.25}); else { E(8,'snap',{v:0.8}); E(14,'snap',{v:0.35}); }
+      if(half && b<12 && !up) hats({trip:true,roll:0.25,v:0.85});
+      else hats({rate:b>=12?1:2, roll:b<2?0.12:0.4, open:b%2?[14]:null});
+      if(!half) E(0,'strings',{ns:chordNotes(chord,3),l:16,v:0.5,a:0.5});
+      else { for(const [s,nn,l] of VSTR[bb]) E(s,'strings',{ns:[nn+(up?-12:0)],l,v:0.85,a:0.25}); E(0,'strings',{ns:chordNotes(chord,2),l:16,v:0.35,a:0.5}); }
+      if((b>=4&&b<8)||b>=12) E(0,'choir',{ns:chordNotes(chord,b>=12?14:10),l:16,v:b>=12?0.55:0.45,a:0.4,vw:up?'o':'u'});
+      // the PSG echoes the piano's last notes, an octave up, on the bars that breathe
+      if(b%4===3 && !drop){ const P=PIANO[bb]; for(const [s,nn] of P.slice(-2)) E(s+1,'psg',{n:nn+12,l:1.5,v:0.45,d:12,dec:1.5,throw:0.4}); }
+      if(drop){ stopAt(12,['piano','vox']); if(pass<2) E(12,'cash',{v:0.9}); else E(12,'bell',{n:31,v:0.6,d:1.2}); }
+      if(last){ fill(pass+3); E(8,'rev',{l:8,v:0.8}); }
+    }
+    else if(id==='stop'){
+      // the game pauses: the chord slows down with the clock, the 808 sinks, a filter closes
+      Object.assign(M,{bell:0,keys:0,vox:0,fmb:0,lead:0});
+      const st=stack(23,'C');
+      E(0,'crash',{v:0.7}); E(0,'kick',{v:1});
+      E(0,'psg',{n:31,l:1,v:0.8,d:50,gate:1}); E(1,'psg',{n:36,l:1.5,v:0.8,d:50,gate:1,dec:1.5});     // the pause chime
+      E(0,'spin',{ns:st.concat([st[0]-12]),l:14,v:1,to:0.06}); E(0,'strings',{ns:st,l:3,a:0.01,v:0.6});
+      E(0,'s808',{n:r,l:14,path:[[1,r-12,11]]});
+      const hs=0.9+0.2*R(); [0,1,2.2,3.6,5.3,7.4,9.9].forEach((s,i)=>E(s*hs,'hat',{v:0.8-i*0.08,tone:1-i*0.07}));
+      E(pass%2?6:4,'clap',{v:0.55,throw:0.9});
+      A(0,{a:'lp',from:20000,f:300,l:13,q:2}); A(0,{a:'fb',v:0.55,tc:0.3});
+      stopAt(13);
+    }
+    else if(id==='switch'){
+      const bb=b%8, half=b>=8, alt=pass%2===1;
+      Object.assign(M,{piano:0,keys:0,vox:0,lead:0,brass:half?1:0,fmb:half?1:0});
+      if(b===0){ reset(); E(0,'boom',{v:1}); E(0,'crash',{v:0.6}); }
+      sub(T_SWITCH[(b+pass+(R()<0.35?1:0))%T_SWITCH.length]);
+      clap({ghost:0.35});
+      if(bb%4===3 && !alt) hats({rate:1,roll:0.5}); else hats({trip:true,roll:0.35,open:bb%2?[10]:null});
+      if(R()<0.6) E(pick([6,13,15]),'snap',{v:0.35});
+      const bo=(half!==alt)?12:0;
+      for(const [s,nn,l] of BELLS[bb]) E(s,'bell',{n:nn+bo,v:hum(0.8),d:Math.min(2,0.6+l*0.22),throw:l>=4&&R()<0.3?0.4:0});
+      const pt=chordNotes(chord,5); for(let s=0;s<16;s+=2) if(!lite||s%4===0) E(s,'pizz',{n:pt[[0,1,2,1][(s/2)%4]]+(half&&s%4===2?12:0),side:(s/2)%2,v:hum(s%4?0.55:0.8)});
+      E(0,'choir',{ns:chordNotes(chord,8),l:16,v:0.5,a:0.4,vw:'o'});
+      if(half){ drive({k:(bb+pass)%DRV.length,v:0.8}); E(0,'brass',{ns:chordNotes(chord,4),l:3,v:0.75}); if(R()<0.6) E(3,'brass',{ns:chordNotes(chord,4),l:2,v:0.6});
+        E(0,'strings',{ns:[chordNotes(chord,17)[0]],l:16,v:0.7,a:0.3}); if(bb%2) E(0,'hit',{ns:chordNotes(chord,17).slice(-2),v:0.7}); }
+      if(bb===0) E(0,'timp',{n:tn,v:0.8});
+      if(last){ fill(pass+1); E(4,'riser',{l:12,v:0.8}); }
+    }
+    else if(id==='soul'){
+      /* The save point: the soul record on the platter. Four bars of the "sample" alone,
+         dull and thin, then the boom-bap drums and the filter opens. */
+      const drums=b>=4, v2=pass%2===1;
+      Object.assign(M,{kick:drums?1:0,drums:drums?1:0,hats:drums?1:0,choir:0,brass:0,bell:0,piano:0,orch:0,fmb:0,lead:0,psg:0.8});
+      if(b===0){ A(0,{a:'lp',from:20000,f:2200,l:1,q:1.3}); A(0,{a:'hp',from:20,f:170,l:1}); A(0,{a:'fb',v:MIX.echoFb,tc:0.05}); }
+      if(b===4){ A(0,{a:'lp',from:2200,f:20000,l:6,q:0.9}); A(0,{a:'hp',from:170,f:20,l:4}); E(0,'crash',{v:0.35}); }
+      const vc=SOULV[chord];
+      const KR=[[[0,6,0.9],[6,3,0.5],[10,6,0.7]],[[0,3,0.9],[3,5,0.6],[10,2,0.5],[12,4,0.65]],[[0,10,0.9],[10,2,0.55],[14,2,0.6]]];
+      for(const [s,l,kv] of KR[(b+pass)%3]) E(s,'keys',{ns:s&&R()<0.3?vc.slice(1):vc,l,v:hum(kv)});
+      E(0,'strings',{ns:vc.map(x=>x+12),l:16,v:0.4,a:0.7});
+      sub(T_SOUL[(b+pass)%2],{soft:1,kick:false,v:0.9});
+      const S=SOUL[v2?[4,5,3,2,0,1,6,7][b]:b];
+      S.forEach(([s,nn,l],i)=>{ const oct=(v2&&i===0&&b%2)?-12:0;
+        if(v2 && l>=4 && i===0){ E(s,'vox',{n:nn+oct,l:1,v:0.8,vw:'a',chop:1}); E(s+1,'vox',{n:nn+oct,l:l-1,v:hum(0.9),vw:'a',vw2:'o',chop:1}); }
+        else E(s,'vox',{n:nn+oct,l,v:hum(0.9),vw:i%2?'o':'a',vw2:l>=4?'o':null,sc:l>=4&&R()<0.6,chop:l<4,throw:(b===3||b===7)&&i===S.length-1?0.5:0}); });
+      // the PSG answers the singer's last note, a save-point sparkle
+      if(b%2===1){ const top=vc[vc.length-1]+12; E(14,'psg',{n:top,l:2,v:0.4,d:12,dec:1.2,throw:0.6}); }
+      if(drums){
+        E(0,'kick',{v:1,dusty:1,d:0.3}); E(7,'kick',{v:0.55,dusty:1,d:0.25}); E(10,'kick',{v:0.85,dusty:1,d:0.3});
+        if(R()<0.4) E(15,'kick',{v:0.45,dusty:1,d:0.2});
+        E(4,'snare',{v:0.9,dusty:1}); E(12,'snare',{v:1,dusty:1,throw:b===7?0.5:0});
+        for(const s of [3,9,14]) if(R()<0.3) E(s,'snare',{v:0.18,dusty:1});
+        for(let s=0;s<16;s+=2) E(s,'hat',{v:hum(s%4?0.45:0.7)}); if(b%2) E(14,'hat',{o:1,v:0.5});
+      } else if(b===3){ for(let i=0;i<4;i++) E(12+i,'snare',{v:0.2+i*0.12,dusty:1}); }
+      for(const e of ev){ const i=Math.round(e.s); if(e.v!=='@' && Math.abs(e.s-i)<1e-6 && (i&1)) e.s+=0.28; }   // the boom-bap swing
+    }
+    else if(id==='build'){
+      tempo=[0.72,0.8,0.88,0.96][b];
+      Object.assign(M,{keys:0,vox:0,bell:0,piano:0,fmb:0,lead:0});
+      if(b===0){ reset(); A(0,{a:'hp',from:20,f:110,l:16}); E(0,'s808',{n:r,l:14}); E(0,'kick',{v:1}); E(0,'crash',{v:0.5}); }
+      else A(0,{a:'hp',from:[20,110,200,330][b],f:[110,200,330,520][b],l:16});
+      E(0,'choir',{ns:chordNotes(chord,pass%2?21:16),l:16,v:0.6+0.13*b,a:0.3,vw:pass%2?'o':'a'});
+      if(R()<0.5) E(pick([6,10,14]),'snap',{v:0.3+0.1*b});
+      for(let s=0;s<16;s+=(b<2?2:1)) E(s,'strings',{ns:chordNotes(chord,11+(pass%3)*3),l:1,stac:1,v:0.35+0.12*b+0.01*s});
+      if(b>=1) arp({c:27+b*2,rate:b>=2?0.5:1,v:0.3+0.1*b,pat:(b+pass)%2?0:3});
+      timpRoll(0,b===3?12:16,[2,2,1,0.5][b],0.25+0.15*b,0.4+0.15*b);
+      if(b>=1){ const dv=[4,2,1][b-1]; for(let s=0;s<(b===3?12:16);s+=dv) E(s,'snare',{v:0.2+0.2*b+0.012*s}); }
+      if(b>=2) for(const s of [0,4,8,12]) if(b<3||s<12) E(s,'kick',{v:0.85});
+      if(b>=1) hats({rate:b>=2?1:2,roll:0});
+      if(b===2) E(0,'riser',{l:30,v:1});
+      if(b===3){ stopAt(12); E(8,'rev',{l:8,v:0.9}); E(12.5,'pop',{v:1,fizz:1.4,spr:0.4}); }
+    }
+    else if(id==='outro'){
+      Object.assign(M,{bell:0,keys:0,vox:0,fmb:0,lead:0});
+      if(b<3){ sub(T_VERSE[(b+pass)%3]); clap({ghost:0.2}); hats({rate:2,roll:0.25}); }
+      E(0,'choir',{ns:chordNotes(chord,15),l:b===3?14:16,v:0.6,a:0.2,vw:b===3?'a':'o'});
+      if(b===0){ piano(0,{v:0.9}); orch(HOOK[0].slice(0,3),{v:0.7,choir:false}); }
+      if(b===1){ E(0,'pop',{v:0.9,fizz:2.4,spr:0.3}); piano(2,{v:0.85}); E(0,'strings',{ns:chordNotes(chord,8),l:16,v:0.6,a:0.3}); }
+      if(b===2){ E(0,'strings',{ns:chordNotes(chord,8),l:8,v:0.6,a:0.2}); E(8,'brass',{ns:stack(23,chord),l:5,v:1,fall:5}); timpRoll(12,16,0.5,0.3,0.9); }
+      if(b===3){ tempo=0.93; hit(0,{l:3,crash:1,fall:2+Math.floor(R()*3)}); E(0,'boom',{v:1}); E(0,'s808',{n:r,l:14,path:[[4,r-12,8]]});
+        E(0,'piano',{ns:pass%2?[7,12,15,19]:[12,15,19,24],l:14,v:0.6});
+        // stage clear: the PSG runs up the tonic and holds, the bells ring it out
+        const run=[[24,27,31,36,39,43],[19,24,27,31,36,39],[36,31,27,31,36,39]][pass%3];
+        run.forEach((x,i)=>E(4+i*0.5,'psg',{n:x,l:0.5,v:0.8,d:[25,12,25][pass%3],gate:1}));
+        E(7,'psg',{n:pass%3===1?43:48,l:6,v:0.6,d:50,dec:0.6,throw:0.5}); E(7,'bell',{n:36,v:0.8,d:2.4}); E(7,'bell',{n:31,v:0.5,d:2.4});
+        stopAt(8,['choir','piano','sub','orch','psg','bell']); }
+    }
+    if(kx) for(const e of ev){ const p=e.p;
+      if(p.n!=null) p.n+=kx; if(p.g!=null) p.g+=kx; if(p.ns) p.ns=p.ns.map(x=>x+kx); if(p.path) p.path=p.path.map(([a,x,g])=>[a,x+kx,g]); }
+    A(-0.2,{a:'mix',m:M,tc:0.008});
+    return {ev, label:sec.name, sec:id, pos, pass, energy:ENERGY[id], tempo:+tempo.toFixed(3)};
+  }
+  const MIX={ makeup:0.55, echoFb:0.3, echoRet:0.5, springRet:0, lowMid:-2, air:3, hallRet:0.7,
+    channels:{
+      kick:   {level:1.0, pan:0,     echo:0,    spring:0.02, chain:[['hp',30],['peak',60,2,1],['peak',3500,2,1]]},
+      sub:    {level:1.0, pan:0,     echo:0,    spring:0,    chain:[['hp',27],['drive',1.6],['lp',1800],['peak',52,2,1],['peak',330,-3,1],['trim',0.11]]},
+      fmb:    {level:1.0, pan:0,     echo:0,    spring:0.04, chain:[['hp',105],['peak',300,-2,1],['lp',3500]]},
+      drums:  {level:2.0, pan:0,     echo:0.03, spring:0.22, chain:[['hp',140],['peak',220,2,1],['peak',5000,2,1]]},
+      hats:   {level:1.3, pan:0.18,  echo:0,    spring:0.04, chain:[['hp',5000]]},
+      perc:   {level:0.8, pan:-0.2,  echo:0.03, spring:0.15, chain:[['hp',2500]]},
+      choir:  {level:1.0, pan:0, spread:0.7, echo:0.05, spring:0.45, chain:[['hp',170],['lp',9000]]},
+      strings:{level:1.8, pan:0, spread:0.6, echo:0,    spring:0.35, chain:[['hp',130],['lp',8500]]},
+      brass:  {level:1.2,pan:0, spread:0.4, echo:0.08, spring:0.25, chain:[['hp',140],['peak',1500,2,1],['lp',7500]]},
+      piano:  {level:1.3, pan:-0.12, echo:0.08, spring:0.3,  chain:[['hp',80],['lp',8000]]},
+      bell:   {level:1.2, pan:0.25,  echo:0.22, spring:0.3,  chain:[['hp',400]]},
+      keys:   {level:0.9, pan:0, echo:0.06, spring:0.25, chain:[['hp',110],['lp',6000]]},
+      vox:    {level:0.5, pan:0.06,  echo:0.22, spring:0.3,  chain:[['hp',220],['lp',6500]]},
+      orch:   {level:1.5, pan:0,     echo:0.04, spring:0.35, chain:[['hp',65],['lp',9000]]},
+      lead:   {level:0.6, pan:0.1,   echo:0.2,  spring:0.2,  chain:[['hp',200],['drive',1.6],['lp',6500]]},
+      psg:    {level:0.9, pan:-0.25, echo:0.18, spring:0.12, chain:[['hp',300],['lp',9000]]},
+      fx:     {level:0.8, pan:0,     echo:0.12, spring:0.35, chain:[['hp',110]]},
+    } };
+  return {
+    title:'Coronation Drift (64-Bit Boss Mix)', bpm:140, key:-4, swing:0, echoSteps:3, voices,
+    // the orchestra leans back behind the grid; the drums and the 808 sit on it
+    lag:{choir:0.012, strings:0.008, brass:0.004, piano:0.006, keys:0.012, vox:0.014, bell:0.004, clap:0.002, hit:0.002},
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan, mix:MIX,
+    courseNote:'deferred: produced station keeps its own tune, in the course key',
   };
 })();
 /* ==== /SONG ENGINE ==== */
