@@ -38418,6 +38418,42 @@ function rank(){
 // avoids allocating fresh Vector3/Matrix4 instances 360+ times a second at 6 racers
 const _worldUp=new T.Vector3(0,1,0), _oFwd=new T.Vector3(), _oUp=new T.Vector3(),
       _oRight=new T.Vector3(), _oTrueUp=new T.Vector3(), _oBasis=new T.Matrix4();
+// The kit mouths are an arch that grows UP from its own origin, so the wide / tall shapes of
+// the celebration, the WOO and the shocked O rise into the pupils (the first fix only capped
+// how tall the arch may get). Once per racer, remember where the pupils are and how far the
+// resting mouth reaches into them, and sample the mouth's outline; while the mouth is off its
+// neutral shape, sit it lower by however much further than at rest it now reaches. At neutral
+// nothing moves, and a racer whose mouth never reaches a pupil (bead, voxel, the toothy grins)
+// is untouched. (Dropping it the whole way clear buried the arch in the moustaches and chains.)
+const _mfV=new T.Vector3(), _mfM=new T.Matrix4(), _mfB=new T.Box3();
+const MOUTH_MAX_DROP=0.9;
+function mouthReach(mf, m4){         // how far the outline (in the racer's frame) rises above the pupil bottoms in their columns
+  let pen=0;
+  for(const v of mf.pts){ _mfV.copy(v).applyMatrix4(m4);
+    for(const c of mf.cols) if(_mfV.x>c.x0 && _mfV.x<c.x1 && _mfV.y-c.y>pen) pen=_mfV.y-c.y; }
+  return pen;
+}
+function mouthFit(o){
+  const ud=o.userData; if(ud._mf!==undefined) return ud._mf;
+  ud._mf=null;
+  const mo=ud.mouth, mb=ud.mouthBase, pu=ud.pupils;
+  if(ud.dragonRig||!mo||!mb||!mo.isMesh||mo.parent!==o||!pu||!pu.length||!mo.geometry||!mo.geometry.attributes.position) return null;
+  o.updateMatrixWorld(true); _mfM.copy(o.matrixWorld).invert();
+  const cols=pu.map(q=>{ _mfB.setFromObject(q).applyMatrix4(_mfM); return {x0:_mfB.min.x-0.25, x1:_mfB.max.x+0.25, y:_mfB.min.y}; });
+  const pos=mo.geometry.attributes.position, step=Math.max(1,Math.ceil(pos.count/64)), pts=[];
+  for(let i=0;i<pos.count;i+=step) pts.push(new T.Vector3().fromBufferAttribute(pos,i));
+  const mf={cols, pts, y0:mo.position.y, rest:0};
+  mf.rest=mouthReach(mf, new T.Matrix4().compose(mo.position, mo.quaternion, mb));
+  return (ud._mf=mf);
+}
+function mouthClear(o, mo, mb){
+  const mf=mouthFit(o); if(!mf) return;
+  const ramp=Math.min(1, 4*Math.max(Math.abs(mo.scale.x/mb.x-1), Math.abs(mo.scale.y/mb.y-1)));
+  mo.position.y=mf.y0;
+  if(ramp<0.001) return;
+  mo.updateMatrix();
+  mo.position.y=mf.y0-Math.min(MOUTH_MAX_DROP, Math.max(0, mouthReach(mf, mo.matrix)-mf.rest))*ramp;
+}
 function syncObjects(dt,now){
   for(const r of racers){
     const o=r.obj;
@@ -38533,6 +38569,7 @@ function syncObjects(dt,now){
       else if(r.drift===1){ fx=1.25; fy=0.55; }     // gritted teeth
       mo.scale.x += (mb.x*fx-mo.scale.x)*Math.min(1,12*dt);
       mo.scale.y += (mb.y*fy-mo.scale.y)*Math.min(1,12*dt);
+      mouthClear(r.obj, mo, mb);
     }
     const pu=r.obj.userData.pupils;
     if(pu){ if(r.spinT>0||r.celebT>0){ pu[0].rotation.z+=dt*(r.celebT>0?10:18); pu[1].rotation.z+=dt*(r.celebT>0?10:18); }
