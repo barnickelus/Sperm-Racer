@@ -39385,7 +39385,10 @@ function netDropPeer(pid){
   p.gone=true; NET.players.delete(pid);
   // mid-race: hand the abandoned kart to the AI, or retire it, per the host's lobby setting
   const r=racers.find(x=>x.netId===pid);
-  if(r){ if(NET.fillAI){ r.remote=false; r.name=r.name+' (AI)'; }
+  if(r && r.remote) netNoteFinish(r, r._snap);   // their closing snapshot may still be waiting for the next frame
+  // a driver who has already crossed the line is not abandoning anything: leaving after the
+  // finish (their race screen going up sends 'bye') keeps their name and their own time
+  if(r && !r.finished){ if(NET.fillAI){ r.remote=false; r.name=r.name+' (AI)'; }
          else { r.finished=true; r.finishT=raceTime; } }
   if(NET.host) netBroadcastRoster();
   netRenderLobby();
@@ -39482,16 +39485,22 @@ function netBeginRace(){
 }
 
 /* ---- per-frame: publish my kart, and drop peers that have gone quiet ---- */
+// `ft` is the finish time on MY clock, so the others' results boards show the time this
+// driver actually saw rather than the moment the packet happened to land there.
+function netSendSnap(){
+  const me=racers.find(r=>r.you);
+  if(me) netSend({t:'s', x:+me.x.toFixed(2), y:+me.y.toFixed(2), z:+me.z.toFixed(2),
+    h:+me.head.toFixed(3), sp:+me.spd.toFixed(1), sl:+(me.slip||0).toFixed(3),
+    bk:+(me._bank||0).toFixed(3), lap:me.lap, tot:+me.total.toFixed(3), prog:+me.prog.toFixed(4),
+    bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0, wh:me._whipN||0,
+    ft:(me.finished&&isFinite(me.finishT))?+me.finishT.toFixed(2):undefined});
+}
 function netTick(dt){
   if(!NET.on || !NET.t) return;
   NET._acc+=dt;
   if(NET._acc >= 1/NET.SEND_HZ){
     NET._acc=0;
-    const me=racers.find(r=>r.you);
-    if(me) netSend({t:'s', x:+me.x.toFixed(2), y:+me.y.toFixed(2), z:+me.z.toFixed(2),
-      h:+me.head.toFixed(3), sp:+me.spd.toFixed(1), sl:+(me.slip||0).toFixed(3),
-      bk:+(me._bank||0).toFixed(3), lap:me.lap, tot:+me.total.toFixed(3), prog:+me.prog.toFixed(4),
-      bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0, wh:me._whipN||0});
+    netSendSnap();
   }
 }
 
@@ -39499,6 +39508,9 @@ function netTick(dt){
  * the last known heading covers the gap between packets (at 15Hz that is up to 67ms, and
  * more when a packet is lost), then the position eases onto the true one so a correction
  * reads as a small slide rather than a teleport. */
+function netNoteFinish(r, s){
+  if(s && s.fin && !r.finished){ r.finished=true; r.finishT=(typeof s.ft==='number'&&isFinite(s.ft))?s.ft:raceTime; }
+}
 function netApplySnap(r, dt){
   const s=r._snap; if(!s) return;
   const age=Math.min(0.5, (performance.now()-(r._snapT||0))/1000);
@@ -39514,7 +39526,7 @@ function netApplySnap(r, dt){
   if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen && isDragonRacer(r))
     r._wh={t:0, side:whipSide(r), hit:[], lock:null, net:true};
     r._whipSeen=s.wh; }
-  if(s.fin && !r.finished){ r.finished=true; r.finishT=raceTime; }
+  netNoteFinish(r,s);
 }
 
 /* ---- lobby wiring ---- */
@@ -39701,7 +39713,7 @@ function endRace(){
     }
   }
   $('finish').classList.remove('hidden');
-  if(NET.on) netLeave();   // the room is over once everyone is home; solo races after it must not see it
+  if(NET.on){ netSendSnap(); netLeave(); }   // the room is over once everyone is home (a last snapshot first, so the finish is on record before 'bye'); solo races after it must not see it
   if(!wasUnlocked && localStorage.getItem('sr_gp_done')) setupSelect(true);   // rebuild cards so the unlock shows without a reload
 }
 // start a Grand Prix: lock the lineup, race every circuit in order, tally points
