@@ -38401,10 +38401,10 @@ function syncObjects(dt,now){
     const wantSc=r.megaT>0?1.8:1;
     if(Math.abs((o.scale.x||1)-wantSc)>0.01){ const ns=o.scale.x+(wantSc-o.scale.x)*Math.min(1,6*dt); o.scale.setScalar(ns); }
     // glance over at rivals who are pulling alongside / about to pass — turn the head to look
-    let near=null,nd=1e9,minD=1e9;
+    let near=null,nd=1e9;
     const GR=24;
     for(const o2 of racers){ if(o2===r)continue;
-      const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd<minD)minD=dd; if(dd>GR)continue;
+      const dd=Math.hypot(o2.x-r.x,o2.z-r.z); if(dd>GR)continue;
       // weight toward rivals that are roughly beside you (the ones you'd actually look at)
       let df=Math.atan2(o2.x-r.x,o2.z-r.z)-r.head; while(df>Math.PI)df-=6.2832; while(df<-Math.PI)df+=6.2832;
       const sideness=Math.abs(Math.sin(df));            // 1 = directly to the side
@@ -38428,10 +38428,12 @@ function syncObjects(dt,now){
     // before — ordinary road superelevation and the berm wall-ride lean both already flow
     // into r._bank), then derive an orthonormal right/up so the model banks relative to its
     // own direction of travel, matching the road surface underneath it.
-    // the glance swings the whole model, tail and hat with it: on the grid and with a rival
-    // close alongside that would fan it across the neighbour's slot, so it is kept small there
-    const gcap=state==='count'?0.25:0.25+0.85*ldSmooth(14,20,minD);
-    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : ldClamp(r._glance,-gcap,gcap));   // dragons turn their own heads
+    // Dragons turn their own heads (the rig does the looking), so this whole-model swing is
+    // only for the ordinary racers — and it must stay FULL there: it IS the countdown's
+    // "everyone checking out the competition" look, and the alongside-a-rival glance. An
+    // earlier collision fix capped it to ~14 degrees to stop a dragon's body fanning across
+    // a neighbour's slot, but dragons never used this value, so the cap only muted everyone else.
+    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance);   // dragons turn their own heads
     const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
