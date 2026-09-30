@@ -38630,15 +38630,22 @@ const _camPush=new T.Vector3(), _camPushed=new T.Vector3(), _camLook=new T.Vecto
 let _camRoll=0, _camPushOn=false;
 function camAim(x,y,z){ _camLook.set(x,y,z); camera.lookAt(_camLook); }
 const CAM_CLEAR=3;                    // how far the lens stays off any racer's skin
-function camPushOut(dt){
-  const p=_cpP.copy(camera.position);
-  let hitO=null;
+// A dragon's meshes reach well past its chain: horns, antlers, mane, limbs and the tail tuft
+// stand up to ~7.5 units off the spine (measured over a race and the victory coil for all
+// three dragons), so its spheres are the link radius plus that reach, then the usual clearance.
+const CAM_DRAGON_REACH=7.6, CAM_DRAGON_CLEAR=3.2;
+const _cpK=new T.Vector3(), _cpM=new T.Vector3(), _cpC=new T.Vector3();
+let _cpHit=null;
+// move p out of every racer's clearance spheres (a few passes: pushing clear of one can
+// land inside the next). Returns true if p was inside anything to begin with.
+function camClearOf(p){
+  let moved=false; _cpHit=null;
   // one sphere test: move p out to radius R round (cx,cy,cz) if it is inside
   const clr=(o,cx,cy,cz,R)=>{
     let dx=p.x-cx, dy=p.y-cy, dz=p.z-cz; const d2=dx*dx+dy*dy+dz*dz;
     if(d2>=R*R) return false;
     const d=Math.sqrt(d2); if(d<1e-4){ dx=0; dy=1; dz=0; } else { dx/=d; dy/=d; dz/=d; }
-    p.set(cx+dx*R, cy+dy*R, cz+dz*R); hitO=o; return true;
+    p.set(cx+dx*R, cy+dy*R, cz+dz*R); _cpHit=o; return true;
   };
   const test=()=>{
     let any=false;
@@ -38650,7 +38657,11 @@ function camPushOut(dt){
         // the head, then every third link of the chain (links sit half a unit apart)
         const cw=b.cw;
         for(let i=0;i<=b.N;i+=(i<3?1:3)){
-          const R=(i<3?6*sc:Math.max(2.5, b.rad[i]*sc+2))+CAM_CLEAR;
+          // the player's own dragon keeps the tighter spheres while a shot is composed on it (the
+          // portrait and the orbit sit at a set distance from its head, which already clears the
+          // horns); once the race is over the lens just drifts, so it gets the full ones
+          const R=(r.you&&state!=='done') ? (i<3?6*sc:Math.max(2.5, b.rad[i]*sc+2))+CAM_CLEAR
+                        : (b.rad[i]+CAM_DRAGON_REACH)*sc+CAM_DRAGON_CLEAR;
           if(clr(o, cw[i*3], cw[i*3+1]+LD_Y*sc, cw[i*3+2], R)) any=true;
         }
       } else {
@@ -38664,21 +38675,38 @@ function camPushOut(dt){
     return any;
   };
   let still=false;
-  for(let pass=0;pass<3;pass++){ if(!test()){ still=false; break; } still=(pass===2); }
-  // no sideways way out (boxed in between bodies): go over the top instead
-  if(still && hitO) p.y=Math.max(p.y, hitO.position.y+12*(hitO.scale.x||1));
-  _cpD.copy(p).sub(camera.position);
-  // grow at once (the lens must never sit inside a body), relax gently so it doesn't pop
-  if(_cpD.lengthSq()>=_camPush.lengthSq()) _camPush.copy(_cpD);
-  else _camPush.lerp(_cpD, Math.min(1,6*dt));
+  for(let pass=0;pass<4;pass++){ if(!test()){ still=false; break; } moved=true; still=(pass===3); }
+  // no sideways way out (boxed in between bodies): go over the top instead, only as high as it
+  // takes (a fixed jump to the top of the tallest sphere popped the shot by ten units)
+  if(still && _cpHit){
+    const y0=p.y;
+    for(let k=0;k<120&&test();k++) p.y+=0.5;
+    if(p.y<y0) p.y=y0;
+  }
+  return moved;
+}
+function camPushOut(dt){
+  const raw=camera.position;
+  // what was applied last frame, moved on clear of whatever has drifted into it since:
+  // the lens never sits inside a body and never swings to a different side either
+  _cpK.copy(raw).add(_camPush); camClearOf(_cpK); _cpK.sub(raw);
+  // the least push that would do from here; relax toward it, but only while that stays clear,
+  // and slowly, so a body rocking past the lens does not bounce it up and down
+  _cpM.copy(raw); camClearOf(_cpM); _cpM.sub(raw);
+  _cpC.copy(_cpK).lerp(_cpM, Math.min(1,3*dt));
+  _cpD.copy(raw).add(_cpC);
+  if(!camClearOf(_cpD)) _camPush.copy(_cpC); else _camPush.copy(_cpK);
 }
 function updateCamera(dt){
   // a push left from last frame is only ours to strip if nothing else has moved the lens
-  if(_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6) camera.position.sub(_camPush);
+  const pushed=_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6;
+  if(pushed) camera.position.sub(_camPush);
   else _camPush.set(0,0,0);
   _camPushOn=false; _camRoll=0;
   updateCameraCore(dt);
-  if(state==='count'||state==='race'){
+  // 'done' too: the results panel goes up on the frame the race ends and the lens must not
+  // snap back to the raw orbit point (often inside a rival dragon) behind it
+  if(state==='count'||state==='race'||state==='done'){
     camPushOut(dt);
     if(_camPush.lengthSq()>1e-6){
       camera.position.add(_camPush); camera.lookAt(_camLook);
