@@ -35502,8 +35502,8 @@ function dragonFx(o, r, dr, an, dt){
 }
 // The long shadow: soft blobs along the chain, each dropped onto the road right beneath
 // its point of the body (the course samples near the racer, banking included), shrinking
-// and fading with height so the whole body reads as hovering over the road, and on a jump
-// the shadow stays on the ground. One instanced draw; alpha rides the instance colour.
+// with height so the whole body reads as hovering over the road, and on a jump
+// the shadow stays on the ground. One instanced draw; the road-edge fade rides the instance colour.
 const LD_SH=10;
 // Road-surface frame under a point: writes the road's up-normal into `n` (it rises sin(bank)
 // per unit of lateral, same as the height terms, and by the sample-to-sample grade along the
@@ -35524,8 +35524,14 @@ function dragonShadow(o, r, dr){
   if(!dr.shadow){
     const g=new T.PlaneGeometry(1,1); g.rotateX(-Math.PI/2);
     const m=new T.MeshBasicMaterial({map:TEX_SHADOW, color:0x000000, transparent:true, depthWrite:false});
-    m.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',
-      '#include <color_fragment>\n#ifdef USE_INSTANCING_COLOR\n\tdiffuseColor.a *= vColor.r;\n#endif'); };
+    // r128 defines USE_INSTANCING_COLOR (and declares vColor) in the VERTEX shader only, so
+    // reading vColor in the fragment shader compiled to nothing and the per-blob fade never
+    // ran. Carry the instance value across in a varying of our own instead.
+    m.onBeforeCompile=sh=>{
+      sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying float vShA;')
+        .replace('#include <color_vertex>','#include <color_vertex>\n\tvShA = instanceColor.x;');
+      sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vShA;')
+        .replace('#include <color_fragment>','#include <color_fragment>\n\tdiffuseColor.a *= vShA;'); };
     const im=new T.InstancedMesh(g,m,LD_SH); im.frustumCulled=false;
     for(let k=0;k<LD_SH;k++) im.setColorAt(k,new T.Color(1,1,1));
     r.shadow.parent.add(im); dr.shadow=im; r._dshadow=im;
@@ -35554,7 +35560,7 @@ function dragonShadow(o, r, dr){
     _ldX.crossVectors(_ldN,_ldF);
     _ldQ.makeBasis(_ldX,_ldN,_ldF); _dgO.quaternion.setFromRotationMatrix(_ldQ);
     _dgO.scale.set(w,1,w*1.7); _dgO.updateMatrix(); im.setMatrixAt(k,_dgO.matrix);
-    im.instanceColor.setXYZ(k,0.62*f*sfade,0,0);
+    im.instanceColor.setXYZ(k,sfade,0,0);      // alpha: the road-edge fade only (the shadow's strength on the pavement stays as it was drawn)
   }
   im.instanceMatrix.needsUpdate=true; im.instanceColor.needsUpdate=true;
 }
