@@ -502,7 +502,8 @@
   <div id="diffpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
   <div class="tag" style="margin:14px 0 6px">circuit</div>
   <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
-  <button class="go alt" id="tiltbtn" style="margin-top:14px">Tilt steering: OFF</button>
+  <button class="go alt" id="cambtn" style="margin-top:14px">View: Chase</button>
+  <button class="go alt" id="tiltbtn" style="margin-top:10px">Tilt steering: OFF</button>
   <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
   <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
   <button class="go alt on" id="hapticbtn" style="margin-top:10px">Vibration: ON</button>
@@ -39502,6 +39503,14 @@ function flashFx(amt,color){
 const _camPush=new T.Vector3(), _camPushed=new T.Vector3(), _camLook=new T.Vector3(),
       _cpP=new T.Vector3(), _cpD=new T.Vector3();
 let _camRoll=0, _camPushOn=false;
+/* VIEW OPTION: 'chase' (the original), 'close' (the same chase, pulled in so the racer fills more
+   of a small phone screen) or 'fp' (first person, from the racer's own eyes — pairs with tilt
+   steering). Remembered between visits; a first-time narrow portrait screen starts on 'close'. */
+let camMode='';
+try{ camMode=localStorage.getItem('sr_cam')||''; }catch(_){}
+if(camMode!=='chase' && camMode!=='close' && camMode!=='fp') camMode=(innerWidth<=520 && innerHeight>innerWidth) ? 'close' : 'chase';
+let _fpYaw=null, _fpRate=0, _fpRoll=0, _fpPitch=0;
+const CAM_LABEL={chase:'Chase', close:'Close chase', fp:'First person'};
 function camAim(x,y,z){ _camLook.set(x,y,z); camera.lookAt(_camLook); }
 const CAM_CLEAR=3;                    // how far the lens stays off any racer's skin
 // A dragon's meshes reach well past its chain: horns, antlers, mane, limbs and the tail tuft
@@ -39580,7 +39589,7 @@ function updateCamera(dt){
   updateCameraCore(dt);
   // 'done' too: the results panel goes up on the frame the race ends and the lens must not
   // snap back to the raw orbit point (often inside a rival dragon) behind it
-  if(state==='count'||state==='race'||state==='done'){
+  if((state==='count'||state==='race'||state==='done') && !(camMode==='fp' && state==='race' && !(racers.find(r=>r.you)||{}).finished)){
     camPushOut(dt);
     if(_camPush.lengthSq()>1e-6){
       camera.position.add(_camPush); camera.lookAt(_camLook);
@@ -39604,6 +39613,9 @@ function camHold(me){
 }
 function updateCameraCore(dt){
   const me=racers.find(r=>r.you); if(!me)return;
+  const fp=camMode==='fp' && state==='race' && !me.finished;
+  if(me.obj) me.obj.visible=!fp;                // first person: you are the eyes, not the body
+  if(!fp) _fpYaw=null;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
   // Grid intro: HOLD ON THE FACE, then pull back to the driving view.
   // The old version orbited on a WORLD-axis circle of radius 34 — because it ignored the
@@ -39715,6 +39727,30 @@ function updateCameraCore(dt){
     return;
   }
   const boost=me.boostT>0, mega=me.megaT>0;
+  if(fp){
+    /* FIRST PERSON. The lens sits at the head, a touch ahead of centre, and follows the nose
+       (heading + a little slide) on a short spring so it neither lags nor jitters. It leans into
+       turns from the actual yaw RATE, so it reads the same with keys, the stick or tilt steering,
+       rolls with road banking, and widens on boost. Hops lift it with the model. */
+    const sc=Math.max(1,me.obj.scale.y||1), yawT=me.head+(me.slip||0)*0.6;
+    if(_fpYaw===null){ _fpYaw=yawT; _fpRate=0; _fpRoll=0; _fpPitch=0; }
+    let dy=(yawT-_fpYaw)%(Math.PI*2); if(dy>Math.PI) dy-=Math.PI*2; else if(dy<-Math.PI) dy+=Math.PI*2;
+    const k=Math.min(1,14*dt); _fpYaw+=dy*k; _fpRate+=((dy*k/Math.max(dt,1e-3))-_fpRate)*Math.min(1,8*dt);
+    const sy=Math.sin(_fpYaw), cy=Math.cos(_fpYaw);
+    camera.position.set(me.obj.position.x+sy*3.4*sc, me.obj.position.y+4.3*sc, me.obj.position.z+cy*3.4*sc);
+    if(camShake>0){ camera.position.x+=(Math.random()*2-1)*camShake*0.5; camera.position.y+=(Math.random()*2-1)*camShake*0.5; camShake=Math.max(0,camShake-dt*5); }
+    // look slightly down the road, following its slope a little so crests and dips read
+    _fpPitch+=((me.air?0:-0.05)-_fpPitch)*Math.min(1,4*dt);
+    camAim(camera.position.x+sy*40, camera.position.y+40*_fpPitch-0.5, camera.position.z+cy*40);
+    const rollT=-(me._bank||0)*0.5 + ldClamp(_fpRate*0.07,-0.2,0.2);
+    _fpRoll+=(rollT-_fpRoll)*Math.min(1,6*dt);
+    camera.rotateZ(_fpRoll);
+    const fovFp=finishPunchT>0 ? 98 : (boost?96:(mega?86:84));
+    camera.fov += (fovFp-camera.fov)*Math.min(1,5*dt);
+    camera.updateProjectionMatrix();
+    return;
+  }
+  const close=camMode==='close';   // the same chase, pulled in: a bigger racer on a small screen
   // tube mode: inside a tunnel the camera closes in tight and low — claustrophobic,
   // and it rolls with the berm bank so wall-riding reads through the lens too
   const tube=state==='race' && TRACKS[selTrack].berm && tunnelAt(me.prog);
@@ -39722,8 +39758,8 @@ function updateCameraCore(dt){
   // plus a constant low rumble while it lasts
   if(mega) camShake=Math.max(camShake,0.09);
   const hold=camHold(me);   // up and back while the start pack / a finishing rival is on top of the chase spot
-  const back=fwd.clone().multiplyScalar((mega?-42:(tube?-19:(boost?-27:-30)))-6*hold);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(mega?18:(tube?8.5:(boost?11.5:13)))+6*hold,0));
+  const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-16:(boost?-18:-19))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?7:(boost?9.5:9))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold,0));
   camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
     camera.position.x += (Math.random()*2-1)*camShake;
@@ -39731,7 +39767,7 @@ function updateCameraCore(dt){
     camera.position.z += (Math.random()*2-1)*camShake;
     camShake=Math.max(0,camShake-dt*5);
   }
-  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(18)).add(new T.Vector3(0,4,0));
+  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(close?12:18)).add(new T.Vector3(0,close?0.6:4,0));
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
@@ -41010,6 +41046,16 @@ function setupDifficulty(){
   });
 }
 
+// ---- camera view option (chase / close chase / first person) ----
+function setupCamBtn(){
+  const b=$('cambtn'); if(!b) return;
+  const paint=()=>{ b.textContent='View: '+CAM_LABEL[camMode]; b.classList.toggle('on',camMode!=='chase'); };
+  b.onclick=()=>{ camMode=camMode==='chase'?'close':(camMode==='close'?'fp':'chase'); _fpYaw=null;
+    try{ localStorage.setItem('sr_cam',camMode); }catch(_){}
+    paint(); };
+  paint();
+}
+
 // ---- gyroscope tilt steering ----
 function setupTilt(){
   const btn=$('tiltbtn'); if(!btn) return;
@@ -41100,7 +41146,7 @@ setupSelect();
 setupJoystick();
 setupTrackPick();
 setupDifficulty();
-setupTilt();
+setupCamBtn(); setupTilt();
 setupSlider();
 setupSliderToggle();
 setupFullscreen();
