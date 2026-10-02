@@ -33155,8 +33155,63 @@ function addOutline(mesh,k){
 }
 // Smoothly wiggle the single tapering tail tube by displacing its spine in x.
 const TAIL_OUTLINE_W=0.32;   // constant absolute width — tapers with the tube, doesn't flare
-function wiggleTail(g, phase, amp, lift){
-  lift=lift||0;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
+/* ---- How a racer's tail swims is part of who they are. The default is the plain travelling
+ * sine every racer used to share; TAIL_STYLE bends it per character, and every variant of a
+ * character (bead, voxel, wire, paper, clay...) inherits its base's style through SR_BASE so
+ * the personality survives a change of material. Fields (all optional, see TAIL_DEF):
+ *   f/fv beat rate (and extra at speed), a/sp amplitude (and how much speed adds), w the
+ *   wavelength (the lag along the tail), p how sharply the sway grows toward the tip,
+ *   ya/yf/yph a second, vertical axis (yf 1 = a roll, 2 = a figure-8), sh how square the swing
+ *   is (a snap at the end of each stroke; shv adds more at speed), h3 a third harmonic (jig),
+ *   lean a held side bias, hop an on-the-beat lift, jit an irregular drag, sweep how far the
+ *   tail trails out of a slide, flick a whip on boost.
+ * The vertical term only ever lifts (never dips), so the road clearance r._tailLift already
+ * guarantees still holds. A character with no entry swims exactly as before. */
+const SR_BASE={dragon:'korean', paper:'korean', voxel:'sailor', beadSalty:'sailor', kingVox:'king', wire:'rick',
+  dough:'latin', beadJuan:'latin', beadBandido:'latin', mosaic:'irish', bead:'cholo', paint:'french',
+  felt:'hillbilly', ukiyo:'samurai'};
+const TAIL_DEF={f:1, fv:0, a:1, sp:1, w:1, p:2, ya:0, yf:1, yph:0, sh:0, shv:0, h3:0, lean:0, hop:0, hf:1, jit:0, sweep:0, flick:0};
+const TAIL_STYLE={
+  guido:   {f:1.15, a:1.1, sh:2.4, lean:0.08, sweep:0.8},                              // hip-pop: side to side, a snap at each end
+  chad:    {f:0.55, a:1.15, w:1.6, p:1.6, ya:0.9, yf:1, yph:1.57, sp:0.7},             // long lazy surf-glide with a slow roll
+  korean:  {f:1.0, a:0.45, sp:0.15, w:0.8, sh:0.5},                                    // metronome: small, even, never hurried
+  nerd:    {f:2.1, a:0.55, w:0.5, sh:1.3, jit:0.12},                                   // quick, stiff, nervous flutter
+  latin:   {f:0.9, a:1.0, w:1.1, ya:1.6, yf:2, hop:0.9, sweep:0.5},                    // salsa figure-8 with an on-beat hop
+  rasta:   {f:0.5, a:1.25, w:1.8, p:1.7, ya:0.7, yf:1, yph:0.8, sp:0.6},               // slow rolling reggae sway
+  irish:   {f:1.5, a:0.85, h3:0.55, hop:0.8, hf:1.5},                                  // a jig: double-time triplet bounce
+  sailor:  {f:0.6, a:1.3, w:2.0, p:1.5, ya:1.2, yf:1, sp:0.8, jit:0.08},               // heavy rolling-ship wave
+  hillbilly:{f:0.6, fv:1.3, a:0.9, w:1.4, jit:0.3, sp:1.8, shv:2.5},                   // loose drag that cracks into a whip at top speed
+  rick:    {f:1.3, a:1.15, ya:1.4, yf:2, sh:1.8, hop:0.5, sweep:0.6, flick:1},         // funky figure-8, sharp snaps, flick on boost
+  french:  {f:0.65, a:0.9, w:2.2, p:1.8, ya:0.5, yf:1, yph:1.57, lean:0.05},           // elegant long glide
+  king:    {f:0.5, a:1.35, w:1.3, sh:0.4},                                             // regal wide slow sweeps
+  aviator: {f:2.4, a:0.7, w:0.35, p:2.4, jit:0.1, sp:0.7},                             // fast flag-like flutter
+  samurai: {f:0.9, a:0.8, sh:2.5, sweep:1.0, w:0.9},                                   // crisp cuts that snap through corners
+  desi:    {f:1.0, a:1.1, h3:0.25, ya:0.9, yph:1.0, w:1.2, flick:0.6},                 // hero-shot flourishes
+  wall:    {f:2.0, a:1.1, jit:0.45, sh:0.8, sp:1.3},                                   // frantic broker
+  cholo:   {f:0.8, a:0.8, hop:1.4, hf:2, ya:0.4},                                      // low-rider bounce on the beat
+};
+const _tsC={};
+function tailStyleFor(id){
+  if(!id) return null; const b=SR_BASE[id]||id;
+  if(!TAIL_STYLE[b]) return null;
+  return _tsC[b]||(_tsC[b]=Object.assign({}, TAIL_DEF, TAIL_STYLE[b]));
+}
+// per-racer values staged by syncObjects just before wiggleTail (no allocation in the hot path)
+const _TW={bias:0, hop:0, sh:0};
+let _tox=0, _toy=0;
+// x and y offset of the spine at fraction t, `lag` radians behind the head; st=null is the
+// plain sine, bit-for-bit what the tail always did
+function tailOffset(lag, t, phase, amp, st){
+  if(!st){ _tox=Math.sin(phase - lag)*amp*t*t; _toy=0; return; }
+  const tp=st.p===2?t*t:Math.pow(t,st.p), a=phase - lag*st.w;
+  let sn=Math.sin(a);
+  if(st.h3) sn=(sn + st.h3*Math.sin(3*a-1))/(1+st.h3*0.5);
+  const k=_TW.sh; if(k>0) sn=sn*(1+k)/(1+k*Math.abs(sn));   // squarer: dwell, then snap across
+  _tox=(sn*amp + _TW.bias)*tp;
+  _toy=((st.ya? st.ya*(0.5+0.5*Math.sin(st.yf*a+st.yph)) : 0) + _TW.hop)*tp;
+}
+function wiggleTail(g, phase, amp, lift, st){
+  lift=lift||0; st=st||null;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -33165,10 +33220,11 @@ function wiggleTail(g, phase, amp, lift){
   if(bt){
     const {mesh,rings,dummy}=bt; let i=0;
     for(const rg of rings){
-      const sway=Math.sin(phase - rg.ph)*amp*rg.t*rg.t, z=-2 - rg.t*20;
+      tailOffset(rg.ph, rg.t, phase, amp, st);
+      const sway=_tox, zy=_toy, z=-2 - rg.t*20;
       for(let j=0;j<rg.n;j++){
         const u=j/rg.n*Math.PI*2+(rg.a0||0);
-        dummy.position.set(sway+Math.cos(u)*rg.r, 3.2+lift*rg.t*rg.t+Math.sin(u)*rg.r+(rg.dy||0), z);
+        dummy.position.set(sway+Math.cos(u)*rg.r, 3.2+lift*rg.t*rg.t+zy+Math.sin(u)*rg.r+(rg.dy||0), z);
         dummy.scale.setScalar(rg.s);
         dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
       }
@@ -33180,10 +33236,10 @@ function wiggleTail(g, phase, amp, lift){
   // longitudinal spines between them, which is what makes a tube out of pure edges.
   const wt=g.userData.wireTail;
   if(wt){
-    const {mesh,pos,R,S,cx,cz,cr}=wt, ly=i=>3.2+lift*(i/(R-1))*(i/(R-1));
+    const {mesh,pos,R,S,cx,cz,cr}=wt, cy=wt.cy||(wt.cy=new Float32Array(R)), ly=i=>3.2+lift*(i/(R-1))*(i/(R-1))+cy[i];
     for(let i=0;i<R;i++){
       const t=i/(R-1);
-      cx[i]=Math.sin(phase - i*0.55*(20/R))*amp*t*t;
+      tailOffset(i*0.55*(20/R), t, phase, amp, st); cx[i]=_tox; cy[i]=_toy;
       cz[i]=-2 - t*20;
       cr[i]=1.5*(1-t)*(1-t)+0.28;
     }
@@ -33208,9 +33264,10 @@ function wiggleTail(g, phase, amp, lift){
     const {mesh,rings,dummy}=vt;
     let i=0;
     for(const r of rings){
-      const sway=Math.sin(phase - r.ph)*amp*r.t*r.t, z=-2 - r.t*20;
+      tailOffset(r.ph, r.t, phase, amp, st);
+      const sway=_tox, zy=_toy, z=-2 - r.t*20;
       for(const o of r.offs){
-        dummy.position.set(sway+o[0], 3.2+lift*r.t*r.t+o[1], z);
+        dummy.position.set(sway+o[0], 3.2+lift*r.t*r.t+zy+o[1], z);
         dummy.scale.set(o[2],o[2],o[2]);
         dummy.rotation.set(0, sway*0.12, 0);
         dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
@@ -33225,13 +33282,14 @@ function wiggleTail(g, phase, amp, lift){
   let p=0;
   for(let i=0;i<=rings;i++){
     const t=i/rings;
-    const cx=Math.sin(phase - i*0.5)*amp*t*t;   // more sway toward the tip
+    tailOffset(i*0.5, t, phase, amp, st);
+    const cx=_tox, oy=_toy;                     // more sway toward the tip
     const sy=tailS?tailS(t):0;                  // Chad's tail carries a fixed upward S
     const cz=ringZ[i], r=ringR[i], ro=r+TAIL_OUTLINE_W;
     for(let j=0;j<=sides;j++){
       const ang=j/sides*Math.PI*2, c=Math.cos(ang), s=Math.sin(ang);
       pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
-      pos[p]=y+lift*t*t+sy+s*r;  outlinePos[p]=y+lift*t*t+sy+s*ro;  p++;
+      pos[p]=y+lift*t*t+sy+oy+s*r;  outlinePos[p]=y+lift*t*t+sy+oy+s*ro;  p++;
       pos[p]=cz;     outlinePos[p]=cz;      p++;
     }
   }
@@ -38898,6 +38956,146 @@ function mouthClear(o, mo, mb){
   mo.updateMatrix();
   mo.position.y=mf.y0-Math.min(MOUTH_MAX_DROP, Math.max(0, mouthReach(mf, mo.matrix)-mf.rest))*ramp;
 }
+/* ---- Ordinary racers have no neck, so "looking" is the whole model turning on a spring plus
+ * the pupils, which lead and settle; a roll/pitch tilt, lids, mouth and blinks carry the mood.
+ * It is the luck dragons' rig (dragonMind) ported to the generic userData hooks: the same
+ * pick-one-rival-with-stickiness, never-straight-behind, pass-detection-by-a-dead-band logic,
+ * plus emotions driven by how a rival is MOVING, not just how near it is. How a character
+ * looks at the others is much of who they are, so every number below is LOOK_PERSONA data;
+ * variants inherit their base character's through SR_BASE. All of it is derived from
+ * positions and speeds every client already has (remote racers included): nothing on the wire. */
+const LOOK_DEF={react:9, zeta:0.85, turn:1.05, lead:1, tilt:0.2, blink:3.2, blinkLen:0.15, lid:1,
+  cur:1, wary:1, smug:1, grump:1, det:1, nod:0, nodF:2.6, sway:0, swayF:1.1, dart:0, chin:0.12,
+  smirk:0, wink:0, back:1};
+const LOOK_PERSONA={
+  guido:    {react:11, smug:1.6, chin:0.24, smirk:0.12, lid:0.92, tilt:0.16, grump:1.3, blink:3.6},   // swagger: chin up, smirk, offended when passed
+  chad:     {react:4.5, zeta:1, turn:0.9, lid:0.72, blink:5, nod:0.07, nodF:1.6, sway:0.05, cur:0.7, wary:0.5, smug:0.6, grump:0.5, lead:0.8, tilt:0.14}, // slow lazy glances, hang-loose nod
+  korean:   {react:14, zeta:1.15, turn:0.9, blink:7.5, tilt:0.04, cur:0.5, wary:0.8, det:1.5, smug:0.4, grump:0.5, lead:1.2, chin:0, back:0.6}, // crisp, minimal, near unblinking
+  nerd:     {react:13, zeta:0.6, blink:1.1, dart:0.35, lid:1.12, wary:1.8, cur:1.3, smug:0.3, grump:1.2, tilt:0.2, back:2.2},           // nervous darting eyes, quick blinks
+  latin:    {react:9, smug:1.3, wink:0.9, chin:0.15, smirk:0.1, lid:0.9, tilt:0.18, cur:1.2},                // a confident wink at whoever he passes
+  samurai:  {react:6, zeta:1.2, turn:0.8, blink:6.5, blinkLen:0.28, lid:0.88, tilt:0.03, cur:0.4, wary:0.4, smug:0.2, grump:0.3, det:1.6, lead:1.1, back:0.4}, // calm steady stare, slow blinks
+  rasta:    {react:5, zeta:1, lid:0.78, nod:0.08, nodF:2.6, sway:0.04, blink:4.5, cur:0.8, wary:0.4, smug:0.5, grump:0.3, tilt:0.16},      // Wyrmston's cool irie nod
+  aviator:  {react:12, smug:1.5, chin:0.2, smirk:0.14, tilt:0.28, wary:0.9, cur:1.2, blink:3},               // cocky grin, thumbs-up tilt
+  irish:    {react:9, smug:1.3, smirk:0.1, lid:0.95, cur:1.2, tilt:0.2, wink:0.5, chin:0.14, nod:0.03, nodF:4}, // lucky grin
+  sailor:   {react:5.5, lid:0.65, turn:0.9, blink:5, lead:0.7, cur:0.7, wary:0.8, det:1.3, tilt:0.1, sway:0.04, swayF:0.8}, // squint at the horizon
+  hillbilly:{react:4.5, zeta:1, lid:0.62, blink:4.5, wary:0.6, grump:1.5, smug:0.8, det:1.2, tilt:0.12},      // slow suspicious squint
+  rick:     {react:11, nod:0.09, nodF:5.2, sway:0.07, swayF:2.6, smug:1.2, cur:1.3, tilt:0.2, lid:0.95},     // head-bob to the beat
+  desi:     {react:8, chin:0.26, smug:1.2, lid:0.9, tilt:0.16, nod:0.03, smirk:0.06},                        // hero-shot chin-up
+  wall:     {react:14, zeta:0.55, dart:0.3, blink:1.8, wary:1.6, cur:1.3, smug:0.8, grump:1.6, tilt:0.12, back:1.8, lid:1.08}, // frantic glances
+  french:   {react:7, chin:0.18, lid:0.85, smug:1.1, tilt:0.2, blink:4, smirk:0.06, wink:0.4},
+  king:     {react:5, turn:0.8, chin:0.2, lid:0.88, smug:0.9, tilt:0.06, cur:0.5, blink:5.5, lead:0.9},
+  cholo:    {react:8, nod:0.06, nodF:3.4, lid:0.8, smug:1.1, chin:0.1, tilt:0.14, blink:3.5},
+};
+const _lpC={};
+function lookPersona(id){
+  const b=SR_BASE[id]||id;
+  return _lpC[b]||(_lpC[b]=Object.assign({}, LOOK_DEF, LOOK_PERSONA[b]));
+}
+const _lkQ=new T.Quaternion(), _lkE=new T.Euler();
+// a taunt/double-take is a gesture: one at a time, with a cooldown so a pack of overtakes isn't a twitch
+// own little generator per racer: the look must not draw from the shared Math.random stream
+function lkRnd(L){ L.rs=(L.rs*16807)%2147483647; return (L.rs-1)/2147483646; }
+function lkGest(L,P,k,ang,lat){
+  if(L.t-L.gcd<2.6) return; L.gcd=L.t;
+  L.g={k, t:0, dur:k==='smug'?1.7:1.1, side:lat>=0?1:-1, ang};
+  if(k==='smug'){ L.smT=1; if(lkRnd(L)<P.wink) L.wk=0.55; } else L.grT=1;
+}
+function socialLook(r,o,dt,racing){
+  let L=r._lk;
+  if(!L){ L=r._lk={rs:1+((r._li||0)+3)*7919, tgt:null, yaw:0, yv:0, eye:0, lon:new Map(), c:0, w:0, d:0, sm:0, gr:0, smT:0, grT:0, wk:0,
+    g:null, gcd:-9, pcd:-9, t:0, blinkT:0, blinkS:0, blink:1, tilt:0, pitch:0,
+    lidL:1, lidR:1, mx:1, my:1, mrz:0, eyeO:0, P:lookPersona(r.id)};
+    L.t=lkRnd(L)*20; L.blinkT=1+lkRnd(L)*3; }
+  const P=L.P; dt=Math.min(dt,0.05); L.t+=dt;
+  const spd=Math.abs(r.spd||0), grid=state==='count' || spd<6;
+  let tgt=null, bs=1e9, ba=0, bd=0, wary=0, wSide=1, cur=0, nearD=1e9;
+  if(racing){
+    const hd=r.head+(r.slip||0), fx=Math.sin(hd), fz=Math.cos(hd), vrx=Math.sin(r.head)*r.spd, vrz=Math.cos(r.head)*r.spd;
+    for(const q of racers){ if(q===r) continue;
+      const dx=q.x-r.x, dz=q.z-r.z, d=Math.hypot(dx,dz), lon=dx*fx+dz*fz, lat=dx*fz-dz*fx;
+      if(d<nearD) nearD=d;
+      if(d<26){   // which side of our shoulders they are on, with a dead band so running level isn't a pass
+        const was=L.lon.get(q), nw=lon>2?1:(lon<-2?-1:(was||0));
+        if(was && nw!==was && Math.abs(lat)<18) lkGest(L,P,nw<0?'smug':'dbl',Math.atan2(lat,lon),lat);
+        L.lon.set(q,nw);
+      } else L.lon.delete(q);
+      if(d>34) continue;
+      // closing speed along the line between us: a rival reeling you in from behind is a threat, one level beside you is a curiosity
+      const cl=d>0.1 ? -(dx*(Math.sin(q.head)*q.spd-vrx)+dz*(Math.cos(q.head)*q.spd-vrz))/d : 0;
+      if(lon<-2 && cl>12){ const w=Math.min(1,cl/70)*(1-d/34); if(w>wary){ wary=w; wSide=lat>=0?1:-1; } }
+      if(Math.abs(lon)<16 && d<24 && Math.abs(lat)>2){ const c=(1-d/24)*(1-Math.abs(lon)/16); if(c>cur) cur=c; }
+      if(d>30) continue;
+      const a=Math.atan2(lat,lon); if(Math.abs(a)>2.45) continue;      // straight behind: no neck for that
+      let sc=d*(1.3-0.6*Math.abs(Math.sin(a))); if(q===L.tgt) sc*=0.72;   // stickiness against flicker
+      if(sc<bs){ bs=sc; tgt=q; ba=a; bd=d; }
+    }
+  } else if(L.lon.size) L.lon.clear();
+  L.tgt=tgt;
+  let G=L.g;
+  if(!G && racing && wary*P.wary>0.3 && L.t-L.pcd>1.9/P.back){ L.pcd=L.t; G=L.g={k:'peek', t:0, dur:0.65, side:wSide, ang:0}; }   // a quick look back
+  let lookT=0, eyeT=0, wide=0, hold=0;
+  if(racing){
+    if(tgt){ const w=1-ldSmooth(14,30,bd); lookT=ldClamp(ba,-P.turn,P.turn)*w; eyeT=ldClamp(ba-L.yaw,-0.55,0.55)*Math.min(1,w*2)*P.lead; }
+    else eyeT=ldClamp(-(r.slip||0)*0.8,-0.4,0.4);
+  } else eyeT=(r._glance||0)*0.35;
+  if(G){
+    G.t+=dt; const u=G.t/G.dur;
+    if(u>=1) L.g=G=null;
+    else if(G.k==='dbl'){      // snap away, then snap back at whoever just went by, eyes wide
+      if(u<0.25){ lookT=-G.side*0.3*ldSmooth(0,0.12,u); eyeT=lookT; }
+      else { hold=ldSmooth(0.25,0.4,u)*(1-ldSmooth(0.75,1,u)); lookT=ldClamp(G.ang,-P.turn,P.turn)*hold; eyeT=G.side*0.5*hold; wide=hold; }
+    } else {                   // smug / peek: look back over the shoulder, then release
+      hold=ldSmooth(0,0.25,u)*(1-ldSmooth(0.65,1,u)); lookT=G.side*P.turn*(G.k==='peek'?0.9:1)*hold; eyeT=G.side*0.5*hold;
+    }
+  }
+  if(racing){
+    const w0=P.react*(G?1.5:1);
+    L.yv+=(w0*w0*(lookT-L.yaw)-2*P.zeta*w0*L.yv)*dt; L.yaw+=L.yv*dt;
+    r._glance=ldClamp(L.yaw,-1.2,1.2);
+  } else { L.yaw=r._glance||0; L.yv=0; }
+  L.eye+=(eyeT-L.eye)*Math.min(1,16*dt);   // faster than the head: the eyes arrive first and settle as it catches up
+  L.eyeO=L.eye + (P.dart ? P.dart*0.4*Math.sin(L.t*5.3)*Math.sin(L.t*2.1+1)*(tgt?0.3:1) : 0);
+  // ---- feelings: how it is being approached, smoothed (quick to rise, slow to fade)
+  const det=(racing && nearD>40 && spd>85) ? Math.min(1,(spd-85)/40)*P.det : 0;
+  L.smT=Math.max(0,L.smT-dt/2.8); L.grT=Math.max(0,L.grT-dt/2.8);
+  const cT=Math.min(1,cur*1.3)*P.cur, wT=Math.min(1,wary*1.5)*P.wary, sT=L.smT*Math.min(1.4,P.smug), gT=L.grT*Math.min(1.5,P.grump);
+  L.c+=(cT-L.c)*Math.min(1,(cT>L.c?5:2)*dt); L.w+=(wT-L.w)*Math.min(1,(wT>L.w?8:2)*dt);
+  L.d+=(det-L.d)*Math.min(1,1.5*dt); L.sm+=(sT-L.sm)*Math.min(1,6*dt); L.gr+=(gT-L.gr)*Math.min(1,6*dt);
+  if(L.wk>0) L.wk-=dt;
+  L.blinkT-=dt;
+  if(L.blinkT<=0){ L.blinkS=P.blinkLen; L.blinkT=P.blink*(0.6+0.8*lkRnd(L)); }
+  L.blink=1;
+  if(L.blinkS>0){ L.blinkS-=dt; L.blink=0.08+0.92*Math.abs(Math.cos(Math.min(1,1-L.blinkS/P.blinkLen)*Math.PI)); }
+  // eyes: wide when startled or curious, half-lidded when smug, narrowed when focused or sulking
+  let lid=P.lid - 0.22*L.d - 0.18*L.sm - 0.28*L.gr + 0.28*L.w + 0.14*L.c + 0.4*wide;
+  if(r.spinT>0) lid+=0.3; else if(r.drift===1) lid-=0.12; else if(r.boostT>0) lid+=0.1;
+  lid=ldClamp(lid,0.4,1.3);
+  L.lidL=lid; L.lidR=lid-0.16*L.sm;                                   // the smug one's lid sits lower on one side
+  // mouth (the existing scale hooks): smirk widens and flattens, worry and sulk pinch it, focus grits it
+  L.mx=1+0.28*L.sm-0.12*L.w-0.1*L.gr+0.1*L.d-0.05*L.c;
+  L.my=Math.max(0.35,1-0.15*L.sm-0.3*L.w-0.45*L.gr-0.35*L.d+0.1*L.c);
+  L.mrz=P.smirk+0.14*L.sm;
+  // head: curious tilt toward the rival (as the dragons do), chin up when smug, the signature nod/sway
+  const nb=Math.sin(L.t*P.nodF), nod=P.nod*(grid?1:0.55)*(nb>0?nb*nb:-0.4*nb*nb);
+  const pT=nod - P.chin*L.sm + 0.05*L.w + 0.05*L.gr + 0.04*L.d + 0.06*L.c;
+  const tT=-P.tilt*ldClamp(lookT,-1,1)*(0.35+0.65*L.c) + P.sway*Math.sin(L.t*P.swayF);
+  L.pitch+=(pT-L.pitch)*Math.min(1,10*dt); L.tilt+=(tT-L.tilt)*Math.min(1,8*dt);
+}
+// pupils ride the eyeball's surface: swing each about its own eye's centre so it stays on the ball
+// (a plain sideways shift would sink it into the sphere). Any family whose pupils don't share the
+// eye's parent just shifts a little, and one with no pupils skips this.
+function lkPupils(ud,L){
+  const pu=ud.pupils, ey=ud.eyes; if(!pu||pu.length<2) return;
+  const rest=ud._pr||(ud._pr=pu.map(q=>q.position.clone()));
+  const a=ldClamp(L.eyeO,-0.5,0.5), ca=Math.cos(a), sa=Math.sin(a);
+  for(let i=0;i<2;i++){
+    const q=pu[i], e=ey&&ey[i];
+    if(e && e.parent===q.parent){
+      const dx=rest[i].x-e.position.x, dz=rest[i].z-e.position.z;
+      q.position.x=e.position.x+dx*ca+dz*sa; q.position.z=e.position.z-dx*sa+dz*ca;
+    } else q.position.x=rest[i].x+a*0.6;
+  }
+}
 function syncObjects(dt,now){
   for(const r of racers){
     const o=r.obj;
@@ -38926,6 +39124,10 @@ function syncObjects(dt,now){
       glance=Math.max(-1.0,Math.min(1.0,diff*1.3))*prox;   // wider, snappier head turn
     }
     r._glance=(r._glance||0)+(glance-(r._glance||0))*Math.min(1,8*dt);
+    // ordinary racers (dragons turn their own heads) get the full social look on top: in a race it
+    // takes over the turn from the proximity swing above; on the grid that swing and the
+    // countdown glance stand, and it adds the pupils, blinks and mood
+    const lk=o.userData.dragonRig ? null : (socialLook(r,o,dt,state==='race' && !r.finished), r._lk);
     // Orientation via an explicit basis instead of raw Euler y+z: a plain rotation.z roll
     // doesn't compose correctly with a rotation.y heading turn for any heading other than
     // "facing world +Z" — that mismatch is exactly why banked characters looked flat/wrong
@@ -38940,13 +39142,14 @@ function syncObjects(dt,now){
     // earlier collision fix capped it to ~14 degrees to stop a dragon's body fanning across
     // a neighbour's slot, but dragons never used this value, so the cap only muted everyone else.
     const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance);   // dragons turn their own heads
-    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0) + (lk?lk.tilt:0);
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
     _oRight.crossVectors(_oUp, _oFwd).normalize();
     _oTrueUp.crossVectors(_oFwd, _oRight).normalize();
     _oBasis.makeBasis(_oRight, _oTrueUp, _oFwd);
     o.quaternion.setFromRotationMatrix(_oBasis);
+    if(lk && (lk.pitch>0.002||lk.pitch<-0.002)){ _lkQ.setFromEuler(_lkE.set(lk.pitch,0,0)); o.quaternion.multiply(_lkQ); }   // nod / chin-lift
     if(r.shadow){
       // ground shadow tracks the TRUE road surface height (r.surfY), not the character's
       // own y — which now floats HOVER_H above the road. Without this split the shadow
@@ -38966,8 +39169,12 @@ function syncObjects(dt,now){
       r.shadow.material.opacity=0.82*sc*sfade;
     }
     // tail wiggle scaled by speed (smooth per-vertex, no segments)
-    r.phase += dt*(4+Math.abs(r.spd)*0.06);
-    const amp=2.4 + Math.min(4.5,Math.abs(r.spd)*0.035);
+    // each character swims in their own way (TAIL_STYLE); no entry = the plain sine as ever
+    const ts=r._tsd!==undefined ? r._tsd : (r._tsd=r.obj.userData.dragonRig ? null : tailStyleFor(r.id));
+    const tsf=Math.min(1,Math.abs(r.spd)/140);
+    r.phase += dt*(4+Math.abs(r.spd)*0.06)*(ts ? ts.f*(1+ts.fv*tsf) : 1);
+    let amp=ts ? ts.a*(2.4 + Math.min(4.5,Math.abs(r.spd)*0.035*ts.sp)) : 2.4 + Math.min(4.5,Math.abs(r.spd)*0.035);
+    let tph=r.phase;
     // the tail is rigid in the racer's level frame, so where the road climbs behind the kart (a
     // descent, the far side of a crest) its tip ended up to 3.5 units under the tarmac. Lift the
     // tip by however much the road under it is higher than the kart can clear; flat and gently
@@ -38981,7 +39188,16 @@ function syncObjects(dt,now){
       tl=Math.min(8, Math.max(0, sb.p.y+Math.sin(sb.bank||0)*latT - r.surfY - 2.0));
     }
     r._tailLift=(r._tailLift||0)+(tl-(r._tailLift||0))*Math.min(1,8*dt);
-    wiggleTail(r.obj, r.phase, amp, r._tailLift);
+    if(ts){
+      // irregular drag, trailing out of a slide (the tail lags the turn), a whip when a boost lights
+      tph=r.phase + ts.jit*(1.3*Math.sin(r.phase*0.43+r.wob) + 0.7*Math.sin(r.phase*0.97));
+      r._tsw=(r._tsw||0)+(ldClamp((r.slip||0)*2,-1,1)-(r._tsw||0))*Math.min(1,6*dt);
+      if(r.boostT>0 && !r._tbp) r._tfl=1; r._tbp=r.boostT>0; r._tfl=Math.max(0,(r._tfl||0)-dt*2.2);
+      amp*=1+ts.flick*0.9*r._tfl;
+      _TW.bias=ts.lean*amp + ts.sweep*r._tsw*4; _TW.sh=ts.sh+ts.shv*tsf;
+      _TW.hop=ts.hop ? ts.hop*Math.abs(Math.sin(tph*ts.hf)) : 0;
+    }
+    wiggleTail(r.obj, tph, amp, r._tailLift, ts);
     // boost flush on head + halo — brighten the character's OWN stored base emissive
     // (captured in makeCell after every typeId skin-tone override) rather than recomputing
     // a fresh color from r.hue every frame, which used to silently overwrite any
@@ -39011,20 +39227,29 @@ function syncObjects(dt,now){
       else if(r.spinT>0){ fx=0.55; fy=1.6; }        // shocked "O"
       else if(boosting){ fx=1.5; fy=1.4; }          // wide excited grin
       else if(r.drift===1){ fx=1.25; fy=0.55; }     // gritted teeth
+      else if(lk){ fx=lk.mx; fy=lk.my; }            // mood
       mo.scale.x += (mb.x*fx-mo.scale.x)*Math.min(1,12*dt);
       mo.scale.y += (mb.y*fy-mo.scale.y)*Math.min(1,12*dt);
+      if(lk){ const ud=r.obj.userData; if(ud._mrz0===undefined) ud._mrz0=mo.rotation.z; mo.rotation.z=ud._mrz0+lk.mrz; }   // lopsided smirk
       mouthClear(r.obj, mo, mb);
     }
     const pu=r.obj.userData.pupils;
     if(pu){ if(r.spinT>0||r.celebT>0){ pu[0].rotation.z+=dt*(r.celebT>0?10:18); pu[1].rotation.z+=dt*(r.celebT>0?10:18); }
-            else { pu[0].rotation.z=0; pu[1].rotation.z=0; } }
+            else { pu[0].rotation.z=0; pu[1].rotation.z=0; }
+            if(lk) lkPupils(r.obj.userData, lk); }
     // wink during the second gesture beat: right eye squeezes shut, then reopens
     const ey=r.obj.userData.eyes;
     if(ey){
       const ph=6-r.celebT;
       const wink=r.celebT>0 && ph>=1.4 && ph<2.6;
-      ey[1].scale.y += ((wink?0.12:1)-ey[1].scale.y)*Math.min(1,14*dt);
-      ey[0].scale.y += (((r.celebT>0&&ph>=2.6&&ph<3.8)?1.18:1)-ey[0].scale.y)*Math.min(1,10*dt); // eyes widen on the WOO
+      const woo=r.celebT>0&&ph>=2.6&&ph<3.8;
+      if(lk){ const k=Math.min(1,26*dt);   // lids carry the mood and the blink
+        ey[1].scale.y += (((wink||lk.wk>0)?0.12:lk.lidR*lk.blink)-ey[1].scale.y)*k;
+        ey[0].scale.y += ((woo?1.18:lk.lidL*lk.blink)-ey[0].scale.y)*k;
+      } else {
+        ey[1].scale.y += ((wink?0.12:1)-ey[1].scale.y)*Math.min(1,14*dt);
+        ey[0].scale.y += ((woo?1.18:1)-ey[0].scale.y)*Math.min(1,10*dt); // eyes widen on the WOO
+      }
     }
     // human markers: nameplate holds a fixed screen-ish size by scaling with distance, and
     // the ground ring breathes so it reads as a live player rather than a decal
