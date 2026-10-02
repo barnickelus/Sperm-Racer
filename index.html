@@ -33197,8 +33197,9 @@ function tailStyleFor(id){
   return _tsC[b]||(_tsC[b]=Object.assign({}, TAIL_DEF, TAIL_STYLE[b]));
 }
 // per-racer values staged by syncObjects just before wiggleTail (no allocation in the hot path)
-const _TW={bias:0, hop:0, sh:0};
+const _TW={bias:0, hop:0, sh:0, pg:1};   // pg: mood gain on every vertical lift (droop when beaten, bounce when smug)
 let _tox=0, _toy=0;
+const TAIL_SLOPE=1.0;   // max lateral slope (dx/dz) the styled swims may reach; ~45 degrees
 // x and y offset of the spine at fraction t, `lag` radians behind the head; st=null is the
 // plain sine, bit-for-bit what the tail always did
 function tailOffset(lag, t, phase, amp, st){
@@ -33206,9 +33207,16 @@ function tailOffset(lag, t, phase, amp, st){
   const tp=st.p===2?t*t:Math.pow(t,st.p), a=phase - lag*st.w;
   let sn=Math.sin(a);
   if(st.h3) sn=(sn + st.h3*Math.sin(3*a-1))/(1+st.h3*0.5);
-  const k=_TW.sh; if(k>0) sn=sn*(1+k)/(1+k*Math.abs(sn));   // squarer: dwell, then snap across
-  _tox=(sn*amp + _TW.bias)*tp;
-  _toy=((st.ya? st.ya*(0.5+0.5*Math.sin(st.yf*a+st.yph)) : 0) + _TW.hop)*tp;
+  // The chase camera looks ALONG the tail, so a sideways wave reads as a line zig-zagging across
+  // the screen. A squarer shaper (corners) and a lateral swing that is steep for its wavelength
+  // (the tail folding back on itself) were what made it look like bent wire. Keep the character
+  // of each style but: only a gentle share of the snap, and a soft cap on the lateral slope
+  // (amp x phase-rate along the tube) so no segment ever runs closer than ~45 degrees to the axis.
+  const k=Math.min(_TW.sh,1.4)*0.3; if(k>0) sn=sn*(1+k)/(1+k*Math.abs(sn));   // squarer: dwell, then ease across
+  let v=amp*tp;
+  if(t>0.05){ const cap=TAIL_SLOPE*21/Math.max(0.05,lag*st.w/t); v=v*cap/Math.sqrt(v*v+cap*cap); }   // soft-limit the lateral reach
+  _tox=sn*v + _TW.bias*tp;
+  _toy=((st.ya? st.ya*(0.5+0.5*Math.sin(st.yf*a+st.yph)) : 0) + _TW.hop)*tp*_TW.pg;
 }
 function wiggleTail(g, phase, amp, lift, st){
   lift=lift||0; st=st||null;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
@@ -33284,7 +33292,7 @@ function wiggleTail(g, phase, amp, lift, st){
     const t=i/rings;
     tailOffset(i*0.5, t, phase, amp, st);
     const cx=_tox, oy=_toy;                     // more sway toward the tip
-    const sy=tailS?tailS(t):0;                  // Chad's tail carries a fixed upward S
+    const sy=tailS?tailS(t)*_TW.pg:0;           // Chad's tail carries a fixed upward S
     const cz=ringZ[i], r=ringR[i], ro=r+TAIL_OUTLINE_W;
     for(let j=0;j<=sides;j++){
       const ang=j/sides*Math.PI*2, c=Math.cos(ang), s=Math.sin(ang);
@@ -35059,10 +35067,12 @@ function faceMouth(w, yTop, yBot, sag, tex, lift){
 function updateSway(o, r, now){
   const drag=Math.min(0.55, Math.abs(r.spd||0)*0.004);
   const side=Math.max(-0.4, Math.min(0.4, (r.slip||0)*0.9));
+  // hair, locks, scarves and ties flare with the mood: they sit in the silhouette the chase camera sees
+  const lk=r._lk, eg=lk ? 1+lk.w+0.5*lk.sm+Math.min(0.6,Math.abs(lk.pv)*0.12) : 1, dg=lk ? 1+0.8*lk.w+0.3*lk.sm : 1;
   for(const s of o.userData.sway){
     const w=now*s.f + s.ph;
-    s.o.rotation.x = s.bx + drag*s.drag + Math.sin(w)*s.amp;
-    s.o.rotation.z = s.bz + side*(s.side!=null?s.side:s.drag) + Math.sin(w*0.77+1.3)*s.amp*0.6;
+    s.o.rotation.x = s.bx + drag*dg*s.drag + Math.sin(w)*s.amp*eg;
+    s.o.rotation.z = s.bz + side*(s.side!=null?s.side:s.drag) + Math.sin(w*0.77+1.3)*s.amp*0.6*eg;
   }
 }
 
@@ -37131,7 +37141,7 @@ function makeCell(hue, typeId){
       leaves.position.set(0,-0.05,0.15); leaves.rotation.z=Math.PI; pend.add(leaves);
       sway.push({o:pend, bx:0, bz:0, amp:0.1, f:2.4, ph:0.7, drag:0.9, side:0.5}); }
     // --- a long tail that sweeps up in an S (wiggleTail reads userData.tailS)
-    g.userData.tailS=t=>2.5*t*t*(1+0.3*t) - 0.7*Math.sin(Math.PI*Math.min(1,t*1.5))*(1-t);
+    g.userData.tailS=t=>1.7*t*t*(1+0.3*t) - 0.35*Math.sin(Math.PI*Math.min(1,t*1.5))*(1-t);   // gentler dip: with the wave on top the stronger S stacked into a Z from behind
   } else if(typeId === 'sailor'){
     head.material.color.setHex(0xf3c9cf); head.material.emissive.setHex(0x4a2630);
     const cap=new T.Mesh(new T.CylinderGeometry(2.8,3.2,1.2,18), new T.MeshPhongMaterial({color:0xffffff, emissive:0x666666}));
@@ -38966,14 +38976,14 @@ function mouthClear(o, mo, mb){
  * positions and speeds every client already has (remote racers included): nothing on the wire. */
 const LOOK_DEF={react:9, zeta:0.85, turn:1.05, lead:1, tilt:0.2, blink:3.2, blinkLen:0.15, lid:1,
   cur:1, wary:1, smug:1, grump:1, det:1, nod:0, nodF:2.6, sway:0, swayF:1.1, dart:0, chin:0.12,
-  smirk:0, wink:0, back:1};
+  smirk:0, wink:0, back:1, ov:1.9, ovH:0.55, ov2:0};   // ov/ovH/ov2: how far (rad), how long (s) and whether twice the racer glances back over the shoulder
 const LOOK_PERSONA={
-  guido:    {react:11, smug:1.6, chin:0.24, smirk:0.12, lid:0.92, tilt:0.16, grump:1.3, blink:3.6},   // swagger: chin up, smirk, offended when passed
-  chad:     {react:4.5, zeta:1, turn:0.9, lid:0.72, blink:5, nod:0.07, nodF:1.6, sway:0.05, cur:0.7, wary:0.5, smug:0.6, grump:0.5, lead:0.8, tilt:0.14}, // slow lazy glances, hang-loose nod
+  guido:    {react:11, smug:1.6, chin:0.24, smirk:0.12, lid:0.92, tilt:0.16, grump:1.3, blink:3.6, ov:2.3, ovH:0.85},   // swagger: chin up, smirk, offended when passed
+  chad:     {react:4.5, zeta:1, turn:0.9, lid:0.72, blink:5, nod:0.07, nodF:1.6, sway:0.05, cur:0.7, wary:0.5, smug:0.6, grump:0.5, lead:0.8, tilt:0.14, ov:1.7, ovH:0.6}, // slow lazy glances, hang-loose nod
   korean:   {react:14, zeta:1.15, turn:0.9, blink:7.5, tilt:0.04, cur:0.5, wary:0.8, det:1.5, smug:0.4, grump:0.5, lead:1.2, chin:0, back:0.6}, // crisp, minimal, near unblinking
-  nerd:     {react:13, zeta:0.6, blink:1.1, dart:0.35, lid:1.12, wary:1.8, cur:1.3, smug:0.3, grump:1.2, tilt:0.2, back:2.2},           // nervous darting eyes, quick blinks
-  latin:    {react:9, smug:1.3, wink:0.9, chin:0.15, smirk:0.1, lid:0.9, tilt:0.18, cur:1.2},                // a confident wink at whoever he passes
-  samurai:  {react:6, zeta:1.2, turn:0.8, blink:6.5, blinkLen:0.28, lid:0.88, tilt:0.03, cur:0.4, wary:0.4, smug:0.2, grump:0.3, det:1.6, lead:1.1, back:0.4}, // calm steady stare, slow blinks
+  nerd:     {react:13, zeta:0.6, blink:1.1, dart:0.35, lid:1.12, wary:1.8, cur:1.3, smug:0.3, grump:1.2, tilt:0.2, back:2.2, ov:2.2, ovH:0.3, ov2:1},           // nervous darting eyes, quick blinks
+  latin:    {react:9, smug:1.3, wink:0.9, chin:0.15, smirk:0.1, lid:0.9, tilt:0.18, cur:1.2, ov:2.0, ovH:0.5},                // a confident wink at whoever he passes
+  samurai:  {react:6, zeta:1.2, turn:0.8, blink:6.5, blinkLen:0.28, lid:0.88, tilt:0.03, cur:0.4, wary:0.4, smug:0.2, grump:0.3, det:1.6, lead:1.1, back:0.4, ov:2.4, ovH:1.0}, // calm steady stare, slow blinks
   rasta:    {react:5, zeta:1, lid:0.78, nod:0.08, nodF:2.6, sway:0.04, blink:4.5, cur:0.8, wary:0.4, smug:0.5, grump:0.3, tilt:0.16},      // Wyrmston's cool irie nod
   aviator:  {react:12, smug:1.5, chin:0.2, smirk:0.14, tilt:0.28, wary:0.9, cur:1.2, blink:3},               // cocky grin, thumbs-up tilt
   irish:    {react:9, smug:1.3, smirk:0.1, lid:0.95, cur:1.2, tilt:0.2, wink:0.5, chin:0.14, nod:0.03, nodF:4}, // lucky grin
@@ -38981,7 +38991,7 @@ const LOOK_PERSONA={
   hillbilly:{react:4.5, zeta:1, lid:0.62, blink:4.5, wary:0.6, grump:1.5, smug:0.8, det:1.2, tilt:0.12},      // slow suspicious squint
   rick:     {react:11, nod:0.09, nodF:5.2, sway:0.07, swayF:2.6, smug:1.2, cur:1.3, tilt:0.2, lid:0.95},     // head-bob to the beat
   desi:     {react:8, chin:0.26, smug:1.2, lid:0.9, tilt:0.16, nod:0.03, smirk:0.06},                        // hero-shot chin-up
-  wall:     {react:14, zeta:0.55, dart:0.3, blink:1.8, wary:1.6, cur:1.3, smug:0.8, grump:1.6, tilt:0.12, back:1.8, lid:1.08}, // frantic glances
+  wall:     {react:14, zeta:0.55, dart:0.3, blink:1.8, wary:1.6, cur:1.3, smug:0.8, grump:1.6, tilt:0.12, back:1.8, lid:1.08, ov:2.1, ovH:0.3, ov2:1}, // frantic glances
   french:   {react:7, chin:0.18, lid:0.85, smug:1.1, tilt:0.2, blink:4, smirk:0.06, wink:0.4},
   king:     {react:5, turn:0.8, chin:0.2, lid:0.88, smug:0.9, tilt:0.06, cur:0.5, blink:5.5, lead:0.9},
   cholo:    {react:8, nod:0.06, nodF:3.4, lid:0.8, smug:1.1, chin:0.1, tilt:0.14, blink:3.5},
@@ -38995,20 +39005,24 @@ const _lkQ=new T.Quaternion(), _lkE=new T.Euler();
 // a taunt/double-take is a gesture: one at a time, with a cooldown so a pack of overtakes isn't a twitch
 // own little generator per racer: the look must not draw from the shared Math.random stream
 function lkRnd(L){ L.rs=(L.rs*16807)%2147483647; return (L.rs-1)/2147483646; }
-function lkGest(L,P,k,ang,lat){
+function lkGest(L,P,k,ang,lat,q){
   if(L.t-L.gcd<2.6) return; L.gcd=L.t;
-  L.g={k, t:0, dur:k==='smug'?1.7:1.1, side:lat>=0?1:-1, ang};
-  if(k==='smug'){ L.smT=1; if(lkRnd(L)<P.wink) L.wk=0.55; } else L.grT=1;
+  const side=lat>=0?1:-1, ov=P.ov>0 && k==='smug';   // just passed someone: glance back over the shoulder at them
+  L.g={k, t:0, dur:ov?0.6+P.ovH*(P.ov2?2:1):(k==='smug'?1.7:1.1), side, ang, q, ov};
+  // body language readable from behind: smug = a proud stretch, a hat tilt toward them and a taunt wag; passed = a shrug and a sulk
+  if(k==='smug'){ L.smT=1; if(lkRnd(L)<P.wink) L.wk=0.55; L.pv+=5; L.rlv+=side*3.5; L.fl=1; L.fs=side; L.em='smug'; }
+  else { L.grT=1; L.pv-=5; L.rlv-=side*3; L.em='dbl'; }
 }
 function socialLook(r,o,dt,racing){
   let L=r._lk;
   if(!L){ L=r._lk={rs:1+((r._li||0)+3)*7919, tgt:null, yaw:0, yv:0, eye:0, lon:new Map(), c:0, w:0, d:0, sm:0, gr:0, smT:0, grT:0, wk:0,
     g:null, gcd:-9, pcd:-9, t:0, blinkT:0, blinkS:0, blink:1, tilt:0, pitch:0,
-    lidL:1, lidR:1, mx:1, my:1, mrz:0, eyeO:0, P:lookPersona(r.id)};
+    lidL:1, lidR:1, mx:1, my:1, mrz:0, eyeO:0, P:lookPersona(r.id),
+    pp:0, pv:0, rl:0, rlv:0, rlT:0, hy:0, hv:0, shk:0, fl:0, fs:1, ecd:-9, em:null, pbo:false, psp:false, pcur:0};
     L.t=lkRnd(L)*20; L.blinkT=1+lkRnd(L)*3; }
   const P=L.P; dt=Math.min(dt,0.05); L.t+=dt;
   const spd=Math.abs(r.spd||0), grid=state==='count' || spd<6;
-  let tgt=null, bs=1e9, ba=0, bd=0, wary=0, wSide=1, cur=0, nearD=1e9;
+  let tgt=null, bs=1e9, ba=0, bd=0, wary=0, wSide=1, wq=null, cur=0, nearD=1e9;
   if(racing){
     const hd=r.head+(r.slip||0), fx=Math.sin(hd), fz=Math.cos(hd), vrx=Math.sin(r.head)*r.spd, vrz=Math.cos(r.head)*r.spd;
     for(const q of racers){ if(q===r) continue;
@@ -39016,13 +39030,13 @@ function socialLook(r,o,dt,racing){
       if(d<nearD) nearD=d;
       if(d<26){   // which side of our shoulders they are on, with a dead band so running level isn't a pass
         const was=L.lon.get(q), nw=lon>2?1:(lon<-2?-1:(was||0));
-        if(was && nw!==was && Math.abs(lat)<18) lkGest(L,P,nw<0?'smug':'dbl',Math.atan2(lat,lon),lat);
+        if(was && nw!==was && Math.abs(lat)<18) lkGest(L,P,nw<0?'smug':'dbl',Math.atan2(lat,lon),lat,q);
         L.lon.set(q,nw);
       } else L.lon.delete(q);
       if(d>34) continue;
       // closing speed along the line between us: a rival reeling you in from behind is a threat, one level beside you is a curiosity
       const cl=d>0.1 ? -(dx*(Math.sin(q.head)*q.spd-vrx)+dz*(Math.cos(q.head)*q.spd-vrz))/d : 0;
-      if(lon<-2 && cl>12){ const w=Math.min(1,cl/70)*(1-d/34); if(w>wary){ wary=w; wSide=lat>=0?1:-1; } }
+      if(lon<-2 && cl>12){ const w=Math.min(1,cl/40)*(1-d/34); if(w>wary){ wary=w; wSide=lat>=0?1:-1; wq=q; } }
       if(Math.abs(lon)<16 && d<24 && Math.abs(lat)>2){ const c=(1-d/24)*(1-Math.abs(lon)/16); if(c>cur) cur=c; }
       if(d>30) continue;
       const a=Math.atan2(lat,lon); if(Math.abs(a)>2.45) continue;      // straight behind: no neck for that
@@ -39030,9 +39044,10 @@ function socialLook(r,o,dt,racing){
       if(sc<bs){ bs=sc; tgt=q; ba=a; bd=d; }
     }
   } else if(L.lon.size) L.lon.clear();
-  L.tgt=tgt;
+  L.tgt=tgt; L.rlT=0;
   let G=L.g;
-  if(!G && racing && wary*P.wary>0.3 && L.t-L.pcd>1.9/P.back){ L.pcd=L.t; G=L.g={k:'peek', t:0, dur:0.65, side:wSide, ang:0}; }   // a quick look back
+  if(!G && racing && wary*P.wary>0.3 && L.t-L.pcd>1.9/P.back){ L.pcd=L.t; G=L.g={k:'peek', t:0, dur:P.ov>0?0.55+P.ovH*(P.ov2?2:1):0.65, side:wSide, ang:0, q:wq, ov:P.ov>0};   // a quick look back
+    L.shk=1; L.hv=14; L.pv+=3; L.em='peek'; if(!r.air) emit(r.x-Math.sin(r.head)*6, r.y+1.5, r.z-Math.cos(r.head)*6, {color:0xffffff, life:0.45, vy:6, s0:2.2, s1:0, op:0.55}); }   // alarmed hop and a puff
   let lookT=0, eyeT=0, wide=0, hold=0;
   if(racing){
     if(tgt){ const w=1-ldSmooth(14,30,bd); lookT=ldClamp(ba,-P.turn,P.turn)*w; eyeT=ldClamp(ba-L.yaw,-0.55,0.55)*Math.min(1,w*2)*P.lead; }
@@ -39044,14 +39059,28 @@ function socialLook(r,o,dt,racing){
     else if(G.k==='dbl'){      // snap away, then snap back at whoever just went by, eyes wide
       if(u<0.25){ lookT=-G.side*0.3*ldSmooth(0,0.12,u); eyeT=lookT; }
       else { hold=ldSmooth(0.25,0.4,u)*(1-ldSmooth(0.75,1,u)); lookT=ldClamp(G.ang,-P.turn,P.turn)*hold; eyeT=G.side*0.5*hold; wide=hold; }
+    } else if(G.ov){
+      /* The chase camera sits BEHIND the racer, so a face turned only +-60 degrees is never seen.
+       * Swing the whole model round (visual yaw only) until the face looks back toward the camera
+       * side: quick springy snap, a short hold, an eased release. Fades out while steering hard or
+       * drifting so it never fights the line the kart is actually taking. The eyes stay on the
+       * rival, measured from where the model now faces. */
+      const dd=G.dur;
+      hold=ldSmooth(0,0.15,G.t)*(1-ldSmooth(dd-0.4,dd,G.t));
+      if(P.ov2) hold*=1-0.85*Math.exp(-Math.pow((G.t/dd-0.5)/0.07,2));   // nervous double check: look, flinch away, look again
+      const steer=Math.min(1,Math.abs(r.slip||0)*4+(r.drift?0.8:0)); hold*=1-steer;
+      lookT=G.side*P.ov*hold;
+      let ea=G.side*1.6; if(G.q){ const hd=r.head+(r.slip||0); ea=Math.atan2((G.q.x-r.x)*Math.cos(hd)-(G.q.z-r.z)*Math.sin(hd),(G.q.x-r.x)*Math.sin(hd)+(G.q.z-r.z)*Math.cos(hd)); }
+      eyeT=ldClamp(ea-L.yaw,-0.55,0.55)*hold; wide=G.k==='peek'?hold:0;
+      L.rlT=-G.side*0.22*hold;   // lean the shoulders into the glance
     } else {                   // smug / peek: look back over the shoulder, then release
       hold=ldSmooth(0,0.25,u)*(1-ldSmooth(0.65,1,u)); lookT=G.side*P.turn*(G.k==='peek'?0.9:1)*hold; eyeT=G.side*0.5*hold;
     }
   }
   if(racing){
-    const w0=P.react*(G?1.5:1);
-    L.yv+=(w0*w0*(lookT-L.yaw)-2*P.zeta*w0*L.yv)*dt; L.yaw+=L.yv*dt;
-    r._glance=ldClamp(L.yaw,-1.2,1.2);
+    const ovg=G&&G.ov, w0=ovg ? Math.max(7,P.react*1.5) : P.react*(G?1.5:1), ze=ovg ? Math.min(P.zeta,0.62) : P.zeta;   // underdamped: a little overshoot reads as a snap
+    L.yv+=(w0*w0*(lookT-L.yaw)-2*ze*w0*L.yv)*dt; L.yaw+=L.yv*dt;
+    r._glance=ldClamp(L.yaw,-2.6,2.6);
   } else { L.yaw=r._glance||0; L.yv=0; }
   L.eye+=(eyeT-L.eye)*Math.min(1,16*dt);   // faster than the head: the eyes arrive first and settle as it catches up
   L.eyeO=L.eye + (P.dart ? P.dart*0.4*Math.sin(L.t*5.3)*Math.sin(L.t*2.1+1)*(tgt?0.3:1) : 0);
@@ -39080,6 +39109,21 @@ function socialLook(r,o,dt,racing){
   const pT=nod - P.chin*L.sm + 0.05*L.w + 0.05*L.gr + 0.04*L.d + 0.06*L.c;
   const tT=-P.tilt*ldClamp(lookT,-1,1)*(0.35+0.65*L.c) + P.sway*Math.sin(L.t*P.swayF);
   L.pitch+=(pT-L.pitch)*Math.min(1,10*dt); L.tilt+=(tT-L.tilt)*Math.min(1,8*dt);
+  // ---- body language that reads from behind and above (hat, shoulders, whole silhouette). All springs, all
+  // driven by the same events as the face; zero at rest, so a calm racer is exactly the old model.
+  if(racing){
+    if(r.boostT>0 && !L.pbo) L.pv+=5;                                    // boost: stretch
+    if(r.spinT>0 && !L.psp){ L.pv-=6; L.rlv+=(lkRnd(L)<0.5?-1:1)*4; L.em='hit'; }   // hit: squash and a stagger
+    if(L.c>0.6 && L.pcur<=0.6) L.em=L.em||'cur';
+    if(L.d>0.85 && spd>110 && !L.pdt){ L.em=L.em||'det'; }
+    L.pdt=L.d>0.85 && spd>110; L.pcur=L.c;
+  }
+  L.pbo=r.boostT>0; L.psp=r.spinT>0;
+  L.pv+=(-484*L.pp-15*L.pv)*dt; L.pp=ldClamp(L.pp+L.pv*dt,-0.28,0.28);
+  L.rlv+=(-190*(L.rl-L.rlT)-11*L.rlv)*dt; L.rl=ldClamp(L.rl+L.rlv*dt,-0.4,0.4);
+  if(L.hy>0||L.hv>0){ L.hv-=90*dt; L.hy=Math.max(0,L.hy+L.hv*dt); if(L.hy===0&&L.hv<0) L.hv=0; }
+  L.shk=Math.max(0,L.shk-dt*2.4); L.fl=Math.max(0,L.fl-dt*1.8);
+  if(L.em){ emoteFor(r,L,L.em); L.em=null; }
 }
 // pupils ride the eyeball's surface: swing each about its own eye's centre so it stays on the ball
 // (a plain sideways shift would sink it into the sphere). Any family whose pupils don't share the
@@ -39096,14 +39140,88 @@ function lkPupils(ud,L){
     } else q.position.x=rest[i].x+a*0.6;
   }
 }
+
+/* ---- Emote bubbles: small icons over a racer's head that read from any angle (billboards). The
+ * chase camera rarely sees a face, so the mood has to be said where it can be seen. One shared
+ * pool of sprites and one small canvas texture per icon, drawn once from vector shapes (no emoji
+ * fonts, which are unreliable). Brief, rate-limited so AI racers cannot spam the screen. */
+const EM_POOL=8, EM_LIFE=1.15, _em={tex:null, spr:[], box:new T.Box3()};
+function emDraw(kind){
+  const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
+  x.lineJoin='round'; x.lineCap='round'; x.lineWidth=6; x.strokeStyle='#1b1830';
+  const fill=(col)=>{ x.fillStyle=col; x.stroke(); x.fill(); };
+  x.translate(32,32);
+  if(kind==='cur'||kind==='peek'){ x.font='bold 56px Arial,Helvetica,sans-serif'; x.textAlign='center'; x.textBaseline='middle'; const t=kind==='cur'?'?':'!';
+    x.lineWidth=8; x.strokeText(t,0,3); x.fillStyle=kind==='cur'?'#fff0a0':'#ff5a4a'; x.fillText(t,0,3); }
+  else if(kind==='smug'){ x.beginPath(); for(let i=0;i<8;i++){ const a=i*Math.PI/4, r=i%2?7:26; x.lineTo(Math.cos(a)*r,Math.sin(a)*r); } x.closePath(); fill('#ffe45c'); }
+  else if(kind==='shades'){ x.beginPath(); x.ellipse(-14,0,13,10,0,0,7); x.moveTo(26,0); x.ellipse(14,0,13,10,0,0,7); fill('#15131f'); x.beginPath(); x.moveTo(-4,-3); x.lineTo(4,-3); x.stroke();
+    x.strokeStyle='#fff'; x.lineWidth=3; x.beginPath(); x.moveTo(-20,-4); x.lineTo(-15,-6); x.moveTo(8,-4); x.lineTo(13,-6); x.stroke(); }
+  else if(kind==='dbl'){ x.beginPath(); x.moveTo(0,-26); x.bezierCurveTo(6,-12,16,-2,16,8); x.arc(0,8,16,0,Math.PI); x.bezierCurveTo(-16,-2,-6,-12,0,-26); fill('#6fd6ff'); }
+  else if(kind==='hit'){ x.beginPath(); x.arc(-12,6,12,Math.PI*0.5,Math.PI*1.5); x.arc(-2,-8,13,Math.PI,Math.PI*1.9); x.arc(14,2,12,Math.PI*1.4,Math.PI*0.5); x.closePath(); fill('#8d93a8');
+    x.beginPath(); x.moveTo(2,10); x.lineTo(-6,22); x.lineTo(1,20); x.lineTo(-3,30); x.lineTo(10,16); x.lineTo(3,17); x.closePath(); x.lineWidth=3; fill('#ffd23c'); }
+  else if(kind==='note'){ x.beginPath(); x.ellipse(-8,16,10,7.5,-0.4,0,7); fill('#9be7ff'); x.beginPath(); x.moveTo(1,14); x.lineTo(1,-22); x.quadraticCurveTo(10,-18,16,-8); x.lineWidth=7; x.stroke(); x.strokeStyle='#9be7ff'; x.lineWidth=3; x.stroke(); }
+  else if(kind==='heart'){ x.beginPath(); x.moveTo(0,22); x.bezierCurveTo(-34,-2,-18,-28,0,-10); x.bezierCurveTo(18,-28,34,-2,0,22); fill('#ff4f7a'); }
+  else if(kind==='det'){ x.beginPath(); x.moveTo(8,-28); x.lineTo(-14,4); x.lineTo(-1,4); x.lineTo(-8,28); x.lineTo(16,-6); x.lineTo(3,-6); x.closePath(); fill('#ffe14a'); }
+  _em.tex[kind]=new T.CanvasTexture(c);
+}
+function emBuild(){
+  _em.tex={}; for(const k of ['cur','peek','smug','shades','dbl','hit','note','heart','det']) emDraw(k);
+  for(let i=0;i<EM_POOL;i++){
+    const m=new T.SpriteMaterial({map:_em.tex.cur, transparent:true, depthTest:false, depthWrite:false, fog:false});
+    const sp=new T.Sprite(m); sp.visible=false; sp.renderOrder=999; sp.userData.em={r:null,t:0,kind:'',ai:true};
+    scene.add(sp); _em.spr.push(sp);
+  }
+}
+// height of the model's highest solid (hat included) above its origin, measured once
+function emTop(r){
+  if(r._emTop) return r._emTop;
+  const o=r.obj, b=_em.box, bb=new T.Box3(); let top=0; o.updateMatrixWorld(true);
+  o.traverse(m=>{ if(!m.isMesh||m.isSprite||!m.geometry) return; if(!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    b.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld); if(b.max.y>top) top=b.max.y; });
+  return r._emTop=ldClamp((top-o.position.y)/(o.scale.y||1),6,24);
+}
+function emoteFor(r,L,ev){
+  const b=SR_BASE[r.id]||r.id;
+  const kind = ev==='smug' ? ((b==='chad'||b==='guido')?'shades':(b==='latin'?'heart':'smug'))
+    : ev==='cur' ? ((b==='rick'||b==='rasta')?'note':'cur')
+    : ev==='dbl' ? ((L.P.grump>1.2)?'hit':'dbl') : ev;
+  emote(r,L,kind);
+}
+function emote(r,L,kind){
+  if(r.obj.userData.dragonRig) return;
+  if(L.t-L.ecd<(r.you?1.2:2.5)) return;
+  if(!r.you && camera.position.distanceToSquared(r.obj.position)>220*220) return;   // unreadable at that range
+  if(!_em.tex) emBuild();
+  let free=null, ai=0; for(const sp of _em.spr){ const e=sp.userData.em; if(!sp.visible) free=free||sp; else if(e.ai) ai++; }
+  if(!r.you && (ai>=2 || !free)) return;                       // at most two AI bubbles at once
+  if(!free){ free=_em.spr[0]; for(const sp of _em.spr) if(sp.userData.em.t>free.userData.em.t) free=sp; }   // the player's own always shows
+  L.ecd=L.t; const e=free.userData.em; e.r=r; e.t=0; e.kind=kind; e.ai=!r.you;
+  free.material.map=_em.tex[kind]; free.visible=true; emTop(r);
+}
+function emoteTick(dt){
+  for(const sp of _em.spr){ if(!sp.visible) continue;
+    const e=sp.userData.em, r=e.r; e.t+=dt;
+    if(e.t>=EM_LIFE || !r || !r.obj.visible || r.finished){ sp.visible=false; e.r=null; continue; }
+    const u=e.t/EM_LIFE, o=r.obj, sc=o.scale.y||1, d=Math.sqrt(camera.position.distanceToSquared(o.position));
+    const pop=e.t<0.18 ? e.t/0.18 : 1;   // pop-in with a little overshoot, then a gentle bob
+    const sz=(4.6+d*0.05)*(pop<1 ? Math.sin(pop*Math.PI*0.5)*1.25 : 1+0.06*Math.sin(e.t*9));
+    sp.scale.set(sz,sz,1);
+    sp.position.set(o.position.x, o.position.y+r._emTop*sc+1.2+sz*0.5+Math.sin(e.t*5)*0.5+e.t*1.2, o.position.z);
+    sp.material.opacity=1-ldSmooth(0.72,1,u);
+    sp.material.rotation=e.kind==='peek' ? Math.sin(e.t*42)*0.28*(1-u) : 0;
+  }
+}
 function syncObjects(dt,now){
+  emoteTick(dt);
   for(const r of racers){
     const o=r.obj;
     const lift = r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0;
     o.position.set(r.x, r.y + lift, r.z);
     // mega item: swell up (and ease back down) — the whole model scales
     const wantSc=r.megaT>0?1.8:1;
-    if(Math.abs((o.scale.x||1)-wantSc)>0.01){ const ns=o.scale.x+(wantSc-o.scale.x)*Math.min(1,6*dt); o.scale.setScalar(ns); }
+    // (ordinary racers keep that swell in r._ms, because o.scale also carries the squash-and-stretch pops below)
+    if(o.userData.dragonRig){ if(Math.abs((o.scale.x||1)-wantSc)>0.01){ const ns=o.scale.x+(wantSc-o.scale.x)*Math.min(1,6*dt); o.scale.setScalar(ns); } }
+    else { if(r._ms===undefined) r._ms=o.scale.x||1; if(Math.abs(r._ms-wantSc)>0.01) r._ms+=(wantSc-r._ms)*Math.min(1,6*dt); }
     // glance over at rivals who are pulling alongside / about to pass — turn the head to look
     let near=null,nd=1e9;
     const GR=24;
@@ -39141,8 +39259,12 @@ function syncObjects(dt,now){
     // "everyone checking out the competition" look, and the alongside-a-rival glance. An
     // earlier collision fix capped it to ~14 degrees to stop a dragon's body fanning across
     // a neighbour's slot, but dragons never used this value, so the cap only muted everyone else.
-    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance);   // dragons turn their own heads
-    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0) + (lk?lk.tilt:0);
+    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance) + (lk&&lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0);   // dragons turn their own heads; shk = an alarmed head-shake
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0) + (lk?lk.tilt+lk.rl:0);   // rl: hat/shoulder tilt kicks
+    if(lk){   // squash-and-stretch and the alarmed hop: the silhouette is what the chase camera sees
+      const ms=r._ms||1, p=lk.pp; o.scale.set(ms*(1-0.5*p), ms*(1+p), ms*(1-0.5*p));
+      if(lk.hy>0 && !r.air) o.position.y+=lk.hy;
+    }
     _oFwd.set(Math.sin(headAngle), 0, Math.cos(headAngle));
     _oUp.copy(_worldUp).applyAxisAngle(_oFwd, rollAngle);
     _oRight.crossVectors(_oUp, _oFwd).normalize();
@@ -39172,8 +39294,15 @@ function syncObjects(dt,now){
     // each character swims in their own way (TAIL_STYLE); no entry = the plain sine as ever
     const ts=r._tsd!==undefined ? r._tsd : (r._tsd=r.obj.userData.dragonRig ? null : tailStyleFor(r.id));
     const tsf=Math.min(1,Math.abs(r.spd)/140);
-    r.phase += dt*(4+Math.abs(r.spd)*0.06)*(ts ? ts.f*(1+ts.fv*tsf) : 1);
-    let amp=ts ? ts.a*(2.4 + Math.min(4.5,Math.abs(r.spd)*0.035*ts.sp)) : 2.4 + Math.min(4.5,Math.abs(r.spd)*0.035);
+    // tail mood (the tail is the biggest thing the chase camera sees): a multiplier layer over the character's
+    // own swim, all 1 when calm. Smug/happy = faster, wider, bouncier; beaten/grumpy = slow, low, drooping;
+    // alarmed = stiff fast flutter; determined = tight efficient strokes; plus a one-off taunt wag at a rival.
+    let fm=1, am=1, pgm=1, hpm=1;
+    const lm=o.userData.dragonRig ? null : lk;
+    if(lm){ fm=1+0.3*lm.sm+0.9*lm.w+0.12*lm.d-0.4*lm.gr; am=1+0.25*lm.sm-0.4*lm.gr-0.3*lm.w-0.15*lm.d; pgm=Math.max(0.6,1+0.15*lm.sm-0.4*lm.gr); hpm=1+0.6*lm.sm; }
+    r.phase += dt*(4+Math.abs(r.spd)*0.06)*(ts ? ts.f*(1+ts.fv*tsf) : 1)*fm;
+    let amp=(ts ? ts.a*(2.4 + Math.min(4.5,Math.abs(r.spd)*0.035*ts.sp)) : 2.4 + Math.min(4.5,Math.abs(r.spd)*0.035))*am;
+    if(lm && lm.fl>0) amp*=1+0.5*lm.fl;
     let tph=r.phase;
     // the tail is rigid in the racer's level frame, so where the road climbs behind the kart (a
     // descent, the far side of a crest) its tip ended up to 3.5 units under the tarmac. Lift the
@@ -39194,8 +39323,8 @@ function syncObjects(dt,now){
       r._tsw=(r._tsw||0)+(ldClamp((r.slip||0)*2,-1,1)-(r._tsw||0))*Math.min(1,6*dt);
       if(r.boostT>0 && !r._tbp) r._tfl=1; r._tbp=r.boostT>0; r._tfl=Math.max(0,(r._tfl||0)-dt*2.2);
       amp*=1+ts.flick*0.9*r._tfl;
-      _TW.bias=ts.lean*amp + ts.sweep*r._tsw*4; _TW.sh=ts.sh+ts.shv*tsf;
-      _TW.hop=ts.hop ? ts.hop*Math.abs(Math.sin(tph*ts.hf)) : 0;
+      _TW.bias=ts.lean*amp + ts.sweep*r._tsw*4 + (lm ? lm.fs*2.5*lm.fl*lm.fl : 0); _TW.sh=ts.sh+ts.shv*tsf+(lm ? 0.8*lm.w : 0);
+      _TW.hop=ts.hop ? ts.hop*hpm*Math.abs(Math.sin(tph*ts.hf)) : 0; _TW.pg=pgm;
     }
     wiggleTail(r.obj, tph, amp, r._tailLift, ts);
     // boost flush on head + halo — brighten the character's OWN stored base emissive
