@@ -2332,6 +2332,11 @@ const SONG_ENGINE=(function(){
       song, bus,
       get running(){ return running; },
       get timer(){ return timer; },
+      // the bar the scheduler has loaded (it runs ahead of the speakers): its index, its section
+      // id, when its downbeat sounds on ctx.currentTime and its step length — enough to land a
+      // visual on an audible beat (beat k of that bar is at barT + 4*k*stepDur)
+      get bar(){ return bar; }, get barT(){ return barT; }, get stepDur(){ return sd; },
+      get sectionId(){ return planInfo?planInfo.sectionId:null; },
       setKey(k){ key=k|0; },
       setTempoScale(x){ tempoScale=x||1; if(running) setEcho(ctx.currentTime,0.35); },  // the tape warps to the new time
       start(o){ o=o||{};
@@ -37250,23 +37255,60 @@ function dressGuido(g, K){
     const cuff=new T.Mesh(new T.LatheGeometry(prof,30), cm);
     cuff.rotation.x=-Math.PI/2; cuff.position.y=HEAD_CY; cuff.scale.set(1.06,1,0.9); g.add(bodyPart(cuff)); }
 
-  // --- the fist pump: a cartoon fist (pinky ring and all) that pops up beside the head to pump (hidden otherwise)
-  { const fist=bodyPart(new T.Group()); fist.position.set(4.2,5.6,0.2); fist.visible=false; g.add(fist);
-    const parts=[[new T.SphereGeometry(1,12,10), M(0,0,0,0.95,1.05,0.9)]];
-    for(let i=0;i<4;i++) parts.push([new T.SphereGeometry(1,8,6), M(-0.6+i*0.4,0.62,0.55,0.3,0.28,0.32)]);
-    parts.push([new T.SphereGeometry(1,8,6), M(-0.75,0.0,0.62,0.28,0.55,0.28,0.4)]);
-    parts.push([new T.CylinderGeometry(0.62,0.7,1.6,10), M(0.05,-1.35,-0.05,1,1,1)]);
-    fist.add(new T.Mesh(kingMerge(parts), tanMat));
-    const ring=new T.Mesh(new T.TorusGeometry(0.2,0.08,6,10), GOLD); ring.position.set(0.62,0.42,0.62); ring.rotation.y=0.3; fist.add(ring);
-    fist.rotation.set(0,-0.6,-0.25);
-    g.userData.gjKit={pick, cl, fist};
+  // --- the fist-pump arm: a short spray-tanned forearm, a fat gold Cuban bracelet and a chunky
+  // curled fist (four knuckles, the finger rolls, the thumb wrapped across them, a gold pinky
+  // ring). It comes up out of the tank cuff on his right and tucks back into it, so it reads as
+  // his arm; bodyPart, so it stays on the body as the head turns. One tan mesh, its ink outline
+  // shell and one gold mesh, plus a glint sprite that flashes on each snap. tickGuido pumps it.
+  { const root=bodyPart(new T.Group()); root.position.set(1.75,3.7,-5.3); root.rotation.set(-0.15,0.5,-0.45); root.scale.setScalar(1.3); g.add(root);
+    const arm=new T.Group(); arm.visible=false; root.add(arm);
+    const L=2.2, FS=1.15, FY=L+0.6*FS;                    // forearm length, fist size (cartoon-big), fist centre
+    const Me=(x,y,z,sx,sy,sz,rx,ry,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)), V(sx,sy,sz));
+    const F=(x,y,z,sx,sy,sz,rx,ry,rz)=>Me(x*FS,FY+y*FS,z*FS,sx*FS,sy*FS,sz*FS,rx,ry,rz), S=()=>new T.SphereGeometry(1,12,9);
+    const C0=0xc0581e, C1=0xe8742c, C2=0xf89a58;        // the shadowed hand behind the fingers, tan, lit knuckles
+    const prof=[[0,-0.3],[0.38,-0.25],[0.46,0.3],[0.56,1.0],[0.58,1.4],[0.5,1.9],[0.44,L],[0.46,L+0.2],[0,L+0.3]].map(p=>new T.Vector2(p[0],p[1]));
+    // fist frame: the knuckle row runs along x, the curled fingers face -z, the pinky is at +x (out, away from the head)
+    const parts=[[new T.LatheGeometry(prof,12), new T.Matrix4(), C1], [S(), F(0,0,0.05,0.8,0.74,0.62), C0]];
+    for(let i=0;i<4;i++){ const x=-0.51+i*0.34, sm=i===3?0.86:1;
+      parts.push([S(), F(x,0.56,-0.02,0.25*sm,0.24*sm,0.3), C2]);                 // knuckle
+      parts.push([S(), F(x,0.15,-0.5,0.165*sm,0.36*sm,0.21), C1]); }             // curled finger
+    parts.push([S(), F(0.04,-0.33,-0.64,0.52,0.18,0.21,0,0,0.14), C1]);           // the thumb, wrapped across the fingers
+    parts.push([S(), F(0.42,-0.27,-0.74,0.13,0.11,0.06,0,0,0.14), C2]);           // its nail
+    parts.push([S(), F(-0.6,-0.3,-0.22,0.28,0.36,0.34), C1]);                    // its heel
+    const geo=kingMerge(parts);
+    const armM=new T.MeshPhongMaterial({color:0xffffff, vertexColors:true, emissive:TANE, shininess:34, specular:0x6a3c1c}); armM.userData.keepPhong=true;
+    arm.add(new T.Mesh(geo, armM));
+    // ink outline: the same shape pushed out along its normals, back faces only, so it holds at chase-cam size
+    const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
+    for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.07, op.getY(i)+on.getY(i)*0.07, op.getZ(i)+on.getZ(i)*0.07);
+    const ol=new T.Mesh(og, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); ol.userData.isOutline=true; arm.add(ol);
+    arm.add(new T.Mesh(kingMerge([[new T.TorusGeometry(0.5,0.15,6,16), Me(0,L-0.15,0,1,1,1,Math.PI/2)],
+      [new T.TorusGeometry(0.21,0.075,6,12), F(0.51,0.05,-0.5,1,1,1,Math.PI/2)]]), GOLD));
+    const glint=new T.Sprite(new T.SpriteMaterial({map:TX.star, transparent:true, blending:T.AdditiveBlending, depthWrite:false}));
+    glint.position.set(0.66*FS,FY+0.1,-0.72*FS); glint.visible=false; arm.add(glint);
+    g.userData.gjKit={pick, cl, arm, glint};
   }
   g.userData.tick=tickGuido;
   return true;
 }
-// per-frame: the toothpick rides the high corner of the grin and chews; the fist pumps on a win
-// and for the first beat of a boost
-const _gjV=new T.Vector3();
+/* per-frame: the toothpick rides the high corner of the grin and chews, and the arm pumps its
+ * fist in short series: on landing a real jump, at the finish, and (his own record playing, for
+ * the player only) on the downbeats where Gold Chain Tarantella drops into a chorus. A series is
+ * a list of punch times (fp.pk, on syncObjects' clock) and every pose is a function of those
+ * times, so each punch peaks exactly on its time. All local: nothing here goes over the network.
+ * A pump: hold, wind down and cock back (W), a sharp punch up (stretched), a snap past the top
+ * (squashed, the ring glints, the head nods into it) and a springy settle; after the last one
+ * the arm tucks back into the cuff. */
+const _gjV=new T.Vector3(), _gjQ=new T.Quaternion(), _gjX=new T.Vector3(1,0,0);
+const GJ_DROPS={chorus:1, chorus2:1, modch:1};   // Gold Chain Tarantella sections that land a drop on their first downbeat
+// queue n punches `gap` apart from t0; a series in progress wins, unless this one is on the beat (force)
+function gjSeries(fp, now, t0, n, gap, force){
+  if(force){ const t1=t0+(n-1)*gap; fp.pk=fp.pk.filter(p=>p<t0-0.45 || p>t1+0.45); }
+  else if(fp.pk.some(p=>p>now-0.5)) return;
+  for(let i=0;i<n;i++) fp.pk.push(t0+i*gap);
+  fp.pk.sort((a,b)=>a-b);
+}
+const gjSettle=s=>0.6+(0.4*Math.cos(20*s)+0.8*Math.sin(20*s))*Math.exp(-8*s);   // past the top at 0.04 s, then a springy settle
 function tickGuido(o, r, now){
   const ud=o.userData, k=ud.gjKit; if(!k) return;
   const mo=ud.mouth;
@@ -37274,12 +37316,56 @@ function tickGuido(o, r, now){
     k.pick.position.copy(mo.position).add(_gjV);
     k.pick.rotation.z=-1.05+0.12*Math.sin(now*3.1)+(r.drift===1?0.25:0); }
   const dt=Math.min(0.1, Math.max(0, now-(ud._gjT||now))); ud._gjT=now;
-  const b=r.boostT>0; if(b && !ud._gjB) ud._gjBt=now; ud._gjB=b;
-  const on=r.celebT>0 || (b && now-(ud._gjBt||0)<1.4);
-  const f=k.fist; ud._gjS=(ud._gjS||0)+((on?1:0)-(ud._gjS||0))*Math.min(1,dt*10);
-  f.visible=ud._gjS>0.03;
-  if(f.visible){ const beat=Math.pow(Math.abs(Math.sin(now*Math.PI*2.1)),0.55);
-    f.scale.setScalar(ud._gjS); f.position.y=5.0+1.3*beat*ud._gjS; f.rotation.z=-0.25-0.25*beat; }
+  const fp=ud._fp||(ud._fp={pk:[], e:0, ev:0, h:0.6, air:false, airT:0, cool:0, cel:0, fin:false, bar:-1, sec:null});
+  // --- triggers
+  // a landing after real airtime (a ramp jump, not a bump); one series, then a cooldown
+  if(r.air && !fp.air) fp.airT=now;
+  if(!r.air && fp.air && now-fp.airT>0.35 && now>fp.cool){ gjSeries(fp, now, now+0.22, 3, 0.36); fp.cool=now+3; }
+  fp.air=!!r.air;
+  // the finish: the player's celebration gets two series; an AI Guido pumps if he wins
+  if(r.celebT>0){ if(now>=fp.cel && r.celebT>1.6){ gjSeries(fp, now, now+0.25, 4, 0.38); fp.cel=now+2.7; } } else fp.cel=0;
+  if(!r.you && r.finished && !fp.fin){ fp.fin=true; if(r.place===1) gjSeries(fp, now, now+0.3, 4, 0.38); }
+  // the drops of his own record: when the scheduler loads the first bar of a chorus (it runs ahead
+  // of the speakers) the four downbeats of that bar go in, mapped from the audio clock onto ours
+  // and pushed back by the output latency, so each punch lands on the kick you hear. The player's
+  // own Guido only, music on, his station dialled in.
+  const h=(r.you && musicOn && actx && state==='race' && curStyle && curStyle.engine==='goldChain') ? producedStations.goldChain : null;
+  if(h && h.running && h.ctx===actx){
+    const b=h.bar, sec=h.sectionId;
+    if(b!==fp.bar){
+      if(b===fp.bar+1 && GJ_DROPS[sec] && sec!==fp.sec){
+        const off=now-actx.currentTime+Math.min(0.2, actx.outputLatency||actx.baseLatency||0);
+        gjSeries(fp, now, h.barT+off, 4, 4*h.stepDur, true); }
+      fp.bar=b; fp.sec=sec; }
+  } else fp.bar=-1;
+  // --- the pose
+  while(fp.pk.length && fp.pk[0]<now-1.5) fp.pk.shift();
+  let P=null, Q=null; for(const p of fp.pk){ if(p>now){ P=p; break; } Q=p; }
+  const s=Q!=null ? now-Q : 9, gap=(P!=null && Q!=null) ? P-Q : 1, W=Math.min(0.26, gap*0.55), PD=0.075;
+  let hh=0.6, wind=0;
+  if(P!=null && now>=P-W){
+    const h0=Q!=null ? gjSettle(P-W-Q) : 0.6;
+    if(now<P-PD){ const t=(now-(P-W))/(W-PD); wind=t*t*(3-2*t); hh=h0+(-0.35-h0)*wind; }   // wind down, cock back
+    else { const t=(now-(P-PD))/PD; wind=1; hh=-0.35+1.35*t*t; }                             // punch, accelerating into the top
+  } else if(Q!=null) hh=gjSettle(s);
+  const vel=dt>0 ? (hh-fp.h)/dt : 0; fp.h=hh;
+  // out of the cuff (a springy pop) a beat before the first wind-up, back in after the last settle
+  const want=(P!=null && P-now<W+0.3) || s<0.5;
+  for(let n=Math.ceil(dt/0.016), i=0;i<n;i++){ const st=dt/n; fp.ev+=((want?1:0)-fp.e)*260*st-fp.ev*(want?20:30)*st; fp.e=Math.max(0,fp.e+fp.ev*st); }
+  const a=k.arm, e=Math.min(1.15, fp.e); a.visible=e>0.02;
+  k.glint.visible=false;
+  if(!a.visible) return;
+  const e1=Math.min(1,e), str=Math.max(0, Math.min(1, vel/25)), sq=(Q!=null && s<0.09 && wind===0) ? Math.sin(Math.PI*s/0.09) : 0;
+  a.position.set(0, -3.4*(1-e1)+0.8*(hh-0.6), 0);
+  a.rotation.set(-0.35*(0.6-hh), 0, -0.3*(0.6-hh));
+  const pop=0.25+0.75*e, sy=1+0.3*str-0.17*sq, sx=1-0.12*str+0.13*sq;
+  a.scale.set(sx*pop, sy*pop, sx*pop);
+  if(Q!=null && s<0.3){ const gs=Math.sin(Math.PI*s/0.3); k.glint.visible=true; k.glint.scale.setScalar(2.2*gs); k.glint.material.rotation=s*5; }
+  // the head nods into each punch (after poseNeck, about the same pivot)
+  const nk=ud.neck;
+  if(nk && r._lk){ const nod=((Q!=null && s<0.34) ? 0.13*Math.sin(Math.PI*s/0.34) : 0)-0.05*wind;
+    if(nod){ _gjQ.setFromAxisAngle(_gjX, nod*e1); nk.quaternion.premultiply(_gjQ);
+      nk.position.copy(NECK_PIV).sub(_gjV.copy(NECK_PIV).applyQuaternion(nk.quaternion)); } }
 }
 
 /* ============== NECK JOINT ==============
