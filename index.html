@@ -36783,7 +36783,44 @@ function charKitTextures(){
   _chTex.wBeard.repeat.set(4,2); _chTex.cBeard.repeat.set(3,2);
   return _chTex;
 }
-function makeCell(hue, typeId){
+/* ============== NECK JOINT ==============
+ * Every ordinary racer is built as one flat list of parts on the model root. rigNeck() moves
+ * everything except the tail and the body-worn pieces (userData.bodyPart: collars, cuffs,
+ * stoles, trains, pendants, scarf ribbons) into a `neck` group, so the glance / look-back /
+ * head tilt and nod turn the HEAD about its own centre while the tail and body stay on the
+ * line. The group's position is pivot - R*pivot, so every child keeps its model-space
+ * transform: at neck angle 0 every world matrix is exactly what it was without the group. */
+const NECK_PIV=new T.Vector3(0,HEAD_CY,0), NECK_MAX=1.75, NECK_TWIST=0.15, _nkQ=new T.Quaternion(), _nkE=new T.Euler(), _nkV=new T.Vector3();
+function bodyPart(o){ o.userData.bodyPart=true; return o; }
+function rigNeck(g){
+  const ud=g.userData; if(ud.dragonRig) return g;
+  const td=ud.tailData, flame=ud.flame||[];
+  const stays=c=>{
+    if(c.userData.bodyPart || c===ud.tailMesh || c===ud.glow || flame.includes(c)) return true;
+    if(td && c.geometry===td.outlineGeo) return true;
+    if(c.isMesh && c.geometry){
+      const gt=c.geometry.type, pr=c.geometry.parameters;
+      // a neck ring (collar, kerchief, chain) round the base of the head
+      if(gt==='TorusGeometry' && pr && pr.radius*Math.max(c.scale.x,c.scale.y)>=2.9 && c.position.y<=3.0 && Math.abs(Math.abs(c.rotation.x)-Math.PI/2)<0.2) return true;
+      // tie / link / medallion hanging below the chin
+      if(c.position.y<=1.2 && c.position.z>=2.5) return true;
+    }
+    return false;
+  };
+  const neck=new T.Group(); neck.name='neck';
+  for(const c of [...g.children]) if(!stays(c)) neck.add(c);
+  g.add(neck); ud.neck=neck;
+  return g;
+}
+// pose the neck: yaw is relative to the body; roll/pitch are the head tilt and nod; all about the head centre
+function poseNeck(o, yaw, roll, pitch){
+  const n=o.userData.neck; if(!n) return;
+  _nkQ.setFromEuler(_nkE.set(pitch,yaw,roll,'YZX'));
+  n.quaternion.copy(_nkQ);
+  n.position.copy(NECK_PIV).sub(_nkV.copy(NECK_PIV).applyQuaternion(_nkQ));
+}
+function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
+function makeCellBuild(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
   if(typeId === 'beadBandido') return makeBandidoCell(); // the Creature Lab sombrero actor
   if(typeId === 'beadBosun') return makeBosunCell();     // creature-lab iteration 3
@@ -37126,10 +37163,10 @@ function makeCell(hue, typeId){
     const sc=[]; for(let i=0;i<=24;i++){ const a=0.5+i/24*(Math.PI*2-1.0); sc.push(new T.Vector3(Math.sin(a)*3.55, 1.7-0.25*Math.pow(Math.abs(Math.cos(a/2+Math.PI/2*0)),0)*0, -0.2+Math.cos(a)*4.6)); }
     const stoleC=new T.CatmullRomCurve3(sc,false);
     const stoleT=K.fur.clone(); stoleT.repeat.set(6,1); stoleT.needsUpdate=true;
-    g.add(new T.Mesh(taperTube(stoleC,48,10,u=>0.5+0.3*Math.sin(Math.PI*u)), new T.MeshPhongMaterial({color:0xffffff, map:stoleT, shininess:2, specular:0x000000})));
+    g.add(bodyPart(new T.Mesh(taperTube(stoleC,48,10,u=>0.5+0.3*Math.sin(Math.PI*u)), new T.MeshPhongMaterial({color:0xffffff, map:stoleT, shininess:2, specular:0x000000}))));
     const cc=[new T.Vector3(0,-0.1,4.1)]; for(let i=0;i<=22;i++){ const a=0.55+i/22*(Math.PI*2-1.1); cc.push(new T.Vector3(Math.sin(a)*3.45, 2.2, -0.2+Math.cos(a)*4.5)); }
-    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cc,true,'catmullrom',0.3),70,0.17,6,true), goldM));
-    const med=new T.Group(); med.position.set(0,0.1,4.1); g.add(med);
+    g.add(bodyPart(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cc,true,'catmullrom',0.3),70,0.17,6,true), goldM)));
+    const med=new T.Group(); med.position.set(0,0.1,4.1); g.add(bodyPart(med));
     const disc=new T.Mesh(new T.CylinderGeometry(0.95,0.95,0.24,18), [goldM, new T.MeshPhongMaterial({color:0xffffff, map:K.medal, shininess:90, specular:0xffffff}), goldM]);
     disc.rotation.x=Math.PI/2; disc.position.set(0,-0.9,0.1); med.add(disc);
     sway.push({o:med, bx:0, bz:0, amp:0.08, f:2.1, ph:0.5, drag:0.5, side:0.6});
@@ -37138,7 +37175,7 @@ function makeCell(hue, typeId){
     const trainMat=(t)=>new T.MeshPhongMaterial({color:0xffffff, map:t, shininess:10, side:T.DoubleSide});
     const panel=(L,w0,w1,ripple,tex,tp)=>new T.Mesh(gridGeo(12,8,(u,v)=>{ const s=u*2-1, W=T.MathUtils.lerp(w0,w1,v)*(1-tp*Math.pow(v,4));
       return [-s*W/2, -0.9*s*s*(0.4+v)*1.0 + ripple*Math.sin(v*5+s*2.5)*0.25, -v*L]; }), trainMat(tex));
-    const pa=new T.Group(); pa.position.set(0,4.8,-4.4); g.add(pa); pa.add(panel(4.6,3.4,5.6,0.9,K.capeA,0));
+    const pa=new T.Group(); pa.position.set(0,4.8,-4.4); g.add(bodyPart(pa)); pa.add(panel(4.6,3.4,5.6,0.9,K.capeA,0));
     const pb=new T.Group(); pb.position.set(0,0,-4.6); pa.add(pb); pb.add(panel(4.8,5.6,5.2,1.4,K.capeB,0.5));
     sway.push({o:pa, bx:0.02, bz:0, amp:0.05, f:1.5, ph:0.4, drag:0.45, side:0.6});
     sway.push({o:pb, bx:0.08, bz:0, amp:0.1, f:2.2, ph:1.7, drag:0.6, side:0.9});
@@ -37263,14 +37300,14 @@ function makeCell(hue, typeId){
     // --- hibiscus shirt: a short sleeve-cuff wrapped round the neck where head meets tail
     const cuff=new T.Mesh(new T.LatheGeometry([[2.3,-3.5],[2.15,-4.1],[1.8,-5.2],[1.55,-6.4],[1.5,-7.3],[1.56,-7.4]].map(p=>new T.Vector2(p[0],-p[1])), 30),
       new T.MeshPhongMaterial({color:0xffffff, map:K.shirt, shininess:12, side:T.DoubleSide}));
-    cuff.rotation.x=-Math.PI/2; cuff.position.y=3.2; cuff.scale.set(1.06,1,0.9); g.add(cuff);
+    cuff.rotation.x=-Math.PI/2; cuff.position.y=3.2; cuff.scale.set(1.06,1,0.9); g.add(bodyPart(cuff));
     const hem=new T.Mesh(new T.TorusGeometry(1.56,0.13,6,26), new T.MeshPhongMaterial({color:0xf2e2b4, emissive:0x2a2410, shininess:12}));
-    hem.position.set(0,3.2,-7.34); hem.scale.set(1.06,0.9,1); g.add(hem);
+    hem.position.set(0,3.2,-7.34); hem.scale.set(1.06,0.9,1); g.add(bodyPart(hem));
     // --- pineapple pendant: cord loop under the chin, the fruit swinging off the front
     const cordPts=[]; for(let i=0;i<16;i++) cordPts.push(new T.Vector3(...headPt(2.72,i/16*Math.PI*2,1.075)));
-    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cordPts,true),48,0.075,5,true),
-      new T.MeshPhongMaterial({color:0x8a6a3c, emissive:0x1e1608, shininess:4})));
-    const pend=new T.Group(); { const c=new T.Vector3(...headPt(2.72,Math.PI/2,1.075)); pend.position.copy(c); g.add(pend);
+    g.add(bodyPart(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cordPts,true),48,0.075,5,true),
+      new T.MeshPhongMaterial({color:0x8a6a3c, emissive:0x1e1608, shininess:4}))));
+    const pend=new T.Group(); { const c=new T.Vector3(...headPt(2.72,Math.PI/2,1.075)); pend.position.copy(c); g.add(bodyPart(pend));
       const fruit=new T.Mesh(new T.SphereGeometry(0.62,12,10), new T.MeshPhongMaterial({color:0xffffff, map:K.pine, shininess:30}));
       fruit.scale.set(0.9,1.2,0.9); fruit.position.set(0,-0.95,0.15); pend.add(fruit);
       const leaves=new T.Mesh(new T.ConeGeometry(0.42,0.85,5), new T.MeshPhongMaterial({color:0x2f8f3a, emissive:0x0a2a0e, flatShading:true}));
@@ -37661,7 +37698,7 @@ function makeCell(hue, typeId){
           emissive: i%3===0?0x3a1204:0x3a2a06, shininess:40}));
       bud.position.set(Math.cos(a)*(3.75+Math.sin(i*1.7)*0.12),
                        2.10+Math.sin(a*3)*0.18,
-                       Math.sin(a)*(5.35+Math.cos(i*1.7)*0.14)); g.add(bud);
+                       Math.sin(a)*(5.35+Math.cos(i*1.7)*0.14)); g.add(bodyPart(bud));
     }
     // bandhgala (Nehru) collar under the garland
     const collar=new T.Mesh(new T.TorusGeometry(3.3,0.42,8,20),
@@ -37994,10 +38031,10 @@ function makeCell(hue, typeId){
         d.updateMatrix(); curls.setMatrixAt(i++,d.matrix); } }
     g.add(curls);
     // --- the scarf: a wrap round the neck, a knot behind the left jaw, two free tails
-    g.add(new T.Mesh(gridGeo(48,4,(u,v)=>headPt(2.2+0.36*v, u*Math.PI*2, 1.075+0.05*Math.sin(v*Math.PI))), wrapSilk));
+    g.add(bodyPart(new T.Mesh(gridGeo(48,4,(u,v)=>headPt(2.2+0.36*v, u*Math.PI*2, 1.075+0.05*Math.sin(v*Math.PI))), wrapSilk)));
     const KPH=-0.55, knotP=V(2.34,KPH,1.13);
     const knot=new T.Mesh(new T.SphereGeometry(0.62,12,8), wrapSilk);
-    knot.position.copy(knotP); knot.scale.set(1,0.8,1.1); g.add(knot);
+    knot.position.copy(knotP); knot.scale.set(1,0.8,1.1); g.add(bodyPart(knot));
     // pilot's wings pinned to the front of the wrap
     { const c=V(2.3,FACE,1.12), n=nrm(c);
       const pin=new T.Group(); pin.position.copy(c).addScaledVector(n,0.06); pin.quaternion.setFromUnitVectors(zz,n); g.add(pin);
@@ -38007,7 +38044,7 @@ function makeCell(hue, typeId){
     const scarf=[]; g.userData.scarf=scarf;
     for(const [L,W,dx,ph,roll,off] of [[14,2.5,-0.34,0,0.15,0],[10,2.0,0.06,2.1,-0.35,0.35]]){
       const N=22, {geo,pos}=makeScarfRibbon(N);
-      const m=new T.Mesh(geo, silkMat); m.frustumCulled=false; g.add(m);
+      const m=new T.Mesh(geo, silkMat); m.frustumCulled=false; g.add(bodyPart(m));
       scarf.push({geo,pos,N,L,W,dx,ph,roll,base:knotP.clone().add(new T.Vector3(0,-0.1-off*0.4,-0.25-off))});
     }
     updateScarf(g,{spd:80,slip:0},0);
@@ -38038,7 +38075,7 @@ function makeCell(hue, typeId){
     kerchief.position.set(0,2.3,0); kerchief.rotation.x=Math.PI/2; g.add(kerchief);
     const kKnot=new T.Mesh(new T.SphereGeometry(0.55,8,6),
       new T.MeshPhongMaterial({color:0xb52a2a, emissive:0x3a0a0a}));
-    kKnot.position.set(0,2.3,3.0); g.add(kKnot);                 // centered, sitting ON the ring's front
+    kKnot.position.set(0,2.3,3.0); g.add(bodyPart(kKnot));                 // centered, sitting ON the ring's front
     const baguette=new T.Mesh(new T.CylinderGeometry(0.55,0.55,4.2,8),
       new T.MeshPhongMaterial({color:0xd9a45a, emissive:0x3a2606}));
     baguette.position.set(-3.4,2.6,0.6); baguette.rotation.z=0.5; baguette.rotation.x=-0.4; g.add(baguette);  // tucked in against the head, touching
@@ -39085,8 +39122,8 @@ function mouthFit(o){
   const ud=o.userData; if(ud._mf!==undefined) return ud._mf;
   ud._mf=null;
   const mo=ud.mouth, mb=ud.mouthBase, pu=ud.pupils;
-  if(ud.dragonRig||!mo||!mb||!mo.isMesh||mo.parent!==o||!pu||!pu.length||!mo.geometry||!mo.geometry.attributes.position) return null;
-  o.updateMatrixWorld(true); _mfM.copy(o.matrixWorld).invert();
+  if(ud.dragonRig||!mo||!mb||!mo.isMesh||mo.parent!==(ud.neck||o)||!pu||!pu.length||!mo.geometry||!mo.geometry.attributes.position) return null;
+  o.updateMatrixWorld(true); _mfM.copy((ud.neck||o).matrixWorld).invert();
   const cols=pu.map(q=>{ _mfB.setFromObject(q).applyMatrix4(_mfM); return {x0:_mfB.min.x-0.25, x1:_mfB.max.x+0.25, y:_mfB.min.y}; });
   const pos=mo.geometry.attributes.position, step=Math.max(1,Math.ceil(pos.count/64)), pts=[];
   for(let i=0;i<pos.count;i+=step) pts.push(new T.Vector3().fromBufferAttribute(pos,i));
@@ -39152,7 +39189,7 @@ function lkGest(L,P,k,ang,lat,q){
 function socialLook(r,o,dt,racing){
   let L=r._lk;
   if(!L){ L=r._lk={rs:1+((r._li||0)+3)*7919, tgt:null, yaw:0, yv:0, eye:0, lon:new Map(), c:0, w:0, d:0, sm:0, gr:0, smT:0, grT:0, wk:0,
-    g:null, gcd:-9, pcd:-9, t:0, blinkT:0, blinkS:0, blink:1, tilt:0, pitch:0,
+    g:null, hd:0, nk:0, tw:0, gcd:-9, pcd:-9, t:0, blinkT:0, blinkS:0, blink:1, tilt:0, pitch:0,
     lidL:1, lidR:1, mx:1, my:1, mrz:0, eyeO:0, P:lookPersona(r.id),
     pp:0, pv:0, rl:0, rlv:0, rlT:0, hy:0, hv:0, shk:0, fl:0, fs:1, ecd:-9, em:null, pbo:false, psp:false, pcur:0};
     L.t=lkRnd(L)*20; L.blinkT=1+lkRnd(L)*3; }
@@ -39194,7 +39231,7 @@ function socialLook(r,o,dt,racing){
     G=L.g={k:'peek', t:0, dur:0.95, side:L.ipS, ang:0, q:tgt, ov:true}; }
   let lookT=0, eyeT=0, wide=0, hold=0;
   if(racing){
-    if(tgt){ const w=1-ldSmooth(14,30,bd); lookT=ldClamp(ba,-P.turn,P.turn)*w; eyeT=ldClamp(ba-L.yaw,-0.55,0.55)*Math.min(1,w*2)*P.lead; }
+    if(tgt){ const w=1-ldSmooth(14,30,bd); lookT=ldClamp(ba,-P.turn,P.turn)*w; eyeT=ldClamp(ba-L.hd,-0.55,0.55)*Math.min(1,w*2)*P.lead; }
     else eyeT=ldClamp(-(r.slip||0)*0.8,-0.4,0.4);
   } else eyeT=(r._glance||0)*0.35;
   if(G){
@@ -39215,7 +39252,7 @@ function socialLook(r,o,dt,racing){
       const steer=Math.min(1,Math.abs(r.slip||0)*4+(r.drift?0.8:0)); hold*=1-steer;
       lookT=G.side*P.ov*hold;
       let ea=G.side*1.6; if(G.q){ const hd=r.head+(r.slip||0); ea=Math.atan2((G.q.x-r.x)*Math.cos(hd)-(G.q.z-r.z)*Math.sin(hd),(G.q.x-r.x)*Math.sin(hd)+(G.q.z-r.z)*Math.cos(hd)); }
-      eyeT=ldClamp(ea-L.yaw,-0.55,0.55)*hold; wide=G.k==='peek'?hold:0;
+      eyeT=ldClamp(ea-L.hd,-0.55,0.55)*hold; wide=G.k==='peek'?hold:0;
       L.rlT=-G.side*0.22*hold;   // lean the shoulders into the glance
     } else {                   // smug / peek: look back over the shoulder, then release
       hold=ldSmooth(0,0.25,u)*(1-ldSmooth(0.65,1,u)); lookT=G.side*P.turn*(G.k==='peek'?0.9:1)*hold; eyeT=G.side*0.5*hold;
@@ -39226,6 +39263,8 @@ function socialLook(r,o,dt,racing){
     L.yv+=(w0*w0*(lookT-L.yaw)-2*ze*w0*L.yv)*dt; L.yaw+=L.yv*dt;
     r._glance=ldClamp(L.yaw,-2.6,2.6);
   } else { L.yaw=r._glance||0; L.yv=0; }
+  // the neck takes the look up to NECK_MAX; only a sliver of a longer look-back twists the body
+  L.nk=ldClamp(L.yaw,-NECK_MAX,NECK_MAX); L.tw=NECK_TWIST*(L.yaw-L.nk); L.hd=L.nk+L.tw;
   L.eye+=(eyeT-L.eye)*Math.min(1,16*dt);   // faster than the head: the eyes arrive first and settle as it catches up
   L.eyeO=L.eye + (P.dart ? P.dart*0.4*Math.sin(L.t*5.3)*Math.sin(L.t*2.1+1)*(tgt?0.3:1) : 0);
   // ---- feelings: how it is being approached, smoothed (quick to rise, slow to fade)
@@ -39403,8 +39442,8 @@ function syncObjects(dt,now){
     // "everyone checking out the competition" look, and the alongside-a-rival glance. An
     // earlier collision fix capped it to ~14 degrees to stop a dragon's body fanning across
     // a neighbour's slot, but dragons never used this value, so the cap only muted everyone else.
-    const headAngle=r.head + r.slip + (o.userData.dragonRig ? 0 : r._glance) + (lk&&lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0);   // dragons turn their own heads; shk = an alarmed head-shake
-    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0) + (lk?lk.tilt+lk.rl:0);   // rl: hat/shoulder tilt kicks
+    const headAngle=r.head + r.slip + (lk ? lk.tw : 0);   // the body keeps its line; the look is the NECK's (below). Dragons turn their own heads
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);   // bank and countdown lean stay on the body
     if(lk){   // squash-and-stretch and the alarmed hop: the silhouette is what the chase camera sees
       const ms=r._ms||1, p=lk.pp; o.scale.set(ms*(1-0.5*p), ms*(1+p), ms*(1-0.5*p));
       if(lk.hy>0 && !r.air) o.position.y+=lk.hy;
@@ -39415,7 +39454,8 @@ function syncObjects(dt,now){
     _oTrueUp.crossVectors(_oFwd, _oRight).normalize();
     _oBasis.makeBasis(_oRight, _oTrueUp, _oFwd);
     o.quaternion.setFromRotationMatrix(_oBasis);
-    if(lk && (lk.pitch>0.002||lk.pitch<-0.002)){ _lkQ.setFromEuler(_lkE.set(lk.pitch,0,0)); o.quaternion.multiply(_lkQ); }   // nod / chin-lift
+    // the head: the look (yaw), the alarmed head-shake, tilt + hat/shoulder kicks (roll) and the nod / chin-lift (pitch)
+    if(lk) poseNeck(o, lk.nk + (lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0), lk.tilt+lk.rl, lk.pitch);
     if(r.shadow){
       // ground shadow tracks the TRUE road surface height (r.surfY), not the character's
       // own y — which now floats HOVER_H above the road. Without this split the shadow
