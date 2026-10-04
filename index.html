@@ -31984,24 +31984,63 @@ function buildTrack(idx){
 
   // ---- boost pads: glowing chevron strips on the road ----
   boostPads=[];
+  // the road strip, for seating the pads on its real surface (Ophelia's sheet is its own mesh
+  // and already within 0.05 of the model, so it is not probed)
+  const padProbe=oph ? null : new T.Mesh(geo, new T.MeshBasicMaterial({side:T.DoubleSide}));
+  const padRay=new T.Raycaster(), _padV=new T.Vector3(), _padDn=new T.Vector3(0,-1,0);
   for(const f of [0.13,0.37,0.61,0.85]){
     const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
-    const pad=new T.Mesh(new T.PlaneGeometry(HW*1.3,18),
+    // The strip is DRAPED on the road rather than laid as a rigid plane: an 18-long flat card
+    // cannot follow a crest, a dip, a bend or a bank that is still twisting, so on those samples
+    // one end sank into the road and the chevrons were cut off. Each vertex is placed on the
+    // road surface itself (along the centreline by arc length, out along the road's lateral n,
+    // y = p.y + sin(bank)*lat — the road's own model), so the strip lies on the road and
+    // curves with it, its chevrons pointing down the direction of travel at every point.
+    // The chevrons point to the texture's top (+v): after rotateX(-PI/2) +v runs along -Z, so
+    // the old card printed every chevron pointing BACK at the player; rotateY(PI) turns +v to +Z,
+    // which is mapped to "forward along the road" below.
+    const padGeo=new T.PlaneGeometry(HW*1.3,18,6,12); padGeo.rotateX(-Math.PI/2); padGeo.rotateY(Math.PI);
+    // which way along n is the strip's local +X (keeps the face up: same handedness as the old basis)
+    const pF0=new T.Vector3(s.t.x,0,s.t.z).normalize(), pU=new T.Vector3(0,1,0).applyAxisAngle(pF0, s.bank||0);
+    const pR0=new T.Vector3().crossVectors(pU,pF0), nSg=(s.n.x*pR0.x+s.n.z*pR0.z)<0?-1:1;
+    const padWrap=j=>trackLoop ? ((j%STEPS)+STEPS)%STEPS : Math.max(0,Math.min(STEPS-1,j));
+    const PP=padGeo.attributes.position;
+    for(let k=0;k<PP.count;k++){
+      const lat=PP.getX(k)*nSg, d=PP.getZ(k), dir=d<0?-1:1;
+      let j=i, rem=Math.abs(d), A=SAMP[padWrap(j)], B=A, fr=0;
+      for(let g=0; g<40; g++){ B=SAMP[padWrap(j+dir)]; const L=A.p.distanceTo(B.p);
+        if(rem<=L || L<1e-6){ fr=L>1e-6 ? rem/L : 0; break; }
+        rem-=L; j+=dir; A=B; }
+      const px=A.p.x+(B.p.x-A.p.x)*fr, py=A.p.y+(B.p.y-A.p.y)*fr, pz=A.p.z+(B.p.z-A.p.z)*fr;
+      // out along the banked lateral bn, exactly as the road strip's own edge vertices are
+      const ax=A.bn?A.bn:null, bx=B.bn?B.bn:null;
+      let lx,ly,lz;
+      if(ax&&bx){ lx=ax.x+(bx.x-ax.x)*fr; ly=ax.y+(bx.y-ax.y)*fr; lz=ax.z+(bx.z-ax.z)*fr; }
+      else { const bk=(A.bank||0)+((B.bank||0)-(A.bank||0))*fr; lx=(A.n.x+(B.n.x-A.n.x)*fr)*Math.cos(bk); ly=Math.sin(bk); lz=(A.n.z+(B.n.z-A.n.z)*fr)*Math.cos(bk); }
+      PP.setXYZ(k, px+lx*lat, py+ly*lat+0.3, pz+lz*lat);
+      // ...then onto the road strip's actual triangles: where the bank twists fast (Iris's
+      // S-bends) the strip's quads are not planar and its diagonals sit up to ~0.6 off the
+      // smooth model, enough to bury the chevrons between them. Nearest hit to the model only,
+      // so an overpass above never captures a vertex.
+      if(padProbe){ _padV.set(px+lx*lat, py+ly*lat+4, pz+lz*lat); padRay.set(_padV, _padDn);
+        let best=null; for(const h of padRay.intersectObject(padProbe,false)){
+          const e=Math.abs(h.point.y-(py+ly*lat)); if(e<1.5 && (!best || e<best.e)) best={y:h.point.y, e}; }
+        if(best) PP.setY(k, best.y+0.3); }
+    }
+    padGeo.computeBoundingSphere(); padGeo.computeBoundingBox();
+    const pad=new T.Mesh(padGeo,
       new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
-    pad.geometry.rotateX(-Math.PI/2);
-    // road basis (heading, roll by bank) plus the slope, so the strip lies ON the banked road
-    const pF=new T.Vector3(s.t.x,0,s.t.z).normalize(), pU=new T.Vector3(0,1,0).applyAxisAngle(pF, s.bank||0);
-    const pR=new T.Vector3().crossVectors(pU,pF).normalize(), pT=new T.Vector3().crossVectors(pF,pR).normalize();
-    pad.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(pR,pT,pF));
-    pad.rotateX(-Math.atan2(s.t.y,Math.hypot(s.t.x,s.t.z)));
-    pad.position.copy(s.p).addScaledVector(pT,0.3);
     pad.material.polygonOffset=true; pad.material.polygonOffsetFactor=-2; pad.material.polygonOffsetUnits=-2;
     // Hana: an additive glow on pale paper is invisible — print the chevrons in vermilion
     if(hana){ pad.material.blending=T.NormalBlending; pad.material.color.set(hanaLin(0xd0482c)); }
+    // Iris: the same on her full-chroma bands — added light vanishes on the yellow and green
+    // ones and the chevrons read as broken blobs, so print them in the kerb's dark rope brown
+    if(coil){ pad.material.blending=T.NormalBlending; pad.material.color.setHex(0x4a2a1c).convertSRGBToLinear(); }
     trackGroup.add(pad);
     const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana) trackGroup.add(halo);
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
   }
+  if(padProbe) padProbe.material.dispose();
 
   // ---- jump ramps: placed just BEFORE the sharpest corners so a jump cuts the corner ----
   jumpPads=[];
@@ -32035,9 +32074,15 @@ function buildTrack(idx){
       // Explicit basis rather than Euler y+z: forward = flattened tangent, up = world-up
       // rolled around that forward by the sample's bank. Raw Euler does not commute for
       // any heading but world +Z, which tilts the ramp off the road on banked approaches.
-      const fwd=new T.Vector3(sp.t.x,0,sp.t.z).normalize();
-      const up=_worldUp.clone().applyAxisAngle(fwd, sp.bank||0);
-      const right=new T.Vector3().crossVectors(up,fwd).normalize();
+      // Forward is then the full 3D tangent and across is the road's own lateral (n, rising by
+      // sin(bank)), the same basis as the boost pads, so on a slope the ramp sits in the road
+      // surface too instead of level across it (and its arrow runs straight down the road).
+      const fwd0=new T.Vector3(sp.t.x,0,sp.t.z).normalize();
+      const up=_worldUp.clone().applyAxisAngle(fwd0, sp.bank||0);
+      const right0=new T.Vector3().crossVectors(up,fwd0).normalize();
+      const fwd=sp.t.clone().normalize(), rsb=Math.sin(sp.bank||0);
+      const right=new T.Vector3(sp.n.x,rsb,sp.n.z); if(right.dot(right0)<0) right.set(-sp.n.x,-rsb,-sp.n.z);
+      right.addScaledVector(fwd,-right.dot(fwd)).normalize();
       const trueUp=new T.Vector3().crossVectors(fwd,right).normalize();
       grp.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(right,trueUp,fwd));
       const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
@@ -32047,7 +32092,13 @@ function buildTrack(idx){
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
       const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
         new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
-      mark.position.set(0,2.9,3.2); mark.rotation.x=-0.42-Math.PI/2+Math.PI; grp.add(mark);
+      // The up-arrow lies ON the wedge's sloped top face (centre (0,3.45,2.08) in ramp space,
+      // normal (0,cos .42,-sin .42)), facing up and pointing up the slope = the direction of
+      // travel. Rx(PI/2-.42)*Ry(PI) maps the plane's +v to the slope and its face to the normal;
+      // the old Rx alone left it facing down and ~1 unit inside the box, so it never showed.
+      const mk=mark.material; mk.polygonOffset=true; mk.polygonOffsetFactor=-2; mk.polygonOffsetUnits=-2;
+      mark.rotation.set(Math.PI/2-0.42, Math.PI, 0);
+      mark.position.set(0, 3.45+Math.cos(0.42)*0.08, 2.08-Math.sin(0.42)*0.08); grp.add(mark);
       trackGroup.add(grp);
       const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana) trackGroup.add(halo);
       jumpPads.push({x:sp.p.x+sp.t.x*3, z:sp.p.z+sp.t.z*3, r:12});
