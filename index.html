@@ -25267,6 +25267,19 @@ const TRACKS=[
    tunnels:[[0.26,0.34],[0.64,0.72]], critters:[0.48], pills:[0.18], dams:[0.78],
    ctrl:[[330,10,230],[430,26,-40],[300,46,-300],[40,62,-400],[-240,50,-320],
          [-400,32,-70],[-320,20,170],[-90,14,330],[150,10,380],[290,10,320]]},
+  /* Felicity — "the Weavers' Valley at the Last of the Light": Felicia's circuit, hazards
+     and song, in the same valley an hour later, dressed by a master (see FELICITY kit). The
+     felt flag keeps the shared valley (terrain heights, embankment, placement rules, fog);
+     loom:true swaps in the fibre materials, the low appliqué sun, the woven deck, the
+     tunnels as looms and the landmarks. Felicia herself is untouched. */
+  {name:'Felicity', felt:true, loom:true, key:-1, tempo:164, sky:0x3a1440,
+   song:{ name:'The Shuttle',
+          mel: [7,4,7,4,   9,7,4,2,   0,2,4,7,   4,null,2,null],
+          melB:[12,9,12,9, 14,12,9,7, 9,12,14,16, 14,null,12,null],
+          bass:[0,10,9,10] },
+   tunnels:[[0.26,0.34],[0.64,0.72]], critters:[0.48], pills:[0.18], dams:[0.78],
+   ctrl:[[330,10,230],[430,26,-40],[300,46,-300],[40,62,-400],[-240,50,-320],
+         [-400,32,-70],[-320,20,170],[-90,14,330],[150,10,380],[290,10,320]]},
   // Perla — "the Bead Board": a glossy pegboard plinth in a photo studio. Reuses the
   // voxel dressing for its structure (the reference's base IS square pegs, not beads) but
   // swaps in high-gloss plastic, adds bead-sphere scenery, and switches the whole rig to
@@ -29027,6 +29040,1358 @@ function dawnDressing(inner, ccx, ccz){
   TRACK_PULSE.dawnDew=D;
 }
 
+
+/* ============== FELICITY — THE WEAVERS' VALLEY AT THE LAST OF THE LIGHT ============== *
+ * Felicia's valley, the same circuit and the same palette, made by the master instead of
+ * the apprentice. Four things kept Felicia from being exceptional, and this kit is the
+ * answer to each:
+ *
+ *  1. MATERIAL. Every wool form in Felicia is a faceted icosahedron under per-vertex
+ *     light, so the tufts, clouds and fleece read as cut gemstones and low-poly rock. Felt
+ *     is the opposite of a facet: a soft lump whose EDGE is the brightest, fuzziest part of
+ *     it, because fibres stand proud of the silhouette and catch the light. So: smooth
+ *     puffs (merged, smooth-normalled), a needle-punched mottle in world space, a velvet
+ *     sheen that lifts every grazing edge toward the low sun, and on the big masses a
+ *     transparent fibre shell whose alpha lives only at the silhouette — a halo of loose
+ *     fibre around clouds, banks and canopies. (loomPatch / loomShellMat)
+ *  2. LIGHT. Felicia's dusk has no sun in it. Her key comes from high in the north-west
+ *     and nothing in the sky says where. Here a low sun sits in the sky as an APPLIQUÉ —
+ *     three stacked discs of felt with a running stitch round the core — the key is low and
+ *     warm from exactly that direction, and every silhouette facing it takes a hot rim.
+ *  3. DEPTH. Her far ranges are vertex-coloured strata smeared into vertical rainbow
+ *     streaks (bands finer than the 12-unit facets they are painted on), at full chroma all
+ *     the way to the skyline — the busiest and most saturated thing in the picture. Here the
+ *     strata are computed per FRAGMENT, so every sheet has a crisp pressed lip and the
+ *     shadow of the sheet above it, and they hand over with distance to the dusk haze; the
+ *     dark basin becomes a patchwork of quilted fields, so the lowland is a textile too.
+ *  4. COMPOSITION. Felicia scatters equal-sized things everywhere and has no landmark. This
+ *     valley has five, each a different fibre craft and each big enough to read at speed:
+ *     a giant upright loom the road passes THROUGH, with its shuttle crossing the warp; a
+ *     spinning wheel turning on the infield downs; a village with lit windows, a windmill
+ *     and smoking chimneys; a hillside of giant yarn balls; and the tunnels as real looms —
+ *     you enter under bare warp and leave under finished cloth.
+ * And life, all of it at the edge of noticing: llamas graze and look round, sheep on the
+ * downs, rooks wheel over the village, the shuttles fly, the wheels turn, smoke rises.
+ * Felicia and Aurora are untouched: every line here runs only when TRACKS[idx].loom.
+ * ---------------------------------------------------------------------------------- */
+// The low sun. North-west, as Felicia's key already was, so this is the same valley an
+// hour later — the sun has simply come down to the hills. ~13 degrees up: in frame over the
+// opening climb and the summit run, and low enough that everything facing it takes a rim.
+const LOOM_SUN=new T.Vector3(-0.55,0.225,-0.83).normalize();
+// Fibre noise as a texture rather than arithmetic: one tileable value-noise tile, mipmapped,
+// so the nap costs two taps a fragment and fades to flat by itself with distance (the mip
+// averages it out) instead of shimmering. Built once, on first use.
+let LOOM_NOISE=null;
+function loomNoiseTex(){
+  if(LOOM_NOISE) return LOOM_NOISE;
+  const N=128, g=new Float32Array(16*16), d=new Uint8Array(N*N*4);
+  for(let i=0;i<256;i++) g[i]=fIHash(i%16, (i/16)|0, 9137);
+  const at=(x,y)=>g[((y+16)%16)*16+((x+16)%16)];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    let v=0, a=0.5, f=1, w=0;
+    for(let o=0;o<3;o++){
+      const fx=x/N*16*f, fy=y/N*16*f, xi=Math.floor(fx), yi=Math.floor(fy), u=fx-xi, t=fy-yi;
+      const su=u*u*(3-2*u), st=t*t*(3-2*t), p=16*f;
+      const A=g[((yi%p)%16)*16+((xi%p)%16)], B=g[((yi%p)%16)*16+(((xi+1)%p)%16)],
+            C=g[(((yi+1)%p)%16)*16+((xi%p)%16)], D=g[(((yi+1)%p)%16)*16+(((xi+1)%p)%16)];
+      v+=a*((A*(1-su)+B*su)*(1-st)+(C*(1-su)+D*su)*st); w+=a; a*=0.5; f*=2;
+    }
+    const q=(y*N+x)*4, b=Math.round(v/w*255); d[q]=d[q+1]=d[q+2]=b; d[q+3]=255;
+  }
+  LOOM_NOISE=new T.DataTexture(d,N,N,T.RGBAFormat);
+  LOOM_NOISE.wrapS=LOOM_NOISE.wrapT=T.RepeatWrapping;
+  LOOM_NOISE.magFilter=T.LinearFilter; LOOM_NOISE.minFilter=T.LinearMipmapNearestFilter;
+  LOOM_NOISE.generateMipmaps=true; LOOM_NOISE.needsUpdate=true;
+  return LOOM_NOISE;
+}
+const LOOM_U={uSun:{value:LOOM_SUN.clone()}, uSheen:{value:new T.Color(0xff9a5c)}, uLNoise:{value:null}};
+function applyLoomLighting(){
+  // The sky key is low and hot; the hemi carries the magenta sky into every shadow and is
+  // kept LEANER than Felicia's, because a low sun's whole character is the gap between the
+  // side it finds and the side it doesn't. The rim comes from the side away from the sun:
+  // the coloured bounce of a crimson sky on the shadow side of every form.
+  hemi.color.setHex(0xffaac4); hemi.groundColor.setHex(0x22091e); hemi.intensity=0.50;
+  sun.color.setHex(0xffb07a);  sun.intensity=1.02;
+  sun.position.copy(LOOM_SUN).multiplyScalar(260);
+  rim.color.setHex(0xe0408c);  rim.intensity=0.30;
+  rim.position.set(-LOOM_SUN.x*170, 120, -LOOM_SUN.z*170);
+  fill.color.setHex(0x2438a8); fill.intensity=0.22; fill.position.set(40,-60,-120);
+  flesh.color.setHex(0xe86a22);flesh.intensity=0.12;flesh.position.set(90,20,-60);
+  LOOM_U.uSun.value.copy(LOOM_SUN);
+  LOOM_U.uLNoise.value=loomNoiseTex();
+}
+const LOOM_GLSL_NOISE=`
+float lHash(vec3 p){ p=fract(p*0.3183099+vec3(0.71,0.113,0.419)); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+float lNoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(lHash(i),lHash(i+vec3(1,0,0)),f.x), mix(lHash(i+vec3(0,1,0)),lHash(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(lHash(i+vec3(0,0,1)),lHash(i+vec3(1,0,1)),f.x), mix(lHash(i+vec3(0,1,1)),lHash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+`;
+/* THE FIBRE. Patches a Lambert material with two things felt has and plastic does not:
+     NAP — a needle-punched mottle in world space, two scales: clumps a couple of units
+       across (which survive speed) and fine fibre near the camera only (which would just
+       shimmer further out, so it fades by 200 units);
+     SHEEN — velvet, not specular: every grazing edge lifts toward its own colour and, on
+       the side facing the sun, toward the sun's colour, strongly when you look into the
+       light. That last term is the rim on every silhouette a low sun gives fibre.
+   Strengths are uniforms, not code, so every felt material in the valley shares ONE
+   program (customProgramCacheKey) however many batches there are. `extra` lets the
+   terrain add its strata on top of the same patch. */
+function loomPatch(m, nap, sheen, extra, key){
+  const U={uLNap:{value:nap==null?1:nap}, uLSheenK:{value:sheen==null?1:sheen}};
+  m.userData.loomU=U;
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uLSun=LOOM_U.uSun; sh.uniforms.uLSheen=LOOM_U.uSheen;
+    sh.uniforms.uLNap=U.uLNap; sh.uniforms.uLSheenK=U.uLSheenK; sh.uniforms.uLNoise=LOOM_U.uLNoise;
+    sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\nvarying vec3 vLN; varying vec3 vLV; varying vec3 vLW;')
+      .replace('#include <project_vertex>',`#include <project_vertex>
+        vLN=transformedNormal; vLV=-mvPosition.xyz;
+        { vec4 lw=vec4(transformed,1.0);
+        #ifdef USE_INSTANCING
+          lw=instanceMatrix*lw;
+        #endif
+          vLW=(modelMatrix*lw).xyz; }`);
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\nuniform vec3 uLSun; uniform vec3 uLSheen; uniform float uLNap; uniform float uLSheenK; uniform sampler2D uLNoise;\nvarying vec3 vLN; varying vec3 vLV; varying vec3 vLW;\n'+LOOM_GLSL_NOISE)
+      .replace('#include <color_fragment>',`#include <color_fragment>
+        #ifndef LOOM_NO_NAP
+        float lM=texture2D(uLNoise, (vLW.xz+vLW.y*vec2(0.61,-0.53))*0.05).r;
+        diffuseColor.rgb*=1.0+uLNap*(lM-0.5)*0.46;
+        #endif`)
+      .replace('gl_FragColor = vec4( outgoingLight, diffuseColor.a );',`
+        #ifndef LOOM_NO_SHEEN
+        { vec3 lN=normalize(vLN); vec3 lV=normalize(vLV);
+          float lnv=abs(dot(lN,lV));
+          float lR=1.0-lnv; lR*=lR*sqrt(lR);
+          vec3 lS=(viewMatrix*vec4(uLSun,0.0)).xyz;
+          float lB=max(0.0,dot(-lV,lS)); lB*=lB;
+          float lSide=smoothstep(-0.25,0.65,dot(lN,lS)*sign(dot(lN,lV)));
+          outgoingLight+=uLSheenK*lR*(diffuseColor.rgb*0.32 + uLSheen*lSide*(0.20+0.80*lB));
+        }
+        #endif
+        gl_FragColor = vec4( outgoingLight, diffuseColor.a );`);
+    if(extra) extra(sh);
+  };
+  m.customProgramCacheKey=()=>key||'loomFelt';
+  return m;
+}
+function loomMat(hex, map, nap, sheen){
+  return loomPatch(new T.MeshLambertMaterial({color:hex, map:map||null}), nap, sheen);
+}
+/* THE FIBRE HALO. A slightly larger copy of a batch, drawn transparent, whose alpha lives
+   only where its surface turns away from you and only where a fibre noise fixed to the
+   object says there is a strand. Over the core it is clear; past the core's silhouette it
+   is a fringe of loose wool. Shares the batch's own instance buffers, so it costs one draw
+   and no memory. Unlit (MeshBasic): its colour is the instance colour knocked down to the
+   shade a lit tuft actually reads at, plus the sun where the strands are backlit. */
+function loomShellMat(k, bright, fog){
+  const m=new T.MeshBasicMaterial({color:0xffffff, transparent:true, depthWrite:false, fog:fog!==false});
+  const U={uK:{value:k==null?0.6:k}, uB:{value:bright==null?0.55:bright}};
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uLSun=LOOM_U.uSun; sh.uniforms.uLSheen=LOOM_U.uSheen; sh.uniforms.uK=U.uK; sh.uniforms.uB=U.uB; sh.uniforms.uLNoise=LOOM_U.uLNoise;
+    sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\nvarying vec3 vLN; varying vec3 vLV; varying vec3 vLO;')
+      .replace('#include <project_vertex>',`#include <project_vertex>
+        { vec3 n0=normal;
+        #ifdef USE_INSTANCING
+          n0=mat3(instanceMatrix)*n0;
+        #endif
+          vLN=normalize(normalMatrix*n0); vLV=-mvPosition.xyz; vLO=position; }`);
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\nuniform vec3 uLSun; uniform vec3 uLSheen; uniform float uK; uniform float uB; uniform sampler2D uLNoise;\nvarying vec3 vLN; varying vec3 vLV; varying vec3 vLO;\n')
+      .replace('#include <color_fragment>',`#include <color_fragment>
+        { vec3 lN=normalize(vLN), lV=normalize(vLV);
+          float lE=1.0-abs(dot(lN,lV));
+          vec3 lo=normalize(vLO);
+          float lF=texture2D(uLNoise, lo.xy*0.9+lo.z*vec2(0.41,0.57)).r;
+          vec3 lS=(viewMatrix*vec4(uLSun,0.0)).xyz;
+          float lSide=smoothstep(-0.3,0.7,dot(lN,lS)), lBack=max(0.0,dot(-lV,lS)); lBack*=lBack;
+          diffuseColor.rgb=diffuseColor.rgb*uB + uLSheen*lSide*(0.18+0.75*lBack);
+          diffuseColor.a*=smoothstep(0.30,0.95,lE)*smoothstep(0.36,0.66,lF)*uK; }`);
+  };
+  m.customProgramCacheKey=()=>'loomShell';
+  return m;
+}
+// Soft tuft: the icosahedron WELDED (r128's polyhedra are unindexed, so their normals are
+// per-face — that is the whole gemstone look), lumped with smooth low-frequency noise, and
+// given smooth normals. Detail 1 for the thousands of small ones, detail 2 for big masses.
+function loomPuffGeo(detail, amp, seed){
+  const g=new T.IcosahedronGeometry(1,detail), p=g.attributes.position;
+  const map=new Map(), v=[], idx=[];
+  for(let i=0;i<p.count;i++){
+    const k=Math.round(p.getX(i)*1e4)+','+Math.round(p.getY(i)*1e4)+','+Math.round(p.getZ(i)*1e4);
+    let j=map.get(k);
+    if(j===undefined){ j=v.length/3; map.set(k,j); v.push(p.getX(i),p.getY(i),p.getZ(i)); }
+    idx.push(j);
+  }
+  for(let j=0;j<v.length;j+=3){
+    const x=v[j], y=v[j+1], z=v[j+2];
+    const n=Math.sin(x*2.9+seed)*Math.sin(y*2.5+seed*1.3)*Math.sin(z*3.1+seed*0.7)
+           +0.5*Math.sin(x*5.1+y*4.3+z*3.7+seed*2.1);
+    const k=1+amp*n; v[j]*=k; v[j+1]*=k; v[j+2]*=k;
+  }
+  g.dispose();
+  const o=new T.BufferGeometry();
+  o.setAttribute('position', new T.Float32BufferAttribute(v,3));
+  o.setIndex(idx); o.computeVertexNormals();
+  return o;
+}
+const LOOM_PUFF=loomPuffGeo(1, 0.16, 1.7);
+const LOOM_PUFF2=loomPuffGeo(2, 0.13, 0.6);
+const _lq=new T.Quaternion(), _lz=new T.Vector3(0,0,1), _lv=new T.Vector3();
+// feltBatch, in fibre. `dir` on an entry aims its local Z along a vector (threads that have
+// to follow a slope); `o.shell` adds the halo; `o.mat` overrides the material.
+function loomBatch(geo, list, o){
+  o=o||{};
+  const m=new T.InstancedMesh(geo, o.mat||loomMat(0xffffff,null,o.nap,o.sheen), list.length);
+  if(o.nap===0 && !o.mat) m.material.defines={LOOM_NO_NAP:''};
+  m.frustumCulled=false;
+  const d=new T.Object3D(), c=new T.Color();
+  list.forEach((e,i)=>{
+    d.position.set(e.x,e.y,e.z);
+    if(e.dir){ _lv.set(e.dir[0],e.dir[1],e.dir[2]).normalize(); d.quaternion.setFromUnitVectors(_lz,_lv); }
+    else d.rotation.set(e.rx||0, e.ry||0, e.rz||0);
+    d.scale.set(e.s, e.sy!=null?e.sy:e.s, e.sz!=null?e.sz:e.s);
+    d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+    c.setHex(e.c); m.setColorAt(i,c);
+  });
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  if(o.cull!==false){                    // culled on a sphere round every instance
+    if(!geo.boundingSphere) geo.computeBoundingSphere();
+    const r0=geo.boundingSphere.radius, c0=new T.Vector3(); let n=0;
+    for(const e of list){ c0.x+=e.x; c0.y+=e.y; c0.z+=e.z; n++; }
+    c0.multiplyScalar(1/Math.max(1,n)); let R=0;
+    for(const e of list){ const sc=Math.max(e.s, e.sy!=null?e.sy:e.s, e.sz!=null?e.sz:e.s);
+      R=Math.max(R, Math.hypot(e.x-c0.x,e.y-c0.y,e.z-c0.z)+r0*sc*1.2); }
+    // r128 culls on geometry.boundingSphere, and the geometry is shared — so each batch gets
+    // a view that shares the same attribute buffers (no copy) and carries its own sphere
+    const g2=new T.BufferGeometry(); g2.index=geo.index;
+    for(const k in geo.attributes) g2.attributes[k]=geo.attributes[k];
+    g2.boundingSphere=new T.Sphere(c0,R);
+    m.geometry=g2; m.frustumCulled=true;
+  }
+  if(o.shell){
+    const sg=geo.clone(); sg.scale(o.shellR||1.13, o.shellR||1.13, o.shellR||1.13);
+    const sh=new T.InstancedMesh(sg, loomShellMat(o.shell, o.shellB, o.fog), list.length);
+    sh.frustumCulled=false; sh.instanceMatrix=m.instanceMatrix; sh.instanceColor=m.instanceColor;
+    if(m.frustumCulled){ sg.boundingSphere=m.geometry.boundingSphere.clone(); sh.frustumCulled=true; }
+    m.add(sh); m.userData.shell=sh;
+  }
+  return m;
+}
+// A list laid in lap order (verge, fringe, stitches) split into contiguous runs, each its
+// own culled batch: one draw a run, and the half of the lap behind you costs nothing.
+function loomChunks(geo, list, o, n){
+  const g=new T.Group(), per=Math.ceil(list.length/n);
+  for(let k=0;k<list.length;k+=per) g.add(loomBatch(geo, list.slice(k,k+per), o||{}));
+  return g;
+}
+// A box from point a to point b (centre, length along local Z, aimed with `dir`).
+function loomSpan(list, a, b, w, h, c){
+  const dx=b[0]-a[0], dy=b[1]-a[1], dz=b[2]-a[2], L=Math.hypot(dx,dy,dz)||1;
+  list.push({x:(a[0]+b[0])/2, y:(a[1]+b[1])/2, z:(a[2]+b[2])/2, s:w, sy:h, sz:L, dir:[dx,dy,dz], c});
+}
+// Where the deck/berm surface is at lateral `out` (signed side) — the berm mesh is a
+// straight strip from the BANKED lip at FELT_BERM_IN to the buried toe at FELT_BERM_OUT,
+// so this matches the triangle actually drawn, not an approximation of it.
+function loomBermY(s, side, out, inner){
+  const lipY=s.p.y+s.bn.y*side*FELT_BERM_IN+0.15;
+  if(out<=HW) return s.p.y+s.bn.y*side*out;
+  if(out<=FELT_BERM_IN) return Math.min(s.p.y+s.bn.y*side*out, lipY);
+  if(out>=FELT_BERM_OUT) return feltHeight(s.p.x+s.n.x*side*out, s.p.z+s.n.z*side*out, null, inner);
+  const ox=s.p.x+s.n.x*side*FELT_BERM_OUT, oz=s.p.z+s.n.z*side*FELT_BERM_OUT;
+  const toe=feltHeight(ox,oz,null,inner)-3.5, k=(out-FELT_BERM_IN)/(FELT_BERM_OUT-FELT_BERM_IN);
+  return lipY*(1-k)+toe*k;
+}
+/* WHERE THE GROUND ACTUALLY IS. feltHeight() is the analytic surface; what is DRAWN is a
+   12.5-unit triangulation of it, and on a ridged crest the two part company — measured, the
+   analytic height sits up to 23 units above the drawn triangle and more than 5 above it over
+   about one point in twenty of the valley. Anything seated on the analytic height alone
+   hangs in the air on a ridge (Felicia's stones and fleece do). So the grounded props here
+   read the drawn mesh itself: the terrain's own vertex grid, interpolated on the same two
+   triangles per cell that PlaneGeometry draws, and they take the lower of the two surfaces. */
+let LOOM_GRID=null;                      // Felicity's terrain heights, set by loomTerrain()
+function loomMeshH(x, z){
+  const G=LOOM_GRID; if(!G) return 1e9;
+  const fx=(x+950)/12.5, fz=(z+950)/12.5, ix=Math.floor(fx), iz=Math.floor(fz);
+  if(ix<0||iz<0||ix>=152||iz>=152) return 1e9;
+  const u=fx-ix, v=fz-iz, h=(i,j)=>G[(j*153+i)*3+1];
+  if(u+v<=1) return h(ix,iz)+(h(ix+1,iz)-h(ix,iz))*u+(h(ix,iz+1)-h(ix,iz))*v;
+  return h(ix+1,iz+1)+(h(ix,iz+1)-h(ix+1,iz+1))*(1-u)+(h(ix+1,iz)-h(ix+1,iz+1))*(1-v);
+}
+// lowest ground under a footprint, so nothing on a slope hangs a corner in the air
+function loomGround(x, z, r, inner){
+  let y=Math.min(feltHeight(x,z,null,inner), loomMeshH(x,z));
+  for(const [a,b] of [[1,0],[-1,0],[0,1],[0,-1],[0.7,0.7],[-0.7,0.7],[0.7,-0.7],[-0.7,-0.7]])
+    y=Math.min(y, feltHeight(x+a*r, z+b*r, null, inner), loomMeshH(x+a*r, z+b*r));
+  return y;
+}
+
+/* THE SKY. Felicia's poster-banded dusk, kept band for band, with the one thing it lacked:
+   the sun. Stated in the material of the place — not a glowing disc but an APPLIQUÉ: a gold
+   core, an ember ring and a crimson ring cut from felt and stacked, their edges fuzzed by a
+   fibre noise, a cream running stitch round the core. Around it the sky warms to ember
+   and gold in a wide low glow, and the fbm clouds take a gold edge on the sun side. */
+function loomSky(){
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uTime:{value:0}, uSun:{value:LOOM_SUN.clone()} },
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uTime; uniform vec3 uSun;
+      vec3 h3(vec3 p){ p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),
+        dot(p,vec3(113.5,271.9,124.6))); return fract(sin(p)*43758.5453123)*2.0-1.0; }
+      float gn(vec3 p){ vec3 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);
+        return mix(mix(mix(dot(h3(i),f),dot(h3(i+vec3(1,0,0)),f-vec3(1,0,0)),u.x),
+                   mix(dot(h3(i+vec3(0,1,0)),f-vec3(0,1,0)),dot(h3(i+vec3(1,1,0)),f-vec3(1,1,0)),u.x),u.y),
+                   mix(mix(dot(h3(i+vec3(0,0,1)),f-vec3(0,0,1)),dot(h3(i+vec3(1,0,1)),f-vec3(1,0,1)),u.x),
+                   mix(dot(h3(i+vec3(0,1,1)),f-vec3(0,1,1)),dot(h3(i+vec3(1,1,1)),f-vec3(1,1,1)),u.x),u.y),u.z)*0.5+0.5; }
+      float fbm3(vec3 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*gn(p); p*=2.07; a*=0.5; } return v; }
+      void main(){
+        vec3 d=normalize(vP - cameraPosition); float el=d.y;
+        float sd=dot(d,uSun);
+        vec3 c=mix(vec3(0.230,0.090,0.220), vec3(0.925,0.180,0.240), smoothstep(-0.08,0.30,el));
+        c=mix(c, vec3(0.855,0.090,0.470), smoothstep(0.22,0.92,el));
+        // the sun's glow: wide and low, ember to gold, and it never reaches the zenith
+        float low=1.0-smoothstep(0.02,0.62,el);
+        float s1=max(sd,0.0), s2=s1*s1, s4=s2*s2, s32=s4*s4; s32*=s32; s32*=s32;
+        c=mix(c, vec3(1.000,0.420,0.180), s4*s1*low*0.80);
+        c=mix(c, vec3(1.000,0.660,0.260), s32*s4*0.85);
+        vec3 q=vec3(d.x*2.6, d.y*11.0, d.z*2.6)+vec3(uTime*0.008,0.0,uTime*0.005);
+        float n=fbm3(q), n2=fbm3(q*2.3+17.0);
+        c=mix(c, vec3(1.0,0.72,0.28), smoothstep(0.52,0.72,n2)*smoothstep(0.10,0.55,el)*0.35);
+        // cloud: Felicia's blue-grey, warmed on the sun side and edged gold toward it
+        vec3 cs=mix(vec3(0.330,0.300,0.420), vec3(0.560,0.300,0.380), smoothstep(-0.4,0.9,sd));
+        vec3 cl=mix(vec3(0.860,0.780,0.800), vec3(1.000,0.760,0.480), s2*s1);
+        vec3 cloud=mix(cs, cl, smoothstep(0.45,0.85,n));
+        c=mix(c, cloud, smoothstep(0.47,0.70,n)*smoothstep(-0.03,0.22,el)*0.88*(1.0-0.8*smoothstep(0.990,0.997,sd)));
+        // THE APPLIQUÉ SUN: three cut discs, fuzzed at the edge by fibre (only near it: the
+        // dome is a full-screen shader and these are its most expensive lines)
+        if(sd>0.9945){
+        float ang=sqrt(max(0.0,2.0*(1.0-sd)));                // small-angle acos
+        float fz=(fract(sin(dot(d,vec3(12.9898,78.233,37.719))*1731.0)*43758.5453)-0.5)*0.0042;
+        float a2=ang+fz;
+        c=mix(c, vec3(0.760,0.110,0.170), 1.0-smoothstep(0.0890,0.0905,a2));
+        c=mix(c, vec3(0.960,0.360,0.130), 1.0-smoothstep(0.0650,0.0665,a2));
+        c=mix(c, vec3(1.000,0.760,0.300), 1.0-smoothstep(0.0440,0.0455,a2));
+        // the running stitch round the core: cream thread, dashes on the ring
+        vec3 e1=normalize(cross(uSun,vec3(0.0,1.0,0.0))), e2=cross(e1,uSun);
+        float ph=atan(dot(d,e2),dot(d,e1));
+        float dash=step(0.42,fract(ph*28.0/6.2832));
+        float ring=1.0-smoothstep(0.0011,0.0021,abs(ang-0.0545));
+        c=mix(c, vec3(0.980,0.930,0.840), ring*dash*0.95);
+        }
+        c=floor(c*13.0+0.5)/13.0;                       // Felicia's poster banding, kept
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,36,24), mat);   // < camera.far (1400)
+  m.frustumCulled=false; return m;
+}
+
+/* THE GROUND. Felicia's heights exactly (feltHeight — so every placement rule that reads
+   it still holds), coloured per FRAGMENT. The vertex carries only smooth quantities: the
+   strata coordinate, how deep in the basin it sits and how far into the haze; the shader
+   does the banding, so every sheet edge is crisp at any slope instead of smearing into
+   the vertical rainbow streaks that 12-unit facets painted with 17-unit bands produce.
+     strata: each sheet a flat colour, a pressed cream lip on its upper edge and the
+       shadow of the sheet above along its lower one — poured, layered felt;
+     basin: Felicia's value ladder (the lowland sinks to plum-black so the road reads as
+       the light ribbon), but now a PATCHWORK of quilted fields with stitched seams, so the
+       darkest ground in the frame is still a textile;
+     haze: the ranges give up chroma with distance from the circuit and lean toward the
+       dusk horizon, so the marbling lives in the middle distance and the skyline steps
+       back behind it. */
+function loomPalTex(){
+  const d=new Uint8Array(FELT_PAL.length*4);
+  FELT_PAL.forEach((h,i)=>{ d[i*4]=(h>>16)&255; d[i*4+1]=(h>>8)&255; d[i*4+2]=h&255; d[i*4+3]=255; });
+  const t=new T.DataTexture(d, FELT_PAL.length, 1, T.RGBAFormat);
+  t.magFilter=t.minFilter=T.NearestFilter; t.generateMipmaps=false; t.needsUpdate=true; return t;
+}
+function loomTerrain(inner){
+  const EXT=1900, SEG=152;
+  const g=new T.PlaneGeometry(EXT,EXT,SEG,SEG); g.rotateX(-Math.PI/2);
+  const pos=g.attributes.position, N=pos.count;
+  const aT=new Float32Array(N), aS=new Float32Array(N), aH=new Float32Array(N), aP=new Float32Array(N*2);
+  for(let i=0;i<N;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    const f=feltField(x,z), y=feltHeight(x,z,f,inner);
+    pos.setY(i,y);
+    const w=(fFbm(x*0.0065,z*0.0065,3,FELT_SEED+12)-0.5)*46;
+    aT[i]=(y+w+240)/17;
+    aS[i]=1-fSm(-30,130,y-f.sy);
+    aH[i]=fSm(150,620,f.d);
+    aP[i*2]  =x*0.80+z*0.60+(fFbm(x*0.011,z*0.011,2,FELT_SEED+31)-0.5)*44;
+    aP[i*2+1]=z*0.80-x*0.60+(fFbm(x*0.011,z*0.011,2,FELT_SEED+47)-0.5)*44;
+  }
+  LOOM_GRID=pos.array;                  // the drawn surface, for loomGround()
+  g.setAttribute('aLT', new T.BufferAttribute(aT,1));
+  g.setAttribute('aLS', new T.BufferAttribute(aS,1));
+  g.setAttribute('aLH', new T.BufferAttribute(aH,1));
+  g.setAttribute('aLP', new T.BufferAttribute(aP,2));
+  g.computeVertexNormals();
+  const pal=loomPalTex();
+  const mat=loomPatch(new T.MeshLambertMaterial({color:0xffffff}), 0.9, 0.10, sh=>{
+    sh.uniforms.uLPal={value:pal};
+    sh.vertexShader=sh.vertexShader
+      .replace('#include <common>','#include <common>\nattribute float aLT; attribute float aLS; attribute float aLH; attribute vec2 aLP;\nvarying float vLT; varying float vLS; varying float vLH; varying vec2 vLP;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvLT=aLT; vLS=aLS; vLH=aLH; vLP=aLP;');
+    sh.fragmentShader=sh.fragmentShader
+      .replace('#include <common>','#include <common>\nuniform sampler2D uLPal; varying float vLT; varying float vLS; varying float vLH; varying vec2 vLP;')
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );',`vec4 diffuseColor = vec4( diffuse, opacity );
+        { // marbling: the seam between two sheets wanders on a ~60-unit scale as poured felt does
+          float lT=vLT+(texture2D(uLNoise, vLW.xz*0.0105+vLW.y*0.006).r-0.5)*0.42;
+          float b=floor(lT), fr=lT-b;
+          vec3 c=texture2D(uLPal, vec2((mod(b,14.0)+0.5)/14.0,0.5)).rgb;
+          float near=1.0-0.65*vLH;
+          c=mix(c, vec3(0.910,0.894,0.851), step(0.885,fr)*0.34*near);    // the pressed lip
+          c*=1.0-0.30*(1.0-smoothstep(0.0,0.06,fr));                      // shadow of the sheet above
+          // every third seam is SEWN: a cream running stitch just under the lip
+          float sew=step(2.5,mod(b,3.0))*step(0.80,fr)*step(fr,0.845)*step(0.45,fract((vLW.x*0.71+vLW.z*0.71+vLW.y*0.4)*0.16));
+          c=mix(c, vec3(0.930,0.880,0.780), sew*0.85*near);
+          // the quilted lowland: fields on a warped, rotated grid, one dark dye each,
+          // a darker stitched seam between them
+          vec2 p=vLP;
+          vec2 cell=floor(p/vec2(74.0,52.0)), cf=fract(p/vec2(74.0,52.0));
+          float hc=lHash(vec3(cell,3.7));
+          vec3 dye=hc<0.17?vec3(0.200,0.045,0.230):hc<0.34?vec3(0.035,0.170,0.185):hc<0.51?vec3(0.070,0.090,0.290)
+                  :hc<0.68?vec3(0.290,0.040,0.080):hc<0.84?vec3(0.120,0.160,0.060):vec3(0.300,0.100,0.050);
+          dye*=0.55+0.25*lHash(vec3(cell,9.1));
+          float edge=min(min(cf.x,1.0-cf.x)*74.0, min(cf.y,1.0-cf.y)*52.0);
+          float seam=1.0-smoothstep(0.6,1.8,edge);
+          float dsh=step(0.45,fract((cf.x*74.0+cf.y*52.0)*0.19));
+          vec3 lowland=dye*(1.0-0.55*seam)+vec3(0.50,0.38,0.32)*seam*dsh*0.30;
+          c=mix(c, vec3(0.082,0.024,0.094), vLS*0.90);
+          c=mix(c, lowland, vLS*vLS*0.80*(1.0-vLH));
+          float lum=dot(c,vec3(0.30,0.52,0.18));
+          c=mix(c, mix(vec3(lum)*0.75, vec3(0.300,0.085,0.170), 0.62), vLH*0.80);
+          diffuseColor.rgb*=c*0.66; }`);
+  }, 'loomTerrain');
+  mat.defines={LOOM_NO_NAP:'', LOOM_NO_SHEEN:''};
+  const m=new T.Mesh(g, mat);
+  m.frustumCulled=false;
+  return m;
+}
+
+/* CLOUDS AS ROVING. Felicia's clouds are grey faceted rocks parked in the sky. Wool roving
+   is what a felter makes a cloud from: a hank of combed fibre, drawn out thin at both ends.
+   Each bank is a line of soft puffs, tapering, elongated along the hank, haloed with loose
+   fibre; lit by the low sun so the near side goes apricot and the far side lavender-plum.
+   Same ring, same height band, same slow drift as Felicia's (TRACK_PULSE.feltClouds). */
+function loomClouds(ccx, ccz){
+  const cl=[];
+  for(let i=0;i<15;i++){
+    const a=(i/15)*6.283+((i*37)%13)/13*0.5, r=860+((i*97)%380), by=235+((i*53)%160);
+    const n=6+(i%4), len=230+((i*71)%210), dir=a+1.57+(((i*13)%7)-3)*0.10;
+    const bx=ccx+Math.cos(a)*r, bz=ccz+Math.sin(a)*r;
+    for(let j=0;j<n;j++){
+      const t=j/(n-1)-0.5, taper=1-Math.pow(Math.abs(t)*2,1.7)*0.62;
+      const s=(44+((i*29+j*17)%30))*taper;
+      cl.push({x:bx+Math.cos(dir)*t*len+(((i*7+j*13)%9)-4)*4, y:by+Math.sin(t*3.1+i)*9+((j*7)%5)*2,
+               z:bz+Math.sin(dir)*t*len+(((i*11+j*5)%9)-4)*4,
+               s:s*1.55, sy:s*0.40, sz:s*0.86, ry:-dir+(((j*5)%7)-3)*0.05,
+               c:((i+j)%3) ? 0xf8cfc4 : 0xd9a6c4});
+    }
+  }
+  const cm=loomBatch(LOOM_PUFF2, cl, {nap:0.6, sheen:1.1, shell:0.85, shellR:1.16, shellB:0.80, fog:false});
+  cm.material.fog=false;
+  cm.material.emissive.setHex(0x3a1630);
+  const cg=new T.Group(); cg.position.set(ccx,0,ccz);
+  cm.position.set(-ccx,0,-ccz); cg.add(cm);
+  return cg;
+}
+
+/* THE WOVEN DECK. Felicia's poured strata sheet, unchanged in colour and band (it is the
+   same place), and then WOVEN: a 2/2 twill — warp ends two texels wide, picks eight texels
+   long, so each float is about 0.7 x 0.7 units on the deck and the diagonal rib reads in
+   the near road, where the eye actually is, before it mips away. Over-floats lighter and
+   rounded, under-floats sunk; a little per-end tension so it is a hand weave, not a print. */
+function loomRoadPaint(rg, rc){
+  rc.width=128; rc.height=1024;
+  const RW=128, RH=1024, BP=32, TAU=Math.PI*2;
+  const ROADPAL=[0x170a24,0x3a1440,0x1b2350,0xc11b2e,0x2438a8,0x170a24,
+                 0xc4207e,0x3a1440,0x5a6b84,0x1f6b70,0x1b2350];
+  const RP=ROADPAL.map(h=>[(h>>16)&255,(h>>8)&255,h&255]);
+  const sax=new Float32Array(RW), cax=new Float32Array(RW), s2x=new Float32Array(RW);
+  for(let x=0;x<RW;x++){ sax[x]=Math.sin(x*TAU/RW); cax[x]=Math.cos(x*TAU/RW); s2x[x]=Math.sin(x*TAU*2/RW+1.7); }
+  const ten=new Float32Array(RW);                       // per-end tension: hand-dressed warp
+  for(let x=0;x<RW;x++) ten[x]=1+Math.sin(x*0.63)*0.025+Math.sin(x*0.17+1.3)*0.03+(((x*2654435761)>>>27)-16)/900;
+  const dye=b=>0.80+(((b*2654435761)>>>13)%64)/180;
+  const img=rg.createImageData(RW,RH), D=img.data;
+  for(let y=0;y<RH;y++){
+    const wy = BP*0.20*Math.sin(y*TAU*6/RH) + BP*0.55*Math.sin(y*TAU*2/RH+2.1) + BP*0.04*Math.sin(y*TAU*13/RH+0.7);
+    const dwy = BP*0.20*Math.cos(y*TAU*6/RH)*TAU*6/RH + BP*0.55*Math.cos(y*TAU*2/RH+2.1)*TAU*2/RH
+              + BP*0.04*Math.cos(y*TAU*13/RH+0.7)*TAU*13/RH;
+    const sby=Math.sin(y*TAU*2/RH), cby=Math.cos(y*TAU*2/RH);
+    const pxb=BP/Math.max(0.25,1+dwy);
+    const pick=y>>3, py=(y&7)/7;
+    for(let x=0;x<RW;x++){
+      const wx = BP*0.22*(sax[x]*cby+cax[x]*sby) + BP*0.11*s2x[x];
+      const u=(y+wy+wx)/BP, band=Math.floor(u), f=u-band;
+      const c=RP[((band%RP.length)+RP.length)%RP.length];
+      // the twill: which thread is on top at this float, and where in its round we are
+      const end=x>>1, over=((end+pick)&3)<2;
+      const round=over ? 1.10-0.16*Math.abs((x&1)-0.5)*2 : 0.84-0.10*Math.abs(py-0.5)*2;
+      let k=dye(band)*ten[x]*round;
+      let r=c[0]*k, g2=c[1]*k, b2=c[2]*k;
+      const dTop=f*pxb, dBot=(1-f)*pxb;
+      const lip=0.34+(((band*40503)>>>11)%48)/100;
+      if(dTop<2.0){ const a=(0.62*(1-dTop/2.0)+0.16)*lip*1.5; r+=(232-r)*a; g2+=(228-g2)*a; b2+=(217-b2)*a; }
+      else if(dBot<2.4){ const a=(0.58*(1-dBot/2.4)+0.14)*lip*1.5; r*=1-a; g2*=1-a; b2*=1-a; }
+      const o=(y*RW+x)*4;
+      D[o]=Math.min(255,r); D[o+1]=Math.min(255,g2); D[o+2]=Math.min(255,b2); D[o+3]=255;
+    }
+  }
+  for(let i=0;i<9000;i++){
+    const o=((Math.random()*RW*RH)|0)*4, d=Math.random()<0.5?-16:20;
+    D[o]=Math.max(0,Math.min(255,D[o]+d)); D[o+1]=Math.max(0,Math.min(255,D[o+1]+d)); D[o+2]=Math.max(0,Math.min(255,D[o+2]+d));
+  }
+  rg.putImageData(img,0,0);
+}
+
+/* A KILIM. The cloth on the looms and the tunnel roofs: bands of the valley palette with
+   stepped diamonds — the motif every flat-weave tradition shares, and abstract, which is
+   the point. Woven texture on top, so close up it is threads and far off it is pattern. */
+let LOOM_KILIM=null;
+function loomKilimTex(){
+  if(LOOM_KILIM) return LOOM_KILIM;
+  const c=document.createElement('canvas'); c.width=128; c.height=256;
+  const g=c.getContext('2d');
+  const B=['#c11b2e','#170a24','#e8b22a','#3a1440','#e8408c','#1b2350','#e86a22','#1f6b70'];
+  for(let y=0;y<256;y++){
+    const band=Math.floor(y/32), fy=(y%32)/32;
+    g.fillStyle=B[band%B.length]; g.fillRect(0,y,128,1);
+    // stepped diamonds centred in each band, in the next colour round
+    for(let k=0;k<4;k++){
+      const cx=16+k*32, half=Math.round((0.5-Math.abs(fy-0.5))*30/4)*4;
+      g.fillStyle=B[(band+3)%B.length]; g.fillRect(cx-half/2,y,half,1);
+      if(half>8){ g.fillStyle='#e8e4d9'; g.fillRect(cx-2,y,4,1); }
+    }
+    if(y%32<2){ g.fillStyle='#e8e4d9'; g.fillRect(0,y,128,1); }
+  }
+  // weave: alternate rows and columns a shade apart
+  g.globalAlpha=0.10;
+  for(let y=0;y<256;y+=2){ g.fillStyle='#000'; g.fillRect(0,y,128,1); }
+  for(let x=0;x<128;x+=2){ g.fillStyle='#fff'; g.fillRect(x,0,1,256); }
+  g.globalAlpha=1;
+  LOOM_KILIM=new T.CanvasTexture(c); LOOM_KILIM.encoding=T.sRGBEncoding;
+  LOOM_KILIM.wrapS=LOOM_KILIM.wrapT=T.RepeatWrapping;
+  return LOOM_KILIM;
+}
+// Wound yarn for the giant balls: strands laid round in crossing courses, greyscale so
+// the instance colour dyes it.
+function loomYarnTex(){
+  const c=document.createElement('canvas'); c.width=256; c.height=128;
+  const g=c.getContext('2d');
+  g.fillStyle='#d8d8d8'; g.fillRect(0,0,256,128);
+  for(let course=0;course<5;course++){
+    const tilt=(course-2)*0.38, ph=course*1.7;
+    for(let k=0;k<26;k++){
+      g.strokeStyle=k%3?'rgba(60,60,60,0.55)':'rgba(255,255,255,0.55)'; g.lineWidth=k%3?1.6:2.4;
+      for(const wrap of [-128,0,128]){            // drawn three times so it tiles in v
+        g.beginPath();
+        for(let x=0;x<=256;x+=8){
+          const y=((k*5+course*11)%128)+x*tilt*0.25+Math.sin(x*0.0245+ph)*10+wrap;
+          if(x===0) g.moveTo(x,y); else g.lineTo(x,y);
+        }
+        g.stroke();
+      }
+    }
+  }
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping;
+  return t;
+}
+
+/* THE SHOULDERS. Felicia's two jobs, done in fibre:
+     the wool BANKS stay where her walls are (just past 48.4 infield and 28.2 outside),
+       as soft welded tufts with the fibre halo, so the edge of the world is a fleece;
+     the in-corridor KERB becomes the blanket's FRINGE — tassels lying out from the deck
+       edge and down the embankment, every one inside 0.9 of the surface it lies on. Felicia's
+       kerb was puffs up to 2.6 high standing in the drivable apron; a fringe is the same
+       sparkle of cream at the road edge, and it is something you drive OVER, not through.
+       Tied in bundles with gaps, on an irregular count, so it ticks rather than strobes. */
+function loomVerge(inner){
+  const tufts=[], fringe=[];
+  for(let i=0;i<STEPS;i+=2){
+    const s2=SAMP[i];
+    for(const side of [-1,1]){
+      // Felicia's rows, with one correction: her jitter is in world x/z, so on some samples
+      // it carried a tuft three units back inside its wall. Here the jitter runs ALONG the
+      // road only, and every tuft's own radius is kept clear of the wall it stands behind.
+      const wall=(side*inner>0) ? HW*2.2 : HW*1.28, base=(side*inner>0) ? HW*2.40 : HW*1.46;
+      for(let b=0;b<3+((i*13)%3);b++){
+        const sz=2.1+b*1.05+((i*17+b*37)%22)/10;
+        const out=Math.max(base+b*3.2+((i*11+b*29)%20)/5, wall+sz*1.2+0.6);
+        const jt=(((i*19+b*7)%14)-7)*0.5;
+        tufts.push({x:s2.p.x+s2.n.x*side*out+s2.t.x*jt,
+                    y:feltSeat(s2,side,out,inner)+sz*0.30+((i*23+b*5)%12)*0.12,
+                    z:s2.p.z+s2.n.z*side*out+s2.t.z*jt,
+                    s:sz, sy:sz*(0.62+((i*31+b*11)%44)/90), rx:((i*3)%628)/100,
+                    ry:((i*7+b)%628)/100, rz:((i*5+b*3)%628)/100,
+                    c:FELT_BANK[(i+b*3)%FELT_BANK.length]});
+      }
+    }
+  }
+  const FR=[0xd8ccb4,0xc9a24a,0xd8ccb4,0x8a2a4a,0xd8ccb4,0xc9a24a,0x5a6b84];
+  for(const side of [-1,1]){
+    let i=0, bundle=0;
+    while(i<STEPS){
+      const n=3+((bundle*7+(side>0?2:0))%4), col=FR[(bundle*3+(side>0?1:0))%FR.length];
+      for(let q=0;q<n && i<STEPS;q++,i++){
+        const s2=SAMP[i];
+        const o0=HW-0.4, o1=HW+3.0+((i*13+(side>0?5:0))%7)*0.28;
+        const a=[s2.p.x+s2.n.x*side*o0, loomBermY(s2,side,o0,inner)+0.22, s2.p.z+s2.n.z*side*o0];
+        const b=[s2.p.x+s2.n.x*side*o1+s2.t.x*0.6, loomBermY(s2,side,o1,inner)+0.18, s2.p.z+s2.n.z*side*o1+s2.t.z*0.6];
+        loomSpan(fringe, a, b, 0.62, 0.34, col);
+      }
+      i+=1+((bundle*5)%3); bundle++;                 // the gap between bundles
+    }
+  }
+  trackGroup.add(loomChunks(LOOM_PUFF, tufts, {sheen:1.2, nap:0}, 9));
+  trackGroup.add(loomChunks(new T.BoxGeometry(1,1,1), fringe, {nap:0.4, sheen:0.6}, 5));
+}
+
+/* THE HEM, as BLANKET STITCH. Felicia's navy couched cord stays (it is right: a hem is
+   quiet). What changes is the stitch over it: her gold slanted bars read at speed as
+   yellow tags dropped along the edge. A blanket stitch is the edge stitch felt is actually
+   finished with — legs at right angles into the cloth, every one the same length, the
+   thread running along the edge between them — cream, low, and on a steady pitch with a
+   small irregularity, so it reads as a hand-sewn edge you can measure your speed against. */
+function loomStitch(loop){
+  const stitch=[], HEMOUT=HW-0.9;
+  for(const side of [1,-1]){
+    const cp=[];
+    for(let i=0;i<STEPS;i+=4){
+      const s2=SAMP[i], e=s2.p.clone().addScaledVector(s2.bn, side*HEMOUT);
+      cp.push(new T.Vector3(e.x, e.y+0.26, e.z));
+    }
+    if(!loop) cp.push(SAMP[STEPS-1].p.clone().addScaledVector(SAMP[STEPS-1].bn,side*HEMOUT).add(new T.Vector3(0,0.26,0)));
+    trackGroup.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cp, loop), cp.length*2, 0.48, 6, loop),
+      loomMat(0x1b2350, null, 0.3, 0.5)));
+    let i=0, n=0;
+    while(i<STEPS){
+      const s2=SAMP[i], yaw=Math.atan2(s2.t.x,s2.t.z);
+      // laid ON the banked cross-section (both ends off s.bn), not level: on a superelevated
+      // corner a level 2.5-unit leg stands a unit proud of the deck at one end
+      const L=2.5+((n*7)%3)*0.12, o1=HEMOUT+0.3, o0=o1-L;
+      const a=s2.p.clone().addScaledVector(s2.bn, side*o0), b=s2.p.clone().addScaledVector(s2.bn, side*o1);
+      loomSpan(stitch, [a.x,a.y+0.10,a.z], [b.x,b.y+0.10,b.z], 0.40, 0.20, (n%11===5)?0xe8b22a:0xe8e4d9);
+      i += 1+((n%5)===2?1:0); n++;
+    }
+  }
+  { let i=0, n=0;
+    while(i<STEPS){
+      const s2=SAMP[i], yaw=Math.atan2(s2.t.x,s2.t.z);
+      stitch.push({x:s2.p.x, y:s2.p.y+0.15, z:s2.p.z, s:1.00, sy:0.22, sz:2.6+((n*17)%7)*0.14, ry:yaw,
+                   c:(n%7===3)?0xe8e4d9:0xe8b22a});
+      i += 2; n++;
+    }
+  }
+  trackGroup.add(loomChunks(new T.BoxGeometry(1,1,1), stitch, {nap:0.2, sheen:0.4}, 5));
+}
+
+// Shared shuttle: a boat of polished wood, pointed both ends, with a cream pirn showing.
+function loomShuttle(L, s2, y, a, b, per, ph){
+  const yaw=Math.atan2(s2.t.x,s2.t.z);
+  const m=new T.Mesh(LOOM_PUFF2, loomMat(0x9a6a36, null, 0.3, 1.2));
+  m.scale.set(4.6,1.1,1.5); m.rotation.y=yaw;
+  const pirn=new T.Mesh(LOOM_PUFF, loomMat(0xe8e4d9, null, 0.5, 0.8));
+  pirn.scale.set(0.42,0.9,0.75); pirn.position.y=0.55; m.add(pirn);
+  const th=new T.Mesh(new T.BoxGeometry(1,1,1), loomMat(0xe8e4d9, null, 0.2, 0.6));
+  th.rotation.y=yaw; th.scale.set(1,0.28,0.28);
+  trackGroup.add(m); trackGroup.add(th);
+  L.shuttles.push({m, th, p:s2.p.clone(), n:s2.n.clone(), y, a, b, per, ph});
+}
+
+/* THE START, as a WARP BEAM. Felicia's gate has two faults that are not matters of taste:
+   its beam and banner are aligned ALONG the road (its local Z is the tangent), so from
+   the grid it is a long plank lying lengthways over the racers rather than a gate; and its
+   posts stand at HW+3, inside the 28.2 outer wall, where a kart pinned to the outside
+   drives through them. This one stands its posts outside both walls (34 outside, 54 in),
+   spans the corridor with the beam, and hangs a woven banner from it with a tasselled
+   fringe and pom-pom finials — every part of it over the corridor stays above +23. */
+function loomGate(inner){
+  const s0=SAMP[0], yaw=Math.atan2(s0.t.x,s0.t.z), box=[], pom=[], tas=[];
+  const LO=-inner*34, LI=inner*54, LM=(LO+LI)/2, SPAN=Math.abs(LI-LO);
+  const at=(lat)=>[s0.p.x+s0.n.x*lat, s0.p.z+s0.n.z*lat];
+  const top=s0.p.y+37;
+  for(const lat of [LO,LI]){
+    const [x,z]=at(lat), gy=loomGround(x,z,4,inner)-1.5;
+    box.push({x, y:(gy+top+2)/2, z, s:4.2, sy:top+2-gy, sz:4.0, ry:yaw, c:0x3a2a24});
+    box.push({x, y:gy+2.2, z, s:9.0, sy:4.4, sz:8.0, ry:yaw, c:0x2a1c18});
+    for(let k=0;k<3;k++) pom.push({x, y:top+4.6+k*3.1, z, s:3.1-k*0.55, sy:(3.1-k*0.55)*0.9,
+      ry:k*2.1, c:[0xe8408c,0xe8e4d9,0xc4207e][k]});
+  }
+  { const [x,z]=at(LM); box.push({x, y:top, z, s:SPAN+12, sy:3.8, sz:4.2, ry:yaw, c:0x4a3a2e}); }
+  // the banner: kilim, centred over the road, hanging from the beam to +25.5
+  const W=50, Hb=6.5, bt=top-2.0;
+  const pl=new T.Mesh(new T.PlaneGeometry(W,Hb), loomPatch(new T.MeshLambertMaterial({map:loomKilimTex(), side:T.DoubleSide}),0.5,0.7));
+  pl.material.map=loomKilimTex().clone(); pl.material.map.needsUpdate=true; pl.material.map.repeat.set(2.2,0.4);
+  pl.position.set(s0.p.x, bt-Hb/2, s0.p.z); pl.rotation.y=yaw; trackGroup.add(pl);
+  box.push({x:s0.p.x, y:bt-Hb-0.6, z:s0.p.z, s:W+1, sy:1.2, sz:1.4, ry:yaw, c:0x2a1c18});
+  for(let k=0;k<26;k++){
+    const lat=(k/25-0.5)*W, [x,z]=at(lat), L=2.0+((k*7)%3)*0.5;
+    tas.push({x, y:bt-Hb-1.2-L/2, z, s:0.55, sy:L, sz:0.55, ry:yaw, c:k%4===1?0xe8b22a:k%4===3?0xc11b2e:0xe8e4d9});
+  }
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), box.concat(tas), {nap:0.7, sheen:0.8}));
+  trackGroup.add(loomBatch(LOOM_PUFF, pom, {sheen:1.3}));
+}
+
+/* THE TUNNELS, as LOOMS YOU DRIVE THROUGH. Felicia's colonnade had the right idea — open
+   ribs with the warp running through them — and read as croquet hoops and hosepipe,
+   because a half-torus is not a thing a loom is made of. Here each tunnel is one long
+   floor loom, built the way one is: post-and-lintel frames with knee braces, standing on
+   the embankment outside the 28.2 walls (posts at 33); the WARP running lengthwise
+   overhead; and the CLOTH. You enter under bare warp with the sky through it; halfway in
+   is the fell, where the beater bar is and the shuttle flies across; after it the roof is
+   woven kilim, the light drops, and lanterns hang from the lintels — compression, then
+   release into the sunset at the far mouth. Everything over the corridor is above +31. */
+function loomTunnels(tun, inner){
+  const box=[], warp=[], pom=[], lampP=[], lant=[], L=TRACK_PULSE.loom;
+  const POST=33, TOP=40;
+  const TIMB=[0x2a1c18,0x3a2a24,0x33231c,0x2a1c18,0x4a3a2e];
+  for(const sg of tun){
+    const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
+    const fell=i0+Math.round((i1-i0)*0.42);
+    let i=i0, n=0;
+    while(i<=i1+2){
+      const s2=SAMP[i%STEPS], ry=Math.atan2(s2.t.x,s2.t.z), top=s2.p.y+TOP;
+      const mouth=(n===0)||(i+8>i1+2), c=mouth?0x5a3a26:TIMB[n%TIMB.length];
+      const P=(lat,y,sx,sy,sz,rz,col)=>box.push({x:s2.p.x+s2.n.x*lat, y, z:s2.p.z+s2.n.z*lat,
+        s:sx, sy, sz, ry, rz:rz||0, c:col==null?c:col});
+      for(const sd of [-1,1]){
+        const gy=loomBermY(s2, sd, POST, inner)-2.0;
+        P(sd*POST, (gy+top+2)/2, mouth?6.4:4.6, top+2-gy, mouth?6.4:4.6);
+        P(sd*POST, gy+1.8, mouth?10:7.5, 3.6, mouth?10:7.5, 0, 0x2a1c18);       // footing
+        P(sd*(POST-5.6), top-3.6, 13, 1.8, 2.0, sd>0?-Math.PI/4:Math.PI/4);     // knee brace
+        if(mouth) for(let k=0;k<3;k++) pom.push({x:s2.p.x+s2.n.x*sd*POST, y:top+5.6+k*3.0, z:s2.p.z+s2.n.z*sd*POST,
+          s:3.0-k*0.55, sy:(3.0-k*0.55)*0.9, ry:k*2.1+sd, c:[0xe8408c,0xe8e4d9,0xc4207e][k]});
+      }
+      P(0, top+2, 2*POST+(mouth?14:9), mouth?4.6:3.4, mouth?6:4.2);             // lintel
+      if(mouth){                                                                 // tasselled valance
+        for(let k=0;k<16;k++){ const lat=(k/15-0.5)*2*(POST-4), Lt=2.4+((k*7)%3)*0.6;
+          P(lat, top+2-2.3-Lt/2, 0.6, Lt, 0.6, 0, k%3===1?0xe8b22a:0xe8e4d9); }
+      }
+      // lanterns under the woven half: a felt lantern on a cord, and its glow
+      if(i>fell+2 && !mouth) for(const sd of [-1,1]){
+        const lat=sd*(13+((n*5)%4)), y=top-6.5;
+        P(lat, top-3.0, 0.3, 5.0, 0.3, 0, 0x2a1c18);
+        lant.push({x:s2.p.x+s2.n.x*lat, y, z:s2.p.z+s2.n.z*lat, s:2.2, sy:3.0, sz:2.2, ry, c:0xffc070});
+        lampP.push(s2.p.x+s2.n.x*lat, y, s2.p.z+s2.n.z*lat);
+      }
+      i += 6+((n*5)%4); n++;
+    }
+    // the warp: sixteen ends running from the entry over the frames to the fell
+    for(let w=0;w<16;w++){
+      const lat=(w/15-0.5)*60, col=(w%4===1)?0xe8b22a:0xe8e4d9;
+      for(let k=i0-3;k<fell;k+=3){
+        const a=SAMP[((k%STEPS)+STEPS)%STEPS], b=SAMP[(((k+3)%STEPS)+STEPS)%STEPS];
+        loomSpan(warp, [a.p.x+a.n.x*lat, a.p.y+TOP-0.6, a.p.z+a.n.z*lat],
+                       [b.p.x+b.n.x*lat, b.p.y+TOP-0.6, b.p.z+b.n.z*lat], 0.55, 0.55, col);
+      }
+    }
+    // the cloth: woven from the fell to the far mouth
+    { const cp=[], cu=[], ci=[]; let v=0;
+      for(let k=fell;k<=i1+3;k++){
+        const s2=SAMP[k%STEPS];
+        if(k>fell){ const q=SAMP[(k-1)%STEPS]; v+=s2.p.distanceTo(q.p)/64; }
+        for(let j=0;j<=4;j++){
+          const lat=(j/4-0.5)*62, sag=Math.sin(j/4*Math.PI)*1.4;
+          cp.push(s2.p.x+s2.n.x*lat, s2.p.y+TOP-0.9-sag, s2.p.z+s2.n.z*lat); cu.push(j/4*2, v);
+        }
+      }
+      const rows=cp.length/15;
+      for(let r=0;r<rows-1;r++) for(let j=0;j<4;j++){ const a=r*5+j, b=a+5; ci.push(a,b,a+1, b,b+1,a+1); }
+      const g=new T.BufferGeometry();
+      g.setAttribute('position', new T.Float32BufferAttribute(cp,3));
+      g.setAttribute('uv', new T.Float32BufferAttribute(cu,2));
+      g.setIndex(ci); g.computeVertexNormals();
+      const tex=loomKilimTex();
+      trackGroup.add(new T.Mesh(g, loomPatch(new T.MeshLambertMaterial({map:tex, side:T.DoubleSide}), 0.5, 0.5)));
+    }
+    // the fell: beater bar across, and the shuttle crossing under it
+    const sf=SAMP[fell%STEPS], ry=Math.atan2(sf.t.x,sf.t.z);
+    box.push({x:sf.p.x, y:sf.p.y+TOP-2.2, z:sf.p.z, s:2*POST-2, sy:1.6, sz:2.6, ry, c:0xe8d8b8});
+    loomShuttle(L, sf, sf.p.y+TOP-3.6, -29, 29, 3.4+((i0*7)%5)*0.3, i0*0.37);
+  }
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), box, {nap:0.8, sheen:0.8}));
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), warp, {nap:0.2, sheen:1.0}));
+  if(pom.length) trackGroup.add(loomBatch(LOOM_PUFF, pom, {sheen:1.3}));
+  if(lant.length) trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), lant, {mat:new T.MeshBasicMaterial({color:0xffffff})}));
+  if(lampP.length){
+    const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(lampP,3));
+    const pm=new T.PointsMaterial({map:TEX_SPARK, color:0xffa850, size:15, sizeAttenuation:true,
+      transparent:true, opacity:0.6, blending:T.AdditiveBlending, depthWrite:false});
+    trackGroup.add(new T.Points(g, pm)); L.lamps=pm;
+  }
+}
+
+/* THE GREAT LOOM. The landmark the road passes through: an upright loom spanning the
+   climb out of the start, visible from the grid as a dark frame on the skyline with the
+   sunset beside it. Raked A-frame legs (the side view of a loom, which is its silhouette),
+   a cloth beam across the top, a curtain of warp threads, the fell with the beater and the
+   shuttle crossing, and woven kilim below it down to the breast beam — which is the
+   lowest thing over the corridor, at +25 above the deck's highest edge. Posts stand outside
+   both walls. Sited on the flattest-banked sample of the climb so the clearance holds. */
+function loomGreatLoom(inner){
+  const L=TRACK_PULSE.loom;
+  let bi=100, bb=1e9;
+  for(let i=96;i<=150;i+=2){ const b=Math.abs(SAMP[i].bank||0); if(b<bb){ bb=b; bi=i; } }
+  const s2=SAMP[bi], yaw=Math.atan2(s2.t.x,s2.t.z), box=[], warp=[], pom=[];
+  const LO=-inner*37, LI=inner*57, lo=Math.min(LO,LI), hi=Math.max(LO,LI), LM=(LO+LI)/2;
+  const edgeHi=Math.abs(Math.sin(bb))*HW*2.2;                  // deck rise at the far wall
+  const base=s2.p.y+edgeHi, top=base+56, fellY=base+42, breast=base+28;
+  const at=(lat,along)=>[s2.p.x+s2.n.x*lat+s2.t.x*(along||0), s2.p.z+s2.n.z*lat+s2.t.z*(along||0)];
+  const P=(lat,along,y,sx,sy,sz,c)=>{ const [x,z]=at(lat,along); box.push({x,y,z,s:sx,sy,sz,ry:yaw,c}); };
+  for(const lat of [LO,LI]){
+    const [x,z]=at(lat), gy=loomGround(x,z,6,inner)-1.5;
+    P(lat,0,(gy+top+3)/2, 6.5, top+3-gy, 7.5, 0x3a2a24);
+    P(lat,0,gy+2.5, 12, 5, 13, 0x2a1c18);
+    // raked back leg: the A of the loom's side elevation
+    for(const al of [-1,1]){
+      const [fx,fz]=at(lat, al*26), fy=loomGround(fx,fz,4,inner)-1;
+      const [tx,tz]=at(lat, 0);
+      loomSpan(box, [fx,fy,fz], [tx,top-14,tz], 4.2, 4.2, 0x33231c);
+    }
+    for(let k=0;k<3;k++){ const [px,pz]=at(lat); pom.push({x:px, y:top+7+k*3.4, z:pz, s:3.6-k*0.65, sy:(3.6-k*0.65)*0.9, ry:k*2.2, c:[0xe8408c,0xe8e4d9,0xc4207e][k]}); }
+  }
+  P(LM,0,top, hi-lo+16, 6.0, 7.0, 0x4a3a2e);                   // cloth beam
+  P(LM,-3.2,fellY+6, hi-lo-6, 2.2, 2.0, 0x2a1c18);             // heddle bar, behind
+  P(LM,0,fellY, hi-lo-8, 1.8, 3.0, 0xe8d8b8);                  // the beater at the fell
+  P(LM,0,breast-1.6, hi-lo+6, 3.4, 5.0, 0x4a3a2e);             // breast beam
+  // warp: from the cloth beam down to the fell, an uneven sett
+  for(let k=0, lat=lo+6; lat<hi-6; k++, lat+=2.4+((k*7)%3)*0.35){
+    const [x,z]=at(lat);
+    warp.push({x, y:(top-3+fellY)/2, z, s:0.7, sy:top-3-fellY, sz:0.7, ry:yaw, c:(k%5===2)?0xe8b22a:0xe8e4d9});
+  }
+  // the woven cloth below the fell
+  const W=hi-lo-8, Hc=fellY-breast;
+  const tex=loomKilimTex().clone(); tex.needsUpdate=true; tex.repeat.set(W/34, Hc/32);
+  const pl=new T.Mesh(new T.PlaneGeometry(W,Hc), loomPatch(new T.MeshLambertMaterial({map:tex, side:T.DoubleSide}),0.6,0.7));
+  const [cx,cz]=at(LM); pl.position.set(cx, (fellY+breast)/2, cz); pl.rotation.y=yaw; trackGroup.add(pl);
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), box, {nap:0.8, sheen:0.9}));
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), warp, {nap:0.2, sheen:1.0}));
+  trackGroup.add(loomBatch(LOOM_PUFF, pom, {sheen:1.3}));
+  const sl={p:new T.Vector3(cx,0,cz), n:s2.n, t:s2.t};
+  loomShuttle(L, sl, fellY+1.4, lo+7-LM, hi-7-LM, 4.2, 0.6);
+  return bi;
+}
+
+/* THE SPINNING WHEEL, on the infield downs. The infield is the ground a loop shows you on
+   every corner, and Felicia left it empty; this is the one silhouette that fills it — a
+   wheel over a hundred units high, dark timber against the sunset from across the bowl,
+   turning about once a minute. Bench on splayed legs, the wheel on its uprights, the
+   maidens and flyer at the other end with the bobbin full of crimson, the distaff dressed
+   with a cloud of cream roving and the thread running to the orifice. Sited at the point
+   of the infield furthest from any road. */
+function loomWheel(inner, ccx, ccz){
+  const L=TRACK_PULSE.loom;
+  let best=null, bd=0;
+  for(let gx=-300;gx<=300;gx+=30) for(let gz=-300;gz<=300;gz+=30){
+    const x=ccx+gx, z=ccz+gz, d=harbTrackDist(x,z);
+    const f=feltField(x,z); if(f.lat*inner<=0) continue;            // infield only
+    if(d>bd){ bd=d; best=[x,z]; }
+  }
+  if(!best || bd<140) return null;
+  const [wx,wz]=best;
+  // face the start, so the grid and the attract camera see it square
+  const yaw=Math.atan2(SAMP[0].p.x-wx, SAMP[0].p.z-wz);
+  const cs=Math.cos(yaw), sn=Math.sin(yaw);
+  const gy=loomGround(wx,wz,50,inner)-2;
+  // local frame: X along the bench (across your view), Z toward the start
+  const W=(lx,ly,lz)=>[wx+lx*cs+lz*sn, gy+ly, wz-lx*sn+lz*cs];
+  const box=[], cyl=[], puff=[];
+  const B=(lx,ly,lz,sx,sy,sz,c,rz)=>{ const p=W(lx,ly,lz); box.push({x:p[0],y:p[1],z:p[2],s:sx,sy,sz,ry:yaw,rz:rz||0,c}); };
+  const TB=0x2a1c18, TM=0x3a2a24, TL=0x4a3a2e;
+  const TY=30;                                                     // bench top
+  B(0,TY,0, 100,6,22, TL);
+  for(const [lx,lz] of [[-40,-8],[40,-8],[-36,8],[36,8]]){
+    const a=W(lx*1.12,0,lz*1.6), b=W(lx,TY-2,lz);
+    loomSpan(box, a, b, 4.2, 4.2, TM);
+  }
+  B(10,6,6, 40,2.4,14, TB);                                        // treadle
+  const AX=-22, AY=TY+56, R=47;
+  for(const lz of [-8,8]) B(AX,(TY+AY)/2+2,lz, 5,AY-TY+6,4, TM);    // uprights
+  B(AX,AY,0, 6,6,22, TB);                                          // axle block
+  // the maidens, the flyer and the distaff at the other end
+  for(const lx of [26,46]) B(lx,TY+16,0, 4,28,4, TM);
+  const by=TY+26;
+  const fl=W(36,by,0);
+  cyl.push({x:fl[0],y:fl[1],z:fl[2], s:3.4, sy:20, sz:3.4, rz:Math.PI/2, ry:yaw, c:0x9a6a36});   // spindle shaft
+  puff.push({x:fl[0],y:fl[1],z:fl[2], s:9, sy:6.2, sz:6.2, ry:yaw, c:0xc11b2e});                 // full bobbin
+  const ds=W(62,0,0);
+  B(62,TY+28,0, 2.6,56,2.6, TM);
+  const dt=W(62,TY+52,0);
+  puff.push({x:dt[0],y:dt[1],z:dt[2], s:12, sy:15, sz:12, ry:0.4, c:0xe8e4d9});
+  puff.push({x:dt[0]+1,y:dt[1]+9,z:dt[2]-1, s:8, sy:9, sz:8, ry:1.1, c:0xf0e8dc});
+  loomSpan(box, W(60,TY+46,0), W(46,by,0), 0.5, 0.5, 0xe8e4d9);   // the thread
+  // drive band: wheel rim to the whorl, top and bottom
+  loomSpan(box, W(AX+4,AY+R-1,0), W(30,by+3.4,0), 0.5, 0.5, 0xe8b22a);
+  loomSpan(box, W(AX+4,AY-R+1,0), W(30,by-3.4,0), 0.5, 0.5, 0xe8b22a);
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), box, {nap:0.8, sheen:1.0}));
+  trackGroup.add(loomBatch(new T.CylinderGeometry(1,1,1,10), cyl, {nap:0.5, sheen:1.0}));
+  trackGroup.add(loomBatch(LOOM_PUFF2, puff, {shell:0.8, shellR:1.15}));
+  // the wheel itself, on its own pivot
+  const root=new T.Group(); const ap=W(AX,AY,0); root.position.set(ap[0],ap[1],ap[2]); root.rotation.y=yaw;
+  const spin=new T.Group(); root.add(spin);
+  spin.add(new T.Mesh(new T.TorusGeometry(R,2.8,8,72), loomMat(0x3a2a24, null, 0.7, 1.1)));
+  spin.add(new T.Mesh(new T.TorusGeometry(R-3.4,1.0,6,72), loomMat(0xe8b22a, null, 0.4, 1.0)));
+  const sp=[];
+  for(let k=0;k<12;k++){ const a=k/12*Math.PI*2;
+    sp.push({x:Math.cos(a)*R*0.5, y:Math.sin(a)*R*0.5, z:0, s:R, sy:1.9, sz:1.9, rz:a, c:0x4a3a2e}); }
+  sp.push({x:0,y:0,z:0, s:7, sy:7, sz:9, c:0x2a1c18});
+  spin.add(loomBatch(new T.BoxGeometry(1,1,1), sp, {nap:0.6, sheen:1.0}));
+  trackGroup.add(root);
+  L.wheels.push({g:spin, w:0.11});
+  return {x:wx, z:wz, r:70, gy};
+}
+
+/* THE VILLAGE. The weavers have to live somewhere, and at dusk a village is the one thing
+   in a landscape that makes its OWN light: a dozen felt cottages on the valley floor
+   below the road on the run home, gold windows, smoke rising off the chimneys, a windmill
+   turning, bunting strung between the gables, rooks going round overhead. Seen from the
+   deck seventeen units above, you look down into it — warm points in the darkest ground in
+   the frame, which is exactly where a warm point carries furthest. */
+function loomPrismGeo(){
+  const v=[ -0.5,0,-0.5, 0.5,0,-0.5, 0.5,1,0,  -0.5,0,-0.5, 0.5,1,0, -0.5,1,0,
+            0.5,0,0.5, -0.5,0,0.5, -0.5,1,0,  0.5,0,0.5, -0.5,1,0, 0.5,1,0,
+            -0.5,0,0.5, -0.5,0,-0.5, -0.5,1,0,  0.5,0,-0.5, 0.5,0,0.5, 0.5,1,0,
+            -0.5,0,-0.5, -0.5,0,0.5, 0.5,0,0.5,  -0.5,0,-0.5, 0.5,0,0.5, 0.5,0,-0.5 ];
+  const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(v,3));
+  g.computeVertexNormals(); return g;
+}
+function loomVillage(inner){
+  const L=TRACK_PULSE.loom;
+  // find the site: outside the loop, below the road, flat, on the run home
+  let site=null, sb=1e9;
+  for(let i=520;i<690;i+=6){
+    const s2=SAMP[i], side=-inner;
+    for(const out of [120,150,185]){
+      const x=s2.p.x+s2.n.x*side*out, z=s2.p.z+s2.n.z*side*out;
+      if(!harbClearOK(x,z,62)) continue;
+      const f=feltField(x,z), y=feltHeight(x,z,f,inner);
+      if(y>f.sy-8) continue;
+      let lo=1e9, hi=-1e9;
+      for(const [a,b] of [[0,0],[50,0],[-50,0],[0,50],[0,-50],[35,35],[-35,-35],[35,-35],[-35,35]]){
+        const h=feltHeight(x+a,z+b,null,inner); lo=Math.min(lo,h); hi=Math.max(hi,h); }
+      const score=(hi-lo)+Math.abs(out-150)*0.05;
+      if(score<sb){ sb=score; site={x,z,i,s:s2}; }
+    }
+  }
+  if(!site) return null;
+  const box=[], roof=[], win=[], glowP=[], puff=[], pen=[], chim=[];
+  const WALL=[0xc9b8a8,0x8f9c72,0xa86a7a,0x5a6b84,0xd8cfc0,0x9a8a7a];
+  const ROOF=[0xc11b2e,0x1b2350,0x3a1440,0x8a2a1e,0x2438a8,0x5a1a3a];
+  const houses=[];
+  for(let k=0;k<26 && houses.length<12;k++){
+    const a=k*2.399, r=12+Math.sqrt(k)*15;
+    const x=site.x+Math.cos(a)*r, z=site.z+Math.sin(a)*r;
+    const w=14+((k*7)%9), d=10+((k*5)%5), h=8+((k*3)%5);
+    if(!harbClearOK(x,z,Math.max(w,d)*0.75)) continue;
+    let ok=true; for(const q of houses) if(Math.hypot(q.x-x,q.z-z)<(q.r+Math.max(w,d)*0.6+3)) ok=false;
+    if(!ok) continue;
+    // face the road
+    let bi=0, bd=1e18; for(let i=0;i<STEPS;i+=3){ const p=SAMP[i].p, dd=(p.x-x)**2+(p.z-z)**2; if(dd<bd){bd=dd;bi=i;} }
+    const yaw=Math.atan2(SAMP[bi].p.x-x, SAMP[bi].p.z-z)+(((k*13)%7)-3)*0.12;
+    const gy=loomGround(x,z,Math.max(w,d)*0.6,inner)-1.2;
+    houses.push({x,z,r:Math.max(w,d)*0.6,yaw,gy,w,d,h,k});
+  }
+  for(const H of houses){
+    const {x,z,yaw,gy,w,d,h,k}=H, cs=Math.cos(yaw), sn=Math.sin(yaw);
+    const W=(lx,ly,lz)=>[x+lx*cs+lz*sn, gy+ly, z-lx*sn+lz*cs];
+    box.push({x, y:gy+h/2, z, s:w, sy:h, sz:d, ry:yaw, c:WALL[k%WALL.length]});
+    const rh=6+((k*5)%4);
+    roof.push({x, y:gy+h-0.2, z, s:w+2.4, sy:rh, sz:d+2.6, ry:yaw, c:ROOF[k%ROOF.length]});
+    // chimney, and its smoke
+    const cx=((k%2)?1:-1)*w*0.28, cp=W(cx, h+rh*0.55, -d*0.18);
+    box.push({x:cp[0], y:cp[1], z:cp[2], s:2.4, sy:rh+1.2, sz:2.4, ry:yaw, c:0x3a2a24});
+    if(k%3===0) chim.push({x:cp[0], y:cp[1]+rh*0.5+0.6, z:cp[2], ph:k*0.37});
+    // windows on the face toward the road (+Z local), one on the gable end, and a door
+    const nW=2+(k%2);
+    for(let q=0;q<nW;q++){
+      const lx=((q+0.5)/nW-0.5)*w*0.72, p=W(lx, h*0.55, d/2+0.15);
+      win.push({x:p[0], y:p[1], z:p[2], s:2.4, sy:2.6, sz:0.5, ry:yaw, c:0xffc56a});
+      const g=W(lx, h*0.55, d/2+1.6); glowP.push(g[0],g[1],g[2]);
+    }
+    { const p=W(w/2+0.15, h*0.5, 0); win.push({x:p[0], y:p[1], z:p[2], s:0.5, sy:2.4, sz:2.2, ry:yaw, c:0xffb04a});
+      const g=W(w/2+1.6, h*0.5, 0); glowP.push(g[0],g[1],g[2]); }
+    { const p=W(w*0.30*((k%2)?-1:1), 2.6, d/2+0.12); box.push({x:p[0], y:p[1], z:p[2], s:2.6, sy:5.2, sz:0.5, ry:yaw, c:0x2a1c18}); }
+  }
+  // bunting between neighbouring gables
+  for(let k=0;k+1<houses.length;k+=2){
+    const A=houses[k], Bh=houses[k+1];
+    const a=[A.x, A.gy+A.h+3.5, A.z], b=[Bh.x, Bh.gy+Bh.h+3.5, Bh.z];
+    const n=10, Lc=Math.hypot(b[0]-a[0], b[2]-a[2]);
+    if(Lc>48) continue;
+    const yaw=Math.atan2(b[0]-a[0], b[2]-a[2]);
+    let prev=null;
+    for(let q=0;q<=n;q++){
+      const t=q/n, sag=Math.sin(t*Math.PI)*Lc*0.12;
+      const cur=[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t-sag+1.3, a[2]+(b[2]-a[2])*t];
+      if(prev) loomSpan(box, prev, cur, 0.22, 0.22, 0x2a1c18);          // the cord they hang on
+      prev=cur;
+      pen.push({x:a[0]+(b[0]-a[0])*t, y:a[1]+(b[1]-a[1])*t-sag, z:a[2]+(b[2]-a[2])*t,
+                s:1.6, sy:2.6, sz:1.6, ry:yaw+Math.PI/2, rx:Math.PI, c:[0xe8408c,0xe8b22a,0x2438a8,0xe8e4d9,0xc11b2e][(q+k)%5]});
+    }
+  }
+  trackGroup.add(loomBatch(new T.BoxGeometry(1,1,1), box, {nap:0.8, sheen:0.7}));
+  trackGroup.add(loomBatch(loomPrismGeo(), roof, {nap:0.8, sheen:0.8}));
+  if(pen.length) trackGroup.add(loomBatch(new T.ConeGeometry(0.6,1,3), pen, {nap:0.3, sheen:0.8}));
+  // the windows make their own light: unlit, and fogged like everything else
+  const wm=new T.InstancedMesh(new T.BoxGeometry(1,1,1), new T.MeshBasicMaterial({color:0xffffff}), win.length);
+  { const d=new T.Object3D(), c=new T.Color();
+    win.forEach((e,i)=>{ d.position.set(e.x,e.y,e.z); d.rotation.set(0,e.ry,0); d.scale.set(e.s,e.sy,e.sz);
+      d.updateMatrix(); wm.setMatrixAt(i,d.matrix); c.setHex(e.c); wm.setColorAt(i,c); }); }
+  wm.frustumCulled=false; trackGroup.add(wm);
+  { const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(glowP,3));
+    const pm=new T.PointsMaterial({map:TEX_SPARK, color:0xffa040, size:11, sizeAttenuation:true,
+      transparent:true, opacity:0.5, blending:T.AdditiveBlending, depthWrite:false});
+    trackGroup.add(new T.Points(g, pm)); L.windows=pm; }
+  // chimney smoke: wool puffs rising and thinning, on per-frame instance matrices
+  if(chim.length){
+    const per=4, sm=new T.InstancedMesh(LOOM_PUFF, loomMat(0xffffff, null, 0.5, 1.0), chim.length*per);
+    const c=new T.Color();
+    for(let k=0;k<chim.length*per;k++){ c.setHex((k%3)?0x8a7a92:0xa494a8); sm.setColorAt(k,c); }
+    sm.instanceColor.needsUpdate=true; sm.frustumCulled=false; trackGroup.add(sm);
+    L.smoke={m:sm, src:chim, per, d:new T.Object3D()};
+  }
+  // the windmill, on the edge of the village furthest from the road
+  { const dx=site.x-site.s.p.x, dz=site.z-site.s.p.z, dl=Math.hypot(dx,dz)||1;
+    const mx=site.x+dx/dl*68, mz=site.z+dz/dl*68;
+    if(harbClearOK(mx,mz,30)){
+      const gy=loomGround(mx,mz,9,inner)-1.5, yaw=Math.atan2(-dx,-dz);
+      const parts=[{x:mx, y:gy+19, z:mz, s:8.5, sy:38, sz:8.5, ry:yaw, c:0xd8cfc0}];
+      trackGroup.add(loomBatch(new T.CylinderGeometry(0.62,1,1,12), parts, {nap:0.8, sheen:0.8}));
+      trackGroup.add(loomBatch(new T.ConeGeometry(1,1,12), [{x:mx, y:gy+42.5, z:mz, s:7.4, sy:9, sz:7.4, c:0x3a1440}], {nap:0.6, sheen:0.9}));
+      const root=new T.Group(); root.position.set(mx+(-dx/dl)*6.2, gy+37, mz+(-dz/dl)*6.2); root.rotation.y=yaw;
+      const spin=new T.Group(); root.add(spin);
+      const sails=[];
+      for(let k=0;k<4;k++){ const a=k*Math.PI/2+0.3, cx=Math.cos(a), cy=Math.sin(a);
+        sails.push({x:cx*12, y:cy*12, z:0, s:24, sy:1.2, sz:1.2, rz:a, c:0x4a3a2e});
+        sails.push({x:cx*13+(-cy)*2.6, y:cy*13+cx*2.6, z:0.6, s:19, sy:4.6, sz:0.5, rz:a, c:k%2?0xc11b2e:0xe8e4d9}); }
+      sails.push({x:0,y:0,z:0, s:3, sy:3, sz:3, c:0x2a1c18});
+      spin.add(loomBatch(new T.BoxGeometry(1,1,1), sails, {nap:0.6, sheen:1.0}));
+      trackGroup.add(root); L.wheels.push({g:spin, w:0.30});
+    }
+  }
+  // rooks, wheeling home over the roofs
+  { const wg=new T.BufferGeometry();
+    wg.setAttribute('position', new T.Float32BufferAttribute([0,0,0.9, -2.4,0.9,-0.2, 0,0,-0.7,  0,0,0.9, 0,0,-0.7, 2.4,0.9,-0.2],3));
+    const bm=new T.InstancedMesh(wg, new T.MeshBasicMaterial({color:0x1a0c22, side:T.DoubleSide}), 7);
+    bm.frustumCulled=false; trackGroup.add(bm);
+    L.birds={m:bm, x:site.x, z:site.z, y:site.s.p.y+70, d:new T.Object3D()};
+  }
+  return site;
+}
+
+/* THE YARN-BALL HILLSIDE. Three skeins wound into balls the size of barns, half-sunk
+   into a slope of the western range where the road runs along under it, one strand
+   unwinding off the biggest and running down the hill toward the road. The winding is a
+   greyscale texture the instance colour dyes, so three balls are one draw. */
+function loomYarnHill(inner){
+  let site=null, sb=-1e9;
+  for(let i=380;i<470;i+=5){
+    const s2=SAMP[i], side=-inner;
+    for(const out of [170,210,250]){
+      const x=s2.p.x+s2.n.x*side*out, z=s2.p.z+s2.n.z*side*out;
+      if(!harbClearOK(x,z,70)) continue;
+      const f=feltField(x,z), y=feltHeight(x,z,f,inner);
+      const sc=(y-f.sy)-Math.abs(out-200)*0.1;
+      if(y>f.sy+4 && sc>sb){ sb=sc; site={x,z,s:s2}; }
+    }
+  }
+  if(!site) return;
+  const tex=loomYarnTex(); tex.repeat.set(2,2);
+  const balls=[], R=[30,21,15], CO=[0xc11b2e,0xe8b22a,0x1f6b70], OFF=[[0,0],[44,-22],[-26,38]];
+  const dx=site.x-site.s.p.x, dz=site.z-site.s.p.z, dl=Math.hypot(dx,dz)||1, ux=dx/dl, uz=dz/dl;
+  for(let k=0;k<3;k++){
+    const x=site.x+OFF[k][0]*(-uz)+OFF[k][1]*ux, z=site.z+OFF[k][0]*ux+OFF[k][1]*uz;
+    if(!harbClearOK(x,z,R[k])) continue;
+    const gy=loomGround(x,z,R[k]*0.6,inner);
+    balls.push({x, y:gy+R[k]*0.55, z, s:R[k], rx:k*0.7, ry:k*1.9, rz:k*0.4, c:CO[k]});
+  }
+  if(!balls.length) return;
+  trackGroup.add(loomBatch(new T.SphereGeometry(1,24,16), balls, {mat:loomPatch(new T.MeshLambertMaterial({map:tex}),0.4,1.0)}));
+  // the loose strand, from the big ball down the slope toward the road
+  const b0=balls[0], pts=[];
+  for(let k=0;k<=14;k++){
+    const t=k/14, x=b0.x-ux*(b0.s*0.9+t*120)+Math.sin(t*7)*14*(-uz), z=b0.z-uz*(b0.s*0.9+t*120)+Math.sin(t*7)*14*ux;
+    if(k>2 && !harbClearOK(x,z,4)) break;
+    pts.push(new T.Vector3(x, (k===0? b0.y+b0.s*0.2 : feltHeight(x,z,null,inner)+0.8), z));
+  }
+  if(pts.length>3) trackGroup.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts), pts.length*6, 1.3, 6, false),
+    loomMat(0xc11b2e, null, 0.5, 1.0)));
+}
+
+/* APPLIQUÉ TREES. Felicia's ridges were crowned with seven-sided cones — the one shape in
+   the valley that could have been cut from anything, and from a moving car they hung over
+   the hills as flat triangles. What a felt landscape puts on a hill is a cut-out tree: a
+   dark trunk and a soft round canopy, standing in copses. These stand on the ranges and
+   round the edge of the downs, silhouettes against the sky where the ground rises. */
+function loomTrees(inner, ccx, ccz, avoid){
+  const trunk=[], crown=[], fir=[];
+  const CC=[0x1f6b70,0x14383c,0x2a0f34,0x1f4a52,0x3a1440,0x14383c,0x6a7a4a,0x1f6b70,0xc11b2e,0x2a0f34];
+  for(let k=0;k<46;k++){
+    const a=k*2.399+0.3, r=300+((k*137)%470);
+    const x0=ccx+Math.cos(a)*r, z0=ccz+Math.sin(a)*r;
+    if(harbTrackDist(x0,z0)<140) continue;
+    if(avoid && avoid.some(q=>Math.hypot(q.x-x0,q.z-z0)<q.r+30)) continue;
+    const n=2+(k%4), kind=k%3;
+    for(let q=0;q<n;q++){
+      const x=x0+Math.cos(q*2.1+k)*(8+q*7), z=z0+Math.sin(q*2.1+k)*(8+q*7);
+      const S=0.8+((k*7+q*13)%9)/10;
+      if(!harbClearOK(x,z,14*S)) continue;
+      const gy=loomGround(x,z,4,inner)-1.5, col=CC[(k*3+q)%CC.length];
+      if(kind===1){                                   // felt fir: three stacked skirts
+        trunk.push({x, y:gy+3*S, z, s:1.4*S, sy:6*S, sz:1.4*S, c:0x2a1c18});
+        let y=gy+4*S, r2=9*S;
+        for(let t=0;t<3;t++){ const h=(10-t*1.6)*S;
+          fir.push({x, y:y+h/2, z, s:r2, sy:h, sz:r2, ry:k+t, c:t===2&&(k%4===0)?0x1f6b70:col===0xc11b2e?0x14383c:col});
+          y+=h*0.58; r2*=0.72; }
+        continue;
+      }
+      const th=(kind===0?7:12+((k+q)%4)*3)*S;
+      trunk.push({x, y:gy+th/2, z, s:1.5*S, sy:th, sz:1.5*S, c:0x2a1c18});
+      const cs=(kind===0?5.5:8+((k*3+q*5)%5)*1.4)*S, tall=kind===0?2.9:1.1;
+      crown.push({x, y:gy+th+cs*tall*0.85, z, s:cs, sy:cs*tall, sz:cs*0.92, ry:(k+q)*0.9, c:col});
+    }
+  }
+  trackGroup.add(loomBatch(new T.CylinderGeometry(0.7,1,1,6), trunk, {nap:0.5, sheen:0.7}));
+  trackGroup.add(loomBatch(LOOM_PUFF, crown, {shell:0.75, shellR:1.14, shellB:0.55}));
+  if(fir.length) trackGroup.add(loomBatch(new T.ConeGeometry(1,1,9), fir, {nap:0.8, sheen:1.0}));
+}
+
+/* SHEEP, grazing round the spinning wheel — where the wool comes from. Fleece bodies of
+   welded puffs, dark faces and legs, all facing different ways. */
+function loomSheep(inner, W){
+  if(!W) return;
+  const body=[], dark=[];
+  for(let k=0;k<11;k++){
+    const a=k*2.2+0.4, r=W.r+18+((k*29)%60);
+    const x=W.x+Math.cos(a)*r, z=W.z+Math.sin(a)*r;
+    if(!harbClearOK(x,z,8)) continue;
+    const gy=loomGround(x,z,4,inner)-0.3, yaw=k*1.37, cs=Math.cos(yaw), sn=Math.sin(yaw), S=1.0+((k*7)%4)*0.08;
+    const at=(lx,ly,lz)=>[x+(lx*cs+lz*sn)*S, gy+ly*S, z+(lz*cs-lx*sn)*S];
+    for(const [lx,ly,lz,s] of [[0,4.6,0,3.2],[0,4.9,2.4,2.6],[0,4.7,-2.4,2.8],[1.4,5.4,0.2,2.2],[-1.4,5.3,-0.4,2.2]]){
+      const p=at(lx,ly,lz); body.push({x:p[0],y:p[1],z:p[2], s:s*S, sy:s*S*0.85, ry:k+lx, c:(k%5===3)?0x5a4a40:0xe8e4d9}); }
+    const graze=(k%3===0);
+    const hp=at(0, graze?2.4:5.2, graze?5.4:5.0);
+    dark.push({x:hp[0],y:hp[1],z:hp[2], s:1.2*S, sy:1.3*S, sz:2.0*S, ry:yaw, rx:graze?0.9:0.1, c:0x2a1c18});
+    for(const [lx,lz] of [[1.3,2.2],[-1.3,2.2],[1.3,-2.2],[-1.3,-2.2]]){
+      const p=at(lx,1.4,lz); dark.push({x:p[0],y:p[1],z:p[2], s:0.55*S, sy:2.8*S, sz:0.55*S, c:0x2a1c18}); }
+  }
+  if(body.length) trackGroup.add(loomBatch(LOOM_PUFF, body, {sheen:1.4}));
+  if(dark.length) trackGroup.add(loomBatch(LOOM_PUFF, dark, {nap:0.4, sheen:0.8}));
+}
+
+/* THE SCENERY. Felicia's weavers' valley — her fleece, her looms, her yarn and stones and
+   her herd, placed by her rules (so the copy is still the same place) — in fibre, plus
+   the landmarks above. The one structural change is the herd: the heads are a separate
+   batch on per-frame matrices, so each llama grazes, lifts its head and looks round. */
+function loomScenery(inner, ccx, ccz){
+  const L=TRACK_PULSE.loom;
+  const clumps=[], box=[], spools=[], sph=[], cyl=[], cone=[], qp=[], qu=[], qi=[];
+  for(let k=0;k<150;k++){
+    const s2=SAMP[(k*37)%STEPS];
+    const side=(k%2?-1:1), out=HW*(2.6+((k*13)%58)/6);
+    const sz=5+((k*17)%17);
+    const cx=s2.p.x+s2.n.x*side*out+(((k*23)%30)-15), cz=s2.p.z+s2.n.z*side*out+(((k*31)%30)-15);
+    if(!harbClearOK(cx,cz,sz)) continue;
+    clumps.push({x:cx, y:loomGround(cx,cz,sz*0.5,inner)+sz*0.30, z:cz,
+                 s:sz, sy:sz*(0.52+((k*7)%30)/70), sz:sz*(0.86+((k*5)%20)/70),
+                 ry:((k*19)%628)/100, c:FELT_BANK[k%FELT_BANK.length]});
+  }
+  // Felicia's fourteen looms, by her placement rule
+  for(let k=0;k<14;k++){
+    const i2=(Math.round(k*STEPS/14)+((k*47)%29)-14+STEPS)%STEPS, s2=SAMP[i2];
+    if(i2>=90 && i2<=160) continue;                 // the great loom owns this stretch
+    const side=(k%2?-1:1);
+    const out=(side*inner>0) ? HW*(3.1+((k*7)%5)*0.30) : HW*(1.9+((k*11)%6)*0.26);
+    const ux=s2.t.x, uz=s2.t.z, vx=s2.n.x*side, vz=s2.n.z*side;
+    const bx=s2.p.x+vx*out, bz=s2.p.z+vz*out;
+    const H=44+((k*13)%22), W=30+((k*17)%15);
+    if(!harbClearOK(bx,bz,W*0.5+6)) continue;
+    const yaw=Math.atan2(ux,uz);
+    const by=loomGround(bx,bz,W*0.5,inner)-2.5;
+    const P=(dx,dv,y,sv,sy,su,c)=>box.push({x:bx+ux*dx+vx*dv, y, z:bz+uz*dx+vz*dv, s:sv, sy, sz:su, ry:yaw, c});
+    const TIMBER=[0x3a2a24,0x4a3a2e,0x33231c][k%3];
+    for(const px of [-1,1]){ P(px*W*0.5, 0, by+H*0.5, 4.6, H, 3.4, TIMBER); P(px*W*0.5, 0, by+2.2, 8.4, 4.4, 6.6, 0x2a1c18); }
+    P(0, 0, by+H, 5.6, 4.2, W+11, 0x4a3a2e);
+    P(0, 0, by+7.0, 5.2, 3.6, W+8, 0x4a3a2e);
+    P(0, 3.6, by+H*0.44, 2.6, 2.4, W+5, 0x2a1c18);
+    const NW=9+(k%3)*2;
+    for(let t3=0;t3<NW;t3++){ const f2=(t3+0.5)/NW-0.5;
+      P(f2*W*0.92+((k*3+t3*7)%5-2)*0.22, -0.4, by+(H+7)*0.5, 0.85, H-7.0, 0.85, (t3%4===1)?0xe8b22a:0xe8e4d9); }
+    // the cloth: real woven kilim hanging off the head beam, not six painted strips
+    const drop=H*0.42, y0=by+H-2.6, y1=y0-drop, hw=W*0.47, b0=qp.length/3;
+    for(const [du,yy] of [[-hw,y0],[hw,y0],[-hw,y1],[hw,y1]]){
+      qp.push(bx+ux*du+vx*-2.4, yy, bz+uz*du+vz*-2.4); }
+    qu.push(0,1, W/34,1, 0,1-drop/40, W/34,1-drop/40);
+    qi.push(b0,b0+2,b0+1, b0+1,b0+2,b0+3);
+    P(0, -2.4, y1-0.8, 1.6, 1.6, W*0.97, 0x2a1c18);                 // the rod it is rolled to
+    P(-W*0.18, -4.6, by+H-2.6-drop-1.4, 2.4, 1.8, W*0.30, 0x8a5a2e);
+    for(let t3=1;t3<NW;t3+=3){ const f2=(t3+0.5)/NW-0.5;
+      sph.push({x:bx+ux*(f2*W*0.92)+vx*-0.4, y:by+9.4, z:bz+uz*(f2*W*0.92)+vz*-0.4, s:1.9, sy:2.6, sz:1.9, c:0x5a6b84}); }
+    for(let q=0;q<5;q++){ const t2=((k*13+q*29)%22)/22-0.5;
+      spools.push({x:bx+ux*t2*W*1.15+vx*(3.5+(q%2)*3), y:by+2.4+(q%2)*2.6, z:bz+uz*t2*W*1.15+vz*(3.5+(q%2)*3),
+                   s:2.6+((k+q)%3)*0.7, sy:4.4+((k*q)%4)*0.9, sz:2.6+((k+q)%3)*0.7, rx:Math.PI*0.5, ry:yaw, c:FELT_YARN[(k+q)%FELT_YARN.length]}); }
+  }
+  // spun thread and stones across the valley floor, as Felicia's
+  const yarn=[], stone=[];
+  const YDARK=[0x2438a8,0x1b2350,0x3a1440,0x170a24,0xc11b2e,0x1b2350];
+  for(let k=0;k<340;k++){
+    const a=((k*2.399)%6.283), r=140+((k*137)%580);
+    const jx=ccx+Math.cos(a)*r, jz=ccz+Math.sin(a)*r, sz=3.0+((k*29)%40)/10;
+    if(harbTrackDist(jx,jz)<130 || !harbClearOK(jx,jz,sz+4)) continue;
+    const gy=loomGround(jx,jz,sz*0.6,inner);
+    if(k%4===0) yarn.push({x:jx, y:gy+sz*0.14, z:jz, s:sz, sy:sz, sz:sz*(0.6+((k*7)%40)/70),
+                   rx:Math.PI*0.5+(((k*13)%20)-10)/34, ry:((k*23)%628)/100, c:YDARK[k%YDARK.length]});
+    else stone.push({x:jx, y:gy+sz*0.10, z:jz, s:sz*0.9, sy:sz*0.32, sz:sz*0.8,
+                   rx:((k*3)%628)/100, ry:((k*19)%628)/100, c:[0x3d4a5c,0x2a0f30,0x141a3c,0x6a7458][k%4]});
+  }
+  if(yarn.length)  trackGroup.add(loomBatch(new T.TorusGeometry(1,0.13,6,14,Math.PI*1.55), yarn, {nap:0.3}));
+  if(stone.length) trackGroup.add(loomBatch(LOOM_PUFF, stone, {nap:0.8, sheen:0.6}));
+
+  // THE HERD. Bodies batched with the rest; heads on their own pivots.
+  const heads=[], ears=[], herd=[];
+  const llama=(lx,ly,lz,S,ry)=>{
+    const cs=Math.cos(ry), sn=Math.sin(ry);
+    const at=(ax,ay,az)=>({x:lx+(ax*cs+az*sn)*S, y:ly+ay*S, z:lz+(az*cs-ax*sn)*S});
+    const CR=0xe8e4d9, SH=0xcfc9ba;
+    const put=(arr,ax,ay,az,sx,sy2,sz2,c,rx)=>{ const p=at(ax,ay,az);
+      arr.push({x:p.x,y:p.y,z:p.z,s:sx*S,sy:sy2*S,sz:sz2*S,ry,rx:rx||0,c}); };
+    put(sph, 0,1.55,0,   1.75,1.50,2.55, CR);
+    put(sph, 0,1.40,-1.6,1.28,1.15,1.30, CR);
+    for(const s3 of [-1,1]){ put(cyl, 0.86*s3,0.85,0.95, 0.30,1.90,0.30, SH); put(cyl, 0.80*s3,0.85,-1.5, 0.30,1.90,0.30, SH); }
+    put(cone, 0,2.30,-2.5, 0.28,0.55,0.28, CR, Math.PI*0.82);
+    for(let q=0;q<24;q++){
+      const a=(q*2.399), v2=Math.acos(1-2*((q+0.5)/24));
+      const px=Math.sin(v2)*Math.cos(a)*1.66, py=Math.cos(v2)*1.10+1.75, pz=Math.sin(v2)*Math.sin(a)*2.34;
+      if(py<1.05) continue;
+      const p=at(px,py,pz), ps=(0.34+((q*7)%5)*0.07)*S;
+      clumps.push({x:p.x,y:p.y,z:p.z, s:ps, sy:ps*0.86, sz:ps, ry:(q*1.7)%6.28, c:(q%7)?CR:0xe8b8cc});
+    }
+    for(let q=0;q<3;q++){ const a=q*2.1, p=at(Math.cos(a)*1.1, 0.35, Math.sin(a)*1.5), ps=(0.62+(q%3)*0.16)*S;
+      clumps.push({x:p.x,y:p.y,z:p.z, s:ps, sy:ps*0.72, sz:ps, ry:(q*2.1)%6.28, c:(q%2)?0xd6cfbe:CR}); }
+    // head parts in the NECK's frame: pivot at the withers, +Z toward the face
+    const hi=herd.length, Hp=(arr,x,y,z,sx,sy,sz,c,head,rx)=>arr.push({hi,x,y,z,sx,sy,sz,c,head,rx:rx||0});
+    Hp(heads, 0,1.65,0.05, 0.70,2.05,0.72, CR, false);
+    Hp(heads, 0,3.42,0.36, 0.62,0.66,0.80, CR, true);
+    Hp(heads, 0,3.02,1.16, 0.38,0.34,0.78, SH, true);
+    Hp(heads, 0.40,3.42,0.80, 0.15,0.15,0.15, 0xc11b2e, true);
+    Hp(heads,-0.40,3.42,0.80, 0.15,0.15,0.15, 0xc11b2e, true);
+    Hp(heads, 0,3.90,0.42, 0.44,0.30,0.40, 0xe8408c, true);
+    Hp(ears,  0.34,4.30,0.16, 0.26,1.05,0.26, CR, true);
+    Hp(ears, -0.34,4.30,0.16, 0.26,1.05,0.26, CR, true);
+    const pv=at(0,1.9,1.0);
+    herd.push({x:pv.x, y:pv.y, z:pv.z, ry, S, ph:hi*1.9+0.4});
+  };
+  { const put=[];
+    for(let k=0;k<STEPS && put.length<5;k+=17){
+      const s2=SAMP[k], side=((k/17|0)%2)?1:-1;
+      if(side*inner>0) continue;
+      for(const mul of [3.7,4.5,5.4,6.4]){
+        const out=HW*mul, lx=s2.p.x+s2.n.x*side*out, lz=s2.p.z+s2.n.z*side*out;
+        const f=feltField(lx,lz);
+        const gy=loomGround(lx,lz,9,inner);
+        if(gy>f.sy-6) continue;
+        const dx2=(lx-s2.p.x), dz2=(lz-s2.p.z), dl=Math.hypot(dx2,dz2)||1;
+        if(feltHeight(lx+dx2/dl*60, lz+dz2/dl*60, null, inner) < gy-6) continue;
+        if(!harbClearOK(lx,lz,18)) continue;
+        let near=false; for(const q of put){ if((q[0]-lx)**2+(q[1]-lz)**2 < 240*240){ near=true; break; } }
+        if(near) continue;
+        put.push([lx,lz]);
+        llama(lx, gy-1.6, lz, 3.9, Math.atan2(s2.p.x-lx, s2.p.z-lz));
+        break;
+      }
+    }
+  }
+  const BOX=new T.BoxGeometry(1,1,1);
+  if(qi.length){ const g=new T.BufferGeometry();
+    g.setAttribute('position', new T.Float32BufferAttribute(qp,3)); g.setAttribute('uv', new T.Float32BufferAttribute(qu,2));
+    g.setIndex(qi); g.computeVertexNormals();
+    trackGroup.add(new T.Mesh(g, loomPatch(new T.MeshLambertMaterial({map:loomKilimTex(), side:T.DoubleSide}),0.5,0.7))); }
+  trackGroup.add(loomBatch(LOOM_PUFF, clumps, {sheen:1.3}));
+  trackGroup.add(loomBatch(BOX, box, {nap:0.8, sheen:0.8}));
+  trackGroup.add(loomBatch(new T.CylinderGeometry(1,1,1,10), spools, {nap:0.5}));
+  if(sph.length)  trackGroup.add(loomBatch(LOOM_PUFF, sph));
+  if(cyl.length)  trackGroup.add(loomBatch(new T.CylinderGeometry(0.8,1,1,8), cyl));
+  if(cone.length) trackGroup.add(loomBatch(new T.ConeGeometry(1,2,7), cone));
+  if(herd.length){
+    const mk=(geo,arr)=>{ const m=new T.InstancedMesh(geo, loomMat(0xffffff,null,0.6,1.0), arr.length);
+      const c=new T.Color(); arr.forEach((e,i)=>{ c.setHex(e.c); m.setColorAt(i,c); });
+      m.instanceColor.needsUpdate=true; m.frustumCulled=false; trackGroup.add(m); return m; };
+    L.llamas={herd, heads, ears, hm:mk(LOOM_PUFF,heads), em:mk(new T.ConeGeometry(1,1,7),ears),
+      m:new T.Matrix4(), p:new T.Matrix4(), q:new T.Matrix4(), d:new T.Object3D()};
+    loomTick(L, 0);
+  }
+
+  // the landmarks
+  loomGreatLoom(inner);
+  const W=loomWheel(inner, ccx, ccz);
+  const V=loomVillage(inner);
+  loomYarnHill(inner);
+  loomSheep(inner, W);
+  loomTrees(inner, ccx, ccz, [W, V?{x:V.x,z:V.z,r:90}:null].filter(Boolean));
+}
+
+/* THE VALLEY'S BREATH. Everything here is on a long period and a small amplitude; none
+   of it should ever be the thing you are looking at. */
+function loomTick(L, t){
+  if(L.sky) L.sky.uniforms.uTime.value=t;
+  if(L.llamas){ const H=L.llamas, d=H.d;
+    const pose=H.herd.map(h=>{
+      const g=fSm(0.30,0.78, 0.5+0.5*Math.sin(t*0.11+h.ph));        // grazing: head goes down
+      const yawA=(Math.sin(t*0.23+h.ph*1.7)*0.50+Math.sin(t*0.071+h.ph)*0.18)*(1-g);
+      return {g, yawA};
+    });
+    const apply=(mesh,arr)=>{
+      arr.forEach((e,i)=>{ const h=H.herd[e.hi], P=pose[e.hi], S=h.S;
+        // pivot: withers, turned by the look-round, pitched by the graze
+        H.p.makeRotationY(h.ry+P.yawA); H.q.makeRotationX(P.g*1.75); H.p.multiply(H.q);
+        H.p.setPosition(h.x, h.y, h.z);
+        // the head counter-rotates at the top of the neck so the face stays level-ish
+        d.position.set(e.x*S, e.y*S, e.z*S); d.rotation.set((e.head?-P.g*0.95:0)+e.rx, 0, 0);
+        d.scale.set(e.sx*S, e.sy*S, e.sz*S);
+        if(e.head){ // rotate about the top of the neck (0,3.3,0.2)
+          const ny=3.3*S, nz=0.2*S, dy=e.y*S-ny, dz=e.z*S-nz, a=-P.g*0.95, c=Math.cos(a), s=Math.sin(a);
+          d.position.set(e.x*S, ny+dy*c-dz*s, nz+dy*s+dz*c);
+        }
+        d.updateMatrix(); H.m.multiplyMatrices(H.p, d.matrix); mesh.setMatrixAt(i, H.m);
+      });
+      mesh.instanceMatrix.needsUpdate=true;
+    };
+    apply(H.hm, H.heads); apply(H.em, H.ears);
+  }
+  for(const s of L.shuttles){
+    const ph=(t/s.per+s.ph)%2, e=x=>fSm(0.18,0.82,x), k=ph<1?e(ph):1-e(ph-1);
+    const lat=s.a+(s.b-s.a)*k, from=ph<1?s.a:s.b;
+    s.m.position.set(s.p.x+s.n.x*lat, s.y, s.p.z+s.n.z*lat);
+    const mid=(lat+from)/2, len=Math.max(0.3,Math.abs(lat-from));
+    s.th.position.set(s.p.x+s.n.x*mid, s.y-0.2, s.p.z+s.n.z*mid); s.th.scale.x=len;
+  }
+  for(const w of L.wheels) w.g.rotation.z=-t*w.w;
+  if(L.lamps)   L.lamps.opacity=0.56+0.05*Math.sin(t*0.8)+0.03*Math.sin(t*2.3+1.1);
+  if(L.windows) L.windows.opacity=0.48+0.04*Math.sin(t*0.6+0.4)+0.03*Math.sin(t*1.9);
+  if(L.smoke){ const S=L.smoke, d=S.d;
+    S.src.forEach((c,ci)=>{ for(let k=0;k<S.per;k++){
+      const u=((t*0.06+c.ph+k/S.per)%1), sc=(1.0+u*3.4)*Math.sin(Math.PI*Math.min(1,u*1.1));
+      d.position.set(c.x+u*u*22+Math.sin(t*0.3+k)*0.8, c.y+u*24, c.z+u*u*9);
+      d.rotation.set(k, k*1.7+t*0.05, 0); d.scale.set(sc, sc*0.8, sc); d.updateMatrix();
+      S.m.setMatrixAt(ci*S.per+k, d.matrix); } });
+    S.m.instanceMatrix.needsUpdate=true;
+  }
+  if(L.birds){ const B=L.birds, d=B.d;
+    for(let k=0;k<7;k++){
+      const a=t*0.09+k*0.55+Math.sin(t*0.05+k)*0.3, r=70+k*9;
+      d.position.set(B.x+Math.cos(a)*r, B.y+Math.sin(t*0.13+k*1.3)*8+k*2, B.z+Math.sin(a)*r);
+      d.rotation.set(0, -a, Math.sin(a*2+k)*0.25);
+      const f=Math.sin(t*(3.4+k*0.2)+k*1.9);
+      d.scale.set(2.2, 2.2*f, 2.2); d.updateMatrix(); B.m.setMatrixAt(k, d.matrix);
+    }
+    B.m.instanceMatrix.needsUpdate=true;
+  }
+}
+
 /* ============== BEADWORK KIT (Perla) ============== *
  * Glossy seed-bead sculpture: thousands of small shiny plastic beads laid in rows that
  * FOLLOW the form, lit like a product shot — magenta rim one side, blue the other, on a
@@ -30935,6 +32300,7 @@ function buildTrack(idx){
   const paint =!!TRACKS[idx].paint;      // ...or as a plein-air oil of a misty harbour
   const macro =!!TRACKS[idx].macro;      // ...or as a tilt-shift toy pond on a windowsill
   const dawn  =!!TRACKS[idx].dawn;       // ...and on Aurora, the felt valley in negative
+  const loom  =!!TRACKS[idx].loom;       // ...and on Felicity, the felt valley by a master's hand
   const oph   =!!TRACKS[idx].ophelia;    // ...or as Millais' stream in high summer
   const arc   =!!TRACKS[idx].arcade;     // ...and on Trixie, a whole 16-bit world of blocks
   const hana  =!!TRACKS[idx].hana;       // ...or as a Hokusai woodblock of a coast road
@@ -30944,6 +32310,7 @@ function buildTrack(idx){
   let HK=null;                           // Hana's height grid + prop bag, likewise
   applyTrackLighting(bead, pool, coil, paint, felt, macro, TRACKS[idx]);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
+  if(loom) applyLoomLighting();          // likewise: a low sun in the north-west
   if(oph) applyOpheliaLighting();        // likewise: every light re-set
   if(arc) applyArcadeLighting();         // likewise
   if(hana) applyHanaLighting();          // likewise
@@ -31328,7 +32695,8 @@ function buildTrack(idx){
   } else if(felt){
     // The pressed-sheet state: the tube becomes a bank of marbled strata, and the same
     // texture runs everywhere so road, walls and ridges read as one poured material.
-    skyDome=dawn ? dawnSky() : feltSky(); trackGroup.add(skyDome);
+    skyDome=dawn ? dawnSky() : loom ? loomSky() : feltSky(); trackGroup.add(skyDome);
+    if(loom) TRACK_PULSE.loom={sky:skyDome.material, shuttles:[], wheels:[]};   // Felicity's moving parts
     const tubeMat=feltMat(0x7d6c86, feltTex);   // tinted down so it sits under the road
     const tube=new T.Mesh(new T.TubeGeometry(curve,STEPS,11,12,loop), tubeMat);
     tube.position.y-=19; trackGroup.add(tube);      // r=11: crown was +2, hid 12.6
@@ -31348,7 +32716,7 @@ function buildTrack(idx){
       FELT_LAKE={x:SAMP[lo].p.x, z:SAMP[lo].p.z, y:SAMP[lo].p.y-5, r:430}; }
     for(let i=0;i<STEPS;i+=9){ const s2=SAMP[i];
       FELT_GEO.push({x:s2.p.x, y:s2.p.y, z:s2.p.z, nx:s2.n.x, nz:s2.n.z}); }
-    trackGroup.add(feltTerrain(innerSign));
+    trackGroup.add(loom ? loomTerrain(innerSign) : feltTerrain(innerSign));
 
     /* THE EMBANKMENT. Once the world has a floor, a road hanging seventeen units above it
        on an eleven-unit tube is a shelf with nothing holding up its edges — the same bug
@@ -31371,7 +32739,7 @@ function buildTrack(idx){
       bg.setAttribute('position',new T.Float32BufferAttribute(bp,3));
       bg.setAttribute('uv',new T.Float32BufferAttribute(bu,2));
       bg.setIndex(bi); bg.computeVertexNormals();
-      trackGroup.add(new T.Mesh(bg, feltMat(0xbfb0b8, feltTex)));
+      trackGroup.add(new T.Mesh(bg, loom ? feltMat(0x8a6c88, feltTex) : feltMat(0xbfb0b8, feltTex)));
     }
 
     /* CROWNS. What used to stand here was 156 cones whose bases were 50-140 units BELOW
@@ -31382,6 +32750,7 @@ function buildTrack(idx){
        walking the outer ring and only accepting spots the terrain has actually lifted. */
     const ridge=[], PK=[], tiers=[], ledges=[];
     for(let i=0;i<STEPS;i+=11){
+      if(loom) break;                                   // Felicity crowns her hills with trees instead
       const s2=SAMP[i], side=((i/11|0)%2)?1:-1;
       if(side*innerSign>0) continue;                    // outside the loop only
       const out=HW*(9.5+((i*37)%64)/9);
@@ -31423,7 +32792,8 @@ function buildTrack(idx){
        hard silhouette against the poster sky, drifting on TRACK_PULSE. This is the one
        piece of background motion the course gets, and it is a slow rotation of the whole
        ring about the circuit centre — parallax you notice only if you look for it. */
-    { const cl=[];
+    if(loom){ const cg=loomClouds(ccx, ccz); trackGroup.add(cg); TRACK_PULSE.feltClouds=cg; }   // roving
+    else { const cl=[];
       // Aurora: the ring sits in exactly the 10-24 degree band the sunrise does, so a bank
       // was always parked over the disc. Leave a CLEARING along the sun line as seen from
       // the opening run — banks either side frame the sun instead of hiding it, which is
@@ -31657,6 +33027,8 @@ function buildTrack(idx){
       rg.fillStyle=(((x+y)/16)|0)%2 ? '#e8a8c8' : '#f4e2ea'; rg.fillRect(x,y,16,16); }
     rg.fillStyle='#e0217f'; rg.fillRect(0,0,6,256); rg.fillRect(58,0,6,256);
     rg.fillStyle='#f2c230'; for(let y=0;y<256;y+=36) rg.fillRect(27,y,10,20);
+  } else if(loom){
+    loomRoadPaint(rg, rc);                 // Felicia's sheet, woven
   } else if(felt){
     /* THE PRESSED SHEET, at the density it needs to be a MATERIAL.
        Bands run ACROSS the road rather than along it, so the strata read as sheets the
@@ -31902,6 +33274,8 @@ function buildTrack(idx){
     : bead
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:90,specular:0xffffff,
         side:T.DoubleSide})
+    : loom
+    ? new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide})   // the woven canvas carries its own fibre
     : felt
     ? new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
     : (clay||paper)
@@ -31962,7 +33336,8 @@ function buildTrack(idx){
    * different hue; at its size and its speed that is a nice incident, and at this size and
    * this speed it turns a seam into confetti. Each run of stitching is a single colour with
    * a rare change, which is also what a person with one needle would actually produce. */
-  if(felt){
+  if(loom) loomStitch(loop);             // Felicity: blanket stitch over the hem
+  else if(felt){
     const stitch=[], HEMOUT=HW-0.9;
     for(const side of [1,-1]){
       const cp=[];
@@ -32061,6 +33436,8 @@ function buildTrack(idx){
   const s0=SAMP[0];
   if(oph){
     ophBridge(OK.F, OK.O, innerSign);     // a plank footbridge with a garland; flushed below
+  } else if(loom){
+    loomGate(innerSign);
   } else if(felt){
     /* The start line as a WARP BEAM. The shared gantry is a white plastic bar on two teal
        cylinders, and it is not rotated to the road, so on this course it was a 52-unit
@@ -32359,6 +33736,8 @@ function buildTrack(idx){
       }
     }
     trackGroup.add(coilBatch(new T.TorusGeometry(1,0.18,5,22,4.7), vol));
+  } else if(loom){
+    loomVerge(innerSign);
   } else if(felt){
     /* The raw-tuft state: banks of wool crowding both shoulders. This is the signature
        element and it doubles as the course's soft edge, so it stays — but in TWO rows
@@ -32490,6 +33869,8 @@ function buildTrack(idx){
   } else if(macro){
     // the wisteria walk and the bamboo grove (see lilyTunnels)
     lilyTunnels(MK, innerSign, MK.G);
+  } else if(loom){
+    loomTunnels(tun, innerSign);
   } else if(felt){
     /* THE REED. The old tunnel was a CLOSED torus every three samples, each one wearing
        the same marbled strata map — which is precisely how you build "an unreadable
@@ -33522,6 +34903,8 @@ function buildTrack(idx){
     { const wm=coilBatch(new T.CylinderGeometry(1,1,1,6,1,false,0,Math.PI/6), wedges);
       wm.material.map=coilTexAt(14,14); trackGroup.add(wm); }
     trackGroup.add(coilBatch(new T.ConeGeometry(1,1,4), bursts));
+  } else if(loom){
+    loomScenery(innerSign, ccx, ccz);
   } else if(felt){
     /* A WEAVERS' VALLEY, not a prop scatter. The road is a woven serape, so the verge is
        dressed with the things that would make one: upright looms with a striped blanket
@@ -33892,7 +35275,9 @@ function buildTrack(idx){
       const by=s.p.y+Math.sin(s.bank||0)*side*out+(oph?0.5:2.2);   // ride the banked road edge (posies float ON the water)
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
-      const m = felt
+      const m = loom
+        ? loomMat(new T.Color(`hsl(${300+hue}, 42%, 46%)`).getHex(), null, 0.6, 1.0)
+        : felt
         ? feltMat(new T.Color(`hsl(${300+hue}, 42%, 46%)`).getHex())
         : wire
         ? new T.MeshBasicMaterial({color:new T.Color(`hsl(${290+hue}, 95%, 66%)`),
@@ -33908,7 +35293,8 @@ function buildTrack(idx){
       for(let c=0;c<3;c++){ const r=2.0+Math.random()*1.6;
         // wire solids on the vector course, crates on the voxel one, cell blobs elsewhere
         const blob=new T.Mesh(
-          felt ? FELT_PUFF
+          loom ? LOOM_PUFF
+          : felt ? FELT_PUFF
           : wire ? new T.OctahedronGeometry(r*1.3,0)
           : vox ? new T.BoxGeometry(r*1.9,r*1.9,r*1.9)
           : oph ? POSYG
@@ -43596,6 +44982,8 @@ function frame(now){
   if(TRACK_PULSE.dawnLake) TRACK_PULSE.dawnLake.uniforms.uTime.value=tsec;
   if(TRACK_PULSE.dawnDew) for(const d of TRACK_PULSE.dawnDew)
     d.m.opacity=0.25+0.4*Math.max(0,Math.sin(tsec*1.3+d.ph));
+  // Felicity: llamas graze and look round, shuttles cross, wheels and sails turn, smoke rises
+  if(TRACK_PULSE.loom) loomTick(TRACK_PULSE.loom, tsec);
   // village lights flicker in three phases; stars scintillate more gently
   if(TRACK_PULSE.macroLights) for(const L2 of TRACK_PULSE.macroLights){
     L2.m.opacity=Math.max(0.18, Math.min(1,
