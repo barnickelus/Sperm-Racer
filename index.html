@@ -25167,10 +25167,38 @@ const TRACKS=[
   {name:'Bianca',   key:5, tempo:208, sky:0x1f3a36, tunnels:[[0.32,0.42]],
    critters:[0.5], dams:[0.78],
    ctrl:[[230,8,-320],[120,30,-440],[-120,30,-440],[-230,10,-300],[-270,16,0],[-180,30,300],[0,42,430],[180,30,300],[270,16,0]]},
-  // Eve — long point-to-point dash (≈4×), finishes at the glowing egg (ovum)
-  {name:'Eve', loop:false, egg:true, key:7, tempo:176, sky:0x4a2a1f, tunnels:[[0.16,0.21],[0.40,0.45],[0.66,0.71]],
-   critters:[0.3,0.58], pills:[0.25,0.85], dams:[0.5],
-   ctrl:[[0,0,0],[150,12,-300],[-40,34,-600],[210,52,-900],[60,72,-1240],[-170,54,-1540],[120,40,-1840],[320,26,-2200],[150,56,-2560],[-80,40,-2880],[170,30,-3240],[380,48,-3600],[190,66,-3980],[-50,46,-4320],[140,30,-4680],[330,40,-5040],[150,30,-5440],[80,20,-5800]]},
+  /* Eve — "the Garden at Night" (see NIGHT GARDEN KIT). Still the point-to-point dash to the
+     glowing fruit at the end, but now the one course built TO A CLOCK: a race lasts about one
+     produced song — Recta Final, 3:01 — so the record plays once, start to finish. The run is
+     a single spiral that winds inward through orchard, stream valley, fungus wood and fern
+     hollow to the great tree at the garden's heart, its legs never closer than ~470 apart.
+       steps: the run is ~26,000 units, so it carries 2,600 samples instead of the shared 700,
+         which keeps the ~10-unit sample spacing the AI lookahead, the hazards and the road
+         strip were all tuned on. Every other course stays at 700 (STEPS is reset per build).
+       pads/items/jumps: the shared four boost pads and five item boxes are laid per LAP; on a
+         run this long they would leave forty-second gaps, so Eve carries her own lists, and
+         her ramps are placed just ahead of her own hazards rather than by the shared offsets
+         (which are lap fractions, ~1,000 units early here).
+     Her course song, "Night Bloom", is Lydian — the raised fourth is the floating, unresolved
+     colour of the place — over a I-II-vii-vi bass (0,2,-1,-3) that no other course uses. */
+  {name:'Eve', loop:false, egg:true, eden:true, key:7, tempo:176, sky:0x0a1132, steps:2600,
+   song:{ name:'Night Bloom',
+          mel: [7,null,11,9,   7,null,6,4,   2,null,4,6,   7,null,null,null],
+          melB:[14,null,12,11, 9,null,11,12, 14,null,16,14, 11,null,null,null],
+          bass:[0,2,-1,-3] },
+   tunnels:[[0.18,0.205],[0.445,0.47],[0.66,0.685]],
+   critters:[0.11,0.27,0.43,0.62,0.8], pills:[0.16,0.36,0.54,0.88], dams:[0.24,0.5,0.74], jumps:[0.153,0.233,0.493,0.733,0.873],
+   pads:[0.03,0.08,0.13,0.19,0.26,0.32,0.39,0.46,0.52,0.59,0.65,0.72,0.79,0.85,0.92,0.96],
+   items:[0.05,0.12,0.2,0.28,0.35,0.42,0.49,0.57,0.64,0.71,0.78,0.86,0.93],
+   ctrl:[[-2100,6,700],[-2250,8,300],[-2450,14,-150],[-2350,26,-600],[-2550,40,-1050],[-2400,52,-1550],
+         [-2250,40,-2000],[-2000,26,-2500],[-1550,16,-2900],[-1000,10,-3250],[-450,18,-3450],[0,34,-3200],
+         [400,44,-3000],[900,30,-3100],[1400,14,-2900],[1900,10,-2700],[2200,20,-2300],[2000,30,-1800],
+         [2100,40,-1300],[1850,50,-900],[2000,42,-500],[1900,30,-100],[1800,22,300],[1400,30,600],
+         [1000,36,400],[600,28,600],[200,18,450],[-250,10,600],[-650,14,350],[-1050,26,150],
+         [-1400,40,-250],[-1600,56,-600],[-1450,44,-950],[-1650,30,-1300],[-1400,18,-1650],[-1450,10,-2050],
+         [-1100,14,-2350],[-700,22,-2500],[-300,34,-2300],[100,50,-2450],[500,60,-2250],[950,46,-2350],
+         [1350,30,-2200],[1550,16,-1850],[1400,8,-1450],[1100,12,-1250],[750,22,-1400],[350,30,-1350],
+         [80,24,-1050],[-60,30,-700],[60,40,-350],[0,48,0]]},
   // Valentina — "the Cervix Pass": switchback mountain climb, most of it blind inside a
   // tunnel, opening onto a y=88 summit and a quarter-lap freefall descent. Longest lap
   // (~3070 units). Designed by the Id: claustrophobia -> vertigo -> freefall, every lap.
@@ -25363,7 +25391,9 @@ const TRACKS=[
    ctrl:[[360,6,160],[420,12,-120],[280,30,-330],[40,50,-400],[-200,58,-330],[-380,40,-160],
          [-360,14,40],[-240,6,170],[-190,6,360],[40,8,420],[250,6,330]]},
 ];
-const STEPS=700;
+// Samples per course. 700 everywhere except where a course asks for more (Eve's run is ~26k
+// units long and carries 2,600 to keep the same ~10-unit spacing). Set on EVERY buildTrack.
+let STEPS=700;
 const SAMP=[];                 // {p,t,n,u} — rebuilt per track
 let TRACK_PULSE=[];
 // The shader skydome, if the current course has one. It has to RIDE THE CAMERA: the
@@ -32226,6 +32256,969 @@ function ophTick(P, tsec){
 // Free the GPU side of everything under o: geometry, material AND every texture slot.
 // Dropping a mesh from the scene alone leaks all of it. Shared/cached textures and
 // geometries are safe to dispose: three re-uploads them on next use, only the GPU copy goes.
+/* ============== NIGHT GARDEN KIT (Eve) ============== *
+ * Eve is a garden at night, run point to point: one long spiral that winds inward through
+ * orchard, stream valley, fungus wood and fern hollow to the great fruit tree at its heart.
+ * It is as long as one produced song (see her TRACKS entry). The colour comes from a single
+ * reference and nothing else from it: near-black navy, teal and cyan-green glow, chartreuse
+ * rings, one hot red-orange, indigo and purple, on glossy clay.
+ * VALUE comes first, and at night it runs backwards from a day course. Land and every
+ * silhouette sit in the bottom two steps; the sky's horizon band is one step above them so
+ * trunks and canopies read against it; light lives only in SMALL things — fruit, cap rims,
+ * ringed pods, moss — so the glow is the focal hierarchy rather than a wash over everything.
+ * The road is the one large plane that carries continuous light: a chartreuse line down
+ * each edge and a glowing centre dash, so from the chase camera on a phone the corridor
+ * is the first thing that reads.
+ * EVERYTHING STANDS ON ONE HEIGHT ORACLE (edenField). It flattens a bench under the road
+ * wide enough that no ground triangle can rise into the corridor, carves the ponds and
+ * streams, and seats every prop on the lowest ground under its own footprint.
+ * PLACEMENT checks every prop against EVERY leg of the spiral (not just the sample it was
+ * hung off) — 28.2 clear of the centreline below road+22, which is the point-to-point
+ * corridor; the legs never come closer than ~470 to each other, so that is always solvable.
+ * ---------------------------------------------------------------------------------- */
+const EDEN={
+  zen:0x03050e, mid:0x0a1132, low:0x171a48, hor:0x20214f, sil:0x0b0e24,
+  teal:0x2ad8b4, cyan:0x52e8e0, lime:0xd2f03a, yellow:0xf4e43c, orange:0xff7a1e, red:0xff3d1c,
+  purple:0x5a32b0, violet:0x8a46d0, indigo:0x2a2a8a,
+  bark:[0x3a2040,0x46263f,0x30224a,0x4a2a3a,0x382638],
+  leaf:[0x0c3c3a,0x104a34,0x0c3350,0x135444,0x0a2e40,0x123c30],
+  stone:[0x241f4a,0x1c1a3e,0x2c2050,0x1a2240],
+};
+const EDEN_T={value:0};                 // one clock for every patched material
+const EDEN_H={value:720};               // drawing-buffer height, for point sizes
+const EDEN_MOON={az:-0.62, el:0.40};    // the moon in the sky dome, and the key light's direction
+const edenLin=h=>new T.Color(h).convertSRGBToLinear();
+const edenG3=h=>{ const c=new T.Color(h); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
+const edenL3=h=>{ const c=edenLin(h); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
+const edenSm=t=>{ t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); };
+
+/* Glossy clay. Phong with a modest white-blue specular is the reference's material: the
+   sheen rides the moonlight along every silhouette, which is how a night scene keeps its
+   forms without lighting them up. Options: glow — the instance colour added back as light
+   (bioluminescence, per instance, with no extra draw); sway — the top of the form drifts on
+   two slow incommensurate sines keyed to where it stands, height-squared so the base never
+   moves; vc — geometry vertex colours (the fern's red streak); map — a texture that is also
+   its own emissive map (the ringed pods). */
+function edenMat(o){
+  o=o||{};
+  const m=new T.MeshPhongMaterial({color:0xffffff, shininess:o.shin!=null?o.shin:38,
+    specular:edenLin(o.spec!=null?o.spec:0x3a4a66), side:o.side||T.FrontSide, vertexColors:!!o.vc});
+  if(o.tex) m.map=o.tex;
+  if(o.map){ m.map=o.map; m.emissiveMap=o.map; m.emissive=new T.Color(o.emi!=null?o.emi:0.6,o.emi!=null?o.emi:0.6,o.emi!=null?o.emi:0.6); }
+  const U={uGlow:{value:o.glow||0}};
+  m.userData.edenU=U;
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uT=EDEN_T; sh.uniforms.uGlow=U.uGlow;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;');
+    if(o.sway) sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
+      { float ph=0.0;
+        #ifdef USE_INSTANCING
+          ph=instanceMatrix[3].x*0.031+instanceMatrix[3].z*0.027;
+        #endif
+        float hh=max(0.0,transformed.y), a=${o.sway.toFixed(4)}*hh*hh;
+        transformed.x+=a*sin(uT*0.83+ph); transformed.z+=a*0.7*sin(uT*0.61+ph*1.7+1.3); }`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;')
+      .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
+      #if defined(USE_COLOR)
+        totalEmissiveRadiance+=vColor.rgb*uGlow;
+      #endif`);
+  };
+  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0);
+  return m;
+}
+// pure light: fruit, rims, gills, beads. Unlit, fogged, coloured per instance.
+function edenGlowMat(o){ o=o||{};
+  return new T.MeshBasicMaterial({color:0xffffff, side:o.side||T.FrontSide}); }
+
+/* One InstancedMesh per tenth of the course, each with its own world-space bounding sphere,
+   so the frustum drops the nine-tenths of the garden that are behind you or round the
+   spiral. A whole-course batch with culling off draws every fern on 26 km of verge every
+   frame. Records: {x,y,z,s,sy,sz,rx,ry,rz|q,c,k} — k is the chunk (from the sample index),
+   colours are authored sRGB and decoded, because instanceColor multiplies in linear. */
+let EDEN_CHUNKS=[];                     // every chunk, for the distance cull in edenTick
+function edenBatch(geo, mat, list, noChunk){
+  if(!list.length) return [];
+  // chunks are 520-unit squares of ground, not stretches of road: on a spiral a stretch of
+  // road has a bounding sphere that spans half the garden and is never off screen
+  const groups=new Map();
+  for(const v of list){ const k=noChunk?0:(Math.floor(v.x/520)+512)*4096+(Math.floor(v.z/520)+512); let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(v); }
+  const out=[], d=new T.Object3D(), c=new T.Color();
+  let first=true;
+  for(const L of groups.values()){
+    const g=first?geo:geo.clone(); first=false;
+    const m=new T.InstancedMesh(g, mat, L.length);
+    let cx=0,cy=0,cz=0; for(const v of L){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=L.length; cy/=L.length; cz/=L.length;
+    let r=0;
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z);
+      if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
+      const sx=v.s, sy=v.sy!=null?v.sy:v.s, sz=v.sz!=null?v.sz:v.s;
+      d.scale.set(sx,sy,sz); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+      c.setHex(v.c==null?0xffffff:v.c).convertSRGBToLinear(); m.setColorAt(i,c);
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.max(Math.abs(sx),Math.abs(sy),Math.abs(sz))*1.8+2); });
+    m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+    g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    m.frustumCulled=true; trackGroup.add(m); out.push(m); EDEN_CHUNKS.push(m);
+  }
+  return out;
+}
+// a cylinder record spanning two points (unit CylinderGeometry, height 1, centred)
+const _edY=new T.Vector3(0,1,0), _edV=new T.Vector3();
+function edenSeg(x0,y0,z0,x1,y1,z1,r,c,k){
+  _edV.set(x1-x0,y1-y0,z1-z0); const L=_edV.length()||1;
+  return {x:(x0+x1)/2, y:(y0+y1)/2, z:(z0+z1)/2, s:r, sy:L, sz:r,
+          q:new T.Quaternion().setFromUnitVectors(_edY, _edV.multiplyScalar(1/L)), c, k};
+}
+
+/* THE SKY. Near-black navy at the zenith down to an indigo horizon band — the lightest large
+   value in the frame, deliberately, because it is what every silhouette is read against.
+   Two low washes of the garden's own glow on opposite horizons (teal one way, violet the
+   other) so the dome agrees with the land, sparse stars that scintillate slowly, a small
+   pale moon, and a far tree line one step darker than the band. Unlit and unfogged; it
+   rides the camera like every other dome. */
+function edenSky(){
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uT:EDEN_T },
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(h21(i),h21(i+vec2(1.0,0.0)),f.x),mix(h21(i+vec2(0.0,1.0)),h21(i+vec2(1.0,1.0)),f.x),f.y); }
+      float fbm(vec2 p){ return vn(p)*0.55+vn(p*2.07+5.1)*0.30+vn(p*4.3+1.7)*0.15; }
+      float wrapA(float a){ return a-6.2831853*floor((a+3.14159265)/6.2831853); }
+      void main(){
+        vec3 d=normalize(vP-cameraPosition);
+        float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
+        vec3 c=mix(${edenG3(EDEN.hor)}, ${edenG3(EDEN.low)}, smoothstep(0.0,0.14,el));
+        c=mix(c, ${edenG3(EDEN.mid)}, smoothstep(0.10,0.50,el));
+        c=mix(c, ${edenG3(EDEN.zen)}, smoothstep(0.45,1.30,el));
+        float gt=exp(-pow(wrapA(az-0.9)/0.95,2.0))*exp(-max(el,0.0)*8.0);
+        float gv=exp(-pow(wrapA(az+2.3)/1.05,2.0))*exp(-max(el,0.0)*7.0);
+        c+=${edenG3(0x0c4446)}*gt*0.75+${edenG3(0x34184e)}*gv*0.65;
+        // thin veils of high cloud, barely lighter than the sky they cross
+        float cl=fbm(vec2(az*2.6+uT*0.0015, el*8.0));
+        c=mix(c, ${edenG3(0x1c2150)}, smoothstep(0.58,0.85,cl)*smoothstep(0.06,0.22,el)*(1.0-smoothstep(0.55,0.95,el))*0.45);
+        // stars: one cell in a few hundred, twinkling on its own slow period
+        if(el>0.07){ vec2 sp=vec2(az*90.0, el*90.0), ci=floor(sp); float h=h21(ci);
+          if(h>0.982){ vec2 f=fract(sp)-0.5-(vec2(h21(ci+3.1),h21(ci+7.7))-0.5)*0.5;
+            float s=smoothstep(0.16,0.0,length(f))*(0.35+0.65*fract(h*91.0));
+            s*=0.72+0.28*sin(uT*(0.6+fract(h*37.0)*1.4)+h*60.0);
+            c+=vec3(0.70,0.80,1.0)*s*smoothstep(0.07,0.30,el)*(1.0-0.5*cl); } }
+        // the moon, small and cool, with a soft halo
+        vec3 md=vec3(cos(${EDEN_MOON.az.toFixed(3)})*cos(${EDEN_MOON.el.toFixed(3)}), sin(${EDEN_MOON.el.toFixed(3)}), sin(${EDEN_MOON.az.toFixed(3)})*cos(${EDEN_MOON.el.toFixed(3)}));
+        float dm=acos(clamp(dot(d,md),-1.0,1.0));
+        c+=${edenG3(0x5a78b8)}*(exp(-dm*dm/0.012)*0.30+exp(-dm/0.30)*0.07);
+        if(dm<0.042){ float k=smoothstep(0.042,0.037,dm); vec3 mc=${edenG3(0xd8e6f4)}*(0.86+0.14*vn(d.xz*260.0));
+          mc=mix(mc, ${edenG3(0xa8b8d0)}, smoothstep(0.55,0.75,fbm(d.xz*90.0))); c=mix(c,mc,k); }
+        // the far tree line: rounded crowns, one step darker than the band
+        float tl=0.014+0.020*fbm(vec2(az*6.0,1.3))+0.010*pow(abs(sin(az*19.0+fbm(vec2(az*3.0,3.0))*5.0)),2.0);
+        if(el<tl) c=mix(${edenG3(EDEN.sil)}, c, 0.30*smoothstep(tl-0.012, tl, el));
+        if(el<0.0) c=${edenG3(EDEN.hor)};
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,24), mat); m.frustumCulled=false; return m;
+}
+
+/* THE HEIGHT ORACLE. A spatial hash on the centreline answers "nearest road, and how high is
+   it" for any point; the natural ground is a smoothed copy of the road's own heights (so the
+   land rises where the road climbs) plus slow rolling hills; the two are blended across a
+   bench. FLAT is set by the corridor, not by taste: a 26-unit terrain cell has a 37-unit
+   diagonal, so any vertex that can share a cell with a corridor point (28.2) lies within 65
+   of the road — and every one of those is held at road-0.7. */
+function edenField(){
+  const N=SAMP.length, CS=120, cell=new Map(), K=(a,b)=>(a+32768)*65536+(b+32768);
+  for(let i=0;i<N;i+=2){ const p=SAMP[i].p, k=K(Math.floor(p.x/CS), Math.floor(p.z/CS));
+    let L=cell.get(k); if(!L) cell.set(k,L=[]); L.push(i); }
+  if((N-1)%2){ const p=SAMP[N-1].p, k=K(Math.floor(p.x/CS), Math.floor(p.z/CS)); let L=cell.get(k); if(!L) cell.set(k,L=[]); L.push(N-1); }
+  function near(x,z,maxR){
+    const r=Math.ceil((maxR||300)/CS), cx=Math.floor(x/CS), cz=Math.floor(z/CS);
+    let bi=-1, bd=1e18;
+    for(let a=-r;a<=r;a++) for(let b=-r;b<=r;b++){ const L=cell.get(K(cx+a,cz+b)); if(!L) continue;
+      for(let j=0;j<L.length;j++){ const p=SAMP[L[j]].p, dx=p.x-x, dz=p.z-z, d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=L[j]; } } }
+    if(bi<0) return {d:1e9, y:0, i:-1, lat:0};
+    let bd2=1e18, by=0, bk=bi;
+    for(let k=Math.max(0,bi-3);k<Math.min(N-1,bi+3);k++){ const A=SAMP[k].p, B=SAMP[k+1].p;
+      const ex=B.x-A.x, ez=B.z-A.z, L2=ex*ex+ez*ez||1;
+      const t=Math.max(0,Math.min(1,((x-A.x)*ex+(z-A.z)*ez)/L2));
+      const qx=A.x+ex*t-x, qz=A.z+ez*t-z, d=qx*qx+qz*qz;
+      if(d<bd2){ bd2=d; by=A.y+(B.y-A.y)*t; bk=k; } }
+    const s=SAMP[bk];
+    return {d:Math.sqrt(bd2), y:by, i:bk, lat:(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z};
+  }
+  // bounds
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+  for(const s of SAMP){ x0=Math.min(x0,s.p.x); x1=Math.max(x1,s.p.x); z0=Math.min(z0,s.p.z); z1=Math.max(z1,s.p.z); }
+  const M=620; x0-=M; x1+=M; z0-=M; z1+=M;
+  // far field: inverse-distance average of the road's heights on a coarse grid
+  const FC=150, fnx=Math.ceil((x1-x0)/FC)+1, fnz=Math.ceil((z1-z0)/FC)+1, FF=new Float32Array(fnx*fnz);
+  const D=[]; for(let i=0;i<N;i+=8) D.push(SAMP[i].p);
+  let ymin=1e9; for(const p of D) ymin=Math.min(ymin,p.y);
+  for(let a=0;a<fnx;a++) for(let b=0;b<fnz;b++){ const x=x0+a*FC, z=z0+b*FC; let sw=0, sy=0;
+    for(const p of D){ const dx=p.x-x, dz=p.z-z, w=1/(dx*dx+dz*dz+260*260); sw+=w; sy+=w*p.y; }
+    FF[a*fnz+b]=sy/sw; }
+  const hfar=(x,z)=>{ const fx=Math.max(0,Math.min(fnx-1.001,(x-x0)/FC)), fz=Math.max(0,Math.min(fnz-1.001,(z-z0)/FC));
+    const a=Math.floor(fx), b=Math.floor(fz), u=fx-a, v=fz-b;
+    return (FF[a*fnz+b]*(1-u)+FF[(a+1)*fnz+b]*u)*(1-v)+(FF[a*fnz+b+1]*(1-u)+FF[(a+1)*fnz+b+1]*u)*v; };
+  const roll=(x,z)=>8*Math.sin(x*0.0071+1.3)*Math.sin(z*0.0063+0.4)+6*Math.sin((x+z)*0.0043+2.2)
+                   +4*Math.sin(x*0.013-z*0.011)+3*Math.sin(z*0.019+x*0.004+0.7);
+  const PLANE=ymin-26;
+  const FLAT=66, BLEND=230;
+  const F={near, x0,x1,z0,z1, PLANE, FLAT, ponds:[], streams:[], ymin, G:null};
+  F.natural=(x,z)=>hfar(x,z)-9+roll(x,z);
+  // ground before water is carved (used to level the water)
+  F.base=(x,z)=>{ const q=near(x,z,FLAT+BLEND+CS);
+    let h;
+    if(q.d<FLAT) h=q.y-0.7;
+    else { const t=edenSm((q.d-FLAT)/BLEND); h=(q.y-0.7)*(1-t)+F.natural(x,z)*t; }
+    // fade into the far plane at the edge of the world
+    const e=Math.min(x-x0, x1-x, z-z0, z1-z);
+    return h+(PLANE-h)*edenSm(1-(e-40)/300); };
+  F.carve=(x,z,h)=>{
+    for(const P of F.ponds){ const dx=x-P.x, dz=z-P.z; if(Math.abs(dx)>P.rx*1.7+40 && Math.abs(dz)>P.rx*1.7+40) continue;
+      const u=(dx*P.ca+dz*P.sa)/P.rx, v=(-dx*P.sa+dz*P.ca)/P.rz, e=Math.sqrt(u*u+v*v);
+      if(e<1) h=Math.min(h, P.wl-0.8-4.5*(1-e*e));
+      else if(e<1.6) h=Math.min(h, (P.wl-0.8)+(h-(P.wl-0.8))*edenSm((e-1)/0.6)); }
+    for(const S of F.streams){ if(x<S.bx0||x>S.bx1||z<S.bz0||z>S.bz1) continue;
+      let bd=1e18, bw=0, bwl=0;
+      for(let k=0;k<S.pts.length-1;k++){ const A=S.pts[k], B=S.pts[k+1], ex=B.x-A.x, ez=B.z-A.z, L2=ex*ex+ez*ez||1;
+        const t=Math.max(0,Math.min(1,((x-A.x)*ex+(z-A.z)*ez)/L2)), qx=A.x+ex*t-x, qz=A.z+ez*t-z, d=qx*qx+qz*qz;
+        if(d<bd){ bd=d; bw=A.w+(B.w-A.w)*t; bwl=A.wl+(B.wl-A.wl)*t; } }
+      const d=Math.sqrt(bd);
+      if(d<bw) h=Math.min(h, bwl-0.8-2.8*(1-(d/bw)*(d/bw)));
+      else if(d<bw+26) h=Math.min(h, (bwl-0.8)+(h-(bwl-0.8))*edenSm((d-bw)/26)); }
+    return h; };
+  F.h=(x,z)=>F.carve(x,z,F.base(x,z));
+  // the lowest ground under a round footprint: what a prop actually stands on
+  F.seat=(x,z,r)=>{ let m=F.h(x,z); if(r>0.5) for(let k=0;k<6;k++){ const a=k*1.0472; m=Math.min(m, F.h(x+Math.cos(a)*r*0.75, z+Math.sin(a)*r*0.75)); } return m; };
+  F.wet=(x,z,pad)=>{ pad=pad||0;
+    for(const P of F.ponds){ const dx=x-P.x, dz=z-P.z, u=(dx*P.ca+dz*P.sa)/(P.rx+pad), v=(-dx*P.sa+dz*P.ca)/(P.rz+pad); if(u*u+v*v<1.25) return true; }
+    for(const S of F.streams){ if(x<S.bx0-pad||x>S.bx1+pad||z<S.bz0-pad||z>S.bz1+pad) continue;
+      for(let k=0;k<S.pts.length;k++){ const A=S.pts[k]; if((A.x-x)**2+(A.z-z)**2<(A.w+18+pad)**2) return true; } }
+    return false; };
+  return F;
+}
+
+/* WATER: ponds, and two streams that run beside the road for a stretch and end in a pond.
+   Levels are taken from the ground BEFORE carving — a pond's surface sits 1.2 under the
+   lowest point of its own rim, a stream's falls monotonically downstream — so no sheet of
+   water can ever stand above the land around it. */
+function edenWater(F, R){
+  const N=SAMP.length, tun=F.tun;
+  const inTun=i=>tun.some(([a,b])=>i>=a-30&&i<=b+30);
+  const clearOf=(x,z,r)=>{ const q=F.near(x,z,r+300); return q.d>r+F.FLAT+8; };
+  const addPond=(x,z,rx,rz,rot)=>{ for(const P of F.ponds) if(Math.hypot(P.x-x,P.z-z)<P.rx+rx+60) return false;
+    for(let k=0;k<16;k++){ const a=k*0.3927, u=Math.cos(a)*rx*1.15, v=Math.sin(a)*rz*1.15;
+      if(F.near(x+u*Math.cos(rot)-v*Math.sin(rot), z+u*Math.sin(rot)+v*Math.cos(rot), 300).d<32) return false; }
+    let wl=1e9; for(let k=0;k<20;k++){ const a=k*0.314, ca=Math.cos(rot), sa=Math.sin(rot);
+      for(const e of [1.0,1.25,1.5]){ const u=Math.cos(a)*rx*e, v=Math.sin(a)*rz*e;
+        wl=Math.min(wl, F.base(x+u*ca-v*sa, z+u*sa+v*ca)); } }
+    F.ponds.push({x,z,rx,rz,ca:Math.cos(rot),sa:Math.sin(rot),rot,wl:wl-1.2}); return true; };
+  // streams: [first sample, last sample, side, mean lateral]
+  for(const [ua,ub,side,lat0] of [[0.205,0.300,1,74],[0.735,0.815,-1,70]]){
+    const i0=Math.floor(ua*(N-1)), i1=Math.floor(ub*(N-1)), pts=[];
+    for(let i=i0;i<=i1;i+=4){ const s=SAMP[i], f=(i-i0)/(i1-i0);
+      const lat=side*(lat0+18*Math.sin(f*9.1+side)+9*Math.sin(f*23.0));
+      pts.push({x:s.p.x+s.n.x*lat, z:s.p.z+s.n.z*lat, w:9+5*Math.sin(f*6.0+1)+4*f}); }
+    // only keep the stretch that stays clear of every other leg
+    const ok=pts.filter(p=>{ const q=F.near(p.x,p.z,400); return q.d>p.w+36; });
+    if(ok.length<8) continue;
+    let run=1e9; for(const p of ok){ run=Math.min(run, F.base(p.x,p.z)-1.8); p.wl=run; }
+    let bx0=1e9,bx1=-1e9,bz0=1e9,bz1=-1e9; for(const p of ok){ bx0=Math.min(bx0,p.x-60); bx1=Math.max(bx1,p.x+60); bz0=Math.min(bz0,p.z-60); bz1=Math.max(bz1,p.z+60); }
+    F.streams.push({pts:ok, bx0,bx1,bz0,bz1});
+    const last=ok[ok.length-1], prev=ok[ok.length-2];
+    const dx=last.x-prev.x, dz=last.z-prev.z, L=Math.hypot(dx,dz)||1;
+    const pr=46+R()*20, px=last.x+dx/L*pr*0.7, pz=last.z+dz/L*pr*0.7;
+    if(clearOf(px,pz,pr)){ addPond(px,pz,pr,pr*0.8,Math.atan2(dz,dx));
+      const P=F.ponds[F.ponds.length-1]; if(P.wl>last.wl){ P.wl=last.wl; } else { for(const p of ok) p.wl=Math.max(p.wl, P.wl); } }
+  }
+  // free-standing ponds, beside the road at an irregular cadence
+  let i=60+((R()*80)|0), n=0;
+  while(i<N-120 && n<20){
+    const u=i/(N-1), s=SAMP[i], side=R()<0.5?-1:1;
+    const zone=(u>0.18&&u<0.34)||(u>0.70&&u<0.86)||(u>0.50&&u<0.56);
+    if(!inTun(i) && (zone || R()<0.25)){
+      const rx=34+R()*60, rz=rx*(0.45+R()*0.30), lat=side*(36+rz*1.15+R()*40);
+      const x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, rot=Math.atan2(s.t.z,s.t.x)+(R()-0.5)*0.3;
+      if(addPond(x,z,rx,rz,rot)) n++;
+    }
+    i+=50+((R()*130)|0);
+  }
+}
+function edenWaterMesh(F, glows){
+  const P=[], I=[];
+  const push=(x,y,z)=>{ P.push(x,y,z); return P.length/3-1; };
+  for(const W of F.ponds){ const c=push(W.x,W.wl,W.z), n=40, f=[];
+    for(let k=0;k<n;k++){ const a=k/n*6.2832, u=Math.cos(a)*W.rx*1.18, v=Math.sin(a)*W.rz*1.18;
+      f.push(push(W.x+u*W.ca-v*W.sa, W.wl, W.z+u*W.sa+v*W.ca)); }
+    for(let k=0;k<n;k++) I.push(c, f[(k+1)%n], f[k]); }
+  for(const S of F.streams){ const L=[], Rr=[], pts=S.pts;
+    for(let k=0;k<pts.length;k++){ const A=pts[Math.max(0,k-1)], B=pts[Math.min(pts.length-1,k+1)];
+      let tx=B.x-A.x, tz=B.z-A.z; const l=Math.hypot(tx,tz)||1; tx/=l; tz/=l;
+      const p=pts[k], w=p.w+3;
+      L.push(push(p.x-tz*w, p.wl, p.z+tx*w)); Rr.push(push(p.x+tz*w, p.wl, p.z-tx*w)); }
+    for(let k=0;k<pts.length-1;k++) I.push(L[k],L[k+1],Rr[k], Rr[k],L[k+1],Rr[k+1]); }
+  if(!I.length) return null;
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setIndex(I);
+  const nrm=new Float32Array(P.length); for(let k=1;k<nrm.length;k+=3) nrm[k]=1; g.setAttribute('normal',new T.BufferAttribute(nrm,3));
+  // the reflected lights: the nearest bright things to any water, at most 24 of them
+  const NS=24, src=[], col=[];
+  const wat=F.ponds.map(p=>({x:p.x,z:p.z,r:p.rx})).concat(...F.streams.map(S=>S.pts.filter((p,k)=>k%3===0).map(p=>({x:p.x,z:p.z,r:p.w}))));
+  const scored=glows.map(gw=>{ let d=1e9; for(const w of wat) d=Math.min(d, Math.hypot(gw.x-w.x,gw.z-w.z)-w.r); return {gw,d}; })
+    .filter(o=>o.d<180).sort((a,b)=>a.d-b.d).slice(0,NS);
+  for(let k=0;k<NS;k++){ const o=scored[k];
+    if(o){ src.push(new T.Vector4(o.gw.x,o.gw.y,o.gw.z,o.gw.r)); col.push(edenLin(o.gw.c).multiplyScalar(o.gw.k||1)); }
+    else { src.push(new T.Vector4(0,-9999,0,1)); col.push(new T.Color(0,0,0)); } }
+  const m=new T.MeshPhongMaterial({color:edenLin(0x060a1e), emissive:edenLin(0x010208), shininess:160, specular:edenLin(0x9ab0e8)});
+  m.onBeforeCompile=sh=>{
+    sh.uniforms.uT=EDEN_T; sh.uniforms.uSrc={value:src}; sh.uniforms.uSrcC={value:col.map(c=>new T.Vector3(c.r,c.g,c.b))};
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWW;')
+      .replace('#include <project_vertex>','#include <project_vertex>\nvWW=(modelMatrix*vec4(transformed,1.0)).xyz;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
+      varying vec3 vWW; uniform float uT; uniform vec4 uSrc[${NS}]; uniform vec3 uSrcC[${NS}];`)
+      .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
+      { vec3 V=normalize(vWW-cameraPosition), Rr=reflect(V,vec3(0.0,1.0,0.0));
+        float rp=sin(vWW.x*0.21+uT*1.1+sin(vWW.z*0.17+uT*0.3)*2.0)*sin(vWW.z*0.19-uT*0.9+sin(vWW.x*0.13)*2.0);
+        Rr.xz+=vec2(rp)*0.035;
+        float fres=0.18+0.82*pow(1.0-abs(V.y),4.0);
+        totalEmissiveRadiance+=mix(${edenL3(EDEN.hor)}, ${edenL3(EDEN.mid)}, clamp(Rr.y*1.6,0.0,1.0))*fres*0.9;
+        totalEmissiveRadiance+=${edenL3(0x1a8a7a)}*smoothstep(0.82,1.0,rp)*0.10;
+        for(int k=0;k<${NS};k++){ vec3 s=uSrc[k].xyz-vWW; float L=length(s); vec3 sd=s/max(L,1.0);
+          vec3 dd=Rr-sd; float K=L*L/(uSrc[k].w*uSrc[k].w*4.0+1.0);
+          totalEmissiveRadiance+=uSrcC[k]*exp(-(dd.x*dd.x+dd.z*dd.z)*K-dd.y*dd.y*K*0.06)*0.9; } }`);
+  };
+  const mesh=new T.Mesh(g, m); mesh.frustumCulled=false; return mesh;
+}
+
+/* THE GROUND. One height grid, cut into a 4x4 of tiles so the frustum can drop the far side
+   of the spiral. Vertex colours carry the loam (teal-black, indigo, deep moss) and a second
+   attribute carries LIGHT: patches of luminous moss, a faint glow on the verge either side
+   of the road, and warm pools on the ground under every fruit tree — the fruit's light
+   landing, which is what makes a lamp in a dark scene read as a lamp. Lambert: per-vertex
+   lighting on the largest surface in the frame costs nothing and moss has no gloss. */
+function edenTerrain(F, pools){
+  const C=26, x0=F.x0, z0=F.z0, nx=Math.ceil((F.x1-x0)/C), nz=Math.ceil((F.z1-z0)/C);
+  const H=new Float32Array((nx+1)*(nz+1)), D=new Float32Array((nx+1)*(nz+1));
+  for(let a=0;a<=nx;a++) for(let b=0;b<=nz;b++){ const x=x0+a*C, z=z0+b*C, q=F.near(x,z,360);
+    H[a*(nz+1)+b]=F.h(x,z); D[a*(nz+1)+b]=q.d; }
+  // pool lookup grid
+  const PC=200, PG=new Map(), PK=(a,b)=>(a+32768)*65536+(b+32768);
+  for(const p of pools){ const r=Math.ceil(p.r/PC);
+    for(let a=-r;a<=r;a++) for(let b=-r;b<=r;b++){ const k=PK(Math.floor(p.x/PC)+a, Math.floor(p.z/PC)+b); let L=PG.get(k); if(!L) PG.set(k,L=[]); L.push(p); } }
+  const cA=[edenLin(0x07141c),edenLin(0x0c0f2c),edenLin(0x0a2019),edenLin(0x08122a)];
+  const gMoss=edenLin(0x14907a), gLime=edenLin(0x6a9a1c), gVerge=edenLin(0x0e5a58);
+  const n1=(x,z)=>0.5+0.5*Math.sin(x*0.011+Math.sin(z*0.007)*2.0)*Math.sin(z*0.013+Math.sin(x*0.005)*1.7);
+  const n2=(x,z)=>0.5+0.5*Math.sin(x*0.031+z*0.017+Math.sin(z*0.023)*1.5)*Math.sin(z*0.029-x*0.012+1.1);
+  const TL=4, mat=new T.MeshLambertMaterial({vertexColors:true});
+  mat.onBeforeCompile=sh=>{
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 aGlow; varying vec3 vGlow;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=aGlow;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow;')
+      .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vGlow;');
+  };
+  mat.customProgramCacheKey=()=>'eden-ground';
+  const c=new T.Color(), g=new T.Color();
+  for(let ta=0;ta<TL;ta++) for(let tb=0;tb<TL;tb++){
+    const a0=Math.floor(ta*nx/TL), a1=Math.floor((ta+1)*nx/TL), b0=Math.floor(tb*nz/TL), b1=Math.floor((tb+1)*nz/TL);
+    const W=a1-a0+1, Hh=b1-b0+1, pos=new Float32Array(W*Hh*3), col=new Float32Array(W*Hh*3), glo=new Float32Array(W*Hh*3), idx=[];
+    for(let a=a0;a<=a1;a++) for(let b=b0;b<=b1;b++){ const v=(a-a0)*Hh+(b-b0), x=x0+a*C, z=z0+b*C, h=H[a*(nz+1)+b], d=D[a*(nz+1)+b];
+      pos[v*3]=x; pos[v*3+1]=h; pos[v*3+2]=z;
+      const m1=n1(x,z), m2=n2(x,z);
+      c.copy(cA[0]).lerp(cA[1], edenSm((m1-0.3)/0.5)).lerp(cA[2], edenSm((m2-0.55)/0.35)*0.8).lerp(cA[3], edenSm((d-500)/400)*0.6);
+      col[v*3]=c.r; col[v*3+1]=c.g; col[v*3+2]=c.b;
+      g.setRGB(0,0,0);
+      // luminous moss: patches where both fields agree, never on the bench by the road
+      const lm=edenSm((m2*0.6+m1*0.4-0.68)/0.12)*edenSm((d-70)/40);
+      g.r+=gMoss.r*lm*0.32; g.g+=gMoss.g*lm*0.32; g.b+=gMoss.b*lm*0.32;
+      const ll=edenSm((m1-0.88)/0.08)*edenSm((d-90)/40)*0.22; g.r+=gLime.r*ll; g.g+=gLime.g*ll; g.b+=gLime.b*ll;
+      // the verge either side of the road glows a little, so the dark road has a lit frame
+      const vg=Math.max(0,1-Math.abs(d-36)/20)*0.07; g.r+=gVerge.r*vg; g.g+=gVerge.g*vg; g.b+=gVerge.b*vg;
+      const L=PG.get(PK(Math.floor(x/PC), Math.floor(z/PC)));
+      if(L) for(const p of L){ const dd=Math.hypot(x-p.x,z-p.z)/p.r; if(dd<1){ const k=(1-dd)*(1-dd)*p.k; g.r+=p.c.r*k; g.g+=p.c.g*k; g.b+=p.c.b*k; } }
+      glo[v*3]=g.r; glo[v*3+1]=g.g; glo[v*3+2]=g.b; }
+    for(let a=0;a<W-1;a++) for(let b=0;b<Hh-1;b++){ const i0=a*Hh+b, i1=i0+Hh; idx.push(i0,i0+1,i1, i1,i0+1,i1+1); }
+    const geo=new T.BufferGeometry();
+    geo.setAttribute('position',new T.BufferAttribute(pos,3)); geo.setAttribute('color',new T.BufferAttribute(col,3));
+    geo.setAttribute('aGlow',new T.BufferAttribute(glo,3)); geo.setIndex(idx); geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    trackGroup.add(new T.Mesh(geo, mat));
+  }
+  // beyond the grid, the far plane the grid's edge already fades down to
+  const fp=new T.Mesh(new T.PlaneGeometry(18000,18000,1,1).rotateX(-Math.PI/2),
+    new T.MeshLambertMaterial({color:edenLin(0x0b1830)}));
+  fp.position.set((F.x0+F.x1)/2, F.PLANE-0.3, (F.z0+F.z1)/2); trackGroup.add(fp);
+}
+
+/* GEOMETRY. Unit-sized and shared, so every family is one batch. */
+// a fiddlehead: a stalk that rolls over into a tightening spiral, tapering as it goes;
+// vertex colours put a red-orange streak down the inside of the curl, the reference's stripe
+function edenCurlGeo(){
+  const C=[], Rr=[];
+  const NS=14, NC=44;
+  for(let k=0;k<=NS;k++){ const t=k/NS; C.push(new T.Vector3(0.05*Math.sin(t*2.4), t*0.64, 0)); Rr.push(0.060-0.012*t); }
+  const top=C[C.length-1], R0=0.25, cx=top.x+R0, cy=top.y;
+  for(let k=1;k<=NC;k++){ const t=k/NC, th=Math.PI-t*Math.PI*2.55, r=R0*(1-0.84*t);
+    C.push(new T.Vector3(cx+r*Math.cos(th), cy+r*Math.sin(th), 0)); Rr.push(0.048*(1-t)+0.012); }
+  const RS=8, pos=[], col=[], idx=[], cIn=edenLin(0xe2481e), cOut=edenLin(0x1f8c68), cTop=edenLin(0x7ac84a);
+  for(let k=0;k<C.length;k++){ const A=C[Math.max(0,k-1)], B=C[Math.min(C.length-1,k+1)];
+    const tx=B.x-A.x, ty=B.y-A.y, l=Math.hypot(tx,ty)||1, nx=-ty/l, ny=tx/l;
+    for(let j=0;j<RS;j++){ const ph=j/RS*Math.PI*2, cs=Math.cos(ph), sn=Math.sin(ph);
+      pos.push(C[k].x+Rr[k]*cs*nx, C[k].y+Rr[k]*cs*ny, Rr[k]*sn);
+      const inner=Math.max(0,-cs), f=k>NS?1:0;
+      const cc=cOut.clone().lerp(cTop, Math.max(0,cs)*0.35*f).lerp(cIn, edenSm((inner-0.35)/0.5)*(0.25+0.75*f));
+      col.push(cc.r,cc.g,cc.b); } }
+  for(let k=0;k<C.length-1;k++) for(let j=0;j<RS;j++){ const a=k*RS+j, b=k*RS+(j+1)%RS, c2=a+RS, d=b+RS; idx.push(a,c2,b, b,c2,d); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+// a leaf blade: an arched, pointed strip, unit length along +z, lying in xz, base at origin
+function edenLeafGeo(){
+  const L=10, pos=[], idx=[];
+  for(let k=0;k<=L;k++){ const t=k/L, w=Math.sin(Math.PI*Math.pow(t,0.8))*0.16, y=Math.sin(t*Math.PI*0.9)*0.22-t*t*0.18;
+    pos.push(-w, y, t, 0, y+0.03, t, w, y, t); }
+  for(let k=0;k<L;k++){ const a=k*3; idx.push(a,a+3,a+1, a+1,a+3,a+4, a+1,a+4,a+2, a+2,a+4,a+5); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+// a tulip cup, open to the sky, for the glowing flowers
+function edenCupGeo(){
+  const pts=[[0.02,0],[0.28,0.06],[0.46,0.32],[0.48,0.66],[0.40,0.88],[0.52,1.0]].map(([r,y])=>new T.Vector2(r,y));
+  return new T.LatheGeometry(pts, 12);
+}
+// concentric bands — the reference's yellow-ringed disc — as a texture for pods and medallions
+let _edenRingTex=null;
+function edenRingTex(){
+  if(_edenRingTex && _edenRingTex.image) return _edenRingTex;
+  const cv=document.createElement('canvas'); cv.width=16; cv.height=256; const g=cv.getContext('2d');
+  const B=[['#f4e43c',14],['#d2f03a',10],['#1a3a3a',4],['#f2d23a',12],['#8ad040',8],['#123a44',5],['#e8f05a',10],['#2ad8b4',8],['#0c1c2c',6],['#d2f03a',9],['#f4e43c',12],['#1a6a54',7],['#c8e040',10],['#0e2430',6]];
+  let y=0, k=0; while(y<256){ const [c,h]=B[k%B.length]; g.fillStyle=c; g.fillRect(0,y,16,h); y+=h; k++; }
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping;
+  return _edenRingTex=t;
+}
+// a disc's rings: the same bands, drawn concentric on a square for the start medallion
+function edenDiscTex(){
+  const cv=document.createElement('canvas'); cv.width=cv.height=256; const g=cv.getContext('2d');
+  const B=['#0c1c2c','#2ad8b4','#f4e43c','#123a44','#d2f03a','#f2d23a','#1a3a3a','#e8f05a','#8ad040','#f4e43c','#ff7a1e'];
+  for(let k=0;k<B.length;k++){ g.fillStyle=B[k]; g.beginPath(); g.arc(128,128,128-k*11.5,0,6.2832); g.fill(); }
+  g.fillStyle='#ff3d1c'; g.beginPath(); g.arc(128,128,9,0,6.2832); g.fill();
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; return t;
+}
+// bark: furrows running along the grain (cylinder v = height, torus u = along the root)
+let _edenBarkTex=null;
+function edenBarkTex(){
+  if(_edenBarkTex && _edenBarkTex.image) return _edenBarkTex;
+  const cv=document.createElement('canvas'); cv.width=64; cv.height=64; const g=cv.getContext('2d'), R=harbRnd(0xBA7C);
+  g.fillStyle='#b8b0c0'; g.fillRect(0,0,64,64);
+  for(let k=0;k<26;k++){ const x=R()*64, w=1+R()*3; g.fillStyle=R()<0.5?'#5a4e64':'#77697e'; g.globalAlpha=0.6+R()*0.4;
+    g.fillRect(x,0,w,64); g.fillRect(x-64,0,w,64); }
+  g.globalAlpha=1; for(let k=0;k<40;k++){ g.fillStyle='#e0d8e6'; g.globalAlpha=0.25; g.fillRect(R()*64,R()*64,1,3+R()*6); }
+  g.globalAlpha=1;
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(3,2);
+  return _edenBarkTex=t;
+}
+// lantern-fruit ribs for the finish fruit (the shared egg, re-dressed)
+function edenFruitTex(){
+  const cv=document.createElement('canvas'); cv.width=256; cv.height=64; const g=cv.getContext('2d');
+  g.fillStyle='#ffb070'; g.fillRect(0,0,256,64);
+  for(let k=0;k<12;k++){ const x=k*256/12; const gr=g.createLinearGradient(x,0,x+256/12,0);
+    gr.addColorStop(0,'#ff7a2a'); gr.addColorStop(0.5,'#ffd090'); gr.addColorStop(1,'#ff7a2a'); g.fillStyle=gr; g.fillRect(x,0,256/12+1,64); }
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=T.RepeatWrapping; return t;
+}
+
+/* LIGHT POINTS. One shader for three jobs: static halos round glowing things (bloom, without
+   a bloom pass), fireflies, and drifting spores. The two airborne kinds live in a box of air
+   that travels with the camera and wraps — a few hundred points give the whole 26-km course
+   fireflies without ever popping in. Point size is in world units; alpha falls off with
+   distance (the fog cannot reach a ShaderMaterial) and near the lens so nothing blooms
+   across the screen. Nothing blinks: the firefly glow swells and fades over seconds. */
+function edenPoints(list, mode, box){
+  const n=list.length, pos=new Float32Array(n*3), col=new Float32Array(n*3), sz=new Float32Array(n), ph=new Float32Array(n);
+  const c=new T.Color();
+  list.forEach((p,k)=>{ pos[k*3]=p.x; pos[k*3+1]=p.y; pos[k*3+2]=p.z; c.setHex(p.c); col[k*3]=c.r*(p.k||1); col[k*3+1]=c.g*(p.k||1); col[k*3+2]=c.b*(p.k||1); sz[k]=p.s; ph[k]=p.ph||0; });
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('aCol',new T.BufferAttribute(col,3));
+  g.setAttribute('aSz',new T.BufferAttribute(sz,1)); g.setAttribute('aPh',new T.BufferAttribute(ph,1));
+  const m=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
+    defines:{MODE:mode|0},
+    uniforms:{uT:EDEN_T, uH:EDEN_H, uMap:{value:TEX_GLOW}, uBox:{value:box||new T.Vector3(1,1,1)}},
+    vertexShader:`attribute vec3 aCol; attribute float aSz; attribute float aPh;
+      uniform float uT; uniform float uH; uniform vec3 uBox; varying vec3 vC; varying float vA;
+      void main(){ vec3 p=position;
+        #if MODE==1
+          p+=vec3(sin(uT*0.31+aPh)*7.0, sin(uT*0.53+aPh*1.3)*2.2, cos(uT*0.27+aPh*0.7)*7.0);
+          p.xz=cameraPosition.xz+mod(p.xz-cameraPosition.xz+uBox.xz*0.5, uBox.xz)-uBox.xz*0.5;
+          p.y+=cameraPosition.y;
+        #elif MODE==2
+          p.y=mod(p.y+uT*(0.8+fract(aPh*7.3)*1.2), uBox.y)-uBox.y*0.4;
+          p.x+=sin(uT*0.17+aPh)*6.0; p.z+=cos(uT*0.13+aPh*1.9)*6.0;
+          p.xz=cameraPosition.xz+mod(p.xz-cameraPosition.xz+uBox.xz*0.5, uBox.xz)-uBox.xz*0.5;
+          p.y+=cameraPosition.y;
+        #endif
+        vec4 mv=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv;
+        float dz=-mv.z;
+        gl_PointSize=min(aSz*projectionMatrix[1][1]*uH*0.5/max(dz,1.0), 64.0);
+        vA=(1.0-smoothstep(260.0,1100.0,dz))*smoothstep(6.0,22.0,dz);
+        #if MODE==1
+          vA*=0.25+0.75*smoothstep(-0.3,0.9,sin(uT*0.55+aPh*5.0));
+        #elif MODE==2
+          vA*=0.6;
+        #endif
+        vC=aCol; }`,
+    fragmentShader:`uniform sampler2D uMap; varying vec3 vC; varying float vA;
+      void main(){ float a=texture2D(uMap, gl_PointCoord).a*vA; if(a<0.003) discard; gl_FragColor=vec4(vC, a); }`});
+  const pts=new T.Points(g, m); pts.frustumCulled=false; return pts;
+}
+
+/* TREES. A twisting trunk in three leaning segments, limbs out to a crown of glossy lobes,
+   and fruit hung under the lobes: red-orange mostly, now and then a chartreuse one, and the
+   big trees carry ringed pods. Every lobe and fruit is tested against the corridor on every
+   leg; a crown may overhang the road only where it clears road+24. */
+function edenTree(F, G, x, z, H, R, rnd, k, o){
+  o=o||{};
+  const y=F.seat(x,z,R*1.6);
+  const lobes=[], fruit=[], seg=[];
+  let px=x, py=y-3, pz=z; const lean=rnd()*6.283, lk=(o.lean!=null?o.lean:0.10+rnd()*0.14);
+  for(let s=0;s<3;s++){ const h=(H+3)/3, r0=R*(1-s*0.24), a=lean+s*0.9+rnd()*0.4;
+    const nx=px+Math.cos(a)*h*lk, nz=pz+Math.sin(a)*h*lk;
+    seg.push(edenSeg(px,py,pz,nx,py+h,nz, r0, EDEN.bark[(k+s)%EDEN.bark.length], k)); px=nx; pz=nz; py+=h; }
+  const tx=px, ty=py, tz=pz, CR=o.crown||H*(0.62+rnd()*0.18);
+  lobes.push({x:tx, y:ty+CR*0.28, z:tz, r:CR*0.58, sy:0.68});
+  const nl=6+((rnd()*4)|0), a0=rnd()*6.283;
+  for(let j=0;j<nl;j++){ const a=a0+j/nl*6.283+(rnd()-0.5)*0.6, dd=CR*(0.42+rnd()*0.36);
+    lobes.push({x:tx+Math.cos(a)*dd, y:ty+CR*(0.0+rnd()*0.30), z:tz+Math.sin(a)*dd, r:CR*(0.30+rnd()*0.16), sy:0.62+rnd()*0.16}); }
+  // a few lumps on top break the dome into a crown
+  for(let j=0;j<2+((rnd()*3)|0);j++){ const a=rnd()*6.283, dd=CR*rnd()*0.4;
+    lobes.push({x:tx+Math.cos(a)*dd, y:ty+CR*(0.42+rnd()*0.18), z:tz+Math.sin(a)*dd, r:CR*(0.26+rnd()*0.12), sy:0.7}); }
+  for(const L of lobes){ if(L.y>ty+CR*0.4) continue;
+    for(let f=0;f<(o.fruit||1)+((rnd()*3)|0);f++){ const a=rnd()*6.283, rr=L.r*(0.25+rnd()*0.5), fr=(o.fr||1)*(1.8+rnd()*1.6);
+      const fx=L.x+Math.cos(a)*rr, fz=L.z+Math.sin(a)*rr;
+      const under=L.y-L.r*L.sy*Math.sqrt(Math.max(0.05,1-(rr/L.r)*(rr/L.r)));
+      const lime=rnd()<0.14;
+      fruit.push({x:fx, y:under-fr*0.75, z:fz, r:fr, c:lime?EDEN.lime:(rnd()<0.5?EDEN.orange:EDEN.red), lime}); } }
+  // the corridor, on every leg: lobes and fruit below road+24 must stand clear of 28.2
+  const bad=(px2,py2,pz2,r)=>{ const q=F.near(px2,pz2,r+260); return q.d<28.2+r+2 && py2-r<q.y+24; };
+  if(o.check!==false){
+    for(const L of lobes) if(bad(L.x,L.y,L.z,L.r)) return null;
+    for(const f of fruit) if(bad(f.x,f.y,f.z,f.r)) return null;
+    for(const s of seg) if(bad(s.x,s.y,s.z,R*1.4)) return null; }
+  G.trunk.push(...seg);
+  // roots: three flared stubs into the ground, so the trunk grows out of it rather than off it
+  for(let j=0;j<3+((rnd()*2)|0);j++){ const a=lean+j*2.1+rnd()*0.6, L2=R*(2.2+rnd()*1.2);
+    if(o.check!==false && F.near(x+Math.cos(a)*L2, z+Math.sin(a)*L2, 300).d<31+R*0.5) continue;
+    G.trunk.push(edenSeg(x+Math.cos(a)*R*0.2, y+R*0.9, z+Math.sin(a)*R*0.2, x+Math.cos(a)*L2, F.seat(x+Math.cos(a)*L2, z+Math.sin(a)*L2, 1)-1, z+Math.sin(a)*L2, R*0.45, EDEN.bark[(k+j)%EDEN.bark.length], k)); }
+  for(const L of lobes.slice(1)) if(L.y<ty+CR*0.35) G.trunk.push(edenSeg(tx,ty-2,tz, L.x,L.y-L.r*0.2,L.z, R*0.38, EDEN.bark[(k+2)%EDEN.bark.length], k));
+  lobes.forEach((L,j)=>G.lobe.push({x:L.x,y:L.y,z:L.z,s:L.r,sy:L.r*L.sy,sz:L.r*(0.9+rnd()*0.2),ry:rnd()*6.28,
+    c:EDEN.leaf[((k*7+j*3)+(rnd()*3|0))%EDEN.leaf.length], k}));
+  for(const f of fruit){ G.fruit.push({x:f.x,y:f.y,z:f.z,s:f.r,sy:f.r*1.12,sz:f.r,c:f.c,k});
+    G.halo.push({x:f.x,y:f.y,z:f.z,s:f.r*5.5,c:f.lime?0xb8e040:0xff6a20,k:f.lime?0.55:0.75});
+    G.glow.push({x:f.x,y:f.y,z:f.z,r:f.r*2.2,c:f.c,k:0.8}); }
+  if(o.pods) for(let j=0;j<o.pods;j++){ const L=lobes[1+((rnd()*(lobes.length-1))|0)], pr=(o.fr||1)*(3+rnd()*2.4);
+    const a=rnd()*6.283, rr=L.r*0.5; G.podH.push({x:L.x+Math.cos(a)*rr, y:L.y-L.r*L.sy*0.8-pr*0.8, z:L.z+Math.sin(a)*rr, s:pr, sy:pr*1.2, sz:pr, rx:rnd()*0.6, ry:rnd()*6.28, c:0xffffff, k}); }
+  G.pools.push({x, z, r:CR*1.5, c:edenLin(0xff5a18), k:0.30*(o.poolK||1)});
+  G.pools.push({x:tx, z:tz, r:CR*0.9, c:edenLin(0xff7a28), k:0.18*(o.poolK||1)});
+  return {x,y,z,top:ty+CR};
+}
+function edenShroom(F, G, x, z, h, cr, col, rnd, k, giant){
+  const y=F.seat(x,z,Math.max(1,cr*0.25));
+  const q=F.near(x,z,cr+300); if(q.d<28.2+cr+2 && y+h-cr*0.2<q.y+24) return false;
+  const lean=(rnd()-0.5)*0.18, la=rnd()*6.28, tx=x+Math.sin(lean)*Math.cos(la)*h, tz=z+Math.sin(lean)*Math.sin(la)*h;
+  G.stem.push(edenSeg(x,y-1.5,z, tx,y+h,tz, cr*(giant?0.16:0.20), giant?0x6a5aa8:0x8a78c0, k));
+  G.cap.push({x:tx, y:y+h-cr*0.14, z:tz, s:cr, sy:cr*(0.42+rnd()*0.2), sz:cr, rx:lean*0.6, ry:rnd()*6.28, c:col, k});
+  const rim=rnd()<0.5?EDEN.cyan:EDEN.lime;
+  G.rim.push({x:tx, y:y+h-cr*0.14, z:tz, s:cr*0.99, sy:cr*0.99, sz:cr*(giant?1.6:1.2), rx:Math.PI/2+lean*0.6, c:rim, k});
+  G.gill.push({x:tx, y:y+h-cr*0.15, z:tz, s:cr*0.93, sy:cr*0.93, rx:Math.PI/2, c:giant?0x1a8a7a:0x2aa890, k});
+  G.halo.push({x:tx, y:y+h+cr*0.1, z:tz, s:cr*(giant?2.6:3.2), c:col, k:giant?0.30:0.45});
+  G.pools.push({x:tx, z:tz, r:cr*(giant?2.2:2.8), c:edenLin(0x1ac8a8), k:giant?0.22:0.30});
+  G.glow.push({x:tx,y:y+h,z:tz,r:cr*0.9,c:rim,k:0.5});
+  return true;
+}
+function edenFern(F, G, x, z, s, rnd, k){
+  const y=F.seat(x,z,s*0.5);
+  const q=F.near(x,z,s+300); if(q.d<30+s*0.95) return false;
+  const face=q.i>=0 ? Math.atan2(SAMP[q.i].p.z-z, SAMP[q.i].p.x-x) : 0;   // curls roll toward the road
+  const nf=2+((rnd()*3)|0);
+  for(let j=0;j<nf;j++){ const a=face+(j-(nf-1)/2)*0.55+(rnd()-0.5)*0.3, ss=s*(0.7+rnd()*0.4);
+    G.curl.push({x:x+Math.cos(a)*s*0.06, y:y-0.6, z:z+Math.sin(a)*s*0.06, s:ss, sy:ss, sz:ss, ry:-a, c:j%2?0xffffff:0xd8f0e0, k}); }
+  const nl=4+((rnd()*3)|0);
+  for(let j=0;j<nl;j++){ const a=rnd()*6.283, L=s*(0.55+rnd()*0.35);
+    G.leaf.push({x, y:y+0.2, z, s:L*0.9, sy:L, sz:L, ry:a, rx:-(0.25+rnd()*0.35), o:'YXZ', c:EDEN.leaf[(k+j)%EDEN.leaf.length], k}); }
+  return true;
+}
+function edenFlower(F, G, x, z, h, rnd, k){
+  const y=F.seat(x,z,1.5);
+  const q=F.near(x,z,300); if(q.d<30+h*0.5) return false;
+  const tilt=(rnd()-0.5)*0.25, a=rnd()*6.283, tx=x+Math.sin(tilt)*Math.cos(a)*h, tz=z+Math.sin(tilt)*Math.sin(a)*h;
+  G.stalk.push(edenSeg(x,y-1,z, tx,y+h,tz, 0.55, 0x1f6a4a, k));
+  const cs=2.2+rnd()*1.6, cc=[EDEN.violet,0xd04ab0,EDEN.orange,0x4a6aff,EDEN.violet][(rnd()*5)|0];
+  G.cup.push({x:tx, y:y+h-0.4, z:tz, s:cs, sy:cs*1.3, sz:cs, rx:tilt, ry:a, c:cc, k});
+  G.bead.push({x:tx, y:y+h+cs*0.55, z:tz, s:cs*0.32, c:EDEN.yellow, k});
+  G.halo.push({x:tx, y:y+h+cs*0.6, z:tz, s:cs*4.5, c:cc, k:0.45});
+  for(let j=0;j<2;j++) G.leaf.push({x, y:y+0.2, z, s:h*0.45, sy:h*0.5, sz:h*0.5, ry:a+j*3.1+rnd(), rx:-0.6-rnd()*0.3, o:'YXZ', c:0x145c3e, k});
+  return true;
+}
+
+/* THE PLAN. Everything that stands in the garden is decided here, as positions, before the
+   ground is built — so the ground can carry the light that falls from it. Zones are soft
+   weights along the run, not fences: orchard, stream valley, fungus wood, fern hollow, and
+   the orchard again round the heart. Each family keeps its own irregular cadence. */
+function edenPlan(F, tunIdx){
+  const N=SAMP.length, R=harbRnd(0xEDE9), G={trunk:[],lobe:[],fruit:[],podH:[],podG:[],stem:[],cap:[],rim:[],gill:[],curl:[],leaf:[],
+    stalk:[],cup:[],bead:[],bush:[],moss:[],rock:[],vpod:[],halo:[],glow:[],pools:[],arch:[],archT:[],vine:[],tip:[],shelf:[],log:null};
+  F.G=G;
+  const chunk=i=>Math.min(9, Math.floor(i/N*10));
+  const bump=(u,a,b,e)=>edenSm((u-a)/e)*edenSm((b-u)/e);
+  const W=u=>({ orch:0.25+bump(u,0.02,0.18,0.03)+bump(u,0.46,0.62,0.03)+bump(u,0.84,1.01,0.03),
+                stream:0.15+bump(u,0.19,0.34,0.03)+bump(u,0.70,0.86,0.03),
+                fungus:0.15+bump(u,0.33,0.47,0.03)+bump(u,0.72,0.86,0.04)*0.8,
+                fern:0.15+bump(u,0.60,0.73,0.03)+bump(u,0.19,0.33,0.03)*0.7 });
+  const inTun=(i,pad)=>tunIdx.some(([a,b])=>i>=a-(pad||0)&&i<=b+(pad||0));
+  // footprint hash so big things do not overlap
+  const FH=new Map(), FK=(a,b)=>(a+32768)*65536+(b+32768);
+  const free=(x,z,r)=>{ const cx=Math.floor(x/80), cz=Math.floor(z/80);
+    for(let a=-2;a<=2;a++) for(let b=-2;b<=2;b++){ const L=FH.get(FK(cx+a,cz+b)); if(L) for(const p of L) if(Math.hypot(p.x-x,p.z-z)<p.r+r) return false; }
+    return true; };
+  const take=(x,z,r)=>{ const k=FK(Math.floor(x/80),Math.floor(z/80)); let L=FH.get(k); if(!L) FH.set(k,L=[]); L.push({x,z,r}); };
+  const at=(i,lat)=>{ const s=SAMP[i]; return [s.p.x+s.n.x*lat, s.p.z+s.n.z*lat]; };
+  const ok=(x,z,r,wetPad)=>free(x,z,r) && !F.wet(x,z,wetPad==null?r:wetPad);
+
+  // --- fruit trees: the landmarks of every orchard, sparser elsewhere ---
+  for(let i=24+((R()*20)|0); i<N-60; ){
+    const u=i/(N-1), w=W(u), side=R()<0.5?-1:1;
+    if(!inTun(i,12)){
+      const arch=R()<0.28 && w.orch>0.6;                       // a crown leaning out over the road
+      const hero=!arch && R()<0.12;                            // a landmark, seen across the spiral
+      const H=arch?54+R()*30:hero?110+R()*50:40+R()*55, Rt=3.2+H*0.045, CR=H*(0.60+R()*0.16);
+      const lat=side*(arch? 30+Rt*2+R()*14 : hero ? 60+CR+R()*160 : 40+CR+R()*130);
+      const [x,z]=at(i,lat);
+      if(ok(x,z,CR*0.75, Rt*3) && edenTree(F,G,x,z,H,Rt,R,chunk(i),{pods:hero?3:R()<0.3?1+((R()*2)|0):0, poolK:hero?1.6:1})) take(x,z,CR*0.75);
+    }
+    i+=Math.round((w.orch>0.8?9:22)+R()*(w.orch>0.8?20:44));
+  }
+  // --- mushrooms: giants in the fungus wood, small ones everywhere ---
+  for(let i=30+((R()*30)|0); i<N-40; ){
+    const u=i/(N-1), w=W(u), side=R()<0.5?-1:1;
+    if(!inTun(i,6)){
+      const giant=R()<0.55*w.fungus;
+      const h=giant?24+R()*36:7+R()*13, cr=giant?h*(0.42+R()*0.22):h*(0.38+R()*0.25);
+      const lat=side*(giant?40+cr+R()*120:34+cr+R()*80);
+      const [x,z]=at(i,lat), col=[EDEN.teal,EDEN.cyan,0x2a9ad8,EDEN.violet,EDEN.teal,0x3ac88a][(R()*6)|0];
+      if(ok(x,z,cr*0.8) && edenShroom(F,G,x,z,h,cr,col,R,chunk(i),giant)){ take(x,z,cr*0.8);
+        // a few small ones at the foot of each
+        for(let j=0;j<1+((R()*3)|0);j++){ const a=R()*6.28, dd=cr*(0.9+R()*0.8), x2=x+Math.cos(a)*dd, z2=z+Math.sin(a)*dd, h2=3+R()*6;
+          if(ok(x2,z2,h2*0.4)) edenShroom(F,G,x2,z2,h2,h2*(0.4+R()*0.3),col,R,chunk(i),false); } }
+    }
+    i+=Math.round(5+R()*(w.fungus>0.8?9:26));
+  }
+  // --- giant fiddleheads in the fern hollow and along the streams ---
+  for(let i=40+((R()*20)|0); i<N-40; ){
+    const u=i/(N-1), w=W(u), side=R()<0.5?-1:1;
+    if(!inTun(i,6)){ const s=w.fern>0.8 ? 16+R()*26 : 9+R()*14, lat=side*(38+s*0.8+R()*110);
+      const [x,z]=at(i,lat); if(ok(x,z,s*0.6) && edenFern(F,G,x,z,s,R,chunk(i))) take(x,z,s*0.6); }
+    i+=Math.round(4+R()*(w.fern>0.8?7:22));
+  }
+  // --- glowing flowers in drifts ---
+  for(let i=20+((R()*10)|0); i<N-30; ){
+    const u=i/(N-1), side=R()<0.5?-1:1, n=2+((R()*5)|0), lat0=side*(36+R()*70);
+    if(!inTun(i,4)) for(let j=0;j<n;j++){ const [x,z]=at(Math.min(N-1,i+((R()*6)|0)), lat0+side*(R()*22));
+      const h=6+R()*11; if(ok(x,z,2.5)) { if(edenFlower(F,G,x,z,h,R,chunk(i))) take(x,z,2.5); } }
+    i+=Math.round(5+R()*18);
+  }
+  // --- bushes: glossy dark mounds of leaf, some with glowing berries; the mid-ground mass
+  //     that makes the garden lush rather than a lawn with things stood on it ---
+  for(const side of [-1,1]) for(let i=10+((R()*20)|0); i<N-20; ){
+    const u=i/(N-1), w=W(u), r=3+R()*5.5, lat=side*(33+r+Math.pow(R(),1.6)*120);
+    const [x,z]=at(i,lat);
+    if(!inTun(i,2) && ok(x,z,r*0.8,r+26) && F.near(x,z,r+300).d>28.2+r*1.3+1){
+      const y=F.seat(x,z,r), nb=2+((R()*3)|0), k=chunk(i), berry=R()<0.35;
+      for(let j=0;j<nb;j++){ const a=R()*6.28, dd=r*0.45*R(), rr=r*(0.55+R()*0.35);
+        const lx=x+Math.cos(a)*dd, lz=z+Math.sin(a)*dd;            // each lump on the ground under ITSELF
+        G.bush.push({x:lx, y:F.seat(lx,lz,rr)+rr*0.22, z:lz, s:rr, sy:rr*(0.65+R()*0.25), sz:rr*(0.85+R()*0.3), ry:R()*6.28, c:EDEN.leaf[(j+(R()*6|0))%6], k}); }
+      if(berry){ const bc=[EDEN.orange,EDEN.red,EDEN.lime,EDEN.violet][(R()*4)|0];
+        for(let j=0;j<3+((R()*4)|0);j++){ const a=R()*6.28, br=0.6+R()*0.5;
+          G.fruit.push({x:x+Math.cos(a)*r*0.6, y:y+r*(0.5+R()*0.25), z:z+Math.sin(a)*r*0.6, s:br, c:bc, k}); }
+        G.halo.push({x, y:y+r*0.7, z, s:r*2.6, c:bc, k:0.35}); }
+      take(x,z,r*0.8); }
+    i+=Math.round(2+R()*(w.orch>0.8||w.fern>0.8?5:10));
+  }
+  // --- ringed pods on the ground: the reference's rings, half sunk in the moss ---
+  for(let i=16+((R()*10)|0); i<N-20; ){
+    const side=R()<0.5?-1:1, r=2.4+Math.pow(R(),2)*11, lat=side*(31+r+R()*90);
+    const [x,z]=at(i,lat);
+    if(!inTun(i,3) && ok(x,z,r)){ const q=F.near(x,z,r+300);
+      if(q.d>28.2+r+1){ const y=F.seat(x,z,r);
+        G.podG.push({x, y:y+r*0.35, z, s:r, sy:r*(0.8+R()*0.3), sz:r, rx:(R()-0.5)*1.4, ry:R()*6.28, rz:(R()-0.5)*1.4, c:0xffffff, k:chunk(i)});
+        G.halo.push({x,y:y+r*0.9,z,s:r*3.4,c:0xd2f03a,k:0.30}); take(x,z,r); } }
+    i+=Math.round(7+R()*30);
+  }
+  // --- clay boulders: dark, glossy, grounding the compositions ---
+  for(let i=30+((R()*30)|0); i<N-30; ){
+    const side=R()<0.5?-1:1, r=4+R()*14, lat=side*(34+r+R()*140);
+    const [x,z]=at(i,lat);
+    if(ok(x,z,r) && F.near(x,z,r+300).d>28.2+r*1.15+1){ const y=F.seat(x,z,r);
+      G.rock.push({x,y:y+r*0.12,z,s:r,sy:r*(0.45+R()*0.25),sz:r*(0.7+R()*0.4),ry:R()*6.28,rz:(R()-0.5)*0.3,c:EDEN.stone[(R()*4)|0],k:chunk(i)}); take(x,z,r); }
+    i+=Math.round(12+R()*48);
+  }
+  // --- the verge: low luminous moss and small glowing pods, just outside the corridor.
+  //     This is the near-field rhythm that tells you how fast you are going, so it is dense,
+  //     small, and never on a fixed pitch. ---
+  for(const side of [-1,1]) for(let i=4+((R()*4)|0); i<N-2; ){
+    const [x,z]=at(i, side*(30.5+R()*3.5)), r=0.9+R()*1.5;
+    if(!F.wet(x,z,26) && F.near(x,z,200).d-r*1.4>=28.4){ const y=F.h(x,z);
+      if(R()<0.55){ G.vpod.push({x,y:y+r*0.45,z,s:r,sy:r*(0.9+R()*0.4),sz:r,rx:(R()-0.5),ry:R()*6.28,c:0xffffff,k:chunk(i)}); }
+      else { const c=[EDEN.teal,EDEN.cyan,EDEN.lime,EDEN.teal][(R()*4)|0]; G.vpod.push({x,y:y+r*0.4,z,s:r*0.9,sy:r*1.1,sz:r*0.9,ry:R()*6.28,c,k:chunk(i),glow:true}); }
+    }
+    for(let j=0;j<1+((R()*2)|0);j++){ const [mx,mz]=at(Math.min(N-1,i+((R()*3)|0)), side*(31+R()*26)), mr=1.6+R()*3.8;
+      if(!F.wet(mx,mz,26) && F.near(mx,mz,200).d-mr*1.25>=28.4) G.moss.push({x:mx,y:F.h(mx,mz)+mr*0.12,z:mz,s:mr,sy:mr*(0.32+R()*0.2),sz:mr*(0.7+R()*0.5),ry:R()*6.28,c:[0x0f5a4c,0x13664a,0x0e4c5a,0x1a7a5a][(R()*4)|0],k:chunk(i)}); }
+    i+=1+((R()*4)|0)+(R()<0.2?((R()*6)|0):0);
+  }
+  return G;
+}
+
+/* TUNNELS. The first and third are root arches — two strands of twisted root per rib, open
+   to the sky between them, glowing vines hung from the crowns and ringed pods at the feet;
+   the third trades the vines for hanging bell-flowers. The middle one is a hollow log the
+   road runs straight through: bark outside, shelf fungus glowing inside, knot-holes open
+   to the moon. CORRIDOR: an arch is struck at a 40 half-span and 38 high, so at road+20 its
+   inside face is still 31.7 out; the log's bore is 40 round a point 6 above the road. */
+function edenTunnels(F, tunIdx){
+  const G=F.G, R=harbRnd(0x7A11), N=SAMP.length;
+  tunIdx.forEach(([i0,i1],ti)=>{
+    if(ti===1){ edenLog(F, i0, i1, R); return; }
+    const bloom=ti===2;
+    let i=i0-6, n=0;
+    while(i<=i1+4){ const s=SAMP[Math.max(0,Math.min(N-1,i))], ry=Math.atan2(s.t.x,s.t.z), k=Math.min(9,Math.floor(i/N*10));
+      const S=40+R()*4, Hh=38+R()*8, mouth=(i<i0+3)||(i>i1-6);
+      const by=s.p.y-1.4;
+      // a rib is a ROOT, not a hoop: one heavy strand and two thin ones wound round it, each
+      // leaning a little out of the rib's plane the other way, with knots and moss on the crown
+      G.arch.push({x:s.p.x, y:by, z:s.p.z, s:S, sy:Hh, sz:mouth?S*1.7:S*(1.0+R()*0.4), ry, rx:(R()-0.5)*0.10, rz:(R()-0.5)*0.03, c:EDEN.bark[n%EDEN.bark.length], k});
+      for(const tw of [-1,1]){ const sc=0.965+R()*0.05;
+        G.archT.push({x:s.p.x+s.t.x*tw*(1.2+R()), y:by, z:s.p.z+s.t.z*tw*(1.2+R()), s:S*sc, sy:Hh*(0.95+R()*0.06), sz:S*(0.8+R()*0.5),
+          ry:ry+tw*(0.03+R()*0.05), rx:tw*(0.10+R()*0.10), rz:(R()-0.5)*0.03, c:EDEN.bark[(n+2+tw)%EDEN.bark.length], k}); }
+      for(let j=0;j<2+((R()*3)|0);j++){ const th=Math.PI*(0.22+R()*0.56), kr=1.8+R()*2.2;
+        const lat=Math.cos(th)*S, ky=by+Math.sin(th)*Hh;
+        const kx=s.p.x+s.n.x*lat, kz=s.p.z+s.n.z*lat;
+        if(R()<0.6) G.rock.push({x:kx, y:ky, z:kz, s:kr, sy:kr*0.8, sz:kr*1.3, ry, c:EDEN.bark[(n+j)%5], k});
+        else { G.moss.push({x:kx, y:ky+2.2, z:kz, s:kr*1.3, sy:kr*0.55, sz:kr*1.5, ry, c:0x1a7a5a, k}); } }
+      // feet: root flares into the ground either side
+      for(const sd of [-1,1]){ const fx=s.p.x+s.n.x*sd*(S+2), fz=s.p.z+s.n.z*sd*(S+2), gy=F.seat(fx,fz,4);
+        G.trunk.push(edenSeg(s.p.x+s.n.x*sd*(S-1), s.p.y+5, s.p.z+s.n.z*sd*(S-1), fx+s.n.x*sd*6, gy-1.5, fz+s.n.z*sd*6, 3.0, EDEN.bark[(n+1)%5], k));
+        if(R()<0.6){ const pr=2.5+R()*3.5, px=fx+s.n.x*sd*(4+R()*6)+s.t.x*(R()-0.5)*10, pz=fz+s.n.z*sd*(4+R()*6)+s.t.z*(R()-0.5)*10;
+          G.podG.push({x:px, y:F.seat(px,pz,pr)+pr*0.4, z:pz, s:pr, sy:pr, sz:pr, rx:R(), ry:R()*6.28, c:0xffffff, k});
+          G.halo.push({x:px,y:F.seat(px,pz,pr)+pr,z:pz,s:pr*3.6,c:0xd2f03a,k:0.4}); } }
+      // vines or bells from the crown: never lower than road+22
+      const nv=bloom?3+((R()*3)|0):1+((R()*3)|0);
+      for(let j=0;j<nv;j++){ const lat=(R()*2-1)*S*0.72, top=by+Hh*Math.sqrt(Math.max(0,1-(lat/S)*(lat/S)))-1.5;
+        const bot=Math.max(s.p.y+(bloom?26:24)+R()*4, top-4-R()*9); if(top-bot<2) continue;
+        const vx=s.p.x+s.n.x*lat, vz=s.p.z+s.n.z*lat;
+        G.vine.push(edenSeg(vx,top,vz, vx,bot,vz, 0.35, 0x1a5a46, k));
+        if(bloom){ const bc=[EDEN.violet,0xd04ab0,EDEN.orange][(R()*3)|0], bs=1.6+R()*1.2;
+          G.cup.push({x:vx, y:bot, z:vz, s:bs, sy:bs*1.2, sz:bs, rx:Math.PI, ry:R()*6.28, c:bc, k});
+          G.halo.push({x:vx,y:bot-bs*0.6,z:vz,s:bs*5,c:bc,k:0.5}); }
+        else { const tc=R()<0.6?EDEN.lime:EDEN.cyan; G.tip.push({x:vx,y:bot-0.6,z:vz,s:1.1,sy:1.4,sz:1.1,c:tc,k});
+          G.halo.push({x:vx,y:bot-0.6,z:vz,s:6,c:tc,k:0.55}); } }
+      i+=2+((R()*4)|0)+(R()<0.25?2:0); n++;
+    }
+  });
+}
+function edenLog(F, i0, i1, R){
+  const N=SAMP.length, a0=i0-4, a1=Math.min(N-2,i1+4), RA=[], ANG=[];
+  const NA=22, A0=-0.40, A1=Math.PI+0.40;
+  for(let j=0;j<=NA;j++) ANG.push(A0+(A1-A0)*j/NA);
+  const posO=[], posI=[], colI=[], idxO=[], idxI=[];
+  const bark=edenLin(0x2a1a2c), barkD=edenLin(0x3a2448), wood=edenLin(0x5e3c5c);
+  const cc=new T.Color(); let rows=0;
+  for(let i=a0;i<=a1;i+=2){ const s=SAMP[i], cy=s.p.y+6;
+    for(let j=0;j<=NA;j++){ const a=ANG[j], wob=Math.sin(i*0.21+j*1.7)*0.8+Math.sin(i*0.07+j*0.6)*1.2;
+      const rI=40+wob, rO=rI+3.2+Math.sin(j*2.3+i*0.11)*0.8;
+      const c=Math.cos(a), sn=Math.sin(a);
+      posI.push(s.p.x+s.n.x*c*rI, cy+sn*rI, s.p.z+s.n.z*c*rI);
+      posO.push(s.p.x+s.n.x*c*rO, cy+sn*rO, s.p.z+s.n.z*c*rO);
+      // wood grain running the length of the bore; the light is in the brackets below
+      cc.copy(wood).lerp(barkD, 0.5+0.5*Math.sin(j*2.7+Math.sin(i*0.05)*0.6));
+      colI.push(cc.r,cc.g,cc.b); }
+    rows++; }
+  const NR=NA+1;
+  for(let r=0;r<rows-1;r++) for(let j=0;j<NA;j++){ const a=r*NR+j, b=a+1, c2=a+NR, d=c2+1;
+    // knot-holes: a few cells left open, through both walls, so the moon looks in
+    const hole=((r*7+j*13)%41===0) && j>5 && j<NA-5;
+    if(hole) continue;
+    idxI.push(a,b,c2, b,d,c2); idxO.push(a,c2,b, b,c2,d); }
+  const mk=(P,I,col,mat)=>{ const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    if(col) g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(I); g.computeVertexNormals(); g.computeBoundingSphere();
+    const m=new T.Mesh(g,mat); trackGroup.add(m); return m; };
+  const om=edenMat({shin:20, spec:0x241a30, side:T.DoubleSide}); om.color.copy(bark);
+  mk(posO, idxO, null, om);
+  mk(posI, idxI, colI, edenMat({vc:true, glow:0.85, shin:30, spec:0x30304a, side:T.DoubleSide}));
+  /* SHELF FUNGUS. Half-discs bracketed off the inner wall, in clusters of two or three, teal
+     and cyan mostly with lime and the odd orange. Low on the walls they stand off the bore
+     (37+ out) by at most 5, so they never reach 32; higher up they are above road+24. */
+  const SH=F.G.shelf, FC=[EDEN.teal,EDEN.cyan,EDEN.teal,EDEN.lime,EDEN.cyan,EDEN.orange];
+  for(let i=i0+1;i<=i1-1;i+=1+((R()*2)|0)){
+    const s=SAMP[i], cy=s.p.y+6, k=Math.min(9,Math.floor(i/N*10));
+    for(let c=0;c<2+((R()*2)|0);c++){
+      const side=R()<0.5?-1:1, a=0.05+R()*0.85, base=side>0?a:Math.PI-a, col=FC[(R()*FC.length)|0];
+      for(let m=0;m<2+((R()*2)|0);m++){ const aa=base+(m*0.07+R()*0.03)*(side>0?1:-1), r=2.2+R()*2.8;
+        const lat=Math.cos(aa)*39.5, y=cy+Math.sin(aa)*39.5;
+        const sd=Math.sign(lat)||1, ph=Math.atan2(sd*s.n.z, -sd*s.n.x);
+        SH.push({x:s.p.x+s.n.x*lat+s.t.x*(R()-0.5)*4, y, z:s.p.z+s.n.z*lat+s.t.z*(R()-0.5)*4, s:r, sy:2.4, sz:r*(0.8+R()*0.4), ry:ph, rz:(R()-0.5)*0.25, c:col, k});
+        if(R()<0.35) F.G.halo.push({x:s.p.x+s.n.x*(lat-sd*r*0.5), y:y+0.5, z:s.p.z+s.n.z*(lat-sd*r*0.5), s:r*4, c:col, k:0.4}); } } }
+  // the two mouths: a thick ragged bark rim
+  for(const i of [a0, a1]){ const s=SAMP[i], ry=Math.atan2(s.t.x,s.t.z), k=Math.min(9,Math.floor(i/N*10));
+    F.G.arch.push({x:s.p.x, y:s.p.y+6, z:s.p.z, s:41.6, sy:41.6, sz:60, ry, rz:-0.40, c:0x34203a, k, wide:true}); }
+}
+
+/* THE START: one heavy root arch over the line and, hung from its crown on two vines, the
+   reference's ringed disc as a medallion facing the grid. Bottom edge at road+24. */
+function edenGate(F){
+  const G=F.G, i=Math.min(SAMP.length-1, 9), s=SAMP[i], ry=Math.atan2(s.t.x,s.t.z);
+  G.arch.push({x:s.p.x, y:s.p.y-1.5, z:s.p.z, s:44, sy:50, sz:80, ry, c:0x2e1a34, k:0});
+  G.arch.push({x:s.p.x+s.t.x*2, y:s.p.y-1.5, z:s.p.z+s.t.z*2, s:43, sy:48.5, sz:55, ry:ry+0.05, rz:0.02, c:0x22183a, k:0});
+  for(const sd of [-1,1]){ const fx=s.p.x+s.n.x*sd*47, fz=s.p.z+s.n.z*sd*47;
+    G.trunk.push(edenSeg(s.p.x+s.n.x*sd*42, s.p.y+8, s.p.z+s.n.z*sd*42, fx+s.n.x*sd*8, F.seat(fx,fz,4)-2, fz+s.n.z*sd*8, 4.2, 0x2a1630, 0)); }
+  const cy=s.p.y+35, R0=10.5;
+  const disc=new T.Mesh(new T.CylinderGeometry(R0,R0,1.4,48,1), [
+    new T.MeshPhongMaterial({color:edenLin(0x1a1430), shininess:40}),
+    new T.MeshBasicMaterial({map:edenDiscTex()}), new T.MeshBasicMaterial({map:edenDiscTex()})]);
+  disc.position.set(s.p.x, cy, s.p.z); disc.rotation.set(Math.PI/2, 0, 0, 'YXZ'); disc.rotation.y=ry;
+  trackGroup.add(disc);
+  for(const sd of [-1,1]){ const vx=s.p.x+s.n.x*sd*6, vz=s.p.z+s.n.z*sd*6;
+    G.vine.push(edenSeg(vx, s.p.y+49, vz, vx, cy+R0*0.8, vz, 0.55, 0x1a5a46, 0)); }
+  G.halo.push({x:s.p.x, y:cy, z:s.p.z, s:46, c:0xd2f03a, k:0.45});
+  return disc;
+}
+
+/* THE HEART. A tree three times the size of any other, on its own knoll past the end of the
+   road, crowned in fruit and ringed pods; and the finish fruit (the shared egg, re-dressed)
+   resting in a cradle of leaves at the foot of the run-out. */
+function edenHeart(F){
+  const G=F.G, N=SAMP.length, e=SAMP[N-1], R=harbRnd(0x4EA27);
+  let best=null;
+  for(const d of [150,175,200,130,230]) for(const off of [0,-30,30,-60,60]){
+    const x=e.p.x+e.t.x*d+e.n.x*off, z=e.p.z+e.t.z*d+e.n.z*off;
+    let clear=true; for(let i=0;i<N-40;i+=3){ const p=SAMP[i].p; if(Math.hypot(p.x-x,p.z-z)<170){ clear=false; break; } }
+    if(clear){ best={x,z}; break; } if(best) break; }
+  if(!best) best={x:e.p.x+e.t.x*150, z:e.p.z+e.t.z*150};
+  const t=edenTree(F, G, best.x, best.z, 150, 12, R, 9, {crown:120, fruit:4, fr:2.0, pods:6, lean:0.05, check:false, poolK:0.9});
+  return t;
+}
+
+/* FLUSH: every family above, as chunked instanced batches. */
+function edenFlush(F){
+  const G=F.G, mats={};
+  EDEN_CHUNKS=[];
+  const bark=mats.bark=edenMat({shin:10, spec:0x221c34, glow:0.05, tex:edenBarkTex()});
+  const lobe=mats.lobe=edenMat({shin:16, spec:0x22484c, glow:0.10});
+  const fruit=mats.fruit=edenGlowMat();
+  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42});
+  const stem=mats.stem=edenMat({shin:30, spec:0x3a3a5a, glow:0.10});
+  const glowM=mats.glow=edenGlowMat({side:T.DoubleSide});
+  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a});
+  const leaf=mats.leaf=edenMat({shin:40, spec:0x2a5a4a, glow:0.10, side:T.DoubleSide});
+  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide});
+  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50});
+  const rock=mats.rock=edenMat({shin:70, spec:0x4a4a7a, glow:0.0});
+  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34});
+  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20});
+  edenBatch(new T.CylinderGeometry(0.78,1,1,9,1), bark, G.trunk);
+  edenBatch(new T.SphereGeometry(1,10,7), lobe, G.lobe);
+  edenBatch(new T.SphereGeometry(1,10,8), fruit, G.fruit);
+  edenBatch(new T.CylinderGeometry(0.7,1,1,10,1), stem, G.stem);
+  edenBatch(new T.SphereGeometry(1,12,5,0,Math.PI*2,0,Math.PI/2), cap, G.cap);
+  edenBatch(new T.TorusGeometry(1,0.045,5,30), glowM, G.rim);
+  edenBatch(new T.CircleGeometry(1,24), glowM, G.gill);
+  edenBatch(edenCurlGeo(), curl, G.curl);
+  edenBatch(edenLeafGeo(), leaf, G.leaf);
+  edenBatch(new T.CylinderGeometry(0.5,0.5,1,6,1), stem, G.stalk);
+  edenBatch(edenCupGeo(), cup, G.cup);
+  edenBatch(new T.SphereGeometry(1,8,6), fruit, G.bead.concat(G.tip));
+  edenBatch(new T.SphereGeometry(1,14,10), pod, G.podG.concat(G.podH));
+  edenBatch(new T.SphereGeometry(1,9,6), pod, G.vpod.filter(v=>!v.glow));
+  edenBatch(new T.SphereGeometry(1,8,6), cap, G.vpod.filter(v=>v.glow));
+  edenBatch(new T.SphereGeometry(1,12,7), rock, G.rock);
+  edenBatch(new T.SphereGeometry(1,7,5), lobe, G.bush);
+  edenBatch(new T.SphereGeometry(1,7,5), moss, G.moss);
+  edenBatch(new T.CylinderGeometry(1,1,1,5,1), vineM, G.vine);
+  // arches: a half torus, open below; mouth rims of the log are a wider sweep
+  edenBatch(new T.TorusGeometry(1,0.06,7,26,Math.PI), bark, G.arch.filter(a=>!a.wide));
+  edenBatch(new T.TorusGeometry(1,0.075,7,30,Math.PI+0.8), bark, G.arch.filter(a=>a.wide));
+  edenBatch(new T.TorusGeometry(1,0.034,5,24,Math.PI), bark, G.archT);
+  edenBatch(new T.CylinderGeometry(1,1,0.9,14,1,false,0,Math.PI), cap, G.shelf);
+  trackGroup.add(edenPoints(G.halo, 0));
+  return mats;
+}
+// fireflies and spores: travelling boxes of air (see edenPoints)
+function edenAir(){
+  const R=harbRnd(0xF1EF), ff=[], sp=[];
+  for(let k=0;k<340;k++) ff.push({x:(R()-0.5)*560, y:-10+R()*34, z:(R()-0.5)*560, s:1.6+R()*1.4,
+    c:R()<0.75?0xe8f060:0x9af0a0, k:0.9, ph:R()*40});
+  for(let k=0;k<160;k++) sp.push({x:(R()-0.5)*700, y:R()*70, z:(R()-0.5)*700, s:1.6+R()*1.6,
+    c:R()<0.6?0x40d8c0:0x8a6ae0, k:0.45, ph:R()*40});
+  trackGroup.add(edenPoints(ff, 1, new T.Vector3(560,40,560)));
+  trackGroup.add(edenPoints(sp, 2, new T.Vector3(700,70,700)));
+}
+/* THE ROAD, painted: a deep indigo clay path, darker at its shoulders; the light is a
+   separate emissive sheet so it glows whatever the moon is doing — a chartreuse line inset
+   at each edge and a long glowing centre dash, ~17 units on a 48-unit pitch. */
+function edenRoadTex(){
+  const mk=()=>{ const c=document.createElement('canvas'); c.width=64; c.height=256; return c; };
+  const a=mk(), g=a.getContext('2d'), R=harbRnd(0x40AD);
+  g.fillStyle='#1b1a3e'; g.fillRect(0,0,64,256);
+  for(let k=0;k<160;k++){ g.fillStyle=['#211f48','#17163a','#1e1c44','#151a3a'][k%4]; g.globalAlpha=0.5;
+    const w=4+R()*14, h=6+R()*30; g.beginPath(); g.ellipse(R()*64, R()*256, w/2, h/2, 0, 0, 6.2832); g.fill(); }
+  g.globalAlpha=0.7; g.fillStyle='#0d0c24'; g.fillRect(0,0,4,256); g.fillRect(60,0,4,256);
+  g.globalAlpha=0.35; g.fillRect(4,0,4,256); g.fillRect(56,0,4,256);
+  g.globalAlpha=0.12; g.fillStyle='#2ad8b4'; for(let k=0;k<120;k++) g.fillRect(R()*64, R()*256, 1, 1);
+  // the centre line as a row of glowing seeds, not a painted dash: three on each 48-unit pitch,
+  // the middle one longest, so it reads as one mark at distance and as seeds up close
+  const seeds=(c,al)=>{ c.globalAlpha=al; for(const [y,h] of [[14,20],[42,40],[90,20]]){ c.beginPath(); c.ellipse(32, y+h/2, 2.6, h/2, 0, 0, 6.2832); c.fill(); } c.globalAlpha=1; };
+  g.fillStyle='#b8d848'; seeds(g,0.9);
+  const b=mk(), e=b.getContext('2d');
+  e.fillStyle='#000'; e.fillRect(0,0,64,256);
+  e.fillStyle='#c8e848'; seeds(e,0.85);
+  e.globalAlpha=0.20; e.fillStyle='#2ad8b4'; for(let k=0;k<50;k++) e.fillRect(6+R()*52, R()*256, 1, 2);
+  e.globalAlpha=1;
+  const t1=new T.CanvasTexture(a), t2=new T.CanvasTexture(b);
+  for(const t of [t1,t2]){ t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping; t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy()); }
+  return {map:t1, emi:t2};
+}
+// the kerb: a low glowing cord just outside each edge (0.85 proud — a road marking with
+// thickness, not a wall), and a dark skirt sealing the deck to the bench below it
+function edenKerb(){
+  const N=SAMP.length, out=[];
+  for(const side of [-1,1]){ const cp=[];
+    for(let i=0;i<N;i+=3){ const s=SAMP[i]; cp.push(new T.Vector3(s.p.x+s.n.x*side*(HW+0.7), s.p.y+0.30, s.p.z+s.n.z*side*(HW+0.7))); }
+    const e=SAMP[N-1]; cp.push(new T.Vector3(e.p.x+e.n.x*side*(HW+0.7), e.p.y+0.30, e.p.z+e.n.z*side*(HW+0.7)));
+    const m=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(cp,false), cp.length*2, 0.42, 6, false),
+      new T.MeshBasicMaterial({color:edenLin(0xa8d038)}));
+    trackGroup.add(m); out.push(m);
+    const fp=[], fi=[];
+    for(let i=0;i<N;i++){ const s=SAMP[i];
+      fp.push(s.p.x+s.n.x*side*(HW+0.1), s.p.y+0.04, s.p.z+s.n.z*side*(HW+0.1), s.p.x+s.n.x*side*(HW+2.6), s.p.y-4.5, s.p.z+s.n.z*side*(HW+2.6)); }
+    for(let i=0;i<N-1;i++){ const a=i*2; fi.push(a,a+1,a+2, a+1,a+3,a+2); }
+    const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(fp,3)); fg.setIndex(fi); fg.computeVertexNormals();
+    trackGroup.add(new T.Mesh(fg, new T.MeshLambertMaterial({color:edenLin(0x0c0d22), side:T.DoubleSide})));
+  }
+  return out;
+}
+function applyEdenLighting(){
+  const md=new T.Vector3(Math.cos(EDEN_MOON.az)*Math.cos(EDEN_MOON.el), Math.sin(EDEN_MOON.el), Math.sin(EDEN_MOON.az)*Math.cos(EDEN_MOON.el));
+  hemi.color.setHex(0x3a4aa0); hemi.groundColor.setHex(0x0a2a2a); hemi.intensity=0.50;
+  sun.color.setHex(0xa8c0ff);  sun.intensity=0.62; sun.position.copy(md).multiplyScalar(200);
+  rim.color.setHex(0x30d8b8);  rim.intensity=0.48; rim.position.set(-md.x*150, 50, -md.z*150);
+  fill.color.setHex(0x8a4ad8); fill.intensity=0.26; fill.position.set(md.z*120, 30, -md.x*120);
+  flesh.color.setHex(0xff6a2a);flesh.intensity=0.20; flesh.position.set(0,-30,0);
+}
+function edenTick(E, tsec){
+  EDEN_T.value=tsec;
+  EDEN_H.value=renderer.domElement.height||720;
+  // past the fog nothing is visible anyway: drop whole chunks there, frustum or not
+  const cp=camera.position;
+  for(const m of (E.chunks||[])){ const b=m.geometry.boundingSphere; m.visible=b.center.distanceTo(cp)-b.radius<1180; }
+  // the glow breathes: each family on its own slow period, a few percent, never in step
+  for(const b of E.breath){ const k=1+b.a*Math.sin(tsec*b.f+b.ph)+b.a*0.5*Math.sin(tsec*b.f*2.7+b.ph*1.3);
+    if(b.u) b.u.value=b.base*k; else b.m.color.setScalar(k); }
+}
+
 function disposeObject(o){
   if(!o) return;
   const seen=new Set();
@@ -32243,6 +33236,7 @@ function buildTrack(idx){
   }
   trackGroup=new T.Group(); scene.add(trackGroup);
   TRACK_PULSE=[]; skyDome=null;
+  STEPS=TRACKS[idx].steps||700;         // shared, so assigned on every build
 
   const trackSky=TRACKS[idx].sky||SKY;       // subtle per-track ambient tint
   scene.background.set(trackSky);
@@ -32262,10 +33256,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -32284,6 +33278,9 @@ function buildTrack(idx){
   if(TRACKS[idx].arcade) scene.fog.color.setHex(ARC_FOG);
   // Hana: the land fades into the paper of the horizon, which is where bokashi fades it
   if(TRACKS[idx].hana) scene.fog.color.setHex(HANA_HAZE);
+  // Eve: the indigo band at the foot of her night sky. The dome writes sRGB straight out and
+  // fog is mixed in linear before the output encode, so the fog takes the DECODED colour.
+  if(TRACKS[idx].eden) scene.fog.color.copy(edenLin(EDEN.hor));
   hanaGrain(!!TRACKS[idx].hana);         // the paper overlay: on for Hana, off for every other build
 
   const loop = TRACKS[idx].loop!==false;
@@ -32304,16 +33301,19 @@ function buildTrack(idx){
   const oph   =!!TRACKS[idx].ophelia;    // ...or as Millais' stream in high summer
   const arc   =!!TRACKS[idx].arcade;     // ...and on Trixie, a whole 16-bit world of blocks
   const hana  =!!TRACKS[idx].hana;       // ...or as a Hokusai woodblock of a coast road
+  const eden  =!!TRACKS[idx].eden;       // ...or as a bioluminescent garden at night
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   let MK=null;                           // Lily's ground oracle + prop bag, likewise
   let AK=null;                           // Trixie's block field + prop bag, likewise
   let HK=null;                           // Hana's height grid + prop bag, likewise
+  let EK=null;                           // Eve's height oracle + prop bag, likewise
   applyTrackLighting(bead, pool, coil, paint, felt, macro, TRACKS[idx]);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   if(loom) applyLoomLighting();          // likewise: a low sun in the north-west
   if(oph) applyOpheliaLighting();        // likewise: every light re-set
   if(arc) applyArcadeLighting();         // likewise
   if(hana) applyHanaLighting();          // likewise
+  if(eden) applyEdenLighting();          // likewise: a moon, and the garden's own glow
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
   FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
@@ -32332,7 +33332,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana;   // Lily lays its own pond
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden;   // Lily lays its own pond
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -32418,6 +33418,21 @@ function buildTrack(idx){
     hanaTerrain(HK);
     trackGroup.add(hanaSea(ccx, ccz));
     TRACK_PULSE.hana={rainZone:[105,235], rainOp:0};
+  } else if(eden){
+    // Eve: the night sky, the height oracle, the water, and the whole garden's PLAN — every
+    // prop decided as positions before the ground is built, because the ground carries the
+    // light that falls from them (see NIGHT GARDEN KIT). Batched in the scenery section.
+    skyDome=edenSky(); trackGroup.add(skyDome);
+    const tunIdx=(TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*(STEPS-1)),Math.floor(b*(STEPS-1))]);
+    EK=edenField(); EK.tun=tunIdx;
+    edenWater(EK, harbRnd(0x3A7E2));
+    edenPlan(EK, tunIdx);
+    edenTunnels(EK, tunIdx);
+    EK.gate=edenGate(EK);
+    EK.heart=edenHeart(EK);
+    edenTerrain(EK, EK.G.pools);
+    const wm=edenWaterMesh(EK, EK.G.glow); if(wm) trackGroup.add(wm);
+    TRACK_PULSE.eden={breath:[]};
   } else if(paint){
     skyDome=paintSky(); trackGroup.add(skyDome);
     TRACK_PULSE.paintSky=skyDome.material;
@@ -32938,6 +33953,8 @@ function buildTrack(idx){
     /* the stream draws itself in ophWaterMat; nothing to paint into rc here */
   } else if(hana){
     /* the beaten earth is hanaRoadTex(), cached; nothing to paint into rc here */
+  } else if(eden){
+    /* the clay path and its light sheet are edenRoadTex(); nothing to paint into rc here */
   } else if(paint){
     /* THE DECK. The old surface failed for a reason that has nothing to do with taste:
        the shared UVs run v from 0 to 40 over the lap, and 40 repeats of a 256px sheet
@@ -33225,6 +34242,12 @@ function buildTrack(idx){
     geo.setAttribute('color',new T.Float32BufferAttribute(rc2,3)); }
   // Hana: 50 repeats a lap (a centre dash every ~31 units), and the deck shaded a cool
   // step inside the barrel of the wave — the compression before the release
+  // Eve: one repeat every ~48 units however long the run (the shared v runs 0..40 over the
+  // whole course, which on 26k units would be a dash every 650)
+  let edenEmi=null;
+  if(eden){ const et=edenRoadTex(); rt=et.map; edenEmi=et.emi;
+    let L=0; for(let i=1;i<STEPS;i++) L+=SAMP[i].p.distanceTo(SAMP[i-1].p);
+    rt.repeat.set(1, L/(40*48)); edenEmi.repeat.copy(rt.repeat); EK.len=L; }
   if(hana){ rt=hanaRoadTex(); rt.repeat.set(1, 1.25);
     const [a,b]=HK.tunIdx[0], rc2=[];
     for(let i=0;i<=LAST;i++){ const k=Math.max(0,Math.min(1,(i-a)/10+0.2,(b-i)/10+0.2));
@@ -33237,6 +34260,10 @@ function buildTrack(idx){
     ? (TRACK_PULSE.oph.water=ophWaterMat(OK.geo.userData.lap))
     : hana
     ? new T.MeshBasicMaterial({map:rt, color:0xffffff, vertexColors:true, side:T.DoubleSide})
+    : eden
+    // glossy clay that catches the moon, with its markings in a separate light sheet
+    ? new T.MeshPhongMaterial({map:rt, emissiveMap:edenEmi, emissive:0xffffff, color:0xffffff,
+        shininess:46, specular:edenLin(0x3c4a7a), side:T.DoubleSide})
     : macro
     // wet is a hard WHITE specular (the natatorium lesson); slight violet emissive keeps
     // the water from going black where the key misses it
@@ -33293,7 +34320,8 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt && !oph && !macro && !arc && !hana) for(const side of [HW,-HW]){   // Hana: the road hems itself in ink
+  if(!felt && !oph && !macro && !arc && !hana && !eden) for(const side of [HW,-HW]){   // Eve: a glowing kerb (edenKerb)
+     // Hana: the road hems itself in ink
     // Lily: the glazed lip is its edge
     const ep=[];
     for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS]; const e=s.p.clone().addScaledVector(s.bn,side); ep.push(e.x,e.y+0.6,e.z); }
@@ -33411,7 +34439,7 @@ function buildTrack(idx){
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  motes.visible=!hana;                   // additive sparks have no place in a print
+  motes.visible=!hana && !eden;          // additive sparks have no place in a print; Eve has her own fireflies
   TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
@@ -33498,6 +34526,8 @@ function buildTrack(idx){
     TRACK_PULSE.arc.bulbs=arcGantry(AK, innerSign);   // the arcade marquee (see arcGantry)
   } else if(hana){
     hanaStartBridge(HK, innerSign, 36);  // the timber arch and its cartouche, ahead of the grid
+  } else if(eden){
+    /* the root arch and ringed medallion were planned with the garden (edenGate) */
   } else {
   // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
   // it parallels the road at 14 up instead of cutting across it level; each post stands from
@@ -33803,6 +34833,8 @@ function buildTrack(idx){
     arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
   } else if(hana){
     hanaVerge(HK, innerSign);             // fence outside 28.2, shrubs outside 48.4
+  } else if(eden){
+    edenKerb();                           // glowing cord on each edge; the verge is in the plan
   } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
@@ -33972,6 +35004,8 @@ function buildTrack(idx){
     const [w0,w1]=HK.tunIdx[0], [b0,b1]=HK.tunIdx[1];
     hanaWave(hanaCourseFrames(w0-26, w1+26, innerSign), {ext:26, guard:HK.intrudes});
     hanaTrestle(HK, innerSign, b0, b1);
+  } else if(eden){
+    /* root arches, the hollow log and the bell arbor were planned with the garden */
   } else if(vox){
     const arch=[];
     for(const seg of tun){
@@ -34082,9 +35116,16 @@ function buildTrack(idx){
   if(!loop){
     const end=SAMP[STEPS-1];
     const egg=new T.Mesh(new T.SphereGeometry(13,20,16),
-      new T.MeshPhongMaterial({color:0xffe6cc,emissive:0xff9a6a,shininess:60,transparent:true,opacity:0.95}));
-    egg.scale.set(1,1.25,1); egg.position.copy(end.p).add(new T.Vector3(0,9,0)); trackGroup.add(egg);
-    const halo=glowSprite(0xffd2a0,64); halo.position.copy(egg.position); trackGroup.add(halo);
+      eden ? new T.MeshPhongMaterial({color:edenLin(0xffc890), map:edenFruitTex(), emissiveMap:edenFruitTex(), emissive:0xff7a2a,
+               shininess:70, specular:0x664433})
+           : new T.MeshPhongMaterial({color:0xffe6cc,emissive:0xff9a6a,shininess:60,transparent:true,opacity:0.95}));
+    // Eve: the finish fruit RESTS in a cradle of leaves on the run-out instead of hanging half
+    // sunk into the road (r 13 x 1.25 at +9 put its lower 7 units under the deck)
+    egg.scale.set(1,1.25,1); egg.position.copy(end.p).add(new T.Vector3(0,eden?15.6:9,0)); trackGroup.add(egg);
+    if(eden){ const R=harbRnd(0xC4AD1E);
+      for(let j=0;j<9;j++){ const a=j/9*6.283+R()*0.3, L=14+R()*8;
+        EK.G.leaf.push({x:end.p.x+Math.cos(a)*4, y:end.p.y+0.1, z:end.p.z+Math.sin(a)*4, s:L*1.3, sy:L*0.9, sz:L, ry:Math.PI/2-a, rx:-0.35-R()*0.3, o:'YXZ', c:EDEN.leaf[j%EDEN.leaf.length], k:9}); } }
+    const halo=glowSprite(eden?0xff9a4a:0xffd2a0,64); halo.position.copy(egg.position); trackGroup.add(halo);
     TRACK_PULSE.egg=egg;
   }
 
@@ -34094,7 +35135,7 @@ function buildTrack(idx){
   // and already within 0.05 of the model, so it is not probed)
   const padProbe=oph ? null : new T.Mesh(geo, new T.MeshBasicMaterial({side:T.DoubleSide}));
   const padRay=new T.Raycaster(), _padV=new T.Vector3(), _padDn=new T.Vector3(0,-1,0);
-  for(const f of [0.13,0.37,0.61,0.85]){
+  for(const f of (TRACKS[idx].pads||[0.13,0.37,0.61,0.85])){   // Eve lays her own (a run, not a lap)
     const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
     // The strip is DRAPED on the road rather than laid as a rigid plane: an 18-long flat card
     // cannot follow a crest, a dip, a bend or a bank that is still twisting, so on those samples
@@ -35182,6 +36223,17 @@ function buildTrack(idx){
     Object.assign(TRACK_PULSE.hana, P);
     TRACK_PULSE.hana.rain=hanaRain();
     hanaFlush(HK);                        // every timber, pine, roof and stone above
+  } else if(eden){
+    const M=edenFlush(EK);                // every family planned above, as chunked batches
+    edenAir();                            // fireflies and spores
+    TRACK_PULSE.eden.chunks=EDEN_CHUNKS;  // distance-culled past the fog in edenTick
+    // the glow breathes, each family on its own slow period (see edenTick)
+    TRACK_PULSE.eden.breath=[
+      {m:M.fruit, a:0.07, f:0.53, ph:0.0},
+      {u:M.cap.userData.edenU.uGlow,  base:0.42, a:0.12, f:0.37, ph:1.3},
+      {u:M.lobe.userData.edenU.uGlow, base:0.16, a:0.10, f:0.23, ph:2.1},
+      {u:M.moss.userData.edenU.uGlow, base:0.34, a:0.14, f:0.29, ph:0.7},
+      {u:M.cup.userData.edenU.uGlow,  base:0.62, a:0.10, f:0.41, ph:3.3}];
   } else if(arc){
     const sc=arcScenery(AK, innerSign);
     TRACK_PULSE.arc.egg=sc.eggMat; TRACK_PULSE.arc.birds=sc.birds;
@@ -35288,6 +36340,11 @@ function buildTrack(idx){
         : vox
         ? new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 72%, 60%)`),
             flatShading:true,shininess:16,emissive:new T.Color(`hsl(${300+hue}, 60%, 14%)`)})
+        : eden
+        // Eve: clusters of glowing berries in the garden's own hues, not pink cells
+        ? new T.MeshPhongMaterial({color:edenLin([EDEN.teal,EDEN.lime,EDEN.orange,EDEN.violet][k%4]),
+            emissive:edenLin([EDEN.teal,EDEN.lime,EDEN.orange,EDEN.violet][k%4]).multiplyScalar(0.30),
+            shininess:80, specular:0x445566})
         : new T.MeshPhongMaterial({color:new T.Color(`hsl(${300+hue}, 70%, 62%)`),
             transparent:true,opacity:0.78,shininess:40,emissive:new T.Color(`hsl(${300+hue}, 60%, 18%)`)});
       for(let c=0;c<3;c++){ const r=2.0+Math.random()*1.6;
@@ -35310,7 +36367,7 @@ function buildTrack(idx){
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:300+hue});
     }
   }
 
@@ -45014,6 +46071,8 @@ function frame(now){
   if(TRACK_PULSE.arc) arcTick(TRACK_PULSE.arc, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
   if(TRACK_PULSE.hana) hanaTick(TRACK_PULSE.hana, tsec);
+  // Eve: glow breathes, fronds sway, water ripples, fireflies drift
+  if(TRACK_PULSE.eden) edenTick(TRACK_PULSE.eden, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
@@ -45767,7 +46826,7 @@ buildRacers = function(){
   for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
   for(const p of projectiles){ scene.remove(p.mesh); disposeObject(p.mesh); }
   hazards=[]; projectiles=[];
-  items=[0.12,0.30,0.52,0.74,0.90].map(makeItemBox);
+  items=(TRACKS[selTrack].items||[0.12,0.30,0.52,0.74,0.90]).map(makeItemBox);   // Eve lays her own
 
   // track-authored cyst slalom (Valentina): staggered gates on the flat-out straight —
   // same mesh/collision as a dropped cyst, alternating sides, rebuilt every race start
