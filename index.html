@@ -32377,11 +32377,11 @@ function edenSeg(x0,y0,z0,x1,y1,z1,r,c,k){
    rides the camera like every other dome. */
 function edenSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uT:EDEN_T },
+    uniforms:{ uT:EDEN_T, uBeacon:{value:new T.Vector3(0,-1e5,0)}, uMood:{value:new T.Vector4(0,0,0,0)} },
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP; uniform float uT;
+      varying vec3 vP; uniform float uT; uniform vec3 uBeacon; uniform vec4 uMood;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1.0,0.0)),f.x),mix(h21(i+vec2(0.0,1.0)),h21(i+vec2(1.0,1.0)),f.x),f.y); }
@@ -32409,12 +32409,34 @@ function edenSky(){
         vec3 md=vec3(cos(${EDEN_MOON.az.toFixed(3)})*cos(${EDEN_MOON.el.toFixed(3)}), sin(${EDEN_MOON.el.toFixed(3)}), sin(${EDEN_MOON.az.toFixed(3)})*cos(${EDEN_MOON.el.toFixed(3)}));
         float dm=acos(clamp(dot(d,md),-1.0,1.0));
         c+=${edenG3(0x5a78b8)}*(exp(-dm*dm/0.012)*0.30+exp(-dm/0.30)*0.07);
+        // the 22-degree halo: a faint ring round the moon, warmer on its inner edge
+        c+=${edenG3(0x3a4a88)}*exp(-pow((dm-0.384)/0.05,2.0))*0.13+${edenG3(0x5a3a3a)}*exp(-pow((dm-0.35)/0.03,2.0))*0.05;
+        // long soft bands of cloud drifting across the moon's quarter of the sky
+        { float ba=wrapA(az-(${EDEN_MOON.az.toFixed(3)}));
+          float bnd=smoothstep(0.55,0.85,fbm(vec2(az*1.4+uT*0.0025, el*22.0+sin(az*2.0)*1.2)))*exp(-ba*ba/0.9)*smoothstep(0.12,0.3,el)*(1.0-smoothstep(0.62,0.85,el));
+          c=mix(c, ${edenG3(0x2a3266)}+${edenG3(0x40507a)}*exp(-dm/0.25), bnd*0.55); }
         if(dm<0.042){ float k=smoothstep(0.042,0.037,dm); vec3 mc=${edenG3(0xd8e6f4)}*(0.86+0.14*vn(d.xz*260.0));
           mc=mix(mc, ${edenG3(0xa8b8d0)}, smoothstep(0.55,0.75,fbm(d.xz*90.0))); c=mix(c,mc,k); }
-        // the far tree line: rounded crowns, one step darker than the band
+        // the shrine's beacon: gold light at its bearing, seen through the gaps in the trees
+        { vec3 bd=uBeacon-cameraPosition; float bdist=length(bd.xz);
+          float fade=smoothstep(650.0,1250.0,bdist);
+          if(fade>0.0){ vec3 bn=normalize(bd); float w=clamp(110.0/bdist,0.012,0.12);
+            float da=wrapA(az-atan(bn.z,bn.x)), be=asin(clamp(bn.y,-1.0,1.0));
+            float core=exp(-(da*da+pow(el-be,2.0))/(w*w));
+            float pillar=exp(-da*da/(w*w*0.10))*smoothstep(be+0.25,be,el)*smoothstep(-0.02,0.02,el);
+            float wash=exp(-da*da/(w*w*12.0))*exp(-max(el,0.0)*14.0);
+            c+=${edenG3(0xffc458)}*(core*0.55+pillar*0.22+wash*0.18)*fade; } }
+        // tree lines in three depth bands: the farthest palest and lowest, the nearest darkest
+        float t3=0.020+0.026*fbm(vec2(az*4.0,7.1))+0.008*pow(abs(sin(az*11.0+fbm(vec2(az*2.5,8.0))*4.0)),3.0);
+        if(el<t3) c=mix(${edenG3(0x1a1b44)}, c, 0.45*smoothstep(t3-0.008,t3,el));
+        float t2=0.012+0.020*fbm(vec2(az*5.0,4.2))+0.010*pow(abs(sin(az*13.0+fbm(vec2(az*2.0,5.0))*4.0)),3.0);
+        if(el<t2) c=mix(${edenG3(0x131536)}, c, 0.35*smoothstep(t2-0.010,t2,el));
         float tl=0.014+0.020*fbm(vec2(az*6.0,1.3))+0.010*pow(abs(sin(az*19.0+fbm(vec2(az*3.0,3.0))*5.0)),2.0);
+        tl*=0.8;
         if(el<tl) c=mix(${edenG3(EDEN.sil)}, c, 0.30*smoothstep(tl-0.012, tl, el));
         if(el<0.0) c=${edenG3(EDEN.hor)};
+        // the mood: the air closes in at the horizon, and over the stars, in the hushed places
+        c=mix(c, uMood.rgb, uMood.a*(1.0-smoothstep(0.0,0.75,el)*0.55));
         gl_FragColor=vec4(c,1.0);
       }`});
   const m=new T.Mesh(new T.SphereGeometry(1150,48,24), mat); m.frustumCulled=false; return m;
@@ -32548,7 +32570,7 @@ function edenWater(F, R){
 function edenWaterMesh(F, glows){
   const P=[], I=[];
   const push=(x,y,z)=>{ P.push(x,y,z); return P.length/3-1; };
-  for(const W of F.ponds){ const c=push(W.x,W.wl,W.z), n=40, f=[];
+  for(const W of F.ponds){ if(W.shrine) continue; const c=push(W.x,W.wl,W.z), n=W.lake?72:40, f=[];
     for(let k=0;k<n;k++){ const a=k/n*6.2832, u=Math.cos(a)*W.rx*1.18, v=Math.sin(a)*W.rz*1.18;
       f.push(push(W.x+u*W.ca-v*W.sa, W.wl, W.z+u*W.sa+v*W.ca)); }
     for(let k=0;k<n;k++) I.push(c, f[(k+1)%n], f[k]); }
@@ -32563,13 +32585,13 @@ function edenWaterMesh(F, glows){
   const nrm=new Float32Array(P.length); for(let k=1;k<nrm.length;k+=3) nrm[k]=1; g.setAttribute('normal',new T.BufferAttribute(nrm,3));
   // the reflected lights: the nearest bright things to any water, at most 24 of them
   const NS=24, src=[], col=[];
-  const wat=F.ponds.map(p=>({x:p.x,z:p.z,r:p.rx})).concat(...F.streams.map(S=>S.pts.filter((p,k)=>k%3===0).map(p=>({x:p.x,z:p.z,r:p.w}))));
+  const wat=F.ponds.filter(p=>!p.shrine).map(p=>({x:p.x,z:p.z,r:p.rx})).concat(...F.streams.map(S=>S.pts.filter((p,k)=>k%3===0).map(p=>({x:p.x,z:p.z,r:p.w}))));
   const scored=glows.map(gw=>{ let d=1e9; for(const w of wat) d=Math.min(d, Math.hypot(gw.x-w.x,gw.z-w.z)-w.r); return {gw,d}; })
     .filter(o=>o.d<180).sort((a,b)=>a.d-b.d).slice(0,NS);
   for(let k=0;k<NS;k++){ const o=scored[k];
     if(o){ src.push(new T.Vector4(o.gw.x,o.gw.y,o.gw.z,o.gw.r)); col.push(edenLin(o.gw.c).multiplyScalar(o.gw.k||1)); }
     else { src.push(new T.Vector4(0,-9999,0,1)); col.push(new T.Color(0,0,0)); } }
-  const m=new T.MeshPhongMaterial({color:edenLin(0x060a1e), emissive:edenLin(0x010208), shininess:160, specular:edenLin(0x9ab0e8)});
+  const m=new T.MeshPhongMaterial({color:edenLin(0x060a1e), emissive:edenLin(0x010208), shininess:220, specular:edenLin(0x34405c)});
   m.onBeforeCompile=sh=>{
     sh.uniforms.uT=EDEN_T; sh.uniforms.uSrc={value:src}; sh.uniforms.uSrcC={value:col.map(c=>new T.Vector3(c.r,c.g,c.b))};
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWW;')
@@ -32581,11 +32603,11 @@ function edenWaterMesh(F, glows){
         float rp=sin(vWW.x*0.21+uT*1.1+sin(vWW.z*0.17+uT*0.3)*2.0)*sin(vWW.z*0.19-uT*0.9+sin(vWW.x*0.13)*2.0);
         Rr.xz+=vec2(rp)*0.035;
         float fres=0.18+0.82*pow(1.0-abs(V.y),4.0);
-        totalEmissiveRadiance+=mix(${edenL3(EDEN.hor)}, ${edenL3(EDEN.mid)}, clamp(Rr.y*1.6,0.0,1.0))*fres*0.9;
-        totalEmissiveRadiance+=${edenL3(0x1a8a7a)}*smoothstep(0.82,1.0,rp)*0.10;
+        totalEmissiveRadiance+=mix(${edenL3(0x2a2c66)}, ${edenL3(EDEN.mid)}, clamp(Rr.y*1.6,0.0,1.0))*fres*1.0;
+        totalEmissiveRadiance+=${edenL3(0x1a8a7a)}*smoothstep(0.80,1.0,rp)*0.22;
         for(int k=0;k<${NS};k++){ vec3 s=uSrc[k].xyz-vWW; float L=length(s); vec3 sd=s/max(L,1.0);
           vec3 dd=Rr-sd; float K=L*L/(uSrc[k].w*uSrc[k].w*4.0+1.0);
-          totalEmissiveRadiance+=uSrcC[k]*exp(-(dd.x*dd.x+dd.z*dd.z)*K-dd.y*dd.y*K*0.06)*0.9; } }`);
+          totalEmissiveRadiance+=uSrcC[k]*exp(-(dd.x*dd.x+dd.z*dd.z)*K-dd.y*dd.y*K*0.06)*1.4; } }`);
   };
   const mesh=new T.Mesh(g, m); mesh.frustumCulled=false; return mesh;
 }
@@ -32715,15 +32737,6 @@ function edenBarkTex(){
   const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(3,2);
   return _edenBarkTex=t;
 }
-// lantern-fruit ribs for the finish fruit (the shared egg, re-dressed)
-function edenFruitTex(){
-  const cv=document.createElement('canvas'); cv.width=256; cv.height=64; const g=cv.getContext('2d');
-  g.fillStyle='#ffb070'; g.fillRect(0,0,256,64);
-  for(let k=0;k<12;k++){ const x=k*256/12; const gr=g.createLinearGradient(x,0,x+256/12,0);
-    gr.addColorStop(0,'#ff7a2a'); gr.addColorStop(0.5,'#ffd090'); gr.addColorStop(1,'#ff7a2a'); g.fillStyle=gr; g.fillRect(x,0,256/12+1,64); }
-  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=T.RepeatWrapping; return t;
-}
-
 /* LIGHT POINTS. One shader for three jobs: static halos round glowing things (bloom, without
    a bloom pass), fireflies, and drifting spores. The two airborne kinds live in a box of air
    that travels with the camera and wraps — a few hundred points give the whole 26-km course
@@ -32739,9 +32752,9 @@ function edenPoints(list, mode, box){
   g.setAttribute('aSz',new T.BufferAttribute(sz,1)); g.setAttribute('aPh',new T.BufferAttribute(ph,1));
   const m=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
     defines:{MODE:mode|0},
-    uniforms:{uT:EDEN_T, uH:EDEN_H, uMap:{value:TEX_GLOW}, uBox:{value:box||new T.Vector3(1,1,1)}},
+    uniforms:{uT:EDEN_T, uH:EDEN_H, uMap:{value:TEX_GLOW}, uBox:{value:box||new T.Vector3(1,1,1)}, uAmp:{value:1}, uCtr:{value:new T.Vector3()}},
     vertexShader:`attribute vec3 aCol; attribute float aSz; attribute float aPh;
-      uniform float uT; uniform float uH; uniform vec3 uBox; varying vec3 vC; varying float vA;
+      uniform float uT; uniform float uH; uniform vec3 uBox; uniform float uAmp; uniform vec3 uCtr; varying vec3 vC; varying float vA;
       void main(){ vec3 p=position;
         #if MODE==1
           p+=vec3(sin(uT*0.31+aPh)*7.0, sin(uT*0.53+aPh*1.3)*2.2, cos(uT*0.27+aPh*0.7)*7.0);
@@ -32752,16 +32765,27 @@ function edenPoints(list, mode, box){
           p.x+=sin(uT*0.17+aPh)*6.0; p.z+=cos(uT*0.13+aPh*1.9)*6.0;
           p.xz=cameraPosition.xz+mod(p.xz-cameraPosition.xz+uBox.xz*0.5, uBox.xz)-uBox.xz*0.5;
           p.y+=cameraPosition.y;
+        #elif MODE==4
+          p.x+=sin(uT*0.045+aPh)*9.0; p.z+=cos(uT*0.037+aPh*1.7)*9.0;
+        #elif MODE==3
+          p.y=mod(p.y-uT*(1.4+fract(aPh*3.1)*1.6), uBox.y);
+          p.x+=sin(uT*0.7+aPh)*5.0+sin(uT*1.9+aPh*2.0)*1.4; p.z+=cos(uT*0.5+aPh*1.3)*5.0;
+          p+=uCtr;
         #endif
         vec4 mv=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv;
         float dz=-mv.z;
-        gl_PointSize=min(aSz*projectionMatrix[1][1]*uH*0.5/max(dz,1.0), 64.0);
+        gl_PointSize=min(aSz*projectionMatrix[1][1]*uH*0.5/max(dz,1.0), MODE==4 ? 0.45*uH : 64.0);
         vA=(1.0-smoothstep(260.0,1100.0,dz))*smoothstep(6.0,22.0,dz);
         #if MODE==1
           vA*=0.25+0.75*smoothstep(-0.3,0.9,sin(uT*0.55+aPh*5.0));
         #elif MODE==2
           vA*=0.6;
+        #elif MODE==3
+          vA*=smoothstep(0.0,0.1,position.y/uBox.y)*0.9;
+        #elif MODE==4
+          vA=(1.0-smoothstep(300.0,900.0,dz))*smoothstep(25.0,90.0,dz);
         #endif
+        vA*=uAmp;
         vC=aCol; }`,
     fragmentShader:`uniform sampler2D uMap; varying vec3 vC; varying float vA;
       void main(){ float a=texture2D(uMap, gl_PointCoord).a*vA; if(a<0.003) discard; gl_FragColor=vec4(vC, a); }`});
@@ -32782,11 +32806,11 @@ function edenTree(F, G, x, z, H, R, rnd, k, o){
     seg.push(edenSeg(px,py,pz,nx,py+h,nz, r0, EDEN.bark[(k+s)%EDEN.bark.length], k)); px=nx; pz=nz; py+=h; }
   const tx=px, ty=py, tz=pz, CR=o.crown||H*(0.62+rnd()*0.18);
   lobes.push({x:tx, y:ty+CR*0.28, z:tz, r:CR*0.58, sy:0.68});
-  const nl=6+((rnd()*4)|0), a0=rnd()*6.283;
+  const nl=o.small?3:6+((rnd()*4)|0), a0=rnd()*6.283;
   for(let j=0;j<nl;j++){ const a=a0+j/nl*6.283+(rnd()-0.5)*0.6, dd=CR*(0.42+rnd()*0.36);
     lobes.push({x:tx+Math.cos(a)*dd, y:ty+CR*(0.0+rnd()*0.30), z:tz+Math.sin(a)*dd, r:CR*(0.30+rnd()*0.16), sy:0.62+rnd()*0.16}); }
   // a few lumps on top break the dome into a crown
-  for(let j=0;j<2+((rnd()*3)|0);j++){ const a=rnd()*6.283, dd=CR*rnd()*0.4;
+  for(let j=0;j<(o.small?0:2+((rnd()*3)|0));j++){ const a=rnd()*6.283, dd=CR*rnd()*0.4;
     lobes.push({x:tx+Math.cos(a)*dd, y:ty+CR*(0.42+rnd()*0.18), z:tz+Math.sin(a)*dd, r:CR*(0.26+rnd()*0.12), sy:0.7}); }
   for(const L of lobes){ if(L.y>ty+CR*0.4) continue;
     for(let f=0;f<(o.fruit||1)+((rnd()*3)|0);f++){ const a=rnd()*6.283, rr=L.r*(0.25+rnd()*0.5), fr=(o.fr||1)*(1.8+rnd()*1.6);
@@ -32813,7 +32837,7 @@ function edenTree(F, G, x, z, H, R, rnd, k, o){
     G.glow.push({x:f.x,y:f.y,z:f.z,r:f.r*2.2,c:f.c,k:0.8}); }
   if(o.pods) for(let j=0;j<o.pods;j++){ const L=lobes[1+((rnd()*(lobes.length-1))|0)], pr=(o.fr||1)*(3+rnd()*2.4);
     const a=rnd()*6.283, rr=L.r*0.5; G.podH.push({x:L.x+Math.cos(a)*rr, y:L.y-L.r*L.sy*0.8-pr*0.8, z:L.z+Math.sin(a)*rr, s:pr, sy:pr*1.2, sz:pr, rx:rnd()*0.6, ry:rnd()*6.28, c:0xffffff, k}); }
-  G.pools.push({x, z, r:CR*1.5, c:edenLin(0xff5a18), k:0.30*(o.poolK||1)});
+  G.pools.push({x, z, r:CR*1.3, c:edenLin(0xff5a18), k:0.20*(o.poolK||1)});
   G.pools.push({x:tx, z:tz, r:CR*0.9, c:edenLin(0xff7a28), k:0.18*(o.poolK||1)});
   return {x,y,z,top:ty+CR};
 }
@@ -32862,7 +32886,7 @@ function edenFlower(F, G, x, z, h, rnd, k){
    the orchard again round the heart. Each family keeps its own irregular cadence. */
 function edenPlan(F, tunIdx){
   const N=SAMP.length, R=harbRnd(0xEDE9), G={trunk:[],lobe:[],fruit:[],podH:[],podG:[],stem:[],cap:[],rim:[],gill:[],curl:[],leaf:[],
-    stalk:[],cup:[],bead:[],bush:[],moss:[],rock:[],vpod:[],halo:[],glow:[],pools:[],arch:[],archT:[],vine:[],tip:[],shelf:[],log:null};
+    stalk:[],cup:[],bead:[],bush:[],pad:[],moss:[],rock:[],vpod:[],halo:[],glow:[],pools:[],arch:[],archT:[],vine:[],tip:[],shelf:[],log:null};
   F.G=G;
   const chunk=i=>Math.min(9, Math.floor(i/N*10));
   const bump=(u,a,b,e)=>edenSm((u-a)/e)*edenSm((b-u)/e);
@@ -32938,6 +32962,24 @@ function edenPlan(F, tunIdx){
         G.halo.push({x, y:y+r*0.7, z, s:r*2.6, c:bc, k:0.35}); }
       take(x,z,r*0.8); }
     i+=Math.round(2+R()*(w.orch>0.8||w.fern>0.8?5:10));
+  }
+  // --- the middle distance: saplings and big mounds between the verge and the orchard, so the
+  //     land between the road and the horizon is a garden and not a lawn ---
+  for(const side of [-1,1]) for(let i=30+((R()*30)|0); i<N-40; ){
+    const u=i/(N-1), w=W(u);
+    if(!inTun(i,6)){
+      if(R()<0.55){ const H=15+R()*16, Rt=1.6+H*0.05, CR=H*(0.6+R()*0.2), lat=side*(64+CR+R()*170);
+        const [x,z]=at(i,lat);
+        if(ok(x,z,CR*0.7,Rt*3+20) && edenTree(F,G,x,z,H,Rt,R,chunk(i),{fruit:0,poolK:0.35,small:true})) take(x,z,CR*0.7); }
+      else { const r=7+R()*8, lat=side*(70+r+R()*170), [x,z]=at(i,lat);
+        if(ok(x,z,r*0.8,r+26)){ const k=chunk(i);
+          for(let j=0;j<3+((R()*3)|0);j++){ const a=R()*6.28, dd=r*0.5*R(), rr=r*(0.5+R()*0.35), lx=x+Math.cos(a)*dd, lz=z+Math.sin(a)*dd;
+            G.bush.push({x:lx, y:F.seat(lx,lz,rr)+rr*0.22, z:lz, s:rr, sy:rr*(0.6+R()*0.25), sz:rr*(0.85+R()*0.3), ry:R()*6.28, c:EDEN.leaf[(j+(R()*6|0))%6], k}); }
+          if(R()<0.4){ const bc=[EDEN.orange,EDEN.lime,EDEN.violet][(R()*3)|0]; G.halo.push({x, y:F.seat(x,z,r)+r*0.8, z, s:r*2.2, c:bc, k:0.3});
+            for(let j=0;j<4;j++){ const a=R()*6.28; G.fruit.push({x:x+Math.cos(a)*r*0.5, y:F.seat(x,z,r)+r*0.7, z:z+Math.sin(a)*r*0.5, s:0.9, c:bc, k}); } }
+          take(x,z,r*0.8); } }
+    }
+    i+=Math.round(7+R()*(w.orch>0.8?10:18));
   }
   // --- ringed pods on the ground: the reference's rings, half sunk in the moss ---
   for(let i=16+((R()*10)|0); i<N-20; ){
@@ -33090,18 +33132,6 @@ function edenGate(F){
 /* THE HEART. A tree three times the size of any other, on its own knoll past the end of the
    road, crowned in fruit and ringed pods; and the finish fruit (the shared egg, re-dressed)
    resting in a cradle of leaves at the foot of the run-out. */
-function edenHeart(F){
-  const G=F.G, N=SAMP.length, e=SAMP[N-1], R=harbRnd(0x4EA27);
-  let best=null;
-  for(const d of [150,175,200,130,230]) for(const off of [0,-30,30,-60,60]){
-    const x=e.p.x+e.t.x*d+e.n.x*off, z=e.p.z+e.t.z*d+e.n.z*off;
-    let clear=true; for(let i=0;i<N-40;i+=3){ const p=SAMP[i].p; if(Math.hypot(p.x-x,p.z-z)<170){ clear=false; break; } }
-    if(clear){ best={x,z}; break; } if(best) break; }
-  if(!best) best={x:e.p.x+e.t.x*150, z:e.p.z+e.t.z*150};
-  const t=edenTree(F, G, best.x, best.z, 150, 12, R, 9, {crown:120, fruit:4, fr:2.0, pods:6, lean:0.05, check:false, poolK:0.9});
-  return t;
-}
-
 /* FLUSH: every family above, as chunked instanced batches. */
 function edenFlush(F){
   const G=F.G, mats={};
@@ -33139,9 +33169,10 @@ function edenFlush(F){
   edenBatch(new T.SphereGeometry(1,7,5), moss, G.moss);
   edenBatch(new T.CylinderGeometry(1,1,1,5,1), vineM, G.vine);
   // arches: a half torus, open below; mouth rims of the log are a wider sweep
-  edenBatch(new T.TorusGeometry(1,0.06,7,26,Math.PI), bark, G.arch.filter(a=>!a.wide));
+  edenBatch(edenRootArcGeo(0.058,0x2007), bark, G.arch.filter(a=>!a.wide));
   edenBatch(new T.TorusGeometry(1,0.075,7,30,Math.PI+0.8), bark, G.arch.filter(a=>a.wide));
-  edenBatch(new T.TorusGeometry(1,0.034,5,24,Math.PI), bark, G.archT);
+  edenBatch(edenRootArcGeo(0.032,0x77A1), bark, G.archT);
+  edenBatch(new T.CircleGeometry(1,12), mats.cap, G.pad);
   edenBatch(new T.CylinderGeometry(1,1,0.9,14,1,false,0,Math.PI), cap, G.shelf);
   trackGroup.add(edenPoints(G.halo, 0));
   return mats;
@@ -33153,8 +33184,13 @@ function edenAir(){
     c:R()<0.75?0xe8f060:0x9af0a0, k:0.9, ph:R()*40});
   for(let k=0;k<160;k++) sp.push({x:(R()-0.5)*700, y:R()*70, z:(R()-0.5)*700, s:1.6+R()*1.6,
     c:R()<0.6?0x40d8c0:0x8a6ae0, k:0.45, ph:R()*40});
-  trackGroup.add(edenPoints(ff, 1, new T.Vector3(560,40,560)));
-  trackGroup.add(edenPoints(sp, 2, new T.Vector3(700,70,700)));
+  const sw=[], po=[];
+  for(let k=0;k<420;k++) sw.push({x:(R()-0.5)*200, y:-9+R()*20, z:(R()-0.5)*200, s:1.3+R()*1.2, c:R()<0.8?0xe8f060:0xb0ff90, k:1.0, ph:R()*40});
+  for(let k=0;k<260;k++) po.push({x:(R()-0.5)*520, y:R()*50, z:(R()-0.5)*520, s:0.9+R()*1.0, c:R()<0.7?0xffd890:0xfff0c0, k:0.7, ph:R()*40});
+  const P=[edenPoints(ff, 1, new T.Vector3(560,40,560)), edenPoints(sw, 1, new T.Vector3(200,26,200)),
+           edenPoints(po, 2, new T.Vector3(520,50,520)), edenPoints(sp, 2, new T.Vector3(700,70,700))];
+  P[1].material.uniforms.uAmp.value=0; for(const p of P) trackGroup.add(p);
+  return {ff:P[0].material.uniforms, sw:P[1].material.uniforms, po:P[2].material.uniforms, sp:P[3].material.uniforms};
 }
 /* THE ROAD, painted: a deep indigo clay path, darker at its shoulders; the light is a
    separate emissive sheet so it glows whatever the moon is doing — a chartreuse line inset
@@ -33200,6 +33236,372 @@ function edenKerb(){
   }
   return out;
 }
+/* ---- NIGHT GARDEN, second pass: MOODS ----------------------------------------------
+   The run breathes instead of holding one weather the whole way. Moods are soft bands of
+   the course, blended on the player's progress every frame (edenMood): the stream valley
+   fills with low glowing mist and the fog closes in a little; the fungus wood is cut by
+   shafts of moonlight; the fern hollow is HUSHED — fog at a few hundred units, the light
+   gone teal-black, fireflies swarming at the roadside — and through the bell arbor it
+   opens out into clear air over the lake; the last stretch is warm with pollen and the
+   gold of the shrine ahead. Fog range and colour are shared state: buildTrack sets them on
+   every build, and only Eve's tick ever moves them. */
+const EDEN_MOODS=[
+  // [u0, u1, fogNear, fogFar, fogColour, fireflies, swarm, pollen, spores]
+  [0.19, 0.34, 100,  820, 0x182a48, 1.0, 0.0, 0.4, 1.4],   // stream valley: mist
+  [0.34, 0.47, 110,  900, 0x221c4c, 0.8, 0.0, 0.0, 2.0],   // fungus wood: moonlight shafts
+  [0.585,0.665, 30,  430, 0x0b1626, 1.4, 1.0, 0.0, 0.6],   // fern hollow: hushed and close
+  [0.69, 0.78, 320, 1380, 0x1f2252, 0.8, 0.2, 0.6, 0.8],   // the reveal over the lake
+  [0.90, 1.01, 220, 1350, 0x261e50, 1.0, 0.3, 1.6, 0.5],   // the approach to the shrine
+];
+const EDEN_MOOD0=[150, 1150, 0x20214f, 1.0, 0.0, 0.5, 1.0];
+function edenMood(E, dt){
+  const me=racers.find(r=>r.you); if(!me) return;
+  const u=Math.max(0,Math.min(1,me.idx/(SAMP.length-1)));
+  const T0=EDEN_MOOD0, c=E._mc||(E._mc=new T.Color()), ct=new T.Color(T0[2]);
+  let n=T0[0], f=T0[1], a=[T0[3],T0[4],T0[5],T0[6]];
+  for(const M of EDEN_MOODS){ const w=edenSm((u-M[0])/0.018)*edenSm((M[1]-u)/0.018); if(w<=0) continue;
+    n+=(M[2]-n)*w; f+=(M[3]-f)*w; ct.lerp(new T.Color(M[4]), w);
+    for(let k=0;k<4;k++) a[k]+=(M[5+k]-a[k])*w; }
+  // eased, so a band edge is a change in the air rather than a switch
+  const k=1-Math.exp(-dt*1.4);
+  if(E._fn==null){ E._fn=n; E._ff=f; c.copy(ct); E._a=a.slice(); }
+  E._fn+=(n-E._fn)*k; E._ff+=(f-E._ff)*k; c.lerp(ct,k);
+  for(let j=0;j<4;j++) E._a[j]+=(a[j]-E._a[j])*k;
+  scene.fog.near=E._fn; scene.fog.far=E._ff; scene.fog.color.copy(edenLin(c.getHex()));
+  // the sky takes the same air: closed and dark in the hollow, a haze in the valley
+  if(skyDome && skyDome.material.uniforms.uMood){ const hush=Math.max(0,Math.min(1,(1000-E._ff)/600));
+    skyDome.material.uniforms.uMood.value.set(c.r,c.g,c.b, Math.min(0.85, hush*0.9)); }
+  if(E.air){ E.air.ff.uAmp.value=E._a[0]; E.air.sw.uAmp.value=E._a[1]; E.air.po.uAmp.value=E._a[2]; E.air.sp.uAmp.value=E._a[3]; }
+}
+
+/* A root, not a hoop: a half ring whose section swells and pinches along its length,
+   thickest at the feet where it goes into the ground, with a slow twist in its wander. */
+function edenRootArcGeo(tr, seed){
+  const NS=40, RS=7, pos=[], idx=[], R=harbRnd(seed||0x2007);
+  const ph=[R()*6.28,R()*6.28,R()*6.28];
+  const C=[], rad=[];
+  for(let k=0;k<=NS;k++){ const t=k/NS, a=t*Math.PI;
+    C.push([Math.cos(a), Math.sin(a), 0.035*Math.sin(t*9.0+ph[0])+0.02*Math.sin(t*23+ph[1])]);
+    const foot=Math.pow(Math.abs(t-0.5)*2,6);
+    rad.push(tr*(1+0.30*Math.sin(t*17+ph[2])+0.18*Math.sin(t*41+ph[0])+0.9*foot)); }
+  for(let k=0;k<=NS;k++){ const A=C[Math.max(0,k-1)], B=C[Math.min(NS,k+1)];
+    let tx=B[0]-A[0], ty=B[1]-A[1], tz=B[2]-A[2]; const l=Math.hypot(tx,ty,tz)||1; tx/=l; ty/=l; tz/=l;
+    // normal in the arc plane, binormal across it
+    let nx=-ty, ny=tx, nz=0; const nl=Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+    const bx=ty*nz-tz*ny, by=tz*nx-tx*nz, bz=tx*ny-ty*nx;
+    for(let j=0;j<RS;j++){ const p=j/RS*Math.PI*2, cs=Math.cos(p), sn=Math.sin(p), r=rad[k]*(1+0.12*Math.sin(j*2.1+k*0.7));
+      pos.push(C[k][0]+r*(cs*nx+sn*bx), C[k][1]+r*(cs*ny+sn*by), C[k][2]+r*(cs*nz+sn*bz)); } }
+  for(let k=0;k<NS;k++) for(let j=0;j<RS;j++){ const a=k*RS+j, b=k*RS+(j+1)%RS; idx.push(a,b,a+RS, b,b+RS,a+RS); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  const uv=new Float32Array(pos.length/3*2); for(let k=0;k<=NS;k++) for(let j=0;j<RS;j++){ uv[(k*RS+j)*2]=k/NS*4; uv[(k*RS+j)*2+1]=j/RS; }
+  g.setAttribute('uv',new T.BufferAttribute(uv,2)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+
+// soft textures for the air: a mist sheet, a light shaft, a petal
+function edenSoftTex(kind){
+  const cv=document.createElement('canvas'), R=harbRnd(kind==='mist'?0x3157:kind==='ray'?0x8A75:0x9E7A1);
+  if(kind==='mist'){ cv.width=cv.height=128; const g=cv.getContext('2d');
+    for(let k=0;k<70;k++){ const x=16+R()*96, y=16+R()*96, r=10+R()*26, gr=g.createRadialGradient(x,y,0,x,y,r);
+      gr.addColorStop(0,'rgba(255,255,255,0.34)'); gr.addColorStop(1,'rgba(255,255,255,0)'); g.fillStyle=gr; g.fillRect(0,0,128,128); }
+    const gr=g.createRadialGradient(64,64,10,64,64,64); gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(0,0,0,1)');
+    g.globalCompositeOperation='destination-out'; g.fillStyle=gr; g.fillRect(0,0,128,128); }
+  else if(kind==='ray'){ cv.width=32; cv.height=128; const g=cv.getContext('2d');
+    for(let x=0;x<32;x++){ const s=Math.pow(Math.sin(x/31*Math.PI),2);
+      for(let y=0;y<128;y++){ const v=y/127, a=s*Math.pow(1-v,0.6)*Math.min(1,v*8)*0.9; g.fillStyle=`rgba(255,255,255,${a.toFixed(3)})`; g.fillRect(x,y,1,1); } } }
+  else { cv.width=cv.height=32; const g=cv.getContext('2d');
+    g.fillStyle='rgba(255,255,255,1)'; g.beginPath(); g.moveTo(16,3); g.bezierCurveTo(29,8,27,24,16,29); g.bezierCurveTo(5,24,3,8,16,3); g.fill();
+    g.globalCompositeOperation='destination-out'; g.beginPath(); g.arc(16,2,4,0,6.3); g.fill(); }
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; return t;
+}
+
+/* MIST. Low sheets of glow lying in the stream valley, the fern hollow and over the water
+   by the road, two or three to a pocket at different heights, drifting. Additive and
+   depth-tested, so it reads as light trapped in the air rather than as a surface. */
+function edenMist(F){
+  const N=SAMP.length, R=harbRnd(0x3157), list=[];
+  const zones=[[0.19,0.34,1.0],[0.585,0.665,1.0],[0.72,0.82,0.6],[0.10,0.16,0.3],[0.90,0.98,0.35]];
+  for(let i=20;i<N-20;i+=1+((R()*3)|0)){ const u=i/(N-1); let w=0; for(const [a,b,k] of zones) if(u>a&&u<b) w=Math.max(w,k);
+    if(R()>w*0.8) continue;
+    const s=SAMP[i], lat=(R()<0.25?(R()*2-1)*30:(R()<0.5?-1:1)*(40+R()*200)), x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat;
+    const gy=Math.abs(lat)<40 ? s.p.y : F.h(x,z);
+    list.push({x, y:gy+5+R()*9, z, s:70+R()*110, c:[0x1a8a7a,0x2a6aa8,0x2a9a8a,0x4a3a9a][(R()*4)|0], k:0.14+R()*0.10, ph:R()*40}); }
+  const pts=edenPoints(list, 4);
+  pts.material.uniforms.uMap.value=edenSoftTex('mist'); trackGroup.add(pts);
+  return pts.material.uniforms;
+}
+/* SHAFTS of moonlight in the fungus wood: crossed cards leaning down from the moon,
+   faint and cool, the brightest at their top where they leave the canopy. */
+function edenRays(F){
+  const N=SAMP.length, R=harbRnd(0x8A75), list=[];
+  const md=new T.Vector3(Math.cos(EDEN_MOON.az)*Math.cos(EDEN_MOON.el), Math.sin(EDEN_MOON.el), Math.sin(EDEN_MOON.az)*Math.cos(EDEN_MOON.el)).normalize();
+  const q0=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), md);
+  for(let i=20;i<N-20;i+=4+((R()*9)|0)){ const u=i/(N-1);
+    const w=(u>0.34&&u<0.47)||(u>0.73&&u<0.86)?1:(u>0.585&&u<0.665)?0.35:0; if(R()>w) continue;
+    const s=SAMP[i], lat=(R()*2-1)*120, x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, gy=F.h(x,z);
+    const L=60+R()*55, W=8+R()*14, cx=x+md.x*L*0.5, cy=gy+md.y*L*0.5, cz=z+md.z*L*0.5;
+    for(const sp of [0,Math.PI/2]){ const q=q0.clone().multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0), sp+R()*0.4));
+      list.push({x:cx,y:cy,z:cz,s:W,sy:L,sz:1,q,c:R()<0.7?0x9ab8ff:0x7ae8d8}); } }
+  const tex=edenSoftTex('ray');
+  const m=new T.MeshBasicMaterial({map:tex, transparent:true, opacity:0.11, blending:T.AdditiveBlending, depthWrite:false, side:T.DoubleSide});
+  // the card's texture runs bright at the top: flip so v=0 (bright) is at the canopy end
+  const g=new T.PlaneGeometry(1,1); g.rotateZ(Math.PI);
+  edenBatch(g, m, list);
+  return m;
+}
+/* THE PONDS, readable from the road: a luminous shoreline where moss meets water, and
+   glowing pads afloat — the rim is the line the eye finds at grazing angles, where the
+   water itself is only a dark mirror. */
+function edenPondDress(F){
+  const P=[], C=[], I=[], G=F.G, R=harbRnd(0x9AD5);
+  const cIn=edenLin(0x5af0c8), cOut=new T.Color(0,0,0);
+  const ring=(pts, wl)=>{ const b=P.length/3, n=pts.length;
+    for(const [ix,iz,ox,oz] of pts){ P.push(ix,wl+0.12,iz, ox,wl+0.12,oz); C.push(cIn.r,cIn.g,cIn.b, cOut.r,cOut.g,cOut.b); }
+    for(let k=0;k<n;k++){ const a=b+k*2, c2=b+((k+1)%n)*2; I.push(a,a+1,c2, a+1,c2+1,c2); } };
+  for(const W of F.ponds){ if(W.shrine) continue; const pts=[], n=48;
+    for(let k=0;k<n;k++){ const a=k/n*6.2832, u=Math.cos(a), v=Math.sin(a);
+      const p=(e)=>[W.x+(u*W.rx*e)*W.ca-(v*W.rz*e)*W.sa, W.z+(u*W.rx*e)*W.sa+(v*W.rz*e)*W.ca];
+      const A=p(0.97), B=p(1.12); pts.push([A[0],A[1],B[0],B[1]]); }
+    ring(pts, W.wl);
+    const np=5+((R()*9)|0);
+    for(let j=0;j<np;j++){ const a=R()*6.28, e=Math.sqrt(R())*0.75, u=Math.cos(a)*W.rx*e, v=Math.sin(a)*W.rz*e, r=2.2+R()*3.4;
+      const x=W.x+u*W.ca-v*W.sa, z=W.z+u*W.sa+v*W.ca;
+      G.pad.push({x,y:W.wl+0.15,z,s:r,sy:r,sz:r,rx:-Math.PI/2,rz:R()*6.28,c:[0x1a8a6a,0x2ad8b4,0x6ac040][(R()*3)|0],k:0});
+      if(R()<0.3){ const cc=[EDEN.violet,0xf0a0c8,EDEN.orange][(R()*3)|0];
+        G.cup.push({x,y:W.wl+0.3,z,s:1.4,sy:1.0,sz:1.4,ry:R()*6.28,c:cc,k:0}); G.halo.push({x,y:W.wl+1.5,z,s:9,c:cc,k:0.5}); } } }
+  if(!I.length) return;
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(C,3)); g.setIndex(I);
+  const m=new T.Mesh(g, new T.MeshBasicMaterial({vertexColors:true, transparent:true, blending:T.AdditiveBlending, depthWrite:false}));
+  m.frustumCulled=false; trackGroup.add(m);
+}
+/* THE LAKE at the reveal: as big a sheet of water as fits between two legs of the spiral,
+   placed where the fern hollow lets out. */
+function edenLake(F){
+  const N=SAMP.length;
+  for(const ub of [0.715,0.70,0.73,0.745,0.69]) for(const side of [1,-1]) for(const rz of [170,140,115,90]){
+    const i=Math.floor(ub*(N-1)), s=SAMP[i], rx=rz*1.7, lat=side*(36+rz*1.15+6);
+    const x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, rot=Math.atan2(s.t.z,s.t.x);
+    let ok=true; for(const P of F.ponds) if(Math.hypot(P.x-x,P.z-z)<P.rx+rx+30){ ok=false; break; }
+    if(!ok) continue;
+    for(let k=0;k<24&&ok;k++){ const a=k*0.2618, u=Math.cos(a)*rx*1.15, v=Math.sin(a)*rz*1.15;
+      if(F.near(x+u*Math.cos(rot)-v*Math.sin(rot), z+u*Math.sin(rot)+v*Math.cos(rot), 400).d<32) ok=false; }
+    if(!ok) continue;
+    let wl=1e9; for(let k=0;k<24;k++){ const a=k*0.2618; for(const e of [1.0,1.25,1.5]){ const u=Math.cos(a)*rx*e, v=Math.sin(a)*rz*e;
+      wl=Math.min(wl, F.base(x+u*Math.cos(rot)-v*Math.sin(rot), z+u*Math.sin(rot)+v*Math.cos(rot))); } }
+    F.ponds.push({x,z,rx,rz,ca:Math.cos(rot),sa:Math.sin(rot),rot,wl:wl-1.2,lake:true});
+    return true; }
+  return false;
+}
+
+/* ---- THE SHRINE: the egg at the end of the run ------------------------------------
+   Composed as an altarpiece, in the decorative language of the Birth of Venus and of
+   gilded panel painting — and nothing else from either: no figures, no text, no symbols.
+   Strict symmetry about the road's axis, so on the approach the camera looks straight up
+   the middle of it. From the water up:
+     a glowing pool, gold at its heart, teal at its rim, rings spreading across it;
+     a great scallop shell rising from it, hinge forward, fan raised behind;
+     the egg standing in the shell: pearl, iridescent at its edges, lit from within on a
+     slow double heartbeat;
+     concentric rings round it, gold and chartreuse, beaded, turning very slowly;
+     behind it an almond aureole of gold-leaf rays — straight and flame rays alternating —
+     inside a gilt frame studded with beads;
+     the whole set in a round-arched gilt frame on two plinths, a ringed finial on its crown;
+     two gilded wind-swirls flanking it, turned in toward the egg;
+     petals falling through it, and foam light along the shell's lip.
+   It stands beyond the end of the road, so the finish line (at 98.5%) is well before it and
+   no kart can reach it; the sky carries a gold beacon at its bearing from anywhere farther
+   than the far plane, so it draws you in from across the garden. */
+function edenShrinePlan(F){
+  const N=SAMP.length, e=SAMP[N-1], f=new T.Vector3(e.t.x,0,e.t.z).normalize(), n=new T.Vector3(f.z,0,-f.x);
+  let best=null;
+  for(const d of [130,150,170,115,190]){ const x=e.p.x+f.x*d, z=e.p.z+f.z*d;
+    let clear=true; for(let i=0;i<N-60;i+=3){ const p=SAMP[i].p; if(Math.hypot(p.x-x,p.z-z)<175){ clear=false; break; } }
+    if(clear){ best={x,z,d}; break; } }
+  if(!best) best={x:e.p.x+f.x*130, z:e.p.z+f.z*130, d:130};
+  const PR=74, rot=Math.atan2(f.z,f.x);
+  let wl=1e9; for(let k=0;k<24;k++){ const a=k*0.2618; for(const s of [1.0,1.3]) wl=Math.min(wl, F.base(best.x+Math.cos(a)*PR*s, best.z+Math.sin(a)*PR*s)); }
+  wl=Math.min(wl, e.p.y-4);
+  F.ponds.push({x:best.x, z:best.z, rx:PR, rz:PR, ca:Math.cos(rot), sa:Math.sin(rot), rot, wl:wl-1.2, shrine:true});
+  F.shrine={x:best.x, z:best.z, wl:wl-1.2, f, n, PR, ry:Math.atan2(f.x,f.z), d:best.d};
+  // warm light on the ground all round it
+  F.shrinePools=[{x:best.x, z:best.z, r:220, c:edenLin(0xd89040), k:0.12}, {x:best.x, z:best.z, r:110, c:edenLin(0xffd070), k:0.16}];
+  return F.shrine;
+}
+/* THE GROVE round the shrine: two great fruit trees, matched, flanking it beyond the frame —
+   the wings of the altarpiece, so the sky behind the aureole stays open and the symmetry
+   holds. They are the tallest things in the garden and stand at its centre, so from the
+   inner legs of the spiral they show over everything else. */
+function edenHeartPair(F){
+  const S=F.shrine, G=F.G, out=[]; if(!S) return out;
+  for(const sx of [-1,1]){ const R=harbRnd(0x4EA27);           // same seed both sides: a matched pair
+    const x=S.x+S.n.x*sx*175+S.f.x*70, z=S.z+S.n.z*sx*175+S.f.z*70;
+    out.push(edenTree(F, G, x, z, 175, 13, R, 9, {crown:105, fruit:3, fr:2.2, pods:5, lean:0.0, check:false, poolK:0.5})); }
+  return out;
+}
+function edenShellGeo(R0){
+  const NR=18, NP=72, pos=[], col=[], idx=[], A=0.62, FREQ=34.7;
+  const pearl=edenLin(0xf6e6da), blush=edenLin(0xf0b0a0), gold=edenLin(0xf0c470), foam=edenLin(0xd8fff0), shade=edenLin(0xa86a78);
+  const c=new T.Color();
+  for(let a=0;a<=NR;a++){ const r=0.05+0.95*a/NR;
+    for(let b=0;b<=NP;b++){ const ph=-1.45+2.9*b/NP, rib=0.5+0.5*Math.cos(ph*FREQ);
+      const Rp=R0*(1+0.035*Math.cos(ph*FREQ)), px=r*Math.sin(ph)*Rp, pz=r*Math.cos(ph)*Rp;
+      const py=R0*(0.16*r*r)+R0*0.05*r*rib;
+      pos.push(px, py*Math.cos(A)+pz*Math.sin(A), pz*Math.cos(A)-py*Math.sin(A));
+      c.copy(pearl).lerp(blush, r*0.7).lerp(gold, rib*0.45*r).lerp(shade, (1-rib)*0.35*r);
+      if(r>0.9) c.lerp(foam, (r-0.9)/0.1*0.7);
+      col.push(c.r,c.g,c.b); } }
+  for(let a=0;a<NR;a++) for(let b=0;b<NP;b++){ const i=a*(NP+1)+b; idx.push(i,i+NP+1,i+1, i+1,i+NP+1,i+NP+2); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+}
+// the shell's surface height (local) at a point on its centreline, for standing the egg in it
+function edenShellAt(R0, r){ const A=0.62, rib=1, py=R0*(0.16*r*r)+R0*0.05*r*rib, pz=r*R0;
+  return {y:py*Math.cos(A)+pz*Math.sin(A), z:pz*Math.cos(A)-py*Math.sin(A)}; }
+// the aureole: gold-leaf rays in an almond, rings at its heart, a beaded border
+function edenAureoleTex(){
+  const W=512, H=768, cv=document.createElement('canvas'); cv.width=W; cv.height=H; const g=cv.getContext('2d');
+  const cx=W/2, cy=H*0.47;
+  g.save(); g.beginPath();
+  for(let k=0;k<=96;k++){ const t=k/96*Math.PI*2, s=Math.sin(t); g.lineTo(cx+W*0.46*s*Math.pow(Math.abs(s),0.25), cy-H*0.46*Math.cos(t)); }
+  g.closePath(); g.clip();
+  const bg=g.createRadialGradient(cx,cy,10,cx,cy,H*0.5); bg.addColorStop(0,'rgba(255,214,120,0.55)'); bg.addColorStop(0.5,'rgba(220,150,50,0.18)'); bg.addColorStop(1,'rgba(120,60,20,0.05)');
+  g.fillStyle=bg; g.fillRect(0,0,W,H);
+  const NRAY=64;
+  for(let k=0;k<NRAY;k++){ const a=k/NRAY*Math.PI*2, flame=k%2===1, L=H*(flame?0.36:0.5);
+    g.save(); g.translate(cx,cy); g.rotate(a);
+    const gr=g.createLinearGradient(0,0,0,-L); gr.addColorStop(0,'rgba(255,236,170,0.95)'); gr.addColorStop(0.6,'rgba(244,190,80,0.7)'); gr.addColorStop(1,'rgba(200,130,40,0)');
+    g.fillStyle=gr; g.beginPath();
+    if(flame){ g.moveTo(-5,-40); for(let y=40;y<=L;y+=6) g.lineTo(-4+Math.sin(y*0.09)*5*(y/L), -y); g.lineTo(0,-L); for(let y=L;y>=40;y-=6) g.lineTo(4+Math.sin(y*0.09)*5*(y/L), -y); }
+    else { g.moveTo(-7,-40); g.lineTo(0,-L); g.lineTo(7,-40); }
+    g.closePath(); g.fill(); g.restore(); }
+  // the radiant core the rays leave from
+  { const cg=g.createRadialGradient(cx,cy,0,cx,cy,120); cg.addColorStop(0,'rgba(255,248,226,1)'); cg.addColorStop(0.45,'rgba(255,226,150,0.85)'); cg.addColorStop(1,'rgba(255,200,100,0)');
+    g.fillStyle=cg; g.beginPath(); g.arc(cx,cy,120,0,6.2832); g.fill(); }
+  // rings at the heart
+  for(const [r,cl,w] of [[118,'rgba(210,240,58,0.85)',5],[132,'rgba(255,214,110,0.9)',3],[150,'rgba(210,240,58,0.6)',2],[172,'rgba(255,214,110,0.5)',2]]){
+    g.strokeStyle=cl; g.lineWidth=w; g.beginPath(); g.arc(cx,cy,r,0,6.2832); g.stroke(); }
+  g.restore();
+  // the border: double gold line and beads, the gilder's punchwork
+  const pathAt=(t,sc)=>{ const s=Math.sin(t); return [cx+W*0.46*sc*s*Math.pow(Math.abs(s),0.25), cy-H*0.46*sc*Math.cos(t)]; };
+  for(const [sc,w] of [[1.0,6],[0.95,2]]){ g.strokeStyle='rgba(255,222,140,0.95)'; g.lineWidth=w; g.beginPath(); for(let k=0;k<=120;k++){ const [x,y]=pathAt(k/120*6.2832,sc); g.lineTo(x,y); } g.stroke(); }
+  for(let k=0;k<72;k++){ const [x,y]=pathAt(k/72*6.2832,0.975); g.fillStyle=k%3?'rgba(255,230,160,1)':'rgba(210,240,58,1)'; g.beginPath(); g.arc(x,y,k%3?3.2:4.2,0,6.2832); g.fill(); }
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; return t;
+}
+// pearl that turns iridescent at its edges, under a shared clock
+function edenEggMat(){
+  const m=new T.MeshPhongMaterial({color:edenLin(0xf8f2ec), emissive:0x000000, shininess:140, specular:0xffffff});
+  m.onBeforeCompile=sh=>{ sh.uniforms.uT=EDEN_T;
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uT;')
+      .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
+      { float fr=1.0-abs(dot(normalize(vNormal), normalize(vViewPosition)));
+        vec3 ir=0.5+0.5*cos(6.2832*(fr*1.3+uT*0.04+vec3(0.0,0.33,0.67)));
+        totalEmissiveRadiance+=mix(vec3(0.0), ir*0.75+vec3(0.10,0.08,0.14), pow(fr,1.3)); }`); };
+  m.customProgramCacheKey=()=>'eden-egg';
+  return m;
+}
+// idle: pearl light from within on a slow double heartbeat (lub-dub every 1.6 s)
+function edenEggPulse(e, tsec){
+  const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
+  const s=1+0.025*b; e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.12;
+  e.material.color.setRGB(0.93,0.89,0.86);
+  e.material.emissive.setRGB(0.26+0.24*b, 0.21+0.19*b, 0.17+0.13*b);
+  if(e.userData.halo) e.userData.halo.material.opacity=0.55+0.30*b;
+}
+function edenShrine(F, egg){
+  const S=F.shrine; if(!S) return null;
+  const R=harbRnd(0x5A11), G=F.G;
+  const grp=new T.Group(); grp.position.set(S.x, S.wl, S.z); grp.rotation.y=S.ry; trackGroup.add(grp);
+  const toW=(x,y,z)=>new T.Vector3(x,y,z).applyMatrix4(grp.matrixWorld);
+  grp.updateMatrixWorld(true);
+  const gold=new T.MeshPhongMaterial({color:edenLin(0xd8a440), emissive:edenLin(0x5a3a08), shininess:110, specular:edenLin(0xfff0c0)});
+  const goldD=new T.MeshPhongMaterial({color:edenLin(0xa87828), emissive:edenLin(0x3a2406), shininess:90, specular:edenLin(0xffe0a0)});
+  const glowG=new T.MeshBasicMaterial({color:edenLin(0xffd878)}), glowL=new T.MeshBasicMaterial({color:edenLin(0xd2f03a)});
+  // the pool: gold at its heart, teal at its rim, rings spreading
+  const pool=new T.Mesh(new T.CircleGeometry(S.PR*1.06,64).rotateX(-Math.PI/2), new T.ShaderMaterial({uniforms:{uT:EDEN_T},
+    vertexShader:`varying vec2 vL; void main(){ vL=position.xz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`varying vec2 vL; uniform float uT;
+      void main(){ float r=length(vL)/${(S.PR*1.06).toFixed(1)};
+        vec3 c=mix(${edenG3(0xffc860)}, ${edenG3(0x1a6a6a)}, smoothstep(0.05,0.75,r));
+        c=mix(c, ${edenG3(0x0a1a2a)}, smoothstep(0.75,1.0,r)*0.6);
+        float ring=pow(0.5+0.5*sin(r*46.0-uT*1.1),12.0)*(1.0-smoothstep(0.2,1.0,r));
+        c+=${edenG3(0xd2f03a)}*ring*0.45;
+        c+=${edenG3(0x5af0c8)}*smoothstep(0.92,1.0,r)*0.6;
+        gl_FragColor=vec4(c,1.0); }`}));
+  pool.position.y=0.06; grp.add(pool);
+  // the shell, hinge forward, rising from the water
+  const R0=62, hz=-30;
+  const shell=new T.Mesh(edenShellGeo(R0), edenMat({vc:true, glow:0.42, shin:90, spec:0xd8b070, side:T.DoubleSide}));
+  shell.position.set(0,-1.2,hz); grp.add(shell);
+  // foam light along the lip
+  for(let b=0;b<=40;b++){ const ph=-1.45+2.9*b/40, Rp=R0*1.02, px=Math.sin(ph)*Rp, pz=Math.cos(ph)*Rp, py=R0*0.21;
+    const A=0.62, w=toW(px, -1.2+py*Math.cos(A)+pz*Math.sin(A), hz+pz*Math.cos(A)-py*Math.sin(A));
+    G.halo.push({x:w.x,y:w.y,z:w.z,s:7+R()*5,c:0xd8fff0,k:0.35}); }
+  for(let k=0;k<36;k++){ const a=k/36*6.2832, w=toW(Math.cos(a)*S.PR, 0.5, Math.sin(a)*S.PR); G.halo.push({x:w.x,y:w.y,z:w.z,s:16,c:0x5af0c8,k:0.25}); }
+  // the egg stands in the shell
+  const st=edenShellAt(R0, 0.30), ER=18, ey=-1.2+st.y+ER*1.25-3, ez=hz+st.z;
+  if(egg){ const w=toW(0, ey, ez); egg.position.copy(w); }
+  // rings round the egg, beaded, turning slowly in opposite senses
+  const rings=[];
+  [[38,0.75,glowG,16],[46,0.45,glowL,24]].forEach(([r,tb,mat,nb],j)=>{
+    const rg=new T.Group(); rg.position.set(0, ey+4, ez+16); grp.add(rg);
+    rg.add(new T.Mesh(new T.TorusGeometry(r,tb,6,72), mat));
+    const bead=new T.InstancedMesh(new T.SphereGeometry(tb*2.2,8,6), j%2?glowG:glowL, nb), d=new T.Object3D();
+    for(let k=0;k<nb;k++){ const a=k/nb*6.2832; d.position.set(Math.cos(a)*r, Math.sin(a)*r, 0); d.updateMatrix(); bead.setMatrixAt(k,d.matrix); }
+    rg.add(bead); rings.push({g:rg, w:(j%2?-1:1)*(0.05+j*0.02)}); });
+  // the aureole behind: gold-leaf rays in a gilt almond frame
+  const AH=176, AW=116, az=hz+R0*0.86, ay=ey+6;
+  const aur=new T.Mesh(new T.PlaneGeometry(AW,AH), new T.MeshBasicMaterial({map:edenAureoleTex(), transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false, side:T.DoubleSide}));
+  aur.position.set(0, ay, az); aur.rotation.y=Math.PI; grp.add(aur);
+  // a lapis ground behind the gold, as a panel painting has: the rays are light laid on it,
+  // and nothing in the sky beyond can show through the aureole
+  { const sh=new T.Shape(); for(let k=0;k<=96;k++){ const t=k/96*Math.PI*2, sn=Math.sin(t), x=AW*0.455*sn*Math.pow(Math.abs(sn),0.25), y=-AH*0.455*Math.cos(t);
+      if(k) sh.lineTo(x,y); else sh.moveTo(x,y); }
+    const bg=new T.Mesh(new T.ShapeGeometry(sh,48), new T.MeshBasicMaterial({color:edenLin(0x121646), side:T.DoubleSide}));
+    bg.position.set(0, ay, az+1.2); grp.add(bg); }
+  const ves=[]; for(let k=0;k<=96;k++){ const t=k/96*Math.PI*2, s=Math.sin(t); ves.push(new T.Vector3(AW*0.46*s*Math.pow(Math.abs(s),0.25), ay-AH*0.46*Math.cos(t), az-0.5)); }
+  grp.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(ves,true), 160, 2.2, 8, true), gold));
+  { const bd=new T.InstancedMesh(new T.SphereGeometry(1.7,8,6), goldD, 48), d=new T.Object3D();
+    for(let k=0;k<48;k++){ const p=ves[Math.floor(k/48*96)]; d.position.set(p.x*1.04, ay+(p.y-ay)*1.03, p.z-1.5); d.updateMatrix(); bd.setMatrixAt(k,d.matrix); } grp.add(bd); }
+  // the round-arched gilt frame on two plinths
+  const AWx=104, AHp=150, fz=hz+R0*0.98, path=[];
+  for(let k=0;k<=8;k++) path.push(new T.Vector3(-AWx, 4+AHp*k/8, fz));
+  for(let k=1;k<48;k++){ const a=Math.PI-k/48*Math.PI; path.push(new T.Vector3(Math.cos(a)*AWx, 4+AHp+Math.sin(a)*AWx, fz)); }
+  for(let k=8;k>=0;k--) path.push(new T.Vector3(AWx, 4+AHp*k/8, fz));
+  const archC=new T.CatmullRomCurve3(path,false,'catmullrom',0.1);
+  grp.add(new T.Mesh(new T.TubeGeometry(archC, 220, 4.2, 10, false), gold));
+  const path2=path.map(p=>new T.Vector3(p.x*0.92, 4+(p.y-4)*0.955, p.z+1.5));
+  grp.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(path2,false,'catmullrom',0.1), 200, 1.8, 8, false), goldD));
+  { const nb=64, bd=new T.InstancedMesh(new T.SphereGeometry(1,8,6), gold, nb), bl=new T.InstancedMesh(new T.SphereGeometry(1,8,6), glowL, nb), d=new T.Object3D();
+    for(let k=0;k<nb;k++){ const p=archC.getPointAt((k+0.5)/nb), q=archC.getPointAt((k+1)/nb);
+      d.position.set(p.x*1.055, 4+(p.y-4)*1.03, p.z); d.scale.setScalar(2.6); d.updateMatrix(); bd.setMatrixAt(k,d.matrix);
+      d.position.set((p.x+q.x)*0.5*0.97, 4+((p.y+q.y)*0.5-4)*0.985, p.z-4.6); d.scale.setScalar(1.3); d.updateMatrix(); bl.setMatrixAt(k,d.matrix); }
+    grp.add(bd); grp.add(bl); }
+  // plinths, and the ringed finial on the crown
+  for(const sx of [-1,1]){ const w=toW(sx*AWx, 0, fz), gy=F.seat(w.x,w.z,12)-S.wl;
+    const pl=new T.Mesh(new T.BoxGeometry(22,14,22), new T.MeshPhongMaterial({color:edenLin(0x1c1840), shininess:60, specular:edenLin(0x504070)}));
+    pl.position.set(sx*AWx, gy+5, fz); grp.add(pl);
+    const tr=new T.Mesh(new T.BoxGeometry(24,2.4,24), gold); tr.position.set(sx*AWx, gy+12.4, fz); grp.add(tr);
+    const tr2=tr.clone(); tr2.position.y=gy-1.2; grp.add(tr2);
+    if(gy+12>4){ const post=new T.Mesh(new T.CylinderGeometry(4.2,4.2,gy+12-4,10), gold); post.position.set(sx*AWx,(gy+12+4)/2,fz); grp.add(post); }
+    const fin=new T.Mesh(new T.SphereGeometry(5.5,16,12), gold); fin.position.set(sx*AWx, 4+AHp+2, fz); grp.add(fin); }
+  { const fin=new T.Mesh(new T.SphereGeometry(9,24,16), edenMat({map:edenRingTex(), emi:0.75, shin:90, spec:0xffe0a0}));
+    fin.position.set(0, 4+AHp+AWx+12, fz); fin.rotation.x=Math.PI/2; grp.add(fin);
+    const w=toW(0, 4+AHp+AWx+12, fz); G.halo.push({x:w.x,y:w.y,z:w.z,s:60,c:0xffd070,k:0.5}); }
+  // two gilded wind-swirls, turned in toward the egg
+  const cg=edenCurlGeo();
+  for(const sx of [-1,1]){ const w=toW(sx*82, 0, -6), gy=F.seat(w.x,w.z,10)-S.wl;
+    const m=new T.Mesh(cg, new T.MeshPhongMaterial({color:edenLin(0xd8a440), emissive:edenLin(0x4a3008), shininess:110, specular:edenLin(0xfff0c0), side:T.DoubleSide}));
+    m.position.set(sx*82, gy-1, -6); m.scale.set(-sx*64, 64, 64); m.rotation.y=0; grp.add(m);
+    const tip=toW(sx*82-sx*0.25*64*0.6, gy+0.64*64, -6); G.halo.push({x:tip.x,y:tip.y,z:tip.z,s:30,c:0xffd070,k:0.35}); }
+  // halos: the egg's own bloom and the heart of the aureole
+  { const w=toW(0, ey, ez); G.halo.push({x:w.x,y:w.y,z:w.z,s:130,c:0xffe8c8,k:0.28}); }
+  // petals falling through it
+  const petals=[]; for(let k=0;k<240;k++) petals.push({x:(R()-0.5)*300, y:R()*200, z:(R()-0.5)*260, s:2.0+R()*1.8, c:[0xf6b8c6,0xfff0e2,0xe8708e,0xf8d4c0][(R()*4)|0], k:0.9, ph:R()*40});
+  const pp=edenPoints(petals, 3, new T.Vector3(300,200,260)); pp.material.uniforms.uCtr.value.copy(toW(0,0,0));
+  pp.material.uniforms.uMap.value=edenSoftTex('petal'); trackGroup.add(pp);
+  return {rings, grp};
+}
+
 function applyEdenLighting(){
   const md=new T.Vector3(Math.cos(EDEN_MOON.az)*Math.cos(EDEN_MOON.el), Math.sin(EDEN_MOON.el), Math.sin(EDEN_MOON.az)*Math.cos(EDEN_MOON.el));
   hemi.color.setHex(0x3a4aa0); hemi.groundColor.setHex(0x0a2a2a); hemi.intensity=0.50;
@@ -33209,11 +33611,16 @@ function applyEdenLighting(){
   flesh.color.setHex(0xff6a2a);flesh.intensity=0.20; flesh.position.set(0,-30,0);
 }
 function edenTick(E, tsec){
+  const dt=Math.min(0.1, Math.max(0, tsec-(E._lt==null?tsec:E._lt))); E._lt=tsec;
   EDEN_T.value=tsec;
+  edenMood(E, dt);
+  if(E.rings) for(const r of E.rings) r.g.rotation.z=tsec*r.w;
+  if(E.mist) E.mist.uAmp.value=0.85+0.15*Math.sin(tsec*0.17);
+  if(E.rays) E.rays.opacity=0.16*(0.75+0.25*Math.sin(tsec*0.11)+0.1*Math.sin(tsec*0.29+1.3));
   EDEN_H.value=renderer.domElement.height||720;
   // past the fog nothing is visible anyway: drop whole chunks there, frustum or not
   const cp=camera.position;
-  for(const m of (E.chunks||[])){ const b=m.geometry.boundingSphere; m.visible=b.center.distanceTo(cp)-b.radius<1180; }
+  for(const m of (E.chunks||[])){ const b=m.geometry.boundingSphere; m.visible=b.center.distanceTo(cp)-b.radius<Math.min(1040, scene.fog.far+100); }
   // the glow breathes: each family on its own slow period, a few percent, never in step
   for(const b of E.breath){ const k=1+b.a*Math.sin(tsec*b.f+b.ph)+b.a*0.5*Math.sin(tsec*b.f*2.7+b.ph*1.3);
     if(b.u) b.u.value=b.base*k; else b.m.color.setScalar(k); }
@@ -33426,10 +33833,15 @@ function buildTrack(idx){
     const tunIdx=(TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*(STEPS-1)),Math.floor(b*(STEPS-1))]);
     EK=edenField(); EK.tun=tunIdx;
     edenWater(EK, harbRnd(0x3A7E2));
+    edenLake(EK);                         // the sheet of water the fern hollow opens onto
+    edenShrinePlan(EK);                   // the egg's pool, before anything is placed round it
     edenPlan(EK, tunIdx);
+    EK.G.pools.push(...EK.shrinePools);
+    edenPondDress(EK);
     edenTunnels(EK, tunIdx);
     EK.gate=edenGate(EK);
-    EK.heart=edenHeart(EK);
+    EK.heart=edenHeartPair(EK);
+    skyDome.material.uniforms.uBeacon.value.set(EK.shrine.x, EK.shrine.wl+90, EK.shrine.z);
     edenTerrain(EK, EK.G.pools);
     const wm=edenWaterMesh(EK, EK.G.glow); if(wm) trackGroup.add(wm);
     TRACK_PULSE.eden={breath:[]};
@@ -35115,17 +35527,14 @@ function buildTrack(idx){
   // ---- finish egg (ovum) at the end of a point-to-point course ----
   if(!loop){
     const end=SAMP[STEPS-1];
-    const egg=new T.Mesh(new T.SphereGeometry(13,20,16),
-      eden ? new T.MeshPhongMaterial({color:edenLin(0xffc890), map:edenFruitTex(), emissiveMap:edenFruitTex(), emissive:0xff7a2a,
-               shininess:70, specular:0x664433})
+    const egg=new T.Mesh(eden ? new T.SphereGeometry(18,40,30) : new T.SphereGeometry(13,20,16),
+      eden ? edenEggMat()
            : new T.MeshPhongMaterial({color:0xffe6cc,emissive:0xff9a6a,shininess:60,transparent:true,opacity:0.95}));
-    // Eve: the finish fruit RESTS in a cradle of leaves on the run-out instead of hanging half
-    // sunk into the road (r 13 x 1.25 at +9 put its lower 7 units under the deck)
+    // Eve: the egg stands in the shell of her shrine, past the end of the run (see edenShrine)
     egg.scale.set(1,1.25,1); egg.position.copy(end.p).add(new T.Vector3(0,eden?15.6:9,0)); trackGroup.add(egg);
-    if(eden){ const R=harbRnd(0xC4AD1E);
-      for(let j=0;j<9;j++){ const a=j/9*6.283+R()*0.3, L=14+R()*8;
-        EK.G.leaf.push({x:end.p.x+Math.cos(a)*4, y:end.p.y+0.1, z:end.p.z+Math.sin(a)*4, s:L*1.3, sy:L*0.9, sz:L, ry:Math.PI/2-a, rx:-0.35-R()*0.3, o:'YXZ', c:EDEN.leaf[j%EDEN.leaf.length], k:9}); } }
-    const halo=glowSprite(eden?0xff9a4a:0xffd2a0,64); halo.position.copy(egg.position); trackGroup.add(halo);
+    if(eden){ const so=edenShrine(EK, egg); TRACK_PULSE.eden.rings=so?so.rings:null; }
+    const halo=glowSprite(eden?0xfff0d8:0xffd2a0,eden?90:64); halo.position.copy(egg.position); trackGroup.add(halo);
+    if(eden){ egg.userData.edenPulse=edenEggPulse; egg.userData.halo=halo; }
     TRACK_PULSE.egg=egg;
   }
 
@@ -36225,7 +36634,9 @@ function buildTrack(idx){
     hanaFlush(HK);                        // every timber, pine, roof and stone above
   } else if(eden){
     const M=edenFlush(EK);                // every family planned above, as chunked batches
-    edenAir();                            // fireflies and spores
+    TRACK_PULSE.eden.air=edenAir();       // fireflies, a roadside swarm, pollen and spores (the moods ride their amplitudes)
+    TRACK_PULSE.eden.mist=edenMist(EK);   // low glowing mist in the valley and the hollow
+    TRACK_PULSE.eden.rays=edenRays(EK);   // moonlight shafts in the fungus wood
     TRACK_PULSE.eden.chunks=EDEN_CHUNKS;  // distance-culled past the fog in edenTick
     // the glow breathes, each family on its own slow period (see edenTick)
     TRACK_PULSE.eden.breath=[
@@ -46086,6 +46497,7 @@ function frame(now){
       e.material.color.setHSL(hue,0.6,0.8);
       if(Math.random()<0.7){ const c=new T.Color().setHSL((0.45+Math.random()*0.25)%1,1,0.6).getHex();
         burst(e.position.x+(Math.random()*30-15), e.position.y+(Math.random()*30-8), e.position.z+(Math.random()*30-15), c, 6, 65, 0.8, 6); }
+    } else if(e.userData.edenPulse){ e.userData.edenPulse(e, tsec);   // Eve: pearl, on a slow heartbeat
     } else { const s=1+Math.sin(tsec*2.2)*0.06;
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
