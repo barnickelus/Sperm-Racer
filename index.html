@@ -41573,45 +41573,55 @@ function dressGuido(g, K){
     const cuff=new T.Mesh(new T.LatheGeometry(prof,30), cm);
     cuff.rotation.x=-Math.PI/2; cuff.position.y=HEAD_CY; cuff.scale.set(1.06,1,0.9); g.add(bodyPart(cuff)); }
 
-  // --- the fist-pump arm: ONE smooth spray-tanned surface, a tapered forearm that swells into a
-  // rounded mitten of a fist (no separate hand stuck on a tube), three knuckle rolls over the top,
-  // a thumb wrapped across the front and one fat gold bracelet; same tan, gloss and ink line as
-  // the head. Fist frame: the back of the hand faces -z, the curled fingers and thumb +z, the
-  // thumb on the inner side (-x); TW turns that palm side toward his face, so the chase camera
-  // sees the back of the hand and the knuckle tops, the front camera the curled fingers. It comes
-  // up out of the tank cuff and tucks back into it; bodyPart, so it stays put as the head turns.
-  { const root=bodyPart(new T.Group()); root.position.set(1.75,3.7,-5.3); root.rotation.set(-0.15,0.5,-0.45); root.scale.setScalar(1.3); g.add(root);
-    const arm=new T.Group(); arm.visible=false; root.add(arm);
-    const L=2.2, FY=3.0, FH=0.8, TW=-0.95, BY=L-0.4;      // forearm length, fist centre + half-height, palm twist, bracelet
-    const Me=(x,y,z,sx,sy,sz,rx,ry,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)), V(sx,sy,sz));
-    const tw=new T.Matrix4().makeRotationY(TW), S=()=>new T.SphereGeometry(1,14,10);
-    const smax=(a,b,k)=>{ const h=Math.max(0,Math.min(1,0.5+0.5*(a-b)/k)); return b+(a-b)*h+k*h*(1-h); };
-    const sstep=(e0,e1,x)=>{ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); };
-    const Y0=-0.45, Y1=FY+FH;
-    const skin=gridGeo(20,30,(u,v)=>{ const y=Y0+(Y1-Y0)*v, q=Math.min(1,Math.abs(y-FY)/FH);
-      const ef=Math.cbrt(Math.max(0,1-q*q*q));                                        // the fist: a rounded box in y
-      let rf=(0.6-0.2*sstep(0,L,y))*(1-sstep(FY-0.4,FY+0.1,y));                       // the forearm tapers to the wrist, ends inside the fist
-      if(y<-0.15) rf*=Math.sqrt(Math.max(0,1-((y+0.15)/0.3)**2));                     // rounded off inside the cuff
-      const rx=smax(rf,0.8*ef,0.3), rz=smax(rf,0.64*ef,0.3), pw=2/(2+0.8*ef), cz=0.06*ef;
-      const a=u*Math.PI*2, c=Math.cos(a), s=Math.sin(a);
-      return [rx*Math.sign(c)*Math.pow(Math.abs(c),pw), y, cz+rz*Math.sign(s)*Math.pow(Math.abs(s),pw)]; });
-    const parts=[[skin, tw]];
-    for(let i=0;i<3;i++){ const x=-0.44+i*0.44, k=i===2?0.88:1;                                              // three fingers: a knuckle on top,
-      parts.push([S(), tw.clone().multiply(Me(x,FY+0.6*FH,-0.16,0.27*k,0.26*k,0.36))]);
-      parts.push([S(), tw.clone().multiply(Me(x*0.96,FY+0.12,0.5,0.23*k,0.42*k,0.24,0.35,0,0))]); }            // its roll curled down the front
-    parts.push([S(), tw.clone().multiply(Me(-0.6,FY-0.3,0.22,0.3,0.4,0.36))]);                               // the thumb's heel, inner side
-    parts.push([S(), tw.clone().multiply(Me(-0.1,FY-0.32,0.66,0.52,0.2,0.22,0,0.25,0.1))]);                  // the thumb, wrapped across the curled fingers
-    const geo=kingMerge(parts);
+  // --- the fist-pump arm (his right): a shoulder ball set into the rear flank of the head, an
+  // upper arm with a gym-bro bicep, an elbow, a forearm that narrows to the wrist under one fat
+  // gold bracelet, and a clenched fist: four knuckles over the top, the curled fingers down the
+  // palm side, the thumb wrapped across them. Three rigid pieces in the head's tan, gloss and ink
+  // line, posed by 2-bone IK in tickGuido, so the bones keep their length and the elbow really
+  // bends: down and out on the wind-up, almost straight at the top of the pump above the
+  // pompadour. It rides on the head (the neck rig carries it through glances and nods) and
+  // grows out of the shoulder for a pump series, then folds back into it.
+  { const LU=2.9, LF=2.8;                                   // upper arm, forearm (shoulder to wrist)
+    const root=new T.Group(); root.position.set(-2.95,3.4,-2.3); root.visible=false; g.add(root);
     const armM=new T.MeshPhongMaterial({color:TAN, emissive:TANE, shininess:34, specular:0x6a3c1c}); armM.userData.keepPhong=true;   // the head's tan and gloss
-    arm.add(new T.Mesh(geo, armM));
-    // ink outline: the same shape pushed out along its normals, back faces only, so it holds at chase-cam size
-    const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
-    for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.08, op.getY(i)+on.getY(i)*0.08, op.getZ(i)+on.getZ(i)*0.08);
-    const ol=new T.Mesh(og, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); ol.userData.isOutline=true; arm.add(ol);
-    arm.add(new T.Mesh(new T.TorusGeometry(0.52,0.16,8,18).applyMatrix4(Me(0,BY,0,1,1,1,Math.PI/2)), GOLD));
+    const inkM=new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide});
+    // the same shape pushed out along its normals, back faces only: an ink line that holds at chase-cam size
+    const piece=(geo)=>{ const grp=new T.Group(); grp.add(new T.Mesh(geo, armM));
+      const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
+      for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.07, op.getY(i)+on.getY(i)*0.07, op.getZ(i)+on.getZ(i)*0.07);
+      const ol=new T.Mesh(og, inkM); ol.userData.isOutline=true; grp.add(ol); root.add(grp); return grp; };
+    // a capsule along +y from 0 to L tapering r0 -> r1, with a muscle swell bul(t) toward +z (the inside of the bend)
+    const limb=(L,r0,r1,bul)=>{ const NU=18, geo=gridGeo(NU,26,(u,v)=>{ let y, r, t;
+        if(v<0.18){ const q=v/0.18*Math.PI/2; y=-0.9*r0*Math.cos(q); r=r0*Math.sin(q); t=0; }
+        else if(v>0.82){ const q=(1-v)/0.18*Math.PI/2; y=L+0.9*r1*Math.cos(q); r=r1*Math.sin(q); t=1; }
+        else { t=(v-0.18)/0.64; y=t*L; r=r0+(r1-r0)*t; }
+        const b=bul(t)*Math.min(1,r/Math.max(0.01,r0+(r1-r0)*t)), q=u*Math.PI*2, c=Math.cos(q), s=Math.sin(q);
+        return [c*(r+0.35*b), y, s*(r+b*Math.max(0,s))]; });
+      const n=geo.attributes.normal;                                                    // weld the normals along the u seam
+      for(let j=0;j<=26;j++){ const a=j*(NU+1), z=a+NU; const x=n.getX(a)+n.getX(z), y=n.getY(a)+n.getY(z), w=n.getZ(a)+n.getZ(z), l=Math.hypot(x,y,w)||1;
+        n.setXYZ(a,x/l,y/l,w/l); n.setXYZ(z,x/l,y/l,w/l); }
+      return geo; };
+    const bump=(e0,e1,t)=>Math.pow(Math.sin(Math.PI*Math.max(0,Math.min(1,(t-e0)/(e1-e0)))),2);
+    const S=()=>new T.SphereGeometry(1,14,10);
+    const Me=(x,y,z,sx,sy,sz,rx,ry,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)), V(sx,sy,sz));
+    piece(new T.SphereGeometry(0.74,16,12));                                            // the shoulder
+    const upper=piece(limb(LU, 0.68, 0.5, t=>0.24*bump(0.05,0.85,t)));                  // the bicep
+    const fore=piece(limb(LF, 0.56, 0.4, t=>0.1*bump(-0.1,0.6,t)));                    // forearm meat below the elbow
+    // the fist, in its own frame: the wrist at the origin, y along the forearm, the palm side +z,
+    // the thumb on +x (a right hand); the knuckles face the chase camera at the top of a pump
+    const sup=(a,b,c,ex)=>gridGeo(20,16,(u,v)=>{ const th=(v-0.5)*Math.PI, ph=u*Math.PI*2, P=(w,e)=>Math.sign(w)*Math.pow(Math.abs(w),e);
+      const ct=P(Math.cos(th),ex); return [a*ct*P(Math.cos(ph),ex), b*P(Math.sin(th),ex), c*ct*P(Math.sin(ph),ex)]; });
+    const fparts=[[sup(0.6,0.52,0.48,0.6), Me(0,0.58,0.04,1,1,1)]];                    // the clenched hand, a rounded block
+    [[0.39,1],[0.13,1.06],[-0.13,0.97],[-0.38,0.84]].forEach(([x,k])=>{                  // index .. pinky
+      fparts.push([S(), Me(x,1.0,-0.08,0.15*k,0.15*k,0.21)]);                            // a knuckle over the top
+      fparts.push([S(), Me(x*0.97,0.68,0.47,0.135*k,0.3*k,0.15,-0.15,0,0)]); });         // its finger curled down the palm side
+    fparts.push([S(), Me(0.5,0.38,0.22,0.24,0.34,0.28)]);                                // the thumb's heel
+    fparts.push([S(), Me(0.14,0.44,0.64,0.36,0.14,0.15,0,0,-0.3)]);                      // the thumb, wrapped across the fingers
+    const fist=piece(kingMerge(fparts).applyMatrix4(new T.Matrix4().makeScale(1.12,1.12,1.12)));
+    fist.add(new T.Mesh(new T.TorusGeometry(0.5,0.15,8,20).applyMatrix4(Me(0,-0.32,0,1,1,1,Math.PI/2)), GOLD));   // the bracelet
     const glint=new T.Sprite(new T.SpriteMaterial({map:TX.star, transparent:true, blending:T.AdditiveBlending, depthWrite:false}));
-    glint.position.copy(V(0.45,BY+0.1,-0.45).applyMatrix4(tw)); glint.visible=false; arm.add(glint);   // the bracelet catches the light on each snap
-    g.userData.gjKit={pick, cl, arm, glint};
+    glint.position.set(-0.3,-0.25,-0.45); glint.visible=false; fist.add(glint);           // the bracelet catches the light on each snap
+    g.userData.gjKit={pick, cl, arm:root, upper, fore, fist, LU, LF, glint};
   }
   g.userData.tick=tickGuido;
   return true;
@@ -41624,15 +41634,39 @@ function dressGuido(g, K){
  * Each bar's punches go in when the scheduler loads that bar, so a tempo change can't drift
  * them. A series is a list of punch times (fp.pk, on syncObjects' clock) and every pose is a
  * function of those times, so each punch peaks exactly on its beat. All local: nothing here
- * goes over the network. A pump: hold, wind down and cock back (W), a sharp punch up
- * (stretched), a snap past the top (squashed, the bracelet glints, the head nods into it) and a
- * springy settle; after the last one the arm tucks back into the cuff. */
+ * goes over the network. A pump: hold, wind down and cock back (W: the elbow drops, the fist
+ * by his ear), a sharp punch straight up (the arm all but straightens above his head), a snap
+ * past the top (the fist squashes, the bracelet glints, the head nods into it) and a springy
+ * settle; after the last one the arm folds back into the shoulder. */
 const _gjV=new T.Vector3(), _gjQ=new T.Quaternion(), _gjX=new T.Vector3(1,0,0);
 // Gold Chain Tarantella's drops: section -> the beats (in quarter notes from the section's first
 // downbeat) that get a punch. A plain chorus pumps its first bar; the apex two bars and a flourish.
 const GJ_DROPS={chorus:[0,1,2,3], modch:[0,1,2,3], chorus2:[0,1,2,3, 4,5,6,7,7.5, 8]};
 function gjQueue(fp, t){ if(!fp.pk.some(p=>Math.abs(p-t)<0.06)){ fp.pk.push(t); fp.pk.sort((a,b)=>a-b); } }
 const gjSettle=s=>0.6+(0.4*Math.cos(20*s)+0.8*Math.sin(20*s))*Math.exp(-8*s);   // past the top at 0.04 s, then a springy settle
+// the arm's poses, from the shoulder: wrist targets cocked (fist by the ear, elbow down at his
+// side), hold and apex (straight up past the pompadour), then folded into the shoulder; and the
+// elbow's pole (out and down on the wind-up, out and back at the top)
+const GJ_ARM=[[-1.0,1.6,0.55],[-1.4,3.8,0.35],[-0.35,5.6,0.25],[-0.35,0.8,0.35]], GJ_POLE=[[-1,-1,-0.3],[-1,-0.15,-0.6]];
+const _gjW=new T.Vector3(), _gjP=new T.Vector3(), _gjD=new T.Vector3(), _gjE=new T.Vector3(), _gjO=new T.Vector3(), _gjBx=new T.Vector3(), _gjBy=new T.Vector3(), _gjBz=new T.Vector3(), _gjM=new T.Matrix4();
+// a rigid piece at `at` with its +y along `dir` and its +z (inside of the bend) toward `zh`
+function gjBone(o, at, dir, zh){
+  _gjBy.copy(dir).normalize(); _gjBz.copy(zh).addScaledVector(_gjBy, -zh.dot(_gjBy)).normalize(); _gjBx.crossVectors(_gjBy, _gjBz);
+  o.position.copy(at); o.quaternion.setFromRotationMatrix(_gjM.makeBasis(_gjBx, _gjBy, _gjBz)); }
+// 2-bone IK: shoulder at the origin, the wrist toward W (clamped to the arm's reach, so it never
+// stretches), the elbow swung toward the pole P
+function gjArm(k, W, P){
+  const LU=k.LU, LF=k.LF, d0=W.length()||1, d=Math.max(0.5, Math.min((LU+LF)*0.985, d0));
+  _gjD.copy(W).divideScalar(d0); W.copy(_gjD).multiplyScalar(d);
+  P.addScaledVector(_gjD, -P.dot(_gjD)).normalize();
+  const ax=(LU*LU-LF*LF+d*d)/(2*d), hg=Math.sqrt(Math.max(0, LU*LU-ax*ax));
+  _gjE.copy(_gjD).multiplyScalar(ax).addScaledVector(P, hg);
+  P.negate();
+  gjBone(k.upper, _gjO.set(0,0,0), _gjE, P);
+  _gjO.subVectors(W, _gjE);
+  gjBone(k.fore, _gjE, _gjO, P);
+  gjBone(k.fist, W, _gjO, P);
+}
 function tickGuido(o, r, now){
   const ud=o.userData, k=ud.gjKit; if(!k) return;
   const mo=ud.mouth;
@@ -41640,7 +41674,7 @@ function tickGuido(o, r, now){
     k.pick.position.copy(mo.position).add(_gjV);
     k.pick.rotation.z=-1.05+0.12*Math.sin(now*3.1)+(r.drift===1?0.25:0); }
   const dt=Math.min(0.1, Math.max(0, now-(ud._gjT||now))); ud._gjT=now;
-  const fp=ud._fp||(ud._fp={pk:[], e:0, ev:0, h:0.6, bar:-1, sec:null, b0:0});
+  const fp=ud._fp||(ud._fp={pk:[], e:0, ev:0, bar:-1, sec:null, b0:0});
   // --- the only trigger: the drops of his own record. When the scheduler loads a bar (it runs
   // ahead of the speakers) the punches that fall in it go in, mapped from the audio clock onto
   // ours and pushed back by the output latency, so each one lands on the kick you hear.
@@ -41665,18 +41699,21 @@ function tickGuido(o, r, now){
     if(now<P-PD){ const t=(now-(P-W))/(W-PD); wind=t*t*(3-2*t); hh=h0+(-0.35-h0)*wind; }   // wind down, cock back
     else { const t=(now-(P-PD))/PD; wind=1; hh=-0.35+1.35*t*t; }                             // punch, accelerating into the top
   } else if(Q!=null) hh=gjSettle(s);
-  const vel=dt>0 ? (hh-fp.h)/dt : 0; fp.h=hh;
-  // out of the cuff (a springy pop) a beat before the first wind-up, back in after the last settle
+  // out of the shoulder (a springy pop) a beat before the first wind-up, folded back in after the last settle
   const want=(P!=null && P-now<W+0.3) || s<0.5;
   for(let n=Math.ceil(dt/0.016), i=0;i<n;i++){ const st=dt/n; fp.ev+=((want?1:0)-fp.e)*260*st-fp.ev*(want?20:30)*st; fp.e=Math.max(0,fp.e+fp.ev*st); }
   const a=k.arm, e=Math.min(1.15, fp.e); a.visible=e>0.02;
   k.glint.visible=false;
   if(!a.visible) return;
-  const e1=Math.min(1,e), str=Math.max(0, Math.min(1, vel/25)), sq=(Q!=null && s<0.09 && wind===0) ? Math.sin(Math.PI*s/0.09) : 0;
-  a.position.set(0, -3.4*(1-e1)+0.8*(hh-0.6), 0);
-  a.rotation.set(-0.35*(0.6-hh), 0, -0.3*(0.6-hh));
-  const pop=0.25+0.75*e, sy=1+0.3*str-0.17*sq, sx=1-0.12*str+0.13*sq;
-  a.scale.set(sx*pop, sy*pop, sx*pop);
+  const e1=Math.min(1,e), sq=(Q!=null && s<0.09 && wind===0) ? Math.sin(Math.PI*s/0.09) : 0;
+  // the wrist's target (from the shoulder) runs cocked -> hold -> apex with the pump height (past
+  // the apex it keeps going and the IK holds the arm at full reach); folded while it pops in/out
+  const c=hh<0.6 ? 0 : 1, t=c ? (hh-0.6)/0.4 : (hh+0.35)/0.95, A=GJ_ARM[c], B=GJ_ARM[c+1], u=Math.max(0, Math.min(1, (hh+0.35)/1.35));
+  _gjW.set(A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t, A[2]+(B[2]-A[2])*t).lerp(_gjD.fromArray(GJ_ARM[3]), 1-e1);
+  _gjP.fromArray(GJ_POLE[0]).lerp(_gjD.fromArray(GJ_POLE[1]), u);
+  gjArm(k, _gjW, _gjP);
+  k.fist.scale.set(1+0.12*sq, 1-0.14*sq, 1+0.12*sq);
+  a.scale.setScalar(0.25+0.75*e);
   if(Q!=null && s<0.3){ const gs=Math.sin(Math.PI*s/0.3); k.glint.visible=true; k.glint.scale.setScalar(2.2*gs); k.glint.material.rotation=s*5; }
   // the head nods into each punch (after poseNeck, about the same pivot)
   const nk=ud.neck;
