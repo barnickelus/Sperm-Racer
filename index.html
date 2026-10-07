@@ -48058,18 +48058,25 @@ function setupTrackPick(){
   const wrap=$('trackpick'); if(!wrap) return;
   wrap.innerHTML='';
   const cards=[];
-  TRACKS.forEach((t,i)=>{
+  // display order only (TRACKS indices stay put: saved picks, Grand Prix and lobbies key off them):
+  // these three sit at the end of the strip, in this order
+  const LAST=['Seraphina','Delilah','Bianca'];
+  const ord=TRACKS.map((t,i)=>i).filter(i=>!LAST.includes(TRACKS[i].name))
+    .concat(LAST.map(n=>TRACKS.findIndex(t=>t.name===n)).filter(i=>i>=0));
+  const posOf=i=>ord.indexOf(i);
+  ord.forEach((i,pos)=>{
+    const t=TRACKS[i];
     const a=courseArt(t), b=document.createElement('button');
-    b.className='go trk'; b.dataset.n=String(i+1).padStart(2,'0');
+    b.className='go trk'; b.dataset.n=String(pos+1).padStart(2,'0');
     b.style.setProperty('--plate',a.plate); b.style.setProperty('--ac',a.ac); b.style.setProperty('--ix',a.ix);
     b.innerHTML=a.svg+'<span class="tn">'+t.name+'</span>';
     b.onclick=()=>{ commit(i); toCard(i,true); };
-    wrap.appendChild(b); cards.push(b);
+    wrap.appendChild(b); cards[i]=b;
   });
   const mid=()=>wrap.scrollLeft+wrap.clientWidth/2;
   const nearest=()=>{ const m=mid(); let bi=0, bd=1e9;
     cards.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-m); if(d<bd){bd=d;bi=i;} }); return bi; };
-  const mark=i=>{ cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(i+1).padStart(2,'0')+' / '+TRACKS.length; };
+  const mark=i=>{ cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(posOf(i)+1).padStart(2,'0')+' / '+TRACKS.length; };
   function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
     const left=c.offsetLeft+c.offsetWidth/2-wrap.clientWidth/2;
     if(smooth&&wrap.scrollTo) wrap.scrollTo({left,behavior:'smooth'}); else wrap.scrollLeft=left; }
@@ -48087,8 +48094,8 @@ function setupTrackPick(){
     clearTimeout(settle); settle=setTimeout(()=>commit(nearest()),160);
   },{passive:true});
   wrap.addEventListener('wheel',e=>{ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ wrap.scrollLeft+=e.deltaY; e.preventDefault(); } },{passive:false});
-  $('courseprev').onclick=()=>toCard(Math.max(0,nearest()-1),true);
-  $('coursenext').onclick=()=>toCard(Math.min(TRACKS.length-1,nearest()+1),true);
+  $('courseprev').onclick=()=>toCard(ord[Math.max(0,posOf(nearest())-1)],true);
+  $('coursenext').onclick=()=>toCard(ord[Math.min(ord.length-1,posOf(nearest())+1)],true);
   // whenever the home screen (re)appears, show what is actually selected (a Grand Prix or a lobby may have moved selTrack)
   new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ mark(selTrack); toCard(selTrack,false); paintSummary(); } })
     .observe($('start'),{attributes:true,attributeFilter:['class']});
