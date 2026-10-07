@@ -1678,7 +1678,7 @@ const MUSIC_STYLES={
               mel:[0,2,4,6,7,6,4,2, 7,9,11,12,11,9,7,6],
               melB:[12,11,9,7,9,11,12,14, 12,11,9,7,6,4,2,0] },
   /* Winston Irie's HOME station is now produced: "Rocksteady Rally" (see SONG_ENGINE), an early-60s
-     Jamaican record that goes from a mento porch band into ska, slows into rocksteady and winds
+     Jamaican record that opens on a one-drop porch groove, kicks into ska, slows into rocksteady and winds
      back up. The grid fields are only for the shared code that reads every style (the victory
      fanfare plays the opening of the ska head). */
   rasta:    { engine:'rocksteadyRally', inst:'brass', melWave:'sawtooth', bassWave:'triangle', bassInst:'pluck',
@@ -13005,23 +13005,27 @@ SONG_ENGINE.songs.riptide=(function(){
    tape slapback on the horns, instead of the dub desk.
 
    FORM (a bar is 16 swung eighths = two bars of 4/4; 62 bpm in cut time = 124 to the
-   quarter at tempo 1; 45 bars = 3:09, then loops to the head — the porch plays once):
-     0 Mento porch (4)    0:00  bamboo sax states the head over banjo, rumba box, maracas,
-                                hand drum, 104 bpm; the drummer rolls the band in
-     4 Kick-off (1)       0:18  the band hits the one, snare roll, the horns' pickup
-     5 Ska head (8)       0:22  A A': trumpet + tenor octaves, trombone harmony (tenor and
+   quarter at tempo 1; 43 bars = 3:00, then loops to the head — the porch plays once):
+     0 Reggae porch (2)   0:00  a one-drop from the first beat: kick and rim on 3, hats on the
+                                ands, guitar and piano chop and the organ bubbles on every
+                                "and", a round dub bass locked to the kick, the bamboo sax on
+                                the head, a dub echo throw on the rim; 112 bpm; a snare roll
+                                into the kick-off
+     2 Kick-off (1)       0:08  the band hits the one, snare roll, the horns' pickup
+     3 Ska head (8)       0:12  A A': trumpet + tenor octaves, trombone harmony (tenor and
                                 trombone in low unison on repeats, the trumpet joining late)
-    13 Bridge (4)         0:53  Eb-Bb-G7-Cm-F7, ride cymbal, the horns sustain (the trombone
+    11 Bridge (4)         0:43  Eb-Bb-G7-Cm-F7, ride cymbal, the horns sustain (the trombone
                                 sings it on repeats)
-    17 Trombone solo (8)  1:09  two composed choruses of slide trombone (the tenor sax takes
+    15 Trombone solo (8)  0:59  two composed choruses of slide trombone (the tenor sax takes
                                 the solo on alternate passes), backing riffs in the second half
-    25 Slow-down (2)      1:40  a ritardando on Eb-Cm-D7, the trombone's long gliss down
-    27 Rocksteady (6)     1:50  89 bpm in G minor: heavy melodic bass, picked guitar double,
+    23 Slow-down (2)      1:30  a ritardando on Eb-Cm-D7, the trombone's long gliss down
+    25 Rocksteady (6)     1:40  89 bpm in G minor: heavy melodic bass, picked guitar double,
                                 the trio sings, cross-stick on 2 and 4
-    33 Wind-up (2)        2:22  accelerando, snare roll, the horns climb back in
-    35 Shout chorus (8)   2:31  tenor and trombone take the head low, trumpet riffs on top,
+    31 Wind-up (2)        2:12  accelerando, snare roll, the horns climb back in
+    33 Shout chorus (8)   2:21  tenor and trombone take the head low, trumpet riffs on top,
                                 then everyone on the harmonised head, claps
-    43 Tag (2)            3:01  the ending phrase, the last chord ringing ... one more time
+    41 Tag (2)            2:51  the ending phrase, the last chord ringing ... one more time
+   The organ bubbles (quietly) on the ands all the way through, under the horns and the trio.
    Every bar draws from an RNG keyed to its absolute bar number; the pass count rotates who
    leads the head and the solo and which chorus is played, and the walking bass, chop
    doubles, drags and fills are drawn per bar, so no bar of a three-lap race repeats. */
@@ -13046,6 +13050,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       pno:struck(1/7.3,1.15,26),                                   // hammer an eighth of the way along: the 7th partial is weak
       gtr:struck(0.16,0.95,30), ban:struck(0.07,0.9,36), lg:struck(0.21,1.05,26),
       bas:pw([1,0.5,0.28,0.16,0.09,0.05,0.03,0.02]),
+      org:pw([1,0.7,0.34,0.46,0.14,0.12,0.06]),                    // drawbars: 8', 4', 2 2/3', 2', the upper stops thinning out
       reed:pw(Array.from({length:20},(_,i)=>{ const k=i+1; return (k%2?1:0.2)/Math.pow(k,0.95)*(k>=3&&k<=5?1.3:1); }))};
     const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); } };
     /* The studio plate: dense from the first millisecond (no discrete early echoes — a plate
@@ -13132,6 +13137,22 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
         g.gain.exponentialRampToValueAtTime(0.5*v,t+Math.min(0.12,dur)); g.gain.setValueAtTime(0.5*v,t+Math.max(0.12,dur-0.03));
         g.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.12,dur-0.03)+0.08); g.connect(C.bass.in);
         if(!lite){ const ng=G(0), nl=F('lowpass',700,0.7); N(t,0.03,nl); nl.connect(ng); AD(ng,t,0.001,0.22*v,0.02); ng.connect(C.bass.in); } },
+      // dub bass: a round sine with a triangle under the fingers, the note booming in and settling, left to ring
+      dbass(t,p,sd,hz){ const v=p.v||1; let f=hz(p.n); while(f<40) f*=2; while(f>110) f/=2;
+        const dur=Math.max(0.1,(p.l||2)*sd*0.92), end=t+dur+0.12, g=G(0), lp=F('lowpass',Math.min(900,f*9),0.7), h=G(lite?0.55:0.4);
+        const o=O('sine',f*1.04,t,end,lp); o.frequency.exponentialRampToValueAtTime(f,t+0.03);
+        O('triangle',f,t,end,h); h.connect(lp);
+        lp.frequency.setValueAtTime(Math.min(900,f*9),t); lp.frequency.exponentialRampToValueAtTime(Math.max(160,f*2.5),t+0.2);
+        lp.connect(g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.95*v,t+0.01);
+        g.gain.exponentialRampToValueAtTime(0.7*v,t+Math.min(0.25,dur)); g.gain.setValueAtTime(0.7*v,t+Math.max(0.1,dur-0.02));
+        g.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.1,dur-0.02)+0.1); g.connect(C.bass.in); },
+      // organ bubble: short drawbar stabs, the keys let go as soon as they have spoken
+      org(t,p,sd,hz){ const v=p.v||1, ns=lite?p.ns.slice(-2):p.ns, dur=Math.max(0.05,(p.l||0.5)*sd), end=t+dur+0.06, g=G(0), lp=F('lowpass',3800,0.6), pk=0.21*v/Math.sqrt(ns.length);
+        ns.forEach((n,i)=>O(W.org,hz(n),t,end,lp,(i-1)*3));
+        lp.connect(g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(pk,t+0.004);
+        g.gain.setValueAtTime(pk*0.85,t+dur); g.gain.exponentialRampToValueAtTime(0.0001,t+dur+0.04); g.connect(C.org.in);
+        if(!lite){ const ng=G(0), bp=F('bandpass',3400,1); N(t,0.012,bp); bp.connect(ng); AD(ng,t,0.0008,0.05*v,0.01); ng.connect(C.org.in); }
+        sends(g,p,C.org); },
       // rumba box: a big wooden box with sprung steel tongues — the boom, the tongue's twang
       rbox(t,p,sd,hz){ const v=p.v||1; let f=hz(p.n); while(f>110) f/=2; while(f<40) f*=2;
         const dur=Math.max(0.2,(p.l||2)*sd), end=t+dur+0.05, g=G(0), o=O('sine',f*1.05,t,end,g);
@@ -13155,7 +13176,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       chk(t,p,sd,hz){ const v=p.v||1, ns=lite?p.ns.slice(-2):p.ns, g=G(0), bp=F('bandpass',p.lo?1300:2000,0.8), d=p.d||0.085;
         ns.forEach((n,i)=>O(W.gtr,hz(n),t+i*0.005,t+d+0.08,bp,(Math.random()-0.5)*8));
         bp.connect(g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.6*v,t+0.003); g.gain.exponentialRampToValueAtTime(0.0001,t+d);
-        g.connect(C.gtr.in);
+        g.connect(C.gtr.in); sends(g,p,C.gtr);
         if(!lite){ const ng=G(0), nb=F('bandpass',3000,1.2); N(t,0.02,nb); nb.connect(ng); AD(ng,t,0.001,0.07*v,0.015); ng.connect(C.gtr.in); } },
       // picked lead guitar (the rocksteady way: doubling the bass riff up high, left to ring)
       lg(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.12,(p.l||1)*sd), end=t+dur+0.25, g=G(0), lp=F('lowpass',Math.min(7000,f*8),0.9);
@@ -13268,7 +13289,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
   const PB=[['Eb','Eb'],['Bb','G7'],['Cm','F7'],['Bb','F7']];
   const PR=[['Gm','Gm'],['Cm','F'],['Eb','Cm'],['D7','D7'],['Gm','Eb'],['D7','D7']];
   const FORM=[
-    {id:'mento', name:'Mento porch',   bars:4},
+    {id:'mento', name:'Reggae porch',  bars:2},
     {id:'kick',  name:'Kick-off',      bars:1},
     {id:'head',  name:'Ska head',      bars:8},
     {id:'bridge',name:'Bridge',        bars:4},
@@ -13293,7 +13314,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
     case 'wind': return [['Eb','Eb'],['F7','F7']][b];
     default: return [['Eb','F7'],['Bb','Bb']][b]; } }
   const chordAt=(n)=>{ const L=locate(n); return chordsOf(L.sec.id,L.b); };
-  const ENERGY={mento:0.84, kick:0.95, head:1, bridge:0.93, solo:0.87, slow:0.88, rock:0.9, wind:0.97, shout:1.2, tag:1.1};
+  const ENERGY={mento:0.95, kick:0.95, head:1, bridge:0.93, solo:0.87, slow:0.88, rock:0.9, wind:0.97, shout:1.2, tag:1.1};
 
   function plan(n,R,env){
     const lite=!!(env&&env.lite);
@@ -13302,7 +13323,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
     const hum=(x)=>x*(0.88+R()*0.24);
     const cs=chordsOf(id,b), nx=chordAt(n+1)[0], last=b===sec.bars-1;
     const chordAtStep=(s)=>cs[s<8?0:1];
-    const M={kick:1,drums:1,hats:1,perc:1,bass:1,piano:1,gtr:1,lgtr:1,banjo:1,tpt:1,ten:1,bone:1,lead:1,vox:1};
+    const M={kick:1,drums:1,hats:1,perc:1,bass:1,piano:1,gtr:1,lgtr:1,banjo:1,tpt:1,ten:1,bone:1,lead:1,vox:1,org:1};
     let tempo=1, SW=0.24, warp=0, label=sec.name;
 
     // ---- the kit: rimshot and kick together on 2 and 4, hats opening on the ands
@@ -13336,9 +13357,14 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
     // ---- the chop: guitar and piano together on every "and"
     const chops=(o)=>{ o=o||{};
       for(let s=1;s<16;s+=2){ const c=chordAtStep(s);
-        if(o.gtr!==0) E(s,'chk',{ns:gtrV(c),v:hum((o.gtr||1)*(s%4===3?1:0.85))});
+        if(o.gtr!==0) E(s,'chk',{ns:gtrV(c),v:hum((o.gtr||1)*(s%4===3?1:0.85)),throw:(o.thr&&s===15)?o.thr:0});
         if(o.pno!==0){ E(s,'pno',{ns:pnoV(c),l:0.5,v:hum((o.pno||1)*(s%4===3?0.95:0.8))});
           if(o.dbl && !lite && R()<o.dbl) E(s+0.5,'pno',{ns:pnoV(c),l:0.3,v:hum(0.45*(o.pno||1))}); } } };
+    // ---- the organ bubble: stabs on the ands, a ghost on 2 and 4 under them (not in the one-drop gap on 3)
+    const bubble=(o)=>{ o=o||{}; const v=o.v||1;
+      for(let m=0;m<2;m++){ const b0=m*8, c=chordAtStep(b0), ns=gtrV(c,10);
+        for(const s of [1,3,5,7]) E(b0+s,'org',{ns,l:0.5,v:hum(v*(s%4===3?1:0.85))});
+        if(o.ghost) for(const s of [2,6]) E(b0+s,'org',{ns,l:0.35,v:hum(0.4*v)}); } };
     // ---- the horn section on a line: trumpet on the tune, tenor an octave under it, the
     //      trombone on a harmony — or tenor and trombone in low unison
     const section=(line,o)=>{ o=o||{};
@@ -13364,24 +13390,35 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
 
     // ---- the sections
     if(id==='mento'){
-      /* the porch: the head as a country band plays it, the banjo strumming eighths with the
-         weight on the off-beats of 2 and 4, the rumba box on the habanera, maracas */
-      tempo=0.84; SW=0.18;
-      Object.assign(M,{kick:b===3?1:0, drums:b===3?1:0});
+      /* the porch is a one-drop now: the first bar already has the whole band in it. Kick and
+         rim together on beat 3 (nothing on 1), hats on the off-beats, guitar and piano chopping
+         every "and" with the organ bubbling under, a round dub bass locked to the kick, and the
+         bamboo sax singing the head over it. Bar 0 opens on a bass pickup and a two-note rim
+         drag into the first drop; bar 1 rolls the snare into the kick-off. */
+      tempo=b?0.94:0.9; SW=0.2;
+      M.banjo=0.55;
       soloLine('bam',HEAD[b],{v:0.95, grace:0.25});
-      for(let m=0;m<2;m++){ const c=cs[m], b0=m*8, ns=gtrV(c,12).concat([near(CH[c][0],19)]).sort((x,y)=>x-y);
-        for(let s=0;s<8;s++){ if(lite && !(s===0||s===3||s===4||s===7)) continue;
-          E(b0+s,'bj',{ns,up:s%2===1,v:hum([0.7,0.4,0.6,0.95,0.65,0.4,0.6,0.95][s]),d:s%4===3?0.28:0.16}); }
-        if(b>=1){ const r=bassR(c); E(b0,'rbox',{n:r,l:3,v:hum(1)}); E(b0+3,'rbox',{n:r+7,l:1,v:hum(0.8)});
-          E(b0+4,'rbox',{n:r,l:2,v:hum(0.9)}); E(b0+6,'rbox',{n:R()<0.5?r+7:r+12,l:2,v:hum(0.75)}); }
-        for(let s=0;s<8;s++) E(b0+s,'shk',{v:hum(s%2?0.95:0.55)});
-        if(!lite) for(const s of [1,5]) if(R()<0.4) E(b0+s+0.5,'shk',{v:0.3});
-        if(b>=2){ E(b0,'hand',{f:150,v:hum(0.8)}); E(b0+3,'hand',{slap:1,v:hum(0.7)}); E(b0+4,'hand',{f:150,v:hum(0.6)});
-          E(b0+6,'hand',{f:210,v:hum(0.6)}); if(R()<0.6) E(b0+7,'hand',{slap:1,v:hum(0.55)}); } }
-      if(b===3){ for(let i=0;i<8;i++) E(8+i,'sn',{v:0.25+i*0.08}); E(15.5,'sn',{v:0.9}); section(PICKUP,{tpt:1,ten:1,bone:'harm',v:0.9}); }
+      for(let m=0;m<2;m++){ const c=cs[m], b0=m*8, r=bassR(c), q=CH[c][1], t3=r+QU[q][1], f5=r+7;
+        const nc=m?nx:cs[1]; let tgt=bassR(nc); if(Math.abs(tgt+12-f5)<Math.abs(tgt-f5)) tgt+=12;
+        const ap=tgt+(f5<tgt?-1:1);
+        E(b0+4,'kk',{v:hum(1)}); E(b0+4,'sn',{v:hum(0.85),rim:1,throw:(b+m)%2?0.5:0.28});
+        for(let s=0;s<8;s++){ if(s%2) E(b0+s,'hh',{o:s===7?0.8:0.25,v:hum(0.72)}); else if(!lite) E(b0+s,'hh',{v:hum(0.2)}); }
+        const CELLS=[[[0,r,3],[3,r,1],[4,r,2],[6,f5,1],[7,ap,1]],
+                     [[0,r,2],[3,f5,1],[4,r,2],[6,t3,1],[7,ap,1]],
+                     [[0,r,3],[4,r,3],[7,ap,1]],
+                     [[0,r,2],[2,r+12,1],[3,f5,1],[4,r,3],[7,ap,1]]];
+        for(const [s,x,l] of CELLS[b*2+m]) E(b0+s,'dbass',{n:x,l,v:hum(s?0.85:1)});
+        for(let s=1;s<8;s+=2) E(b0+s,'bj',{ns:gtrV(c,12).concat([near(CH[c][0],19)]).sort((x,y)=>x-y),up:1,v:hum(s%4===3?0.8:0.55),d:0.12});
+        for(let s=0;s<8;s++) E(b0+s,'shk',{v:hum(s%2?0.7:0.4)}); }
+      chops({dbl:0.15, thr:b?0:0.45});
+      bubble({v:0.9, ghost:1});
+      if(!b){ E(2.5,'sn',{v:0.3}); E(3,'sn',{v:0.45}); E(3.5,'sn',{v:0.6}); }
+      else { for(let i=0;i<6;i++) E(13+i*0.5,'sn',{v:0.3+i*0.1}); section(PICKUP,{tpt:1,ten:1,bone:'harm',v:0.9}); }
+      A(-0.1,{a:'fb',v:0.34,tc:0.05});
     }
     else if(id==='kick'){
       tempo=0.97; SW=0.22;
+      A(-0.1,{a:'fb',v:0.14,tc:0.05});                                      // the porch's longer echo tail goes back to the band's
       hit(0,'Bb',{l:3});
       E(3,'sn',{v:0.7,rim:1}); E(6,'kk',{v:0.9}); E(6,'sn',{v:0.95,rim:1}); E(6,'chk',{ns:gtrV('Bb'),v:0.9}); E(6,'pno',{ns:pnoV('Bb'),l:0.5,v:0.9});
       for(let s=8;s<16;s++) E(s,'sn',{v:0.35+(s-8)*0.08});
@@ -13396,6 +13433,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       skaKit({ghost:0.28, open:[b%2?15:7], four:0.45});
       walk({skip:0.22});
       chops({dbl:0.2+0.1*rot});
+      bubble({v:0.5});
       if(rot===0) section(mel,{tpt:1, ten:1, bone:b>=4?'harm':0, falls:0.35});
       else if(rot===1){ label='Ska head (sax & bone)'; section(mel,{tpt:b>=4, ten:1, bone:'uni', falls:0.3, v:1.05}); }
       else section(mel,{tpt:1, ten:'harm', bone:'uni', falls:0.4});
@@ -13407,6 +13445,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       skaKit({ride:1, ghost:0.3, four:0.5});
       walk({skip:0.15});
       chops({dbl:0.3, gtr:0.9});
+      bubble({v:0.5});
       if(pass%2===0) section(BRIDGE[b],{tpt:1, ten:1, bone:'harm', falls:0.3});
       else { label='Bridge (trombone)';                                     // the trombone sings it, the others sustain
         soloLine('bone',BRIDGE[b],{oct:-12, v:1.05, smear:0.35});
@@ -13424,6 +13463,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       skaKit({ride:b<4?0.8:1, ghost:0.35, four:0.35});
       walk({skip:0.3});
       chops({pno:b<4?0.75:0.95, gtr:0.9, dbl:b>=4?0.3:0});
+      bubble({v:0.45});
       if(b>=4){ const others=tenor?['tpt','bone']:['tpt','ten'];            // backing riffs behind the soloist
         for(const m of [0,1]){ const c=cs[m], top=near(CH[c][0]+(CH[c][1]==='6'?9:7),19), st=m*8+(R()<0.5?3:5);
           E(st,others[0],{n:top,l:1,v:0.5,sc:1}); E(st,others[1],{n:harm(top,c)-(others[1]==='bone'?12:0),l:1,v:0.5});
@@ -13465,6 +13505,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
           if(b>=2 && (l>=2||s===0||R()<0.5)) E(b0+s,'lg',{n:x+24,l,v:hum(0.8)}); }
         for(let s=1;s<8;s+=2){ E(b0+s,'chk',{ns:gtrV(c,14),v:hum(0.8),d:0.1}); E(b0+s,'pno',{ns:pnoV(c,5),l:0.4,v:hum(0.7)});
           if(!lite && b>=1) E(b0+s+0.5,'pno',{ns:pnoV(c,5),l:0.3,v:hum(0.42)}); } }
+      if(b>=1) bubble({v:0.5});
       const vw=b<2?'oo':'ah';
       for(const [s,nn,l] of ROCK[b]){ const c=chordAtStep(s);
         E(s,'trio',{ns:trioV(nn,c),l,v:hum(0.95),vw:l>=4&&b>=2?'oh':vw,vw2:l>=4?'ah':vw}); }
@@ -13493,6 +13534,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
       skaKit({ghost:0.35, four:0.6, open:[7,15], clap:b>=4||pass?0.7:0, v:1.05});
       walk({skip:0.35});
       chops({dbl:0.45});
+      bubble({v:0.55});
       if(low){ label='Shout chorus (low horns)';
         section(mel,{ten:1, bone:'uni', v:1.08});                            // tenor and trombone take the head down low,
         for(const m of [0,1]){ const c=cs[m], top=near(CH[c][0]+(CH[c][1]==='6'?9:7),21), st=m*8+(R()<0.5?5:6);   // the trumpet riffs over it
@@ -13523,7 +13565,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
   return {
     title:'Rocksteady Rally', bpm:62, key:1, swing:0, echoSteps:0.5, voices,
     // the chop sits a hair behind the beat, the horns and the singers lean back further
-    lag:{chk:0.006, pno:0.004, tpt:0.007, ten:0.009, bone:0.011, trio:0.014, bam:0.01, lg:0.006, hh:0.002},
+    lag:{org:0.005, chk:0.006, pno:0.004, tpt:0.007, ten:0.009, bone:0.011, trio:0.014, bam:0.01, lg:0.006, hh:0.002},
     form:FORM, bars:TOTAL, loopFrom:LOOP, plan,
     courseNote:'deferred: produced station keeps its own tune, in the course key',
     mix:{ makeup:0.75, lowMid:-3.5, air:4.5, echoFb:0.14, echoRet:0.55, springRet:0,
@@ -13533,6 +13575,7 @@ SONG_ENGINE.songs.rocksteadyRally=(function(){
         hats:  {level:1.1,  pan:0.3,   echo:0,    spring:0.08, chain:[['hp',2800]]},
         perc:  {level:0.9,  pan:-0.3,  echo:0.02, spring:0.16, chain:[['hp',110]]},
         bass:  {level:1.0,  pan:0,     echo:0,    spring:0.02, chain:[['hp',34],['drive',1.4],['peak',95,2,1],['peak',700,4,1.2],['lp',3200],['trim',0.13]]},
+        org:   {level:0.8,  pan:0.22,  echo:0.04, spring:0.2,  chain:[['hp',200],['peak',1400,2,1],['lp',5200]]},
         piano: {level:0.95, pan:-0.3,  spread:0.2, echo:0.02, spring:0.14, chain:[['hp',170],['peak',350,-3,1],['peak',2500,3,1]]},
         gtr:   {level:1.7,  pan:0.36,  echo:0.04, spring:0.1,  chain:[['hp',380],['peak',2300,3,1]]},
         lgtr:  {level:0.9,  pan:-0.22, echo:0.28, spring:0.26, chain:[['hp',160],['peak',1800,2,1]]},
