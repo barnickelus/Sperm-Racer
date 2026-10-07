@@ -42699,7 +42699,9 @@ function wallCaseGeo(){
  * head meets tail and a tall butterfly collar that stands out either side of the head (the
  * chase camera's view). Signature gesture: the disco point. A sequinned arm shoots up out of
  * the collar and points at the sky, a burst of sparkles comes off the fingertip and the head
- * tips back to follow it; on a boost the head first twirls a full turn on the neck.
+ * tips back to follow it; on a boost the head first twirls a full turn on the neck. When he
+ * makes a solid pass the same arm comes up with the middle finger instead, turned back at
+ * the racer he just passed, while he looks over his shoulder at them with the gold-tooth grin.
  * Every material stays Phong (keepPhong): the toon pass's gradient map turns the direct light
  * red, which is what made his brown skin read salmon-pink. Canvas textures are painted once. */
 let _rkTex=null;
@@ -42955,30 +42957,70 @@ function dressRick(g, K){
       [S(), Me(0.12,4.88,0.1,0.21,0.23,0.21)],                                                    // its tip
       [S(), Me(-0.5,3.12,0.3,0.25,0.44,0.27,0,0,0.35)]];                                          // the thumb
     for(let i=0;i<3;i++) parts.push([S(), Me(-0.36+i*0.24,3.48,0.32,0.18,0.17,0.21)]);             // curled knuckles
-    const geo=kingMerge(parts);
-    arm.add(new T.Mesh(geo, P({color:RK_SKIN, emissive:RK_SKINE, shininess:28, specular:0x4a3020})));
-    const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
-    for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.07, op.getY(i)+on.getY(i)*0.07, op.getZ(i)+on.getZ(i)*0.07);
-    const ol=new T.Mesh(og, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); ol.userData.isOutline=true; arm.add(ol);
+    const skinM=P({color:RK_SKIN, emissive:RK_SKINE, shininess:28, specular:0x4a3020}), inkM=new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide});
+    // a hand with an ink line (the same shape pushed out along its normals, back faces only)
+    const hand=(geo)=>{ const grp=new T.Group(); grp.add(new T.Mesh(geo, skinM));
+      const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
+      for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.07, op.getY(i)+on.getY(i)*0.07, op.getZ(i)+on.getZ(i)*0.07);
+      const ol=new T.Mesh(og, inkM); ol.userData.isOutline=true; grp.add(ol); arm.add(grp); return grp; };
+    const point=hand(kingMerge(parts));
+    // the flip-off: the same wrist and fist with the back of the hand to -z (the way he turns it at
+    // whoever he just passed), one thick middle finger straight up with a nail on its back, the
+    // other three knuckled over and curled into the palm, the thumb folded across them
+    const fl=[[new T.CylinderGeometry(0.36,0.42,1.0,12), Me(0,2.45,0,1,1,1)],
+      [S(), Me(0,3.08,0.04,0.68,0.64,0.56)],                                                     // the fist
+      [new T.CylinderGeometry(0.28,0.31,1.75,10), Me(0,4.35,-0.04,1,1,1)],                        // the middle finger
+      [S(), Me(0,5.22,-0.04,0.28,0.3,0.28)],                                                     // its tip
+      [S(), Me(0,3.55,-0.12,0.3,0.24,0.28)],                                                      // its knuckle
+      [S(), Me(-0.18,3.18,0.5,0.4,0.16,0.18,0,0,0.25)],                                           // the thumb, across the curled fingers
+      [S(), Me(-0.62,3.0,0.18,0.2,0.36,0.24,0,0,0.3)]];                                           // the thumb's heel
+    [[-0.4,0.95],[0.37,0.95],[0.66,0.82]].forEach(([x,k])=>{                                       // index, ring, pinky: curled over
+      fl.push([S(), Me(x,3.48,-0.08,0.2*k,0.19*k,0.24*k)]); fl.push([S(), Me(x*0.95,3.36,0.38,0.17*k,0.22*k,0.18*k)]); });
+    const flip=hand(kingMerge(fl)); flip.visible=false;
+    const nail=new T.Mesh(new T.SphereGeometry(1,10,8), P({color:0xc89a84, emissive:0x2a1810, shininess:90, specular:0xffffff}));
+    nail.position.set(0,5.07,-0.29); nail.scale.set(0.21,0.27,0.06); flip.add(nail);
     // sparkle burst off the fingertip (model space, so it hangs in the air where he pointed)
     const spk=bodyPart(new T.Group()); g.add(spk); const sparks=[];
     const SC=[0xffe680,0xff6ae0,0x9ee8ff,0xffffff];
     for(let i=0;i<10;i++){ const sp=new T.Sprite(new T.SpriteMaterial({map:TX.star, color:SC[i%4], transparent:true, blending:T.AdditiveBlending, depthWrite:false}));
       sp.visible=false; spk.add(sp); const a=i*2.39996, e=0.25+0.55*((i*7)%10)/10;
       sparks.push({sp, d:V(Math.cos(a)*Math.cos(e), Math.sin(e)+0.3, Math.sin(a)*Math.cos(e)).normalize(), v:10+4*((i*3)%5)/5}); }
-    g.userData.rkKit={root, arm, sparks, tip:V(0.12,5.15,0.1)};
+    g.userData.rkKit={root, arm, sparks, tip:V(0.12,5.15,0.1), point, flip};
   }
   g.userData.tick=tickRick;
   return true;
 }
-/* per-frame: the smile/grin swap, and the disco point. It goes off when he overtakes someone (the
- * look system's smug gesture), picks up an item, finishes, or lights a boost at speed (that one
- * opens with a full twirl of the head); one at a time, a few seconds apart, purely local. */
+/* per-frame: the smile/grin swap, the disco point and the flip-off. The disco point goes off when
+ * he picks up an item, finishes, or lights a boost at speed (that one opens with a full twirl of
+ * the head). The flip-off is for a SOLID pass and nothing else: he takes a place off someone
+ * (his race total goes past theirs), keeps it for RK_FLIP.hold seconds without them taking it
+ * back, and by then (or within RK_FLIP.win of the pass) has them RK_FLIP.gap units behind him
+ * along his heading, still within RK_FLIP.near. A swap in a pack or a flicker at the line never
+ * gets there. Then the arm comes up with the middle finger turned back at them, held about a
+ * second, and drops; at most once every RK_FLIP.cd seconds. The two gestures share the arm and
+ * never overlap. Player and CPU alike, purely local. */
 const _rkV=new T.Vector3(), _rkQ=new T.Quaternion(), _rkE=new T.Euler();
-const RK_SPIN=0.5, RK_PT=1.45;
+const RK_SPIN=0.5, RK_PT=1.45, RK_FL=1.55, RK_FLIP={hold:1.0, win:3.0, gap:8, near:45, cd:8};
 function rickGo(st, now, spin){
-  if(now-st.t0<(spin?6:3.5)) return;
+  if(now-st.t0<(spin?6:3.5) || now-st.f0<RK_FL) return;
   st.t0=now; st.spin=spin; st.burst=false;
+}
+// solid-pass bookkeeping, one record per rival: are we ahead of them, and since when
+function rickPass(st, r, now){
+  if(state!=='race' || r.finished || racers.indexOf(r)<0){ st.pass.clear(); return null; }
+  let hit=null;
+  for(const q of racers){ if(q===r) continue;
+    const ahead=!q.finished && (r.total||0)>(q.total||0); let p=st.pass.get(q);
+    if(!p){ st.pass.set(q, {a:ahead, t:-1}); continue; }
+    if(ahead && !p.a) p.t=now; else if(!ahead) p.t=-1;     // a place taken off them / given back
+    p.a=ahead;
+    if(p.t<0 || now-p.t<RK_FLIP.hold) continue;
+    if(now-p.t>RK_FLIP.win){ p.t=-1; continue; }            // it never opened up: not a solid pass
+    const dx=q.x-r.x, dz=q.z-r.z, lon=dx*Math.sin(r.head)+dz*Math.cos(r.head);
+    if(lon<-RK_FLIP.gap && Math.hypot(dx,dz)<RK_FLIP.near && !hit) hit=q;
+  }
+  if(hit && !(r.spinT>0) && now-st.f0>=RK_FLIP.cd && now-st.t0>=(st.spin?RK_SPIN:0)+RK_PT){ st.pass.get(hit).t=-1; return hit; }
+  return null;
 }
 function tickRick(o, r, now){
   const ud=o.userData, k=ud.rkKit;
@@ -42986,14 +43028,42 @@ function tickRick(o, r, now){
   if(pm&&mo&&mb){ const sy=mo.scale.y/mb.y, sx=mo.scale.x/mb.x, show=sy>1.12 || (sx>1.15 && sy<0.7);
     if(pm.grin.visible!==show){ pm.grin.visible=show; pm.smile.visible=!show; } }
   if(!k || !r) return;
-  const st=ud._rk||(ud._rk={t0:-99, spin:false, burst:false, item:r.item, cel:r.celebT>0, bo:r.boostT>0, gcd:r._lk?r._lk.gcd:-9});
-  const L=r._lk;
-  if(L && L.gcd!==st.gcd){ st.gcd=L.gcd; if(L.g && L.g.k==='smug') rickGo(st, now, false); }
+  const st=ud._rk||(ud._rk={t0:-99, spin:false, burst:false, item:r.item, cel:r.celebT>0, bo:r.boostT>0, f0:-99, fq:null, pass:new Map()});
+  const fq=rickPass(st, r, now);
+  if(fq){ st.f0=now; st.fq=fq; }
   if(r.item && !st.item) rickGo(st, now, false);
   if(r.celebT>0 && !st.cel) rickGo(st, now, false);
   if(r.boostT>0 && !st.bo && Math.abs(r.spd||0)>40) rickGo(st, now, true);
   st.item=r.item; st.cel=r.celebT>0; st.bo=r.boostT>0;
-  // --- the arm
+  // --- the flip-off: up with a springy pop, a jab, held about a second, then down
+  const fs=now-st.f0;
+  if(fs<RK_FL && st.fq){
+    const a=k.arm; let e;
+    if(fs<0.22){ const t=fs/0.22-1; e=Math.max(0,1+2.70158*t*t*t+1.70158*t*t); }
+    else e=fs<RK_FL-0.3 ? 1 : Math.max(0,(RK_FL-fs)/0.3);
+    const ee=Math.min(1,e), jab=fs>0.2 && fs<0.5 ? Math.sin((fs-0.2)/0.3*Math.PI) : 0;
+    a.visible=e>0.02; k.point.visible=false; k.flip.visible=true;
+    // where they are, in the model's frame (atan2: 0 dead ahead, +-PI dead behind)
+    _rkQ.copy(o.quaternion).invert();
+    _rkV.set(st.fq.x-o.position.x, 0, st.fq.z-o.position.z).applyQuaternion(_rkQ);
+    const al=Math.atan2(_rkV.x,_rkV.z);
+    let yw=al+Math.PI; if(yw>Math.PI) yw-=2*Math.PI;            // turn the back of the hand (the arm's -z) at them
+    _rkV.set(0,1,0).applyQuaternion(_rkQ);                      // and keep it upright through bank and pitch
+    const cx=Math.max(-0.8,Math.min(0.8,Math.atan2(_rkV.x,_rkV.y))), cz=Math.max(-0.6,Math.min(0.6,Math.atan2(_rkV.z,_rkV.y)));
+    k.root.rotation.order='YXZ'; k.root.rotation.set(-0.12+cz, Math.max(-1,Math.min(1,yw*0.85)), -0.45-cx);
+    a.position.set(0,-3.1*(1-ee)+0.35*jab,0); a.rotation.set(-0.15*jab,0,0.5*(1-ee));
+    a.scale.set(0.4+0.6*ee, (0.4+0.6*ee)*(1+0.08*jab), 0.4+0.6*ee);
+    for(const q of k.sparks) if(q.sp.visible) q.sp.visible=false;
+    if(pm){ pm.grin.visible=true; pm.smile.visible=false; }        // the gold-tooth grin
+    // look back over the shoulder at them, chin up
+    const nk=ud.neck;
+    if(nk && r._lk){ const yaw=Math.sign(al||1)*Math.min(1.35, Math.abs(al))*0.85*ee;
+      _rkQ.setFromEuler(_rkE.set(-0.14*ee, yaw, 0.08*Math.sign(al||1)*ee, 'YXZ')); nk.quaternion.premultiply(_rkQ);
+      nk.position.copy(NECK_PIV).sub(_rkV.copy(NECK_PIV).applyQuaternion(nk.quaternion)); }
+    return;
+  }
+  if(st.fq){ st.fq=null; k.flip.visible=false; k.point.visible=true; k.root.rotation.order='XYZ'; }
+  // --- the disco point
   const s=now-st.t0, sp=st.spin ? RK_SPIN : 0, sa=s-sp;
   let e=0, th=0;
   if(sa>-0.05 && sa<RK_PT){
