@@ -209,14 +209,9 @@
       max-width:calc(100vw - 100px - var(--sl) - var(--sr));}
   }
 
-  .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
     justify-content:center;text-align:center;padding:24px;pointer-events:auto;
     background:radial-gradient(circle at 50% 42%,rgba(6,30,38,.74),rgba(3,16,21,.95));backdrop-filter:blur(3px);}
-  /* menu screens scroll, and clear the iOS browser toolbar / home indicator */
-  #start,#finish{justify-content:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;
-    touch-action:pan-y;
-    padding-top:max(20px,env(safe-area-inset-top));
-    padding-bottom:calc(110px + env(safe-area-inset-bottom));}
   /* lobby: same scrolling, but auto margins on first/last child keep it vertically centred
      when it fits (flex-start + auto margins never clip the top the way justify:center does) */
   #mp{justify-content:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;
@@ -224,12 +219,6 @@
     padding-bottom:calc(24px + env(safe-area-inset-bottom));}
   #mp>:first-child{margin-top:auto;}
   #mp>:last-child{margin-bottom:auto;}
-  /* #select does NOT scroll as a whole screen (that let the fixed scroll-hint band overlap
-     cards/the race button at arbitrary scroll offsets). Instead only #sperm-scroll scrolls,
-     framed between a static header and a static, always-visible "Lock in & Race" button. */
-  #select{justify-content:flex-start;overflow:hidden;touch-action:none;
-    padding-top:max(16px,env(safe-area-inset-top));
-    padding-bottom:max(16px,env(safe-area-inset-bottom));}
   .screen .tag{color:var(--signal);letter-spacing:.42em;font-size:11px;text-transform:uppercase;margin-bottom:14px;}
   .screen h1{margin:0;font-size:clamp(40px,12vw,96px);letter-spacing:.04em;font-weight:700;
     text-shadow:0 0 30px rgba(109,242,208,.35);}
@@ -240,7 +229,6 @@
   /* the board is min(420px,92vw) wide but the screen's 24px side padding left less than that on a
      phone (272px of room on a 320px screen, 294px of board), so the panel scrolled sideways: on
      narrow screens the padding shrinks to the 4vw the board leaves free (24px from 600px up) */
-  #finish{padding-left:max(min(24px,4vw),env(safe-area-inset-left));padding-right:max(min(24px,4vw),env(safe-area-inset-right));}
   .screen p{color:var(--ink);max-width:440px;line-height:1.7;font-size:13px;letter-spacing:.03em;}
   .keys{margin:8px 0;color:var(--ink);font-size:11.5px;letter-spacing:.08em;line-height:2;}
   .keys kbd{border:1px solid var(--dim);border-radius:4px;padding:2px 7px;color:var(--bone);margin:0 1px;font-size:11px;}
@@ -263,6 +251,8 @@
   .board .nm{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .board b{flex:none;margin-left:8px;white-space:nowrap;color:var(--bone);font-variant-numeric:tabular-nums;}
   .hidden{display:none!important;}
+  /* the race HUD stays out of the way while a menu or the results are up */
+  body.inmenu #ui{visibility:hidden;}
   #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:#05202a;color:var(--ink);letter-spacing:.3em;font-size:12px;text-transform:uppercase;}
   #loading b{color:var(--signal);}
@@ -403,15 +393,6 @@
   @media (prefers-reduced-motion:reduce){ .opsvg .optail{animation:none} }
   .opname{font-weight:700;letter-spacing:.5px;text-shadow:0 2px 4px rgba(0,0,0,.6);}
   .opdesc{text-shadow:0 1px 3px rgba(0,0,0,.7);}
-  /* short landscape phones: shrink the select header so the card grid gets real room */
-  @media (max-height:480px){
-    #select .tag,#select p{display:none;}
-    #select h1{font-size:22px!important;margin:0!important;}
-    #select{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom));}
-    #select #racebtn{margin-top:8px!important;padding:10px 32px;}
-    #sperm-grid{gap:10px!important;}
-    .opsvg{height:70px;width:auto;}
-  }
   .opcard.locked{filter:grayscale(.85) brightness(.6);cursor:not-allowed;}
   /* .oplock is pinned absolute to the card's bottom edge (doesn't take flow space),
      so reserve room under the description or the badge covers/clips the last line */
@@ -421,6 +402,179 @@
     text-align:center;border-top:1px solid rgba(109,242,208,.3);}
   .shake{animation:cardshake .35s ease;}
   @keyframes cardshake{20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
+  /* ================= LAUNCH DECK (home) =================
+     One screen, nothing scrolls: hero scope on top, then the three picks in the order a player
+     makes them (circuit, racer, difficulty), the RACE call-to-action, and the side modes. On a
+     landscape phone the same pieces split into two columns: identity + RACE on the left,
+     the picks on the right. Settings live behind the gear. */
+  #start{align-items:stretch;justify-content:center;text-align:left;overflow:hidden;
+    padding:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+    background:radial-gradient(130% 90% at 50% 28%,rgba(5,26,33,.30),rgba(3,14,19,.84) 70%),linear-gradient(180deg,rgba(3,14,19,.55),rgba(3,14,19,.2) 38%,rgba(3,14,19,.78));
+    backdrop-filter:none;-webkit-backdrop-filter:none;}
+  .deck{flex:1;min-height:0;width:100%;max-width:min(100%,680px);margin:0 auto;display:flex;flex-direction:column;
+    gap:clamp(6px,1.5dvh,14px);}
+  .dk-l,.dk-r{display:contents;}
+  .dk-head{order:0;display:flex;align-items:center;justify-content:space-between;min-height:44px;margin:-6px 0 -10px;}
+  .dk-head .tag{margin:0;font-size:10.5px;letter-spacing:.38em;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dk-gear{flex:none;width:44px;height:44px;border-radius:50%;border:1px solid var(--dim);background:rgba(13,48,56,.55);color:var(--signal);
+    display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;}
+  .dk-gear:active{background:rgba(109,242,208,.25);}
+  .dk-hero{order:1;flex:1 1 0;min-height:0;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
+  .scope{position:absolute;left:50%;top:50%;height:100%;max-width:100%;aspect-ratio:1/1;transform:translate(-50%,-50%);pointer-events:none;overflow:visible;}
+  .scope .ticks{transform-origin:100px 100px;animation:spin 120s linear infinite;}
+  h1.dk-title{position:relative;margin:0;font-size:clamp(34px,min(11.5vw,7.4dvh),80px);line-height:.98;letter-spacing:.07em;font-weight:800;
+    color:var(--bone);text-shadow:0 0 28px rgba(109,242,208,.45),0 2px 14px rgba(2,12,16,.9);}
+  .dk-title span+span{color:var(--signal);}
+  .dk-line{position:relative;margin:6px 0 0;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink);max-width:none;line-height:1.3;
+    text-shadow:0 1px 8px rgba(2,12,16,.95);}
+  .dk-course{order:2;flex:none;display:flex;flex-direction:column;min-height:0;}
+  .dk-lbl{display:flex;align-items:center;justify-content:space-between;min-height:34px;}
+  .dk-lbl .tag{margin:0;font-size:10.5px;letter-spacing:.34em;}
+  .dk-lbl .tag b{color:var(--bone);letter-spacing:.14em;margin-left:10px;font-variant-numeric:tabular-nums;}
+  .dk-arrows{display:flex;gap:6px;}
+  .dk-arrow{width:44px;height:44px;margin:-6px 0;border-radius:50%;border:1px solid var(--dim);background:rgba(13,48,56,.5);color:var(--signal);
+    font:700 24px/1 ui-monospace,Menlo,monospace;padding:0 0 3px;cursor:pointer;}
+  .dk-arrow:active{background:rgba(109,242,208,.25);}
+  .carousel{--cw:clamp(104px,min(30vw,21dvh),190px);position:relative;display:flex;gap:10px;align-items:stretch;overflow-x:auto;overflow-y:hidden;
+    scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;touch-action:pan-x;scrollbar-width:none;
+    height:clamp(108px,17.5dvh,168px);padding:8px calc(50% - var(--cw)/2);margin:0 calc(-1*max(16px,env(safe-area-inset-left)));
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);}
+  .carousel::-webkit-scrollbar{display:none;}
+  .carousel button.trk{--ac:#6df2d0;position:relative;flex:none;width:var(--cw);height:100%;margin:0;padding:0;scroll-snap-align:center;
+    border-radius:16px;border:1.5px solid rgba(109,242,208,.2);overflow:hidden;background:var(--plate,#0d3038);
+    display:flex;flex-direction:column;justify-content:flex-end;text-align:left;color:var(--bone);
+    transform:scale(.84);opacity:.62;transition:transform .22s,opacity .22s,box-shadow .22s,border-color .22s;}
+  .carousel .trk::before{content:attr(data-n);position:absolute;top:7px;left:9px;font-size:9px;letter-spacing:.2em;color:var(--ix,var(--ac));opacity:.95;z-index:1;
+    text-shadow:0 1px 3px rgba(0,0,0,.5);font-weight:700;}
+  .carousel .trk.on{transform:scale(1);opacity:1;border-color:var(--ac);box-shadow:0 0 0 1px var(--ac),0 10px 28px -8px var(--ac);}
+  .carousel .tp{position:absolute;inset:14% 8% 26% 8%;width:84%;height:60%;overflow:visible;}
+  .carousel .tn{position:relative;display:block;padding:14px 9px 7px;font-size:clamp(10px,2.9vw,12px);font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+    background:linear-gradient(0deg,rgba(3,12,15,.82),rgba(3,12,15,0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dk-racer{order:3;flex:none;display:flex;align-items:center;gap:12px;min-height:58px;padding:6px 14px 6px 10px;border-radius:18px;
+    border:1.5px solid rgba(109,242,208,.28);color:var(--bone);font-family:inherit;text-align:left;cursor:pointer;
+    background:linear-gradient(100deg,hsl(var(--hue,28) 42% 24% / .78),rgba(8,34,42,.62) 70%);}
+  .dk-racer:active{transform:translateY(1px);}
+  .rt-art{flex:none;width:38px;height:50px;margin:-10px 0 -2px;}
+  .rt-art svg{width:100%;height:100%;margin:0;display:block;}
+  .rt-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+  .rt-txt small{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--signal);}
+  .rt-txt b{font-size:15px;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rt-chev{font-size:26px;color:var(--signal);line-height:1;padding-bottom:3px;}
+  .dk-diff{order:4;flex:none;display:flex;align-items:center;gap:12px;}
+  .dk-diff .tag{margin:0;font-size:10px;letter-spacing:.3em;}
+  #diffpick{flex:1;display:flex;border:1.5px solid var(--dim);border-radius:16px;overflow:hidden;background:rgba(8,34,42,.5);}
+  #diffpick .trk{flex:1;margin:0;min-height:44px;padding:0 6px;border:0;border-radius:0;background:transparent;font-size:11.5px;letter-spacing:.2em;color:var(--ink);}
+  #diffpick .trk+.trk{border-left:1px solid rgba(109,242,208,.14);}
+  #diffpick .trk.on{background:rgba(109,242,208,.18);color:var(--bone);box-shadow:inset 0 -2px 0 var(--signal);}
+  button.dk-go{order:5;flex:none;margin:2px 0 0;padding:0;min-height:clamp(58px,8.4dvh,72px);border-radius:22px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    font-size:clamp(22px,4.2dvh,30px);letter-spacing:.36em;
+    background:linear-gradient(180deg,#9bf9e2,#52e2bf);box-shadow:0 0 0 1px rgba(155,249,226,.5),0 10px 34px -6px rgba(109,242,208,.6);animation:goPulse 2.8s ease-in-out infinite;}
+  .go-main{padding-left:.36em;line-height:1;}
+  .go-sub{font-size:9.5px;letter-spacing:.16em;font-weight:700;color:#07453b;text-transform:uppercase;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis;}
+  @keyframes goPulse{0%,100%{box-shadow:0 0 0 1px rgba(155,249,226,.5),0 10px 30px -8px rgba(109,242,208,.45)}50%{box-shadow:0 0 0 1px rgba(155,249,226,.7),0 10px 40px -2px rgba(109,242,208,.75)}}
+  .dk-sec{order:6;flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+  .sec{margin:0!important;padding:5px 4px;min-height:48px;border-radius:14px;border:1.5px solid var(--c);color:var(--c);background:rgba(8,34,42,.55);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.1;text-transform:none;letter-spacing:0;font-weight:400;}
+  .sec b{font-size:11px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;}
+  .sec small{font-size:9px;opacity:.72;letter-spacing:.06em;white-space:nowrap;}
+  .dk-l .keys{display:none;order:7;margin:0;font-size:10.5px;line-height:1.8;text-align:center;}
+  /* settings sheet */
+  .sheet{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center;}
+  .sheet-back{position:absolute;inset:0;background:rgba(2,10,13,.66);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);}
+  .sheet-card{position:relative;width:min(100%,600px);max-height:100%;overflow-y:auto;touch-action:pan-y;
+    padding:16px max(16px,env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+    border-radius:22px 22px 0 0;background:linear-gradient(180deg,#0a2d36,#06222a);border:1px solid var(--dim);border-bottom:0;box-shadow:0 -12px 50px rgba(0,0,0,.5);}
+  .sheet-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .sheet-top .tag{margin:0;}
+  .sheet-top .go{margin:0;padding:10px 22px;min-height:44px;font-size:12px;border-radius:22px;}
+  .sheet-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  .tile{margin:0!important;min-height:54px;padding:8px 10px;font-size:11px;letter-spacing:.07em;border-radius:14px;line-height:1.25;}
+  .tile:disabled{opacity:.45;}
+
+  @media (orientation:landscape) and (min-width:560px){
+    #start{padding-top:max(10px,env(safe-area-inset-top));padding-bottom:max(10px,env(safe-area-inset-bottom));}
+    .deck{max-width:1040px;display:grid;grid-template-columns:minmax(0,.84fr) minmax(0,1.16fr);column-gap:clamp(14px,3vw,40px);}
+    .dk-l,.dk-r{display:flex;flex-direction:column;gap:clamp(6px,1.8dvh,12px);min-height:0;}
+    .dk-l>*,.dk-r>*{order:0;}
+    .dk-head{margin:0;}
+    .dk-head .tag{letter-spacing:.22em;}
+    .dk-title span{display:block;}
+    h1.dk-title{font-size:clamp(30px,min(10.5dvh,6.4vw),84px);}
+    .dk-line{display:none;}
+    .dk-r{justify-content:center;}
+    .dk-course{flex:1 1 auto;justify-content:center;}
+    .carousel{--cw:clamp(104px,min(19vw,36dvh),200px);height:auto;flex:1 1 0;min-height:100px;max-height:210px;margin:0 -8px;padding-left:calc(50% - var(--cw)/2);padding-right:calc(50% - var(--cw)/2);}
+    button.dk-go{min-height:clamp(52px,14dvh,72px);}
+    .sheet{align-items:center;}
+    .sheet-card{border-radius:22px;border-bottom:1px solid var(--dim);}
+    .sheet-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+  }
+  @media (orientation:landscape) and (max-height:430px){
+    .dk-lbl{min-height:30px;}
+    .rt-art{margin-top:-8px;}
+    .dk-racer{min-height:52px;}
+    .dk-sec{gap:6px;}
+    .sec{min-height:44px;}
+  }
+  @media (hover:hover) and (pointer:fine) and (min-height:560px){ .dk-l .keys{display:block;} }
+  @media (max-height:700px) and (orientation:portrait){
+    .dk-line{display:none;}
+    .dk-head{margin-bottom:-14px;}
+    .carousel{height:clamp(100px,16dvh,168px);}
+  }
+  @media (prefers-reduced-motion:reduce){ button.dk-go{animation:none;} .scope .ticks{animation:none;} }
+
+  /* ================= PICK YOUR SPERM ================= */
+  #select{align-items:stretch;justify-content:flex-start;overflow:hidden;touch-action:none;text-align:left;
+    padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));}
+  .sel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;width:100%;max-width:760px;margin:0 auto 6px;}
+  .sel-head .tag{margin:0 0 4px;}
+  .sel-head h1{font-size:clamp(22px,5.4vw,46px);}
+  .sel-count{font-size:11px;letter-spacing:.2em;color:var(--signal);font-variant-numeric:tabular-nums;padding-bottom:4px;white-space:nowrap;}
+  .sel-blurb{margin:0 auto 8px;max-width:760px;width:100%;}
+  #grid-frame{position:relative;flex:1 1 auto;min-height:0;width:100%;max-width:760px;margin:0 auto;}
+  #sperm-scroll{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-width:none;}
+  #sperm-scroll::-webkit-scrollbar{display:none;}
+  #sperm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%;margin:0 0 10px;}
+  #scrollHint{position:absolute;left:0;right:0;bottom:0;height:40px;pointer-events:none;z-index:5;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;
+    background:linear-gradient(to bottom,rgba(5,22,28,0),rgba(5,22,28,.92) 80%);color:var(--signal);font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:0;transition:opacity .2s;}
+  #scrollHint .h-h{display:none;}
+  .sel-foot{display:flex;gap:10px;width:100%;max-width:760px;margin:12px auto 0;flex:none;}
+  .sel-foot .go{margin:0;min-height:54px;}
+  #selback{flex:none;width:60px;padding:0;border-radius:30px;display:flex;align-items:center;justify-content:center;}
+  #racebtn{flex:1;padding:0 20px;}
+  .opcard{background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;}
+  .opcard.sel{border-color:var(--signal);box-shadow:0 0 0 1px var(--signal),0 0 22px -4px var(--signal);}
+  .opcard .opname{color:var(--bone);font-size:15px;}
+  .opcard .opdesc{font-size:11.5px;color:var(--bone);margin-top:3px;line-height:1.3;opacity:.92;}
+  /* phones (either orientation): the roster is a swipeable two-row carousel instead of a long
+     vertical scroll — the selected card scrolls to centre, Lock in stays under the thumb */
+  @media (max-width:700px),(max-height:500px){
+    #select{padding-top:max(10px,env(safe-area-inset-top));}
+    .sel-blurb{display:none;}
+    .sel-head h1{font-size:clamp(20px,5.6vw,30px);}
+    #sperm-scroll{overflow-x:auto;overflow-y:hidden;touch-action:pan-x;scroll-snap-type:x proximity;scroll-padding-inline:2px;}
+    #sperm-grid{--cw:clamp(148px,43vw,210px);grid-template-columns:none;grid-auto-flow:column;grid-template-rows:repeat(2,minmax(0,1fr));grid-auto-columns:var(--cw);
+      gap:10px;height:100%;width:max-content;margin:0;padding-right:40px;}
+    .opcard{min-height:0;padding:10px 8px;scroll-snap-align:start;}
+    .opsvg{height:clamp(66px,13dvh,128px);width:auto;margin-bottom:2px;}
+    .opcard .opname{font-size:14px;}
+    .opcard .opdesc{font-size:11px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
+    #scrollHint{left:auto;right:0;top:0;bottom:0;width:38px;height:auto;align-items:center;justify-content:flex-end;padding:0 8px 0 0;font-size:26px;
+      background:linear-gradient(to right,rgba(5,22,28,0),rgba(5,22,28,.9));}
+    #scrollHint .h-v{display:none;} #scrollHint .h-h{display:inline;}
+  }
+  @media (orientation:landscape) and (max-height:500px){
+    #select{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom));}
+    .sel-head{margin-bottom:4px;} .sel-head .tag{display:none;} .sel-head h1{font-size:20px;}
+    #grid-frame{max-width:none;} .sel-head,.sel-foot{max-width:none;}
+    #sperm-grid{--cw:clamp(138px,19vw,190px);gap:8px;}
+    .opcard{padding:7px 6px;}
+    .opsvg{height:clamp(52px,17dvh,84px);}
+    .opcard .opname{font-size:12.5px;} .opcard .opdesc{font-size:10px;line-height:1.25;-webkit-line-clamp:3;margin-top:1px;}
+    .sel-foot{margin-top:8px;} .sel-foot .go{min-height:48px;}
+  }
 </style>
 </head>
 <body>
@@ -493,51 +647,94 @@
 <div id="loading">warming the slide…</div>
 
 <div class="screen hidden" id="start">
-  <div class="tag">specimen circuit · 400×</div>
-  <h1>RACE WARS</h1>
-  <p>Three laps of a winding plasma circuit. Grab item boxes, hold your drift through
-     the bends for a turbo kick, and don't get spun out.</p>
-  <div class="keys" id="kb">
-    <kbd>▲</kbd> gas &nbsp; <kbd>▼</kbd> brake &nbsp; <kbd>◀</kbd><kbd>▶</kbd> steer<br>
-    <kbd>shift</kbd> hop / drift &nbsp; <kbd>space</kbd> use item
+  <div class="deck">
+    <div class="dk-l">
+      <header class="dk-head">
+        <div class="tag">specimen circuit · 400×</div>
+        <button class="dk-gear nojoy" id="gearbtn" aria-label="Settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </button>
+      </header>
+      <section class="dk-hero" aria-label="Race Wars">
+        <svg class="scope" viewBox="0 0 200 200" aria-hidden="true">
+          <defs>
+            <radialGradient id="scopeGlow" cx="50%" cy="46%" r="52%"><stop offset="0" stop-color="#6df2d0" stop-opacity=".20"/><stop offset=".7" stop-color="#0d3038" stop-opacity=".10"/><stop offset="1" stop-color="#05202a" stop-opacity="0"/></radialGradient>
+            <g id="swm"><path class="swt" fill="none" stroke="#bffcee" stroke-width="2.1" stroke-linecap="round" d="M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0"><animate attributeName="d" dur=".9s" repeatCount="indefinite" values="M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0;M-6,0 C-13,5 -19,-5 -27,0 S-37,4 -44,0;M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0"/></path><ellipse rx="8" ry="5.2" fill="#eafff8"/><ellipse cx="2" cy="-.4" rx="3.6" ry="2.4" fill="#6df2d0" opacity=".55"/></g>
+          </defs>
+          <circle cx="100" cy="100" r="96" fill="url(#scopeGlow)" stroke="#2b6e66" stroke-width="1.2"/>
+          <circle class="ticks" cx="100" cy="100" r="90" fill="none" stroke="#6df2d0" stroke-opacity=".55" stroke-width="5" stroke-dasharray="1 8.55"/>
+          <circle cx="100" cy="100" r="74" fill="none" stroke="#2b6e66" stroke-opacity=".6" stroke-dasharray="2 5"/>
+          <path d="M100 6v22M100 172v22M6 100h22M172 100h22" stroke="#6df2d0" stroke-opacity=".5" stroke-width="1.2"/>
+          <use href="#swm" transform="translate(0 0)" opacity=".28"><animateMotion dur="11s" begin="-5s" repeatCount="indefinite" rotate="auto" path="M40,118 C46,56 112,38 150,74 S170,150 112,150 S34,168 40,118Z"/></use>
+          <use href="#swm" opacity=".5"><animateMotion dur="8.5s" begin="-2s" repeatCount="indefinite" rotate="auto" path="M150,64 C122,34 62,52 54,102 S90,172 138,146 S182,92 150,64Z"/></use>
+          <use href="#swm"><animateMotion dur="7s" repeatCount="indefinite" rotate="auto" path="M48,96 C60,52 128,44 150,88 S128,158 82,144 S38,128 48,96Z"/></use>
+        </svg>
+        <h1 class="dk-title"><span>RACE</span> <span>WARS</span></h1>
+        <p class="dk-line">three laps · item boxes · hold the drift</p>
+      </section>
+      <button class="dk-racer nojoy" id="racerbtn" aria-label="Choose your racer">
+        <span class="rt-art" id="racerart"></span>
+        <span class="rt-txt"><small>racer</small><b id="racername">Guido Tony</b></span>
+        <span class="rt-chev" aria-hidden="true">›</span>
+      </button>
+      <button class="go dk-go" id="startbtn"><span class="go-main">Race</span><span class="go-sub" id="picksum"></span></button>
+      <div class="keys" id="kb">
+        <kbd>▲</kbd> gas &nbsp; <kbd>▼</kbd> brake &nbsp; <kbd>◀</kbd><kbd>▶</kbd> steer &nbsp; <kbd>shift</kbd> drift &nbsp; <kbd>space</kbd> item
+      </div>
+    </div>
+    <div class="dk-r">
+      <section class="dk-course" aria-label="Choose a circuit">
+        <div class="dk-lbl"><span class="tag">circuit <b id="courseno">01 / 21</b></span>
+          <span class="dk-arrows"><button class="dk-arrow nojoy" id="courseprev" aria-label="Previous circuit">‹</button><button class="dk-arrow nojoy" id="coursenext" aria-label="Next circuit">›</button></span></div>
+        <div class="carousel" id="trackpick"></div>
+      </section>
+      <section class="dk-diff"><div class="tag">difficulty</div><div id="diffpick"></div></section>
+      <nav class="dk-sec">
+        <button class="go alt sec" id="mpbtn" style="--c:#9be74e"><b>Multiplayer</b><small>race a friend</small></button>
+        <button class="go alt sec" id="circuitbtn" style="--c:#ff9ec4"><b>🥚 Circuit Cup</b><small>every egg</small></button>
+        <button class="go alt sec" id="demobtn" style="--c:#6df2d0" onclick="location.href='demo.html'"><b>🧪 Lab</b><small>drive &amp; fx</small></button>
+      </nav>
+    </div>
   </div>
-  <div class="tag" style="margin:14px 0 6px">difficulty</div>
-  <div id="diffpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
-  <div class="tag" style="margin:14px 0 6px">circuit</div>
-  <div id="trackpick" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"></div>
-  <button class="go alt" id="cambtn" style="margin-top:14px">View: Chase</button>
-  <button class="go alt" id="tiltbtn" style="margin-top:10px">Tilt steering: OFF</button>
-  <button class="go alt" id="sliderbtn" style="margin-top:10px">Side throttle: OFF</button>
-  <button class="go alt on" id="musicbtn" style="margin-top:10px">Music: ON</button>
-  <button class="go alt on" id="hapticbtn" style="margin-top:10px">Vibration: ON</button>
-  <button class="go alt" id="fsbtn" style="margin-top:10px">Fullscreen</button>
-  <button class="go" id="startbtn">Single race</button>
-  <button class="go alt" id="mpbtn" style="margin-top:10px;border-color:#9be74e;color:#9be74e">Multiplayer — race a friend</button>
-  <button class="go alt" id="circuitbtn" style="margin-top:10px;border-color:#ff9ec4;color:#ff9ec4">🥚 Circuit Cup — fertilize every egg</button>
-  <button class="go alt" style="margin-top:10px;border-color:#6df2d0;color:#6df2d0" onclick="location.href='demo.html'">🧪 Drive &amp; Effects demo</button>
+  <!-- settings live behind the gear: the same toggles, same ids, one sheet instead of a long scroll -->
+  <div class="sheet hidden" id="sheet">
+    <div class="sheet-back" id="sheetback"></div>
+    <div class="sheet-card">
+      <div class="sheet-top"><span class="tag">lab settings</span><button class="go alt" id="sheetdone">Done</button></div>
+      <div class="sheet-grid">
+        <button class="go alt tile" id="cambtn">View: Chase</button>
+        <button class="go alt tile" id="tiltbtn">Tilt steering: OFF</button>
+        <button class="go alt tile" id="sliderbtn">Side throttle: OFF</button>
+        <button class="go alt tile on" id="musicbtn">Music: ON</button>
+        <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
+        <button class="go alt tile" id="fsbtn">Fullscreen</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- CHARACTER SELECT - Pick your stereotype sperm warrior -->
 <div class="screen hidden" id="select">
-  <div class="tag">choose your specimen</div>
-  <h1 style="font-size:clamp(28px,7vw,64px);margin-bottom:2px;">PICK YOUR SPERM</h1>
-  <p style="max-width:520px;margin:4px 0 8px;">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
+  <div class="sel-head">
+    <div><div class="tag">choose your specimen</div><h1>PICK YOUR SPERM</h1></div>
+    <span class="sel-count" id="selcount"></span>
+  </div>
+  <p class="sel-blurb">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
   <!-- grid-frame's box is fixed by flex layout (flex:1 in a non-scrolling #select column), so its
        bottom edge never moves — that's what keeps scrollHint from ever overlapping the cards or
        the race button below, no matter how far #sperm-scroll is scrolled. -->
-  <div id="grid-frame" style="position:relative;flex:1 1 auto;min-height:0;width:100%;max-width:640px;">
-    <div id="sperm-scroll" style="position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;">
-      <div id="sperm-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%;margin:0 0 10px;">
+  <div id="grid-frame">
+    <div id="sperm-scroll">
+      <div id="sperm-grid">
         <!-- Populated by JS -->
       </div>
     </div>
-    <div id="scrollHint" style="position:absolute;left:0;right:0;bottom:0;height:40px;pointer-events:none;z-index:5;
-      display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;
-      background:linear-gradient(to bottom, rgba(5,22,28,0) 0%, rgba(5,22,28,.92) 80%);
-      color:var(--signal);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
-      opacity:0;transition:opacity .2s;">▼ more ▼</div>
+    <div id="scrollHint"><span class="h-v">▼ more ▼</span><span class="h-h">›</span></div>
   </div>
-  <button class="go" id="racebtn" disabled style="opacity:0.5;margin-top:14px;flex:0 0 auto;">Lock in & Race</button>
+  <div class="sel-foot">
+    <button class="go alt" id="selback" aria-label="Back"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="go" id="racebtn" disabled style="opacity:0.5">Lock in &amp; Race</button>
+  </div>
 </div>
 
 <!-- MULTIPLAYER LOBBY -->
@@ -25030,7 +25227,9 @@ function updateScrollHint(){
   if(!sc||!sh) return;
   const overflowing = sc.scrollHeight - sc.clientHeight > 4;
   const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4;
-  sh.style.opacity = (overflowing && !atBottom) ? '1' : '0';
+  const overX = sc.scrollWidth - sc.clientWidth > 4;                 // phone carousel: swipe the other way
+  const atRight = sc.scrollLeft + sc.clientWidth >= sc.scrollWidth - 4;
+  sh.style.opacity = ((overflowing && !atBottom) || (overX && !atRight)) ? '1' : '0';
 }
 (function(){ const sc=document.getElementById('sperm-scroll'); if(sc) sc.addEventListener('scroll', updateScrollHint); })();
 resize();
@@ -47148,8 +47347,8 @@ function netApplySnap(r, dt){
   $$('mppick').onclick=()=>{
     NET.picking=true;
     $$('mp').classList.add('hidden');
-    $$('select').classList.remove('hidden');
-    setupSelect();
+    setupSelect(true);
+    showSelect();
   };
   $$('mpname').oninput=()=>{
     NET.name=$$('mpname').value||'Racer';
@@ -47308,11 +47507,11 @@ function setupSelect(keepPick){
     const locked = t.locked && !gpDone;
     const card = document.createElement('div');
     card.className = 'opcard'+(locked?' locked':'');
-    card.style.cssText = `--hue:${t.hue};background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;`;
+    card.style.setProperty('--hue',t.hue);
     card.innerHTML = `
       ${cardVisual[t.id] || `<div style="width:54px;height:54px;border-radius:50%;background:hsl(${t.hue} 85% 62%);box-shadow:0 0 18px hsl(${t.hue} 85% 55%);margin-bottom:6px;border:3px solid #eafff8;"></div>`}
-      <div class="opname" style="color:var(--bone);font-size:15px;">${t.name}</div>
-      <div class="opdesc" style="font-size:11.5px;color:var(--bone);margin-top:3px;line-height:1.3;opacity:.92;text-shadow:0 1px 2px rgba(0,0,0,.55);">${t.desc}</div>
+      <div class="opname">${t.name}</div>
+      <div class="opdesc">${t.desc}</div>
       ${locked?`<div class="oplock">🔒 Finish a Grand Prix or 3 podiums</div>`:''}
     `;
     card.onclick = () => {
@@ -47320,17 +47519,19 @@ function setupSelect(keepPick){
         card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
         return;
       }
-      if(selectedEl) selectedEl.style.borderColor = 'var(--dim)';
-      card.style.borderColor = 'var(--signal)';
+      if(selectedEl) selectedEl.classList.remove('sel');
+      card.classList.add('sel');
       chosenType = t;
       selectedEl = card;
       $('racebtn').disabled = false;
       $('racebtn').style.opacity = '1';
+      paintRacer(); revealPick(true);
+      try{ localStorage.setItem('sr_racer',t.id); }catch(_){}
       if(window.netAnnouncePick) netAnnouncePick();
     };
     // default select first (Guido) — and enable Lock-in immediately
     if(keep ? (t.id===keep.id && !locked) : idx === 0){
-      card.style.borderColor = 'var(--signal)';
+      card.classList.add('sel');
       selectedEl = card;
       chosenType = t;
       $('racebtn').disabled = false;
@@ -47338,7 +47539,9 @@ function setupSelect(keepPick){
     }
     grid.appendChild(card);
   });
-  const sc=$('sperm-scroll'); if(sc) sc.scrollTop=0;
+  const sc=$('sperm-scroll'); if(sc){ sc.scrollTop=0; sc.scrollLeft=0; }
+  $('selcount').textContent=grid.children.length+' specimens';
+  paintRacer();
   updateScrollHint();
 
   $('racebtn').onclick = () => {
@@ -47674,22 +47877,101 @@ function setupJoystick(){
 // (the joystick now feeds an analog `padSteer` straight into updateRacer above,
 //  so there's no double-applied steering and small finger moves stay gentle)
 
-// ---- track picker (start screen) ----
+// ---- launch deck: course carousel, racer tile, pick summary, settings sheet ----
+// Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
+function paintSummary(){
+  const el=$('picksum'); if(!el||!chosenType) return;
+  el.textContent=TRACKS[selTrack].name+' · '+chosenType.name+' · '+difficulty;
+}
+function paintRacer(){
+  const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
+  let svg=OP_SVG[t.id]||'';
+  // the roster card holds the same art: give the tile's copy its own ids so clip paths / gradients stay unambiguous
+  (svg.match(/ id="[^"]+"/g)||[]).forEach(m=>{ const id=m.slice(5,-1);
+    svg=svg.split(' id="'+id+'"').join(' id="'+id+'_t"').split('url(#'+id+')').join('url(#'+id+'_t)').split('href="#'+id+'"').join('href="#'+id+'_t"'); });
+  a.innerHTML=svg||'<span style="display:block;width:34px;height:34px;margin:8px 2px;border-radius:50%;background:hsl('+t.hue+' 85% 62%)"></span>';
+  n.textContent=t.name;
+  $('racerbtn').style.setProperty('--hue',t.hue);
+  paintSummary();
+}
+// bring the locked-in racer into view when the roster opens (and keep a tapped card centred)
+function revealPick(smooth){
+  const sc=$('sperm-scroll'), c=document.querySelector('#sperm-grid .opcard.sel'); if(!sc||!c||!sc.clientWidth) return;
+  if(sc.scrollWidth-sc.clientWidth<=4) return;                       // wrapping grid on tablets/desktop
+  const left=Math.max(0,c.offsetLeft-(sc.clientWidth-c.offsetWidth)/2);
+  if(smooth&&sc.scrollTo) sc.scrollTo({left,behavior:'smooth'}); else sc.scrollLeft=left;
+}
+function showSelect(){
+  $('start').classList.add('hidden'); $('finish').classList.add('hidden');
+  $('select').classList.remove('hidden');
+  $('racebtn').textContent=NET.picking?'Lock in':'Lock in & Race';
+  updateScrollHint();
+  revealPick(false); updateScrollHint();
+}
+function courseArt(t){
+  const n=t.sky||0, r=(n>>16&255)/255, g=(n>>8&255)/255, b=(n&255)/255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn;
+  let h=0, s=0;
+  if(d>0){ s=d/(1-Math.abs(2*l-1));
+    h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4; h=Math.round((h*60+360)%360); }
+  const hue=s<.12?170:h, light=l>=.5;
+  const hs=(H,S,L)=>`hsl(${H} ${Math.round(S*100)}% ${Math.round(L*100)}%)`;
+  const c1=light?hs(hue,s,Math.min(l+.05,.93)):hs(hue,Math.max(s,.34),Math.min(l+.2,.42));
+  const c2=light?hs(hue,s,l-.2):hs(hue,Math.max(s,.3),Math.max(l-.01,.035));
+  const ink=light?hs(hue,.55,.16):hs(hue,.85,.76);
+  // outline from the course's own control points (top-down x/z), closed or open
+  const P=t.ctrl.map(p=>[p[0],p[2]]), N=P.length, loop=t.loop!==false;
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; P.forEach(([x,z])=>{x0=Math.min(x0,x);x1=Math.max(x1,x);z0=Math.min(z0,z);z1=Math.max(z1,z);});
+  const sc=82/Math.max(x1-x0,z1-z0,1), ox=50-(x0+x1)/2*sc, oz=50-(z0+z1)/2*sc;
+  const Q=P.map(([x,z])=>[x*sc+ox,z*sc+oz]);
+  const at=i=>loop?Q[(i+N)%N]:Q[Math.max(0,Math.min(N-1,i))];
+  let dd='M'+Q[0][0].toFixed(1)+' '+Q[0][1].toFixed(1);
+  for(let i=0;i<(loop?N:N-1);i++){ const a=at(i-1),b2=at(i),c=at(i+1),e=at(i+2);
+    dd+=`C${(b2[0]+(c[0]-a[0])/6).toFixed(1)} ${(b2[1]+(c[1]-a[1])/6).toFixed(1)} ${(c[0]-(e[0]-b2[0])/6).toFixed(1)} ${(c[1]-(e[1]-b2[1])/6).toFixed(1)} ${c[0].toFixed(1)} ${c[1].toFixed(1)}`; }
+  if(loop) dd+='Z';
+  const svg=`<svg class="tp" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><path d="${dd}" fill="none" stroke="${ink}" stroke-opacity=".28" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/><path d="${dd}" fill="none" stroke="${ink}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${Q[0][0].toFixed(1)}" cy="${Q[0][1].toFixed(1)}" r="3.6" fill="${ink}"/></svg>`;
+  return {svg, plate:`radial-gradient(120% 95% at 28% 16%,${c1},${c2})`, ac:light?'#6df2d0':hs(hue,.85,.72), ix:light?hs(hue,.5,.2):hs(hue,.85,.78)};
+}
+// ---- track picker (start screen): a swipeable strip of "slides", the centred one is the pick ----
 function setupTrackPick(){
   const wrap=$('trackpick'); if(!wrap) return;
   wrap.innerHTML='';
+  const cards=[];
   TRACKS.forEach((t,i)=>{
-    const b=document.createElement('button');
-    b.className='go trk'+(i===selTrack?' on':'');
-    b.textContent=t.name;
-    b.onclick=()=>{
-      selTrack=i;
-      wrap.querySelectorAll('.trk').forEach(x=>x.classList.remove('on'));
-      b.classList.add('on');
-      buildTrack(i); buildRacers();   // live-preview the chosen circuit behind the menu
-    };
-    wrap.appendChild(b);
+    const a=courseArt(t), b=document.createElement('button');
+    b.className='go trk'; b.dataset.n=String(i+1).padStart(2,'0');
+    b.style.setProperty('--plate',a.plate); b.style.setProperty('--ac',a.ac); b.style.setProperty('--ix',a.ix);
+    b.innerHTML=a.svg+'<span class="tn">'+t.name+'</span>';
+    b.onclick=()=>{ commit(i); toCard(i,true); };
+    wrap.appendChild(b); cards.push(b);
   });
+  const mid=()=>wrap.scrollLeft+wrap.clientWidth/2;
+  const nearest=()=>{ const m=mid(); let bi=0, bd=1e9;
+    cards.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-m); if(d<bd){bd=d;bi=i;} }); return bi; };
+  const mark=i=>{ cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(i+1).padStart(2,'0')+' / '+TRACKS.length; };
+  function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
+    const left=c.offsetLeft+c.offsetWidth/2-wrap.clientWidth/2;
+    if(smooth&&wrap.scrollTo) wrap.scrollTo({left,behavior:'smooth'}); else wrap.scrollLeft=left; }
+  function commit(i){
+    mark(i);
+    if(i===selTrack) { paintSummary(); return; }
+    selTrack=i;
+    try{ localStorage.setItem('sr_track',String(i)); }catch(_){}
+    buildTrack(i); buildRacers();   // live-preview the chosen circuit behind the menu
+    paintSummary();
+  }
+  let raf=0, settle=0;
+  wrap.addEventListener('scroll',()=>{
+    cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>mark(nearest()));
+    clearTimeout(settle); settle=setTimeout(()=>commit(nearest()),160);
+  },{passive:true});
+  wrap.addEventListener('wheel',e=>{ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ wrap.scrollLeft+=e.deltaY; e.preventDefault(); } },{passive:false});
+  $('courseprev').onclick=()=>toCard(Math.max(0,nearest()-1),true);
+  $('coursenext').onclick=()=>toCard(Math.min(TRACKS.length-1,nearest()+1),true);
+  // whenever the home screen (re)appears, show what is actually selected (a Grand Prix or a lobby may have moved selTrack)
+  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ mark(selTrack); toCard(selTrack,false); paintSummary(); } })
+    .observe($('start'),{attributes:true,attributeFilter:['class']});
+  mark(selTrack); toCard(selTrack,false); paintSummary();
 }
 
 // ---- difficulty picker ----
@@ -47700,10 +47982,20 @@ function setupDifficulty(){
     const b=document.createElement('button');
     b.className='go trk'+(d===difficulty?' on':'');
     b.textContent=d;
-    b.onclick=()=>{ difficulty=d; wrap.querySelectorAll('.trk').forEach(x=>x.classList.remove('on')); b.classList.add('on'); };
+    b.onclick=()=>{ difficulty=d; wrap.querySelectorAll('.trk').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+      try{ localStorage.setItem('sr_diff',d); }catch(_){}
+      paintSummary(); };
     wrap.appendChild(b);
   });
 }
+// ---- settings sheet (the toggles keep their ids and handlers; only their home changed) ----
+(function setupSheet(){
+  const sh=$('sheet'), g=$('gearbtn'); if(!sh||!g) return;
+  const set=o=>{ sh.classList.toggle('hidden',!o); g.setAttribute('aria-expanded',o?'true':'false'); };
+  g.onclick=()=>set(sh.classList.contains('hidden'));
+  $('sheetdone').onclick=()=>set(false);
+  $('sheetback').onclick=()=>set(false);
+})();
 
 // ---- camera view option (chase / close chase / first person) ----
 function setupCamBtn(){
@@ -47800,8 +48092,14 @@ function setupFullscreen(){
   };
 }
 
-// Boot with new flow
-setupSelect();
+// Boot with new flow: pick up where the player left off (course, racer, difficulty)
+try{
+  const tr=parseInt(localStorage.getItem('sr_track'),10); if(tr>=0&&tr<TRACKS.length) selTrack=tr;
+  const df=localStorage.getItem('sr_diff'); if(df==='easy'||df==='medium'||df==='hard') difficulty=df;
+  const rid=localStorage.getItem('sr_racer'), gd=!!localStorage.getItem('sr_gp_done');
+  const rt=SPERM_TYPES.find(t=>t.id===rid&&!t.hidden&&!(t.locked&&!gd)); if(rt) chosenType=rt;
+}catch(_){}
+setupSelect(true);
 setupJoystick();
 setupTrackPick();
 setupDifficulty();
@@ -47853,14 +48151,18 @@ $('startbtn').onclick = () => {
       if(rq){ const p=rq.call(el); if(p&&p.catch) p.catch(()=>{}); }
     }
   }catch(_){}
-  $('start').classList.add('hidden');
+  if(NET.on) netLeave();             // a solo race must not inherit a stale room
   pendingGP=false;
-  $('select').classList.remove('hidden');
-  updateScrollHint();
+  $('start').classList.add('hidden');
+  countdown();                       // straight in with the picks already on the deck
 };
-$('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; $('start').classList.add('hidden'); $('select').classList.remove('hidden'); updateScrollHint(); };
+$('racerbtn').onclick=()=>{ initAudio(); pendingGP=false; NET.picking=false; showSelect(); };
+$('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; showSelect(); };
+$('selback').onclick=()=>{
+  if(NET.picking){ NET.picking=false; $('select').classList.add('hidden'); $('mp').classList.remove('hidden'); return; }
+  pendingGP=false; $('select').classList.add('hidden'); $('start').classList.remove('hidden'); };
 $('againbtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); countdown(); };
-$('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); $('finish').classList.add('hidden'); $('select').classList.remove('hidden'); state='menu'; updateScrollHint(); };
+$('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); state='menu'; pendingGP=false; showSelect(); };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
 $('mainbtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('start').classList.remove('hidden'); state='menu'; };
@@ -47885,6 +48187,14 @@ $('quitbtn').onclick=()=>{
 // unlock audio on the very first touch/click anywhere (iOS needs a gesture)
 window.addEventListener('pointerdown', initAudio, {once:false});
 
+// the HUD hides itself behind any menu screen (class flips on #start/#select/#mp/#finish drive it)
+(function(){
+  const ids=['start','select','mp','finish'];
+  const sync=()=>document.body.classList.toggle('inmenu',ids.some(i=>!$(i).classList.contains('hidden')));
+  const mo=new MutationObserver(sync);
+  ids.forEach(i=>mo.observe($(i),{attributes:true,attributeFilter:['class']}));
+  sync();
+})();
 // boot
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
