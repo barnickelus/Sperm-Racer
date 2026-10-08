@@ -422,6 +422,9 @@
   .dk-hero{order:1;flex:1 1 0;min-height:0;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
   .scope{position:absolute;left:50%;top:50%;height:100%;max-width:100%;aspect-ratio:1/1;transform:translate(-50%,-50%);pointer-events:none;overflow:visible;}
   .scope .ticks{transform-origin:100px 100px;animation:spin 120s linear infinite;}
+  /* the swimmers: a sharp layer over a soft one (half-res, CSS-blurred: bloom, under-shadow, wakes, the out-of-focus cells),
+     both centred on the scope and sized to its square by script; the title stacks above them */
+  .dk-hero canvas.swim{position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-50%,-50%);pointer-events:none;}
   h1.dk-title{position:relative;margin:0;font-size:clamp(34px,min(11.5vw,7.4dvh),80px);line-height:.98;letter-spacing:.07em;font-weight:800;
     color:var(--bone);text-shadow:0 0 28px rgba(109,242,208,.45),0 2px 14px rgba(2,12,16,.9);}
   .dk-title span+span{color:var(--signal);}
@@ -780,16 +783,13 @@
         <svg class="scope" viewBox="0 0 200 200" aria-hidden="true">
           <defs>
             <radialGradient id="scopeGlow" cx="50%" cy="46%" r="52%"><stop offset="0" stop-color="#6df2d0" stop-opacity=".20"/><stop offset=".7" stop-color="#0d3038" stop-opacity=".10"/><stop offset="1" stop-color="#05202a" stop-opacity="0"/></radialGradient>
-            <g id="swm"><path class="swt" fill="none" stroke="#bffcee" stroke-width="2.1" stroke-linecap="round" d="M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0"><animate attributeName="d" dur=".9s" repeatCount="indefinite" values="M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0;M-6,0 C-13,5 -19,-5 -27,0 S-37,4 -44,0;M-6,0 C-13,-5 -19,5 -27,0 S-37,-4 -44,0"/></path><ellipse rx="8" ry="5.2" fill="#eafff8"/><ellipse cx="2" cy="-.4" rx="3.6" ry="2.4" fill="#6df2d0" opacity=".55"/></g>
           </defs>
           <circle cx="100" cy="100" r="96" fill="url(#scopeGlow)" stroke="#2b6e66" stroke-width="1.2"/>
           <circle class="ticks" cx="100" cy="100" r="90" fill="none" stroke="#6df2d0" stroke-opacity=".55" stroke-width="5" stroke-dasharray="1 8.55"/>
           <circle cx="100" cy="100" r="74" fill="none" stroke="#2b6e66" stroke-opacity=".6" stroke-dasharray="2 5"/>
           <path d="M100 6v22M100 172v22M6 100h22M172 100h22" stroke="#6df2d0" stroke-opacity=".5" stroke-width="1.2"/>
-          <use href="#swm" transform="translate(0 0)" opacity=".28"><animateMotion dur="11s" begin="-5s" repeatCount="indefinite" rotate="auto" path="M40,118 C46,56 112,38 150,74 S170,150 112,150 S34,168 40,118Z"/></use>
-          <use href="#swm" opacity=".5"><animateMotion dur="8.5s" begin="-2s" repeatCount="indefinite" rotate="auto" path="M150,64 C122,34 62,52 54,102 S90,172 138,146 S182,92 150,64Z"/></use>
-          <use href="#swm"><animateMotion dur="7s" repeatCount="indefinite" rotate="auto" path="M48,96 C60,52 128,44 150,88 S128,158 82,144 S38,128 48,96Z"/></use>
         </svg>
+        <canvas class="swim soft" aria-hidden="true"></canvas><canvas class="swim" aria-hidden="true"></canvas>
         <h1 class="dk-title"><span>RACE</span> <span>WARS</span></h1>
         <p class="dk-line">three laps · item boxes · hold the drift</p>
       </section>
@@ -48964,6 +48964,226 @@ window.addEventListener('pointerdown', initAudio, {once:false});
   ids.forEach(i=>mo.observe($(i),{attributes:true,attributeFilter:['class']}));
   sync();
 })();
+// ---- home-screen hero: swimmers lapping the scope ----
+// Drawn on a small 2D canvas pair rather than as SVG: one redraw per frame touches no DOM (no style/layout work,
+// no path re-parsing), the blur that sells depth and glow is a compositor filter instead of an SVG filter
+// re-rasterised every frame, and the cost stays flat however detailed the cells get. The loop runs only while the
+// home screen is up and the tab is visible; with reduced motion it draws one still frame instead.
+(function(){
+  const hero=document.querySelector('.dk-hero'), sv=hero&&hero.querySelector('.scope');
+  const cs=hero&&hero.querySelector('canvas.swim.soft'), cv=hero&&hero.querySelector('canvas.swim:not(.soft)');
+  if(!sv||!cv||!cs||!cv.getContext||!window.Path2D) return;
+  // cv: the sharp layer. cs: the soft layer underneath (half resolution, CSS-blurred): bloom, under-shadow, wakes and the
+  // out-of-focus swimmers. Everything lives in scope units (the scope is 200 across).
+  function scopeSwimmers(cv,cs){
+    const TAU=Math.PI*2, PI=Math.PI, clamp=(x,a,b)=>x<a?a:x>b?b:x, ease=(dt,r)=>1-Math.exp(-dt*r);
+    const wrapA=a=>{ a=(a+PI)%TAU; if(a<0) a+=TAU; return a-PI; };
+    let seed=11; const R=()=>{ seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; };
+    const ctx=cv.getContext('2d'), sx=cs.getContext('2d');
+    const HN=40, HDT=1/16;
+    // sz: head length. soft: out of the focal plane. lane: preferred lap radius. vc: cruising speed (units/s)
+    const LAY=[{sz:8,a:1,soft:0,lane:63,vc:25},{sz:7.5,a:.95,soft:0,lane:56,vc:24},{sz:6.5,a:.78,soft:0,lane:72,vc:21},
+               {sz:5.2,a:.62,soft:1,lane:81,vc:15},{sz:4.2,a:.5,soft:1,lane:36,vc:12}];
+    const S=LAY.map((L,i)=>{
+      const n=L.soft?12:18, sz=L.sz, Lf=sz*9.4, Lm=sz*1.2, ds=Lf/n, a0=i*TAU/LAY.length+R()*.7;
+      const env=new Float32Array(n+1), ww=new Float32Array(n+1);
+      for(let j=0;j<=n;j++){ const si=j*ds, u=si/Lf, v=si<=Lm?0:(si-Lm)/(Lf-Lm);
+        env[j]=Lf*.105*(.05+.95*u*Math.sqrt(Math.sqrt(u)));                       // beat amplitude grows toward the tip
+        ww[j]=!j?sz*.075 : si<=Lm?sz*(.12-.022*si/Lm) : sz*(.062*Math.pow(1-v,.85)+.004); }  // neck, midpiece, taper to a hair
+      return {L,n,ds,Lf,env,ww,x:100+L.lane*Math.cos(a0),y:100+L.lane*Math.sin(a0),th:a0+PI/2,turn:0,v:L.vc,ph:R()*TAU,roll:R()*TAU,kap:0,
+        laneT:L.lane,mode:0,foe:null,timer:0,side:1,fMul:1,dim:1,wake:0,lx:0,n1:R()*TAU,n2:R()*TAU,n3:R()*TAU,n4:R()*TAU,
+        hx:new Float32Array(HN),hy:new Float32Array(HN),hn:0,hi:0,ht:0,
+        px:new Float32Array(n+1),py:new Float32Array(n+1),tx:new Float32Array(n+1),ty:new Float32Array(n+1),hX:0,hY:0,hA:0,rs:1};
+    });
+    const order=S.slice().sort((a,b)=>a.L.sz-b.L.sz), ripples=[];
+    const bodyLen=s=>s.L.sz*10.4, ang=s=>Math.atan2(s.y-100,s.x-100), rad=s=>Math.hypot(s.x-100,s.y-100);
+    const lead=(a,b)=>{ let d=ang(b)-ang(a); d=((d%TAU)+TAU)%TAU; return d*(rad(a)+rad(b))/2; };   // how far b is ahead of a, round the lap
+    let t=0, raceT=3, k=1, ks=1, W=0, WS=0, boxes=[];
+    function endRace(s){ if(s.foe) s.foe.foe=null; s.mode=0; s.foe=null; raceT=8+R()*7; }
+    function director(dt){   // every so often the nearest in-focus pair races: chase, draft, overtake, settle
+      raceT-=dt; if(raceT>0||S.some(s=>s.mode)) return;
+      let best=null, bg=1e9;
+      for(const a of S) if(!a.L.soft) for(const b of S) if(b!==a&&!b.L.soft){ const g=lead(a,b); if(g>bodyLen(b)*.75&&g<170&&g<bg){ bg=g; best=[a,b]; } }
+      if(best){ best[0].mode=1; best[0].foe=best[1]; best[1].foe=best[0]; best[0].timer=7; } else raceT=1.5;
+    }
+    function step(dt){
+      t+=dt; director(dt);
+      for(const s of S){
+        const L=s.L, r=rad(s), a=ang(s), f=s.foe;
+        let lane=L.lane+7*Math.sin(t*.31+s.n1)+4*Math.sin(t*.77+s.n2), fMul=1;
+        let vt=L.vc*(1+.12*Math.sin(t*.23+s.n3)+.06*Math.sin(t*.61+s.n4));
+        if(s.mode&&f){
+          const g=lead(s,f), dd=bodyLen(f)*.62; s.timer-=dt;
+          if(s.mode===1){ lane=f.laneT; vt=L.vc*1.85; if(g<dd*1.08){ s.mode=2; s.timer=1.2+R()*.8; } else if(s.timer<0) endRace(s); }
+          else if(s.mode===2){ lane=f.laneT+1.5*Math.sin(t*3); vt=f.v+(g-dd)*1.4; fMul=.8; if(s.timer<0){ s.mode=3; s.side=f.laneT>64?-1:1; s.timer=6; } }
+          else if(s.mode===3){ lane=f.laneT+s.side*12; vt=L.vc*2.2; const ah=lead(f,s); if(ah<150&&ah>L.sz*1.6+6){ s.mode=4; s.timer=2.6; } else if(s.timer<0) endRace(s); }
+          else { vt=L.vc*(1+.9*Math.max(0,s.timer)/2.6); if(s.timer<0) endRace(s); }
+        } else if(f&&f.mode===3) vt=L.vc*1.35;                                     // the leader digs in while being passed
+        s.laneT+=(clamp(lane,26,84)-s.laneT)*ease(dt,1.6);
+        const des=a+PI/2+clamp((r-s.laneT)*.06,-.9,.9)+.16*Math.sin(t*.9+s.n2)+.1*Math.sin(t*1.9+s.n4);
+        s.turn=clamp(wrapA(des-s.th)*2.6,-1.7,1.7); s.th+=s.turn*dt;
+        s.v+=(vt-s.v)*ease(dt,vt>s.v?1.3:.9);
+        s.x+=Math.cos(s.th)*s.v*dt; s.y+=Math.sin(s.th)*s.v*dt;
+        s.kap+=(clamp(s.turn/Math.max(6,s.v),-1/26,1/26)-s.kap)*ease(dt,3);
+        s.fMul+=(fMul-s.fMul)*ease(dt,3);
+        const hz=(1.1+5.2*s.v/bodyLen(s))*s.fMul;                                  // beat frequency follows swimming speed
+        s.ph+=TAU*hz*dt; s.roll+=TAU*hz*.36*dt;
+        s.wake+=(clamp((s.v/L.vc-1.15)/.7,0,1)-s.wake)*ease(dt,3);
+        s.ht+=dt; if(s.ht>=HDT){ s.ht-=HDT; s.hi=(s.hi+1)%HN; s.hx[s.hi]=s.x; s.hy[s.hi]=s.y; if(s.hn<HN) s.hn++; }
+        if(!L.soft&&s.y<72&&s.lx&&(s.lx-100)*(s.x-100)<=0&&ripples.length<3) ripples.push({y:s.y,t:0});   // nosed across the 12 o'clock line
+        s.lx=s.x;
+        let inT=0; for(const b of boxes) if(s.x>b[0]&&s.x<b[2]&&s.y>b[1]&&s.y<b[3]) inT=1;
+        s.dim+=((inT?.45:1)-s.dim)*ease(dt,5);                                     // fade back behind the title
+      }
+      for(let i=ripples.length-1;i>=0;i--) if((ripples[i].t+=dt)>1.1) ripples.splice(i,1);
+    }
+    // Body pose: a travelling wave (phase running tip-ward) minus its rigid-body recoil - zero net side force and
+    // torque with the head's drag lumped in - which is what yaws the head against the tail. The wave rides an arc
+    // that bends with the swim path. Trig by rotation recurrences: no sin/cos per sample.
+    function shape(s){
+      const n=s.n, ds=s.ds, Lh=s.L.sz, env=s.env, px=s.px, py=s.py, tx=s.tx, ty=s.ty, kw=2.6*PI/s.Lf;
+      const hw=Lh*2.4, hs=-Lh*.5;
+      let sw=hw, ss=hw*hs, sss=hw*hs*hs, sy=0, ssy=0;
+      let wc=Math.cos(-s.ph), wsn=Math.sin(-s.ph); const dc=Math.cos(kw*ds), dsn=Math.sin(kw*ds);
+      for(let i=0;i<=n;i++){ const si=i*ds, y=env[i]*wsn; px[i]=y;               // px[] holds the raw wave for a moment
+        sw+=ds; ss+=ds*si; sss+=ds*si*si; sy+=ds*y; ssy+=ds*si*y;
+        const c2=wc*dc-wsn*dsn; wsn=wsn*dc+wc*dsn; wc=c2; }
+      const ms=ss/sw, my=sy/sw, b=(ssy/sw-ms*my)/(sss/sw-ms*ms), a0=my-b*ms, ka=clamp(s.kap*.8,-1/52,1/52);
+      let bc=Math.cos(s.th+PI), bs=Math.sin(s.th+PI), cx=s.x, cy=s.y; const rc=Math.cos(-ka*ds), rsn=Math.sin(-ka*ds);
+      for(let i=0;i<=n;i++){
+        if(i){ const nc=bc*rc-bs*rsn, ns=bs*rc+bc*rsn; cx+=(bc+nc)*.5*ds; cy+=(bs+ns)*.5*ds; bc=nc; bs=ns; }
+        const lat=px[i]-(a0+b*i*ds); px[i]=cx-bs*lat; py[i]=cy+bc*lat;
+      }
+      for(let i=0;i<=n;i++){ const i0=i?i-1:0, i1=i<n?i+1:n, ex=px[i1]-px[i0], ey=py[i1]-py[i0], l=Math.hypot(ex,ey)||1; tx[i]=ex/l; ty[i]=ey/l; }
+      s.hA=Math.atan2(-ty[0],-tx[0]); s.hX=px[0]-tx[0]*Lh*.47; s.hY=py[0]-ty[0]*Lh*.47;
+      s.rs=.6+.4*Math.abs(Math.cos(s.roll));                                      // a flat head rolling: its width breathes
+    }
+    function ribbon(c,s,st,fat,add){                                              // filled outline of the tapering flagellum
+      const n=s.n, px=s.px, py=s.py, ww=s.ww, tx=s.tx, ty=s.ty;
+      let w=ww[0]*fat+add*.4; c.beginPath(); c.moveTo(px[0]-ty[0]*w,py[0]+tx[0]*w);
+      for(let i=st;i<n;i+=st){ const j=Math.min(n,i+st), w1=ww[i]*fat+add, w2=ww[j]*fat+add, xa=px[i]-ty[i]*w1, ya=py[i]+tx[i]*w1;
+        c.quadraticCurveTo(xa,ya,(xa+px[j]-ty[j]*w2)*.5,(ya+py[j]+tx[j]*w2)*.5); }
+      w=ww[n]*fat+add; c.lineTo(px[n]-ty[n]*w,py[n]+tx[n]*w); c.lineTo(px[n]+ty[n]*w,py[n]-tx[n]*w);
+      for(let i=n-(n%st||st);i>0;i-=st){ const j=Math.max(0,i-st), w1=ww[i]*fat+add, w2=ww[j]*fat+(j?add:add*.4), xa=px[i]+ty[i]*w1, ya=py[i]-tx[i]*w1;
+        c.quadraticCurveTo(xa,ya,(xa+px[j]+ty[j]*w2)*.5,(ya+py[j]-tx[j]*w2)*.5); }
+      w=ww[0]*fat+add*.4; c.lineTo(px[0]+ty[0]*w,py[0]-tx[0]*w); c.closePath();
+    }
+    // unit head (length 1, nose at +x): a flattened paddle, narrow at the neck, a soft point at the nose
+    const HEAD=new Path2D(); HEAD.moveTo(.5,0);
+    HEAD.bezierCurveTo(.48,-.11,.34,-.3,.08,-.31); HEAD.bezierCurveTo(-.2,-.32,-.42,-.2,-.49,-.08); HEAD.bezierCurveTo(-.52,-.03,-.52,.03,-.49,.08);
+    HEAD.bezierCurveTo(-.42,.2,-.2,.32,.08,.31); HEAD.bezierCurveTo(.34,.3,.48,.11,.5,0); HEAD.closePath();
+    const ACRO=new Path2D(); ACRO.moveTo(.47,0);
+    ACRO.bezierCurveTo(.45,-.1,.32,-.26,.1,-.27); ACRO.bezierCurveTo(.02,-.27,-.05,-.15,-.05,0);
+    ACRO.bezierCurveTo(-.05,.15,.02,.27,.1,.27); ACRO.bezierCurveTo(.32,.26,.45,.1,.47,0); ACRO.closePath();
+    const EQ=new Path2D(); EQ.moveTo(.1,-.27); EQ.bezierCurveTo(.02,-.27,-.05,-.15,-.05,0); EQ.bezierCurveTo(-.05,.15,.02,.27,.1,.27);
+    const NUC=new Path2D(); NUC.ellipse(-.17,0,.27,.21,0,0,TAU);
+    const grad=(g,stops)=>{ stops.forEach(([o,c])=>g.addColorStop(o,c)); return g; };
+    const gTail=grad(ctx.createLinearGradient(0,0,1,0),[[0,'#eafff8'],[.16,'#cffcef'],[.6,'rgba(140,244,218,.9)'],[1,'rgba(109,242,208,.3)']]);
+    // the shaded head (acrosome cap, nucleus, rim) is painted once per resize into a sprite; per frame it is one drawImage
+    const spr=document.createElement('canvas'), spx=spr.getContext('2d');
+    function paintHead(px){
+      spr.width=Math.ceil(px*1.1); spr.height=Math.ceil(px*.7); const c=spx;
+      c.setTransform(spr.width/1.1,0,0,spr.height/.7,spr.width/2,spr.height/2);
+      c.fillStyle=grad(c.createRadialGradient(.12,-.05,0,0,0,.6),[[0,'#ffffff'],[.55,'#e6fff7'],[1,'#9fe9d6']]); c.fill(HEAD);
+      c.fillStyle=grad(c.createRadialGradient(-.2,.02,0,-.17,0,.3),[[0,'rgba(18,112,100,.5)'],[1,'rgba(18,112,100,0)']]); c.fill(NUC);
+      c.fillStyle=grad(c.createLinearGradient(-.05,0,.5,0),[[0,'rgba(255,255,255,.15)'],[1,'rgba(255,255,255,.75)']]); c.fill(ACRO);
+      c.lineWidth=.03; c.strokeStyle='rgba(60,190,165,.45)'; c.stroke(EQ);
+      c.lineWidth=.045; c.strokeStyle='rgba(109,242,208,.8)'; c.stroke(HEAD);
+    }
+    const headXf=(c,s,kk)=>{ const sc=s.L.sz*kk, ca=Math.cos(s.hA), sa=Math.sin(s.hA); c.setTransform(ca*sc,sa*sc,-sa*sc*s.rs,ca*sc*s.rs,s.hX*kk,s.hY*kk); };
+    function sharp(s){
+      const c=ctx, n=s.n, sz=s.L.sz;
+      c.setTransform(k,0,0,k,0,0); ribbon(c,s,1,1,0);
+      const ax=(s.px[n]-s.px[0])*k, ay=(s.py[n]-s.py[0])*k;                       // gradient runs neck -> tip
+      c.setTransform(ax,ay,-ay,ax,s.px[0]*k,s.py[0]*k); c.fillStyle=gTail; c.fill();
+      if(sz*k>12){                                                                // mitochondrial sheath: faint helical bands, drifting as it rolls
+        const im=Math.max(1,Math.round(n*1.2/9.4)), off=((s.roll/TAU)%1+1)%1;
+        c.setTransform(k,0,0,k,0,0); c.strokeStyle='rgba(16,100,90,.24)'; c.lineWidth=sz*.028; c.beginPath();
+        for(let j=0;j<6;j++){ const fi=(j+off)/6*im, i=Math.floor(fi), fr=fi-i; if(i>=im) continue;
+          const x=s.px[i]+(s.px[i+1]-s.px[i])*fr, y=s.py[i]+(s.py[i+1]-s.py[i])*fr, w=s.ww[i], ux=s.tx[i], uy=s.ty[i];
+          c.moveTo(x-uy*w-ux*w*.6,y+ux*w-uy*w*.6); c.lineTo(x+uy*w+ux*w*.6,y-ux*w+uy*w*.6); }
+        c.stroke();
+      }
+      headXf(c,s,k); c.drawImage(spr,-.55,-.35,1.1,.7);
+      const gl=Math.sin(s.roll); c.fillStyle='#fff'; c.beginPath(); c.ellipse(.22,-.12*gl,.1,.04,-.2*gl,0,TAU); c.fill();   // specular glint
+    }
+    function soft(s,still){
+      const c=sx, al=s.L.a*s.dim;
+      if(s.L.soft){                                                               // out of focus: the blur does the rest
+        c.globalAlpha=al; c.setTransform(ks,0,0,ks,0,0); ribbon(c,s,2,1.9,.7); c.fillStyle='#d6fff4'; c.fill();
+        headXf(c,s,ks); c.scale(1.2,1.25); c.fill(HEAD); return;
+      }
+      if(!still&&s.wake>.02&&s.hn>5){                                             // fading wake behind a sprinter
+        c.setTransform(ks,0,0,ks,0,0); c.strokeStyle='#6df2d0'; const m=s.hn-1;
+        for(let q=0;q<m;q+=8){ c.beginPath(); for(let j=q;j<=Math.min(q+8,m);j++){ const id=(s.hi-j+HN)%HN; j===q?c.moveTo(s.hx[id],s.hy[id]):c.lineTo(s.hx[id],s.hy[id]); }
+          const age=q/m; c.globalAlpha=al*.3*s.wake*(1-age)*(1-age); c.lineWidth=s.L.sz*(.5+age*1.4); c.stroke(); }
+      }
+      c.setTransform(ks,0,0,ks,0,0);
+      c.globalAlpha=al*.5; ribbon(c,s,3,2.4,1.1); c.fillStyle='#6df2d0'; c.fill();                 // bloom
+      c.globalAlpha=al*.6; ribbon(c,s,3,1.1,.55); c.fillStyle='#02141a'; c.fill();                // under-shadow: legible on bright courses
+      headXf(c,s,ks); c.globalAlpha=al*.85; c.fillStyle='#6df2d0'; c.scale(1.5,1.7); c.fill(HEAD);
+      c.scale(1/1.5,1/1.7); c.globalAlpha=al*.6; c.fillStyle='#02141a'; c.fill(HEAD);
+    }
+    function draw(still){
+      if(!W) return;
+      ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,W);
+      sx.setTransform(1,0,0,1,0,0); sx.globalAlpha=1; sx.clearRect(0,0,WS,WS);
+      sx.lineCap=sx.lineJoin='round';
+      for(const s of order){ shape(s); soft(s,still); }
+      for(const s of order) if(!s.L.soft){ ctx.globalAlpha=s.L.a*s.dim; sharp(s); }
+      if(!still&&ripples.length){                                                 // lap marker: ring + a flash on the 12 o'clock crosshair
+        ctx.setTransform(k,0,0,k,0,0); ctx.strokeStyle='#bffcee';
+        for(const r of ripples){ const e=r.t/1.1;
+          ctx.globalAlpha=.4*(1-e)*(1-e); ctx.lineWidth=.7; ctx.beginPath(); ctx.arc(100,r.y,2+14*(1-(1-e)*(1-e)),0,TAU); ctx.stroke();
+          ctx.globalAlpha=.6*(1-e); ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(100,6); ctx.lineTo(100,28); ctx.stroke(); }
+      }
+      ctx.globalAlpha=1;
+    }
+    function resize(css,dpr,bx){
+      W=Math.max(2,Math.round(css*dpr)); WS=Math.max(2,Math.round(W/2)); k=W/200; ks=WS/200; boxes=bx||[];
+      cv.width=cv.height=W; cs.width=cs.height=WS;
+      for(const e of [cv,cs]){ e.style.width=e.style.height=css+'px'; }
+      cs.style.filter='blur('+(css*.0075).toFixed(2)+'px)';
+      paintHead(Math.max(16,LAY[0].sz*k*1.5));
+    }
+    return {resize,step,draw};
+  }
+  let eng; try{ eng=scopeSwimmers(cv,cs); }catch(_){ return; }
+  const startEl=document.getElementById('start');
+  const rm=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:false};
+  let raf=0, last=0, posed=false;
+  function fit(){                      // size both layers to the scope's square; note where the title sits (in scope units)
+    const r=sv.getBoundingClientRect(), side=Math.min(r.width,r.height);
+    if(side<8) return;
+    const x0=r.left+(r.width-side)/2, y0=r.top+(r.height-side)/2, u=200/side, boxes=[];
+    hero.querySelectorAll('.dk-title,.dk-line').forEach(e=>{ const q=e.getBoundingClientRect();
+      if(q.width) boxes.push([(q.left-x0)*u-3,(q.top-y0)*u-3,(q.right-x0)*u+3,(q.bottom-y0)*u+3]); });
+    eng.resize(side,Math.min(3,window.devicePixelRatio||1),boxes);
+    if(!raf) eng.draw(true);
+  }
+  function swimTick(now){
+    raf=requestAnimationFrame(swimTick);
+    const dt=last?Math.min(.05,(now-last)/1000):1/60; last=now;
+    eng.step(dt); eng.draw(false);
+  }
+  function sync(){
+    if(rm.matches){                    // reduced motion: a composed still, no loop
+      if(raf){ cancelAnimationFrame(raf); raf=0; }
+      if(!posed){ posed=true; for(let i=0;i<320;i++) eng.step(1/30); }   // ~10.7 s in: three cells spread round the ring
+      eng.draw(true); return;
+    }
+    const on=!startEl.classList.contains('hidden')&&!document.hidden;
+    if(on&&!raf){ last=0; raf=requestAnimationFrame(swimTick); }
+    else if(!on&&raf){ cancelAnimationFrame(raf); raf=0; }
+  }
+  if(window.ResizeObserver) new ResizeObserver(fit).observe(hero);   // also fires once the home screen first lays out
+  else { window.addEventListener('resize',fit); fit(); }
+  new MutationObserver(sync).observe(startEl,{attributes:true,attributeFilter:['class']});
+  document.addEventListener('visibilitychange',sync);
+  if(rm.addEventListener) rm.addEventListener('change',sync);
+  sync();
+})();
+
 // boot
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
