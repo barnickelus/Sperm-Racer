@@ -48986,7 +48986,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const LAY=[{sz:9.2,a:1,soft:0,lane:63,vc:25},{sz:8.6,a:.95,soft:0,lane:56,vc:24},{sz:7.4,a:.82,soft:0,lane:72,vc:21},
                {sz:5.8,a:.62,soft:1,lane:81,vc:15},{sz:4.6,a:.5,soft:1,lane:36,vc:12}];
     const S=LAY.map((L,i)=>{
-      const n=L.soft?12:18, sz=L.sz, Lf=sz*FL, Lm=sz*1.2, ds=Lf/n, a0=i*TAU/LAY.length+R()*.7;
+      const n=L.soft?12:16, sz=L.sz, Lf=sz*FL, Lm=sz*1.2, ds=Lf/n, a0=i*TAU/LAY.length+R()*.7;
       const env=new Float32Array(n+1), ww=new Float32Array(n+1);
       for(let j=0;j<=n;j++){ const si=j*ds, u=si/Lf, v=si<=Lm?0:(si-Lm)/(Lf-Lm);
         env[j]=Lf*.105*(.05+.95*u*Math.sqrt(Math.sqrt(u)));                       // beat amplitude grows toward the tip
@@ -49080,16 +49080,24 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const NUC=new Path2D(); NUC.ellipse(-.17,0,.27,.21,0,0,TAU);
     const grad=(g,stops)=>{ stops.forEach(([o,c])=>g.addColorStop(o,c)); return g; };
     const gTail=grad(ctx.createLinearGradient(0,0,1,0),[[0,'#eafff8'],[.16,'#cffcef'],[.6,'rgba(140,244,218,.9)'],[1,'rgba(109,242,208,.3)']]);
-    // the shaded head (acrosome cap, nucleus, rim) is painted once per resize into a sprite; per frame it is one drawImage
-    const spr=document.createElement('canvas'), spx=spr.getContext('2d');
+    // the shaded head (acrosome cap, nucleus, rim, glint) is painted per resize into five sprites, one per glint position
+    // as the cell rolls; per frame it is a single drawImage (an ImageBitmap once that is ready)
+    const SPR=[]; let sprGen=0;
     function paintHead(px){
-      spr.width=Math.ceil(px*1.1); spr.height=Math.ceil(px*.7); const c=spx;
-      c.setTransform(spr.width/1.1,0,0,spr.height/.7,spr.width/2,spr.height/2);
-      c.fillStyle=grad(c.createRadialGradient(.12,-.05,0,0,0,.6),[[0,'#ffffff'],[.55,'#e6fff7'],[1,'#9fe9d6']]); c.fill(HEAD);
-      c.fillStyle=grad(c.createRadialGradient(-.2,.02,0,-.17,0,.3),[[0,'rgba(18,112,100,.5)'],[1,'rgba(18,112,100,0)']]); c.fill(NUC);
-      c.fillStyle=grad(c.createLinearGradient(-.05,0,.5,0),[[0,'rgba(255,255,255,.15)'],[1,'rgba(255,255,255,.75)']]); c.fill(ACRO);
-      c.lineWidth=.03; c.strokeStyle='rgba(60,190,165,.45)'; c.stroke(EQ);
-      c.lineWidth=.045; c.strokeStyle='rgba(109,242,208,.8)'; c.stroke(HEAD);
+      const gen=++sprGen, w=Math.ceil(px*1.1), h=Math.ceil(px*.7);
+      for(let v=0;v<5;v++){
+        const cnv=document.createElement('canvas'), c=cnv.getContext('2d'), gl=(v-2)/2;
+        cnv.width=w; cnv.height=h; c.setTransform(w/1.1,0,0,h/.7,w/2,h/2);
+        c.fillStyle=grad(c.createRadialGradient(.12,-.05,0,0,0,.6),[[0,'#ffffff'],[.55,'#e6fff7'],[1,'#9fe9d6']]); c.fill(HEAD);
+        c.fillStyle=grad(c.createRadialGradient(-.2,.02,0,-.17,0,.3),[[0,'rgba(18,112,100,.5)'],[1,'rgba(18,112,100,0)']]); c.fill(NUC);
+        c.fillStyle=grad(c.createLinearGradient(-.05,0,.5,0),[[0,'rgba(255,255,255,.15)'],[1,'rgba(255,255,255,.75)']]); c.fill(ACRO);
+        c.lineWidth=.03; c.strokeStyle='rgba(60,190,165,.45)'; c.stroke(EQ);
+        c.lineWidth=.045; c.strokeStyle='rgba(109,242,208,.8)'; c.stroke(HEAD);
+        c.fillStyle='#fff'; c.beginPath(); c.ellipse(.22,-.12*gl,.1,.04,-.2*gl,0,TAU); c.fill();      // specular glint
+        if(SPR[v]&&SPR[v].close) SPR[v].close();
+        SPR[v]=cnv;
+        if(window.createImageBitmap) createImageBitmap(cnv).then(bm=>{ if(gen===sprGen) SPR[v]=bm; else bm.close(); },()=>{});
+      }
     }
     const headXf=(c,s,kk)=>{ const sc=s.L.sz*kk, ca=Math.cos(s.hA), sa=Math.sin(s.hA); c.setTransform(ca*sc,sa*sc,-sa*sc*s.rs,ca*sc*s.rs,s.hX*kk,s.hY*kk); };
     function sharp(s){
@@ -49105,8 +49113,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
           c.moveTo(x-uy*w-ux*w*.6,y+ux*w-uy*w*.6); c.lineTo(x+uy*w+ux*w*.6,y-ux*w+uy*w*.6); }
         c.stroke();
       }
-      headXf(c,s,k); c.drawImage(spr,-.55,-.35,1.1,.7);
-      const gl=Math.sin(s.roll); c.fillStyle='#fff'; c.beginPath(); c.ellipse(.22,-.12*gl,.1,.04,-.2*gl,0,TAU); c.fill();   // specular glint
+      headXf(c,s,k); c.drawImage(SPR[Math.round(2+2*Math.sin(s.roll))],-.55,-.35,1.1,.7);
     }
     function soft(s,still){
       const c=sx, al=s.L.a*s.dim;
@@ -49116,7 +49123,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
       }
       if(!still&&s.wake>.02&&s.hn>5){                                             // fading wake behind a sprinter
         c.setTransform(ks,0,0,ks,0,0); c.strokeStyle='#6df2d0'; const m=s.hn-1;
-        for(let q=0;q<m;q+=8){ c.beginPath(); for(let j=q;j<=Math.min(q+8,m);j++){ const id=(s.hi-j+HN)%HN; j===q?c.moveTo(s.hx[id],s.hy[id]):c.lineTo(s.hx[id],s.hy[id]); }
+        for(let q=0;q<m;q+=13){ c.beginPath(); for(let j=q;j<=Math.min(q+13,m);j++){ const id=(s.hi-j+HN)%HN; j===q?c.moveTo(s.hx[id],s.hy[id]):c.lineTo(s.hx[id],s.hy[id]); }
           const age=q/m; c.globalAlpha=al*.3*s.wake*(1-age)*(1-age); c.lineWidth=s.L.sz*(.5+age*1.4); c.stroke(); }
       }
       c.setTransform(ks,0,0,ks,0,0);
