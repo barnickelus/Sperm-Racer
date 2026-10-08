@@ -1224,7 +1224,7 @@ const MUSIC_STYLES={
               drums:{kick:[0,4,8,12],snare:[2,6,10,14]}, bass:[0,7,0,7],
               hihat:0, beatGroup:4, tempoMul:0.62, station:'105.3 ALA ANCHA FM',
               stab:{inst:'brass', wave:'sawtooth', note:12, steps:[2,6,10,14], dur:0.1, vol:0.18},
-              mel:[4,null,4,5,7,null,5,4, 2,null,2,4,5,null,4,2],
+              mel:[7,null,4,5,7,null,9,7, 5,null,2,4,5,null,7,2],
               melB:[9,null,7,9,12,null,9,5, 7,null,4,7,12,null,7,4] },
   // Wei Long: the koto is a JAPANESE instrument and he is not, and the phrase was a
   // generic pentatonic doodle. Now Mo Li Hua (Jasmine Flower), the best-known Chinese
@@ -24513,13 +24513,18 @@ SONG_ENGINE.songs.grudge=(function(){
                                      tambora on every beat, tarola sixteenths)
     92 Polka B in G (8)        2:34  trumpets and clarinets on the B strain, everything in
    100 Final (3)               2:47  the tresillo hits, the tuba runs down, the dominant shake, the
-                                     last chord, tambora roll, cut ... and the "pa-pum"
+                                     last chord, tambora roll, cut ... and the "pa-pum" (dominant,
+                                     tonic, still in G), a breath, and the polka starts again in F
    It loops to the polka (the arranque plays once). Every bar draws from an RNG keyed to its
    absolute bar number and the planner reads the pass count: the tuba's walks and runs, the
    tambora's hoop taps, the tarola's ghosts and fills, the clarinet runs and ornaments and the
    trumpets' scoops change every bar; on the next time round the trumpets lead off the polka and
    the cumbia and the clarinets answer, and the tarola leads the break instead of the tambora, so
-   no bar of a three-lap race repeats. */
+   no bar of the strains repeats over a three-lap race. The break, the climb and the ending are
+   set pieces and come back the same each time round.
+   Harmony housekeeping: the trombones' held guide tones step aside (to another chord tone, or a
+   rest) wherever the tune has a semitone neighbour over them, and every trill takes its upper
+   note from the chord's scale. */
 SONG_ENGINE.songs.tamboraAFondo=(function(){
   const PLAZA=0.5;
   function voices(ctx,bus,noise,live,lite){
@@ -24562,8 +24567,9 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
        articulation] each), one set of oscillators sings it and the pitch, the filter and the
        envelope are automated note by note. Legato is real legato, a run of sixteenths costs two
        oscillators instead of thirty, and the vibrato is one LFO whose depth rides each note.
-       Articulations: '>' accent, '~' slur, 'gl' slide (trombone), 'sc' scoop, 'tr' trill,
-       'sh' shake (trumpet lip trill), 'fall' fall-off at the end of the phrase. */
+       Articulations: '>' accent, '~' slur, 'gl' slide (trombone), 'sc' scoop, 'tr' trill a whole
+       step up, 'tr1' a half step up (trArt picks the scale's own neighbour), 'sh' shake (trumpet
+       lip trill), 'fall' fall-off at the end of the phrase. */
     const LINE={
       clar:{wave:CLAR, dets:[-6,7], atk:0.012, pk:0.15, cut:[3,8,5.5], cutMax:9500, q:0.7, vib:7, vibR:5.4, vibIn:0.2, set:0.05},
       tpt: {wave:'sawtooth', dets:[-5,6], atk:0.016, pk:0.115, cut:[2,10,6], cutMax:9500, q:1.1, vib:30, vibR:6.6, vibIn:0.07, set:0.06},
@@ -24581,7 +24587,7 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
       if(p.throw){ const s=G(p.throw); g.connect(s); s.connect(ch.thr); }
       P.setValueAtTime(0,t); Q.setValueAtTime(f0*S.cut[0],t);
       let prevF=f0, gapBefore=true;
-      ns.forEach(([s,n,l,art],i)=>{ const a=at(s), dur=Math.max(0.045,l*sd), f=hz(n), nx=ns[i+1], last=!nx, nxA=nx?at(nx[0]):a+dur+0.2;
+      ns.forEach(([s,n,l,art],i)=>{ const a=at(s), dur=Math.max(0.045,l*sd), f=hz(n), nx=ns[i+1], last=!nx, nxA=nx?at(nx[0]):a+dur+0.2, orn=art==='tr'||art==='tr1'||art==='sh';
         const room=Math.max(0.03,nxA-a), slur=i>0 && (art==='~'||art==='gl') && Math.abs(at(ns[i-1][0]+ns[i-1][2])-a)<0.02;
         const acc=art==='>'?1.22:1, pk=S.pk*v*acc*(lite?1.12:1), atk=Math.min(S.atk,room*0.3), set=Math.min(S.set,room*0.5);
         for(const o of oscs){ const q=o.frequency;
@@ -24589,15 +24595,18 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
           else if(slur){ q.setValueAtTime(prevF,a); q.exponentialRampToValueAtTime(f,a+Math.min(0.022,room*0.4)); }
           else if(art==='sc'){ q.setValueAtTime(f*0.93,a); q.exponentialRampToValueAtTime(f,a+Math.min(0.07,room*0.5)); }
           else q.setValueAtTime(f,a);
-          if(art==='tr'||art==='sh'){ const fu=hz(n+(art==='sh'?3:(p.trUp||2))), rate=art==='sh'?9.5:14; let x=a+0.06, up=true;
-            while(x<a+dur-0.04){ if(art==='sh') q.linearRampToValueAtTime(up?fu:f,x); else q.setValueAtTime(up?fu:f,x); x+=1/rate; up=!up; }
-            q.setValueAtTime(f,Math.max(a+0.06,x)); }
+          // the ornament lives inside its note: the note speaks first, and it is back on the written
+          // pitch before the note ends (and so before the next one starts)
+          if(orn){ const sh=art==='sh', fu=hz(n+(sh?3:art==='tr1'?1:2)), st=1/(sh?9.5:14), stop=a+dur-0.03; let x=a+0.06, up=true;
+            if(sh){ q.setValueAtTime(f,x); x+=st; }
+            while(x<stop){ if(sh) q.linearRampToValueAtTime(up?fu:f,x); else q.setValueAtTime(up?fu:f,x); x+=st; up=!up; }
+            if(!up){ const xe=Math.min(x,a+dur-0.01); if(sh) q.linearRampToValueAtTime(f,xe); else q.setValueAtTime(f,xe); } }
           if(last && fall){ q.setValueAtTime(f,a+dur); q.exponentialRampToValueAtTime(f*0.66,a+dur+fall); } }
         const cut=Math.min(S.cutMax,f*S.cut[1]*(0.78+0.22*v*acc)), rest=Math.min(S.cutMax,f*S.cut[2]);
         if(!slur){ P.setValueAtTime(gapBefore?0:pk*0.15,a); P.linearRampToValueAtTime(pk*1.18,a+atk); P.linearRampToValueAtTime(pk,a+atk+set);
           Q.setValueAtTime(Math.max(180,f*S.cut[0]),a); Q.exponentialRampToValueAtTime(cut,a+atk+0.008); Q.exponentialRampToValueAtTime(rest,a+Math.min(room*0.9,atk+0.22)); }
         else { P.setValueAtTime(pk,a); Q.setValueAtTime(rest,a); }
-        if(vg){ vg.gain.setValueAtTime(0,a); if(dur>0.26 && art!=='tr' && art!=='sh') vg.gain.linearRampToValueAtTime(S.vib,a+Math.min(dur*0.8,S.vibIn+0.18)); }
+        if(vg){ vg.gain.setValueAtTime(0,a); if(dur>0.26 && !orn) vg.gain.linearRampToValueAtTime(S.vib,a+Math.min(dur*0.8,S.vibIn+0.18)); }
         if(last){ P.setValueAtTime(pk,a+dur); if(fall){ P.linearRampToValueAtTime(pk*0.5,a+dur+fall*0.6); P.linearRampToValueAtTime(0,a+dur+fall); } else P.linearRampToValueAtTime(0,a+dur+0.05); }
         else { const nArt=nx[3], nSlur=(nArt==='~'||nArt==='gl') && Math.abs(a+dur-nxA)<0.02;
           gapBefore=nxA-(a+dur)>0.015;
@@ -24698,6 +24707,8 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
   const ctNear=(x,c)=>{ for(let d=0;d<7;d++){ if(isCT(x-d,c)) return x-d; if(isCT(x+d,c)) return x+d; } return x; };
   // the second part: a diatonic third under the line, a chord tone wherever the line sits on one
   const third=(x,c,strong)=>{ if(strong && isCT(x,c)){ const y=ctBelow(x,c,3); if(x-y<=5) return y; } return stepS(stepS(x,c,-1),c,-1); };
+  // a trill's upper note is the next note up the chord's scale: a half step ('tr1') or a whole step
+  const trArt=(x,c)=>stepS(x,c,1)-x===1?'tr1':'tr';
   const near=(x,c0)=>{ while(x<c0-6)x+=12; while(x>=c0+6)x-=12; return x; };
   const root=(c)=>CH[c][0];
   const bassRoot=(c)=>((root(c)+5)%12)-17;                                  // C2..B2 (F2 = -12)
@@ -24713,11 +24724,11 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
   // ---- the tunes: [step, note over F3, length, articulation] ----
   // Polka A: the hook (3+3+2 on each 2/4 bar), its sequence a step down, the climb, the arpeggio
   const A_MEL=[
-    [[0,16,3,'>'],[3,16,3],[6,17,2],[8,19,3,'>'],[11,17,3],[14,16,2]],
-    [[0,14,3,'>'],[3,14,3],[6,16,2],[8,17,3,'>'],[11,16,3],[14,14,2]],
+    [[0,19,3,'>'],[3,16,3],[6,17,2],[8,19,3,'>'],[11,21,3],[14,19,2]],
+    [[0,17,3,'>'],[3,14,3],[6,16,2],[8,17,3,'>'],[11,19,3],[14,14,2]],
     [[0,11,2],[2,14,2],[4,17,2],[6,21,2],[8,23,3,'>'],[11,21,1],[12,19,2],[14,17,2]],
     [[0,16,4,'>'],[4,19,2],[6,16,2],[8,12,2],[10,16,2],[12,19,2],[14,17,2]],
-    [[0,16,3,'>'],[3,16,3],[6,17,2],[8,19,3,'>'],[11,24,3],[14,22,2]],
+    [[0,19,3,'>'],[3,16,3],[6,17,2],[8,19,3,'>'],[11,24,3],[14,22,2]],
     [[0,21,4,'>'],[4,19,2],[6,17,2],[8,21,2],[10,24,2],[12,21,2],[14,17,2]],
     [[0,16,2],[2,19,2],[4,16,2],[6,12,2],[8,14,3,'>'],[11,17,3],[14,23,2]],
     [[0,24,4,'>'],[4,19,2],[6,16,2],[8,12,4]]];
@@ -24733,6 +24744,7 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
     [[0,12,4,'>'],[4,9,2],[6,6,2],[8,11,4,'>'],[12,14,2],[14,17,2]],
     [[0,16,8,'>'],[8,12,2],[10,7,2],[12,4,4]]];
   const B_END2=[[0,16,6,'>'],[6,14,2],[8,11,2],[10,14,2],[12,17,2],[14,19,2]];                     // back to A (over C7)
+  const B_ENDF=[[0,16,6,'>'],[6,14,2],[8,11,2],[10,14,2],[12,17,2],[14,14,2]];                     // into the Final (over C7): down onto its F
   // the trumpets' answers while the trombones hold (B strain, first time)
   const B_ANS=[[[2,17,1],[3,21,1],[4,24,2,'>']], [[2,16,1],[3,19,1],[4,24,2,'>']], [[10,18,1],[11,21,1],[12,24,2,'>']],
     [[2,17,1],[3,21,1],[4,23,2,'>']], null, [[2,19,1],[3,23,1],[4,24,2,'>']], null, [[10,19,1],[11,21,1],[12,24,1],[13,28,3,'fall']]];
@@ -24859,9 +24871,10 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
           if(kind==='tpt' && l>=4 && R()<o.orn*0.35) return [s,x,l,'sh'];
           return q; });
         const L=ns[ns.length-1]; if(o.fall && L[2]>=2 && R()<o.fall) L[3]='fall'; }
-      const main=ns.map(([s,x,l,a])=>[s,T(x),l,a]);
+      const art=(x,s,a)=>a==='tr'?trArt(x,chAt(Math.floor(s))):a;
+      const main=ns.map(([s,x,l,a])=>[s,T(x),l,art(x,s,a)]);
       E(main[0][0],kind,{ns:main,v:o.v||1,throw:o.throw||0});
-      if(o.harm!==false){ const h=ns.map(([s,x,l,a])=>[s,T(third(x,chAt(Math.floor(s)),s%4===0||l>=3)),l,a==='sh'?'':a]);
+      if(o.harm!==false){ const h=ns.map(([s,x,l,a])=>{ const y=third(x,chAt(Math.floor(s)),s%4===0||l>=3); return [s,T(y),l,a==='sh'?'':art(y,s,a)]; });
         E(h[0][0],kind,{ns:h,v:(o.v||1)*0.78,two:1}); } };
     // band hit: trumpets on the top two chord tones near `top`, trombones in the middle, tuba, drums
     const hit=(s,c,o)=>{ o=o||{}; const top=ctNear(o.top||21,c), t2=ctBelow(top,c,3), bt=charV(c).map(x=>x-12);
@@ -24886,11 +24899,27 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
     // clarinet fills wherever the lead holds a note for a half bar or more
     const fillsUnder=(lineArr,o)=>{ o=o||{}; for(const [s,x,l] of lineArr) if(l>=4 && s+l<=16){
         const off=l>=6?2:1, st=s+off, len=Math.min(l-off,6); if(len<3) continue; const dir=R()<0.6?1:-1;
-        clarRun(st,len,(o.base||x+7)+(dir>0?-3:3),dir,{arp:R()<0.5,zig:R()<0.3,hi:31,lo:17,v:o.v||0.75}); } };
-    const guides=(o)=>{ o=o||{}; let prev=4; const ln1=[], ln2=[];
-      for(let m=0;m<2;m++){ const c=cs[m]; if(m===1&&cs[1]===cs[0]) { ln1[ln1.length-1][2]+=8; ln2[ln2.length-1][2]+=8; continue; }
-        const [lo,hi]=guide(c,prev); prev=hi; const art=m?'gl':(o.art||''); ln1.push([m*8,hi,8,art]); ln2.push([m*8,lo,8,art]); }
-      E(0,'bone',{ns:ln1.map(([s,x,l,a])=>[s,T(x),l,a]),v:o.v||0.6}); E(0,'bone',{ns:ln2.map(([s,x,l,a])=>[s,T(x),l,a]),v:(o.v||0.6)*0.85,two:1}); };
+        clarRun(st,len,(o.base||x+7)+(dir>0?-3:3),dir,{arp:R()<0.5,zig:R()<0.3,hi:31-tr,lo:17,v:o.v||0.75}); } };
+    // the notes an eighth or longer the clarinets and trumpets already have in this bar, and the
+    // ones a semitone off a pitch between two steps
+    const heldMel=()=>{ const out=[]; for(const e of ev) if(e.v==='clar'||e.v==='tpt') for(const [s,x,l] of e.p.ns) if(l>=2) out.push([s,s+l,x]); return out; };
+    const rubs=(x,s0,s1,mel)=>mel.filter(([a,b,y])=>Math.min(b,s1)>Math.max(a,s0) && (pc(y-x)===1||pc(y-x)===11));
+    /* The trombones' guide tones, held under the tune (call it after the tune is down): a guide
+       tone a semitone off a melody note it would sit under moves to the nearest chord tone that
+       is clear of the tune; if none is, it rests while the rubbing note sounds and comes back in. */
+    const guides=(o)=>{ o=o||{}; let prev=4; const seg=[], mel=heldMel();
+      for(let m=0;m<2;m++){ const c=cs[m]; if(m===1&&cs[1]===cs[0]){ seg[seg.length-1].l+=8; continue; }
+        const [lo,hi]=guide(c,prev); prev=hi; seg.push({s:m*8, l:8, c, v:[hi,lo], a:m?'gl':(o.art||'')}); }
+      const ln=[[],[]];
+      for(const g of seg){ const {s,l,c}=g, end=s+l;
+        for(let k=0;k<2;k++){ const x=g.v[k], oth=g.v[1-k]; if(!rubs(T(x),s,end,mel).length) continue;
+          let best=null; for(let y=x-5;y<=x+5;y++) if(y!==x && isCT(y,c) && pc(y)!==pc(oth) && !rubs(T(y),s,end,mel).length && (best==null||Math.abs(y-x)<Math.abs(best-x))) best=y;
+          if(best!=null) g.v[k]=best; }
+        for(let k=0;k<2;k++){ const x=g.v[k], spans=rubs(T(x),s,end,mel).map(([p,q])=>[Math.max(p,s),Math.min(q,end)]).sort((p,q)=>p[0]-q[0]);
+          let cur=s; for(const [p,q] of spans){ if(p-cur>=2) ln[k].push([cur,x,p-cur,cur===s?g.a:'']); cur=Math.max(cur,q); }
+          if(end-cur>=2) ln[k].push([cur,x,end-cur,cur===s?g.a:'']); } }
+      if(ln[0].length) E(ln[0][0][0],'bone',{ns:ln[0].map(([s,x,l,a])=>[s,T(x),l,a]),v:o.v||0.6});
+      if(ln[1].length) E(ln[1][0][0],'bone',{ns:ln[1].map(([s,x,l,a])=>[s,T(x),l,a]),v:(o.v||0.6)*0.85,two:1}); };
 
     // ---- the sections
     if(id==='arr'){
@@ -24914,7 +24943,7 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
       const half=b>=8, bb=b%8, mel=(half&&bb===7 && id!=='polA3')?A_END2:(id==='polA3'&&last)?A_MEL[7].slice(0,3):A_MEL[bb];
       const brass=bb===3?mel.filter(q=>q[0]<8):mel, pe=bb===3||bb===7;
       const tutti=id==='polA3', lift=id==='liftA', zap=lift&&half;
-      if(bb===0) plat(0,'x',half?0.8:0.95);
+      if(bb===0 && !(id==='polA' && b===0 && pass>0)) plat(0,'x',half?0.8:0.95);   // after the ending the polka starts afresh, no crash
       polka({v:1, zap, walk:0.6});
       if(!tutti && !lift){
         // first time the clarinets have it in thirds and the trumpets take the repeat; the next time
@@ -24924,14 +24953,16 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
           if(bb===1||bb===5) sec2('tpt',[[14,ctNear(24,cs[1]),2,'>']],{v:0.6}); }
         else { sec2('tpt',brass,{v:1, orn:0.4, fall:pe?0.35:0});
           fillsUnder(brass,{v:0.72});
-          if(bb===3) clarRun(8,8,12,1,{arp:true,v:0.8}); }
+          if(bb===3) clarRun(8,8,12,1,{arp:true,v:0.8,hi:31-tr}); }
         if(half || bb>=4) guides({v:half?0.5:0.4});
       } else {                                                         // tutti / the lift
         sec2('tpt',brass,{v:1.05, orn:0.45, fall:pe?0.35:0});
         sec2('bone',brass,{v:0.85, oct:-12, harm:!lite});
         fillsUnder(brass,{v:0.8});
-        if(bb===3||(bb===7&&!half&&!last)) clarRun(8,8,12,1,{arp:true,v:0.85});
-        if(zap && bb%2===1) sec2('clar',[[12,ctNear(28,cs[1]),4,'tr']],{v:0.7,harm:false});
+        if(bb===3||(bb===7&&!half&&!last)) clarRun(8,8,12,1,{arp:true,v:0.85,hi:31-tr});
+        if(zap && bb%2===1){ const mel=heldMel(); let y=null;            // a trill on a chord tone clear of the tune
+          for(let d=0;d<6 && y==null;d++) for(const z of [26-d,26+d]) if(y==null && isCT(z,cs[1]) && !rubs(T(z),12,16,mel).length) y=z;
+          sec2('clar',[[12,y!=null?y:ctNear(26,cs[1]),4,'tr']],{v:0.7,harm:false}); }
       }
       if(bb===3||bb===7){ if(last) tarFill(pass+1); else if(R()<0.6) tarFill(pass+bb); }
       if(bb===7 && !half && R()<0.6) tubaRun(-1);
@@ -24940,7 +24971,7 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
         hit(8,'A7',{top:23,l:1}); hit(11,'A7',{top:23,l:1}); hit(14,'A7',{top:26,l:2,art:'fp',cym:'o'}); }
     }
     else if(id==='polB'||id==='liftB'){
-      const half=b>=8||id==='liftB', bb=b%8, mel=(bb===7&&(half||id==='liftB'))?B_END2:B_MEL[bb];
+      const half=b>=8||id==='liftB', bb=b%8, mel=bb===7&&id==='liftB'?B_ENDF:(bb===7&&half)?B_END2:B_MEL[bb];
       if(bb===0) plat(0,'x',0.9);
       polka({v:1, walk:0.7, cv:half?1:0.72});                         // the charchetas step back while the trombones sing in their register
       if(!half){                                                       // B1: the trombones sing it, the trumpets answer
@@ -24960,10 +24991,12 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
       const half=b>=8, bb=b%8;
       if(b===0){ plat(0,'x',0.8); A(0,{a:'lp',from:3200,f:20000,l:8}); }
       cumbia({v:1});
-      if((!half)!==(pass%2===1)){ sec2('clar',C_MEL[bb],{v:1, orn:0.3}); if(bb%2===1) guides({v:0.45});
-        if(C_ANS[bb] && bb!==7) sec2('tpt',C_ANS[bb],{v:0.75}); }
-      else { sec2('tpt',C_MEL[bb],{v:0.95, orn:0.35, fall:bb===3?0.5:0}); fillsUnder(C_MEL[bb],{v:0.7}); guides({v:0.45});
-        if(bb===1||bb===5) clarRun(14,2,24,1,{v:0.6}); }
+      if((!half)!==(pass%2===1)){ sec2('clar',C_MEL[bb],{v:1, orn:0.3});
+        if(C_ANS[bb] && bb!==7) sec2('tpt',C_ANS[bb],{v:0.75});
+        if(bb%2===1) guides({v:0.45}); }
+      else { sec2('tpt',C_MEL[bb],{v:0.95, orn:0.35, fall:bb===3?0.5:0}); fillsUnder(C_MEL[bb],{v:0.7});
+        if(bb===1||bb===5) clarRun(14,2,24,1,{v:0.6});
+        guides({v:0.45}); }
       if(bb===3) tarFill(pass);
       if(last){ for(let i=ev.length-1;i>=0;i--) if(ev[i].s>=8 && ['char','tuba','tamb','plat','tarola','tpt','clar','bone'].includes(ev[i].v)) ev.splice(i,1);
         hit(8,'A7',{top:23}); hit(11,'A7',{top:23}); hit(14,'A7',{top:28,l:2,art:'fall',cym:'o'}); }
@@ -24999,8 +25032,8 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
       const shapes=['up','down','zig','arp'], sh=(k)=>shapes[Math.floor(R()*4)+k&3];
       const ns=[]; let x=b%2?28:21;
       for(let m=0;m<2;m++){ const kind=sh(m), dir=kind==='down'?-1:1;
-        const r=run(m*8,8,x,dir,{arp:kind==='arp',zig:kind==='zig',hi:33,lo:16}); ns.push(...r); x=r[r.length-1][1]+(dir>0?-4:4); }
-      if(b===7){ ns.length=0; ns.push(...run(0,12,9,1,{hi:33,lo:9,land:28,landL:2})); }
+        const r=run(m*8,8,x,dir,{arp:kind==='arp',zig:kind==='zig',hi:31,lo:16}); ns.push(...r); x=r[r.length-1][1]+(dir>0?-4:4); }
+      if(b===7){ ns.length=0; ns.push(...run(0,12,9,1,{hi:31,lo:9,land:28,landL:2})); }
       ns[0][3]='>';
       E(0,'clar',{ns:ns.map(([s,q,l,a])=>[s,T(q),l,a]),v:0.95});
       if(!lite) E(0,'clar',{ns:ns.map(([s,q,l,a])=>[s,T(third(q,chAt(s%16))),l,a]),v:0.7,two:1});
@@ -25021,29 +25054,31 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
         hit(0,'D7',{top:24,cym:'x'}); hit(3,'D7',{top:24}); hit(6,'D7',{top:27,l:2,art:'fp'});
         E(8,'tpt',{ns:[[8,28,8,'sh']],v:0.9}); E(8,'tpt',{ns:[[8,25,8,'sh']],v:0.75,two:1});
         for(let x=8;x<16;x+=lite?2:1) tamb(x,x%2?'a':'g',0.55+(x-8)*0.05); tar(8,'r',1,8,0.3);
-        clarRun(10,6,14,1,{v:0.9,hi:33});
+        clarRun(10,6,14,1,{v:0.9,hi:31});
       }
     }
     else if(id==='fin'){
       if(b===0){
         hit(0,'F',{top:24,cym:'x'}); hit(3,'F',{top:24}); hit(6,'F',{top:28,l:2,art:'fp'});
         [[8,0],[9,-1],[10,-3],[11,-5],[12,-7],[13,-8],[14,-10],[15,-12]].forEach(([s,x],i)=>E(s,'tuba',{n:T(x),l:1,v:0.9,leg:1}));
-        clarRun(8,8,16,1,{v:0.9,hi:33}); tar(8,'r',0.9,8,0.3); plat(8,'sw',0.7,8);
+        clarRun(8,8,16,1,{v:0.9,hi:29}); tar(8,'r',0.9,8,0.3); plat(8,'sw',0.7,8);
       } else if(b===1){
         hit(0,'C7',{top:22,l:6,art:'fp',cym:'x',tuba:false}); E(0,'tpt',{ns:[[0,T(26),6,'sh']],v:0.8});
         E(0,'tuba',{n:T(-17),l:6,v:1,acc:1}); for(let x=1;x<6;x++) tamb(x,'g',0.5+x*0.08);
         hit(8,'C7',{top:22}); hit(11,'C7',{top:22}); hit(14,'C7',{top:23,l:2});
         tar(12,'r',0.9,2,0.5);
       } else {
-        tempo=0.9;
-        hit(0,'F',{top:28,l:10,art:'fp',cym:'x'});
-        E(0,'tpt',{ns:[[0,T(28),10,'sh']],v:0.9}); E(0,'clar',{ns:[[0,T(31),10,'tr']],v:0.8}); E(0,'clar',{ns:[[0,T(28),10,'tr']],v:0.6,two:1});
-        E(0,'tuba',{n:T(-24),l:10,v:1,acc:1,leg:1});
-        for(let x=lite?1:0.5;x<10;x+=lite?1:0.5) tamb(x,'g',0.45+x*0.05);
-        // ...cut, and the pa-pum
-        for(const ch of ['tpt','clar','bone','tuba','char','tamb','plat','tarola']) A(10.2,{a:'lvl',ch,v:0,tc:0.01});
-        for(const ch of ['tamb','plat','tuba']) A(13.7,{a:'lvl',ch,v:1,tc:0.005});
-        E(14,'tamb',{k:'g',v:1}); E(14,'plat',{k:'c',v:0.9}); E(14,'tuba',{n:T(-12),l:1,v:1,acc:1});
+        tempo=0.88;
+        hit(0,'F',{top:28,l:9,art:'fp',cym:'x'});
+        E(0,'tpt',{ns:[[0,T(28),9,'sh']],v:0.9}); E(0,'clar',{ns:[[0,T(28),9,trArt(28,'F')]],v:0.8}); E(0,'clar',{ns:[[0,T(24),9,trArt(24,'F')]],v:0.6,two:1});
+        E(0,'tuba',{n:T(-12),l:9,v:1,acc:1,leg:1});
+        for(let x=lite?1:0.5;x<9;x+=lite?1:0.5) tamb(x,'g',0.45+x*0.05);
+        // ...cut, and the pa-pum, both strokes in this bar and in this key (the dominant, then home),
+        // with a breath after it before the polka starts again
+        for(const ch of ['tpt','clar','bone','tuba','char','tamb','plat','tarola']) A(9.2,{a:'lvl',ch,v:0,tc:0.01});
+        for(const ch of ['tamb','plat','tuba']) A(10.7,{a:'lvl',ch,v:1,tc:0.005});
+        E(11,'tamb',{k:'g',v:0.85}); E(11,'plat',{k:'c',v:0.8}); E(11,'tuba',{n:T(-5),l:1,v:0.9});
+        E(13,'tamb',{k:'g',v:1}); E(13,'plat',{k:'c',v:0.95}); E(13,'tuba',{n:T(-12),l:1,v:1,acc:1});
       }
     }
     if(pass>0) tempo*=1+0.008*Math.min(pass,2);                     // the band has warmed up
