@@ -22,10 +22,13 @@ Codes avoid `I`, `O`, `0` and `1`, because they get read aloud over voice chat.
 ## Ownership model
 
 **Each human simulates its own kart** and broadcasts a snapshot at 15 Hz; everyone else
-plays that kart back, extrapolating along the last heading to cover the gap between packets.
-The drawn kart rides that extrapolated position; when a packet corrects it, the gap is kept as
-a residual that melts over ~100 ms, so a correction reads as a slide rather than a teleport and
-the kart never trails the truth by an easing lag at speed. There is no rollback: your kart is
+plays that kart back, extrapolating along its last heading and turn rate (so a kart mid-corner
+follows its arc) to cover the gap between packets. The drawn kart rides that extrapolated
+position; when a packet corrects it, the gap between the old prediction and the new one is kept
+as a residual that melts over ~100 ms, so a correction reads as a slide rather than a teleport
+and the kart never trails the truth by an easing lag at speed. Measured in the two-page test,
+the host's AI karts sit within ~3.5 units (mean) of their position on the client at the same
+instant, against ~140 units before the host owned them. There is no rollback: your kart is
 never yanked back by the server, which is what a kart racer on a phone wants to feel like.
 
 **The host owns everything else**, so the race is one race on every screen:

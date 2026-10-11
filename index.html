@@ -49288,9 +49288,9 @@ function frame(now){
   { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
   if(state==='race'){
     raceTime+=dt;   // accumulate the capped dt: a backgrounded tab / stalled frame must not inflate the clock
-    netTick(dt);
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
+    netTick(dt);    // after the step, so a snapshot carries this frame's positions and hits, not the last one's
     for(const r of racers) if(r._wh) whipTick(r);
     // once YOU'RE done, don't leave the winner floating in dead air while AI stragglers
     // dribble home — give it a few seconds of orbit-cam glory, then call the race,
@@ -49847,6 +49847,11 @@ function netSnapOf(r){
   // status flags, only when set, so an idle kart costs nothing extra on the wire: the host
   // reads them when it settles hits, everyone draws them (shield, swell, drip, shocked face)
   if(r.shieldT>0) o.sh=1; if(r.megaT>0) o.mg=1; if(r.glueT>0) o.gl=1; if(r.spinT>0) o.sn=1;
+  // turn rate (rad/s), so a kart mid-corner is extrapolated along its arc rather than off the
+  // road; measured between this snapshot and the last, not during a spin, and clamped
+  { const now=performance.now(), q=(now-(r._lsT||0))/1000; let w=0;
+    if(r._lsT && q>0.01 && q<0.5 && !(r.spinT>0)) w=Math.max(-2.5,Math.min(2.5, angDiff(r.head,r._lsH)/q));
+    r._lsT=now; r._lsH=r.head; if(Math.abs(w)>0.02) o.w=+w.toFixed(2); }
   return o;
 }
 function netSendSnap(){
@@ -49883,19 +49888,29 @@ function netNoteFinish(r, s){
 }
 function netApplySnap(r, dt){
   const s=r._snap; if(!s) return;
-  const age=Math.min(0.5, (performance.now()-(r._snapT||0))/1000);
-  const px=s.x+Math.sin(s.h)*s.sp*age, pz=s.z+Math.cos(s.h)*s.sp*age;
+  const now=performance.now();
+  // where a snapshot says the kart is `a` seconds on: along its arc when it was turning
+  const ext=(q,a)=>{ const w=q.w||0, hm=q.h+w*a*0.5; return [q.x+Math.sin(hm)*q.sp*a, q.z+Math.cos(hm)*q.sp*a, q.h+w*a]; };
+  const [px,pz,ph]=ext(s, Math.min(0.5, (now-(r._snapT||0))/1000));
   const k=Math.min(1, 10*dt);
   // The kart rides the extrapolated position itself, not an easing toward it: easing the
-  // position trailed the truth by speed/rate (10+ units flat out) all race long. Instead,
-  // when a packet lands, the gap between where the kart is drawn and where it should be is
-  // kept as a residual that melts away over ~100ms — continuous on screen, no lag at speed.
-  if(s!==r._snapSeen){ r._snapSeen=s; r._ex=r.x-px; r._ez=r.z-pz;
-    if(Math.hypot(r._ex,r._ez)>40){ r._ex=0; r._ez=0; } }   // a teleport (respawn) is a teleport
+  // position trailed the truth by speed/rate (10+ units flat out) all race long. When a new
+  // packet takes over, the gap between where the OLD packet would have put the kart this frame
+  // and where the new one puts it is kept as a residual that melts over ~100ms — continuous on
+  // screen, no lag at speed. (Measured against the old model advanced to this frame, not the
+  // last drawn position, or every packet would inject a frame of lag that never melts.)
+  if(s!==r._snapSeen){
+    const o=r._snapSeen;
+    if(o){ const [ox,oz]=ext(o, Math.min(0.5, (now-(r._seenT||0))/1000)); r._ex=ox+(r._ex||0)-px; r._ez=oz+(r._ez||0)-pz; }
+    else { r._ex=r.x-px; r._ez=r.z-pz; }
+    r._snapSeen=s;
+    if(Math.hypot(r._ex,r._ez)>40){ r._ex=0; r._ez=0; }   // a teleport (respawn) is a teleport
+  }
+  r._seenT=r._snapT;
   const melt=Math.exp(-dt/0.1);
   r._ex=(r._ex||0)*melt; r._ez=(r._ez||0)*melt;
   r.x=px+r._ex; r.z=pz+r._ez; r.y+=(s.y-r.y)*k;
-  let dh=s.h-r.head; while(dh>Math.PI)dh-=6.2832; while(dh<-Math.PI)dh+=6.2832;
+  let dh=ph-r.head; while(dh>Math.PI)dh-=6.2832; while(dh<-Math.PI)dh+=6.2832;
   r.head+=dh*k;
   r.spd=s.sp; r.slip=s.sl; r._bank=s.bk;
   r.lap=s.lap; r.total=s.tot; r.prog=s.prog;
