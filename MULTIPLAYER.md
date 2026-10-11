@@ -26,9 +26,10 @@ plays that kart back, extrapolating along its last heading and turn rate (so a k
 follows its arc) to cover the gap between packets. The drawn kart rides that extrapolated
 position; when a packet corrects it, the gap between the old prediction and the new one is kept
 as a residual that melts over ~100 ms, so a correction reads as a slide rather than a teleport
-and the kart never trails the truth by an easing lag at speed. Measured in the two-page test,
-the host's AI karts sit within ~3.5 units (mean) of their position on the client at the same
-instant, against ~140 units before the host owned them. There is no rollback: your kart is
+and the kart never trails the truth by an easing lag at speed. A spinning kart is stepped
+through its whirl rather than extrapolated straight. Measured in the two-page test, the host's
+AI karts sit about 4 units (mean; 95th percentile under 8) from their position on the client
+at the same instant, against ~140 units (and different characters) before the host owned them. There is no rollback: your kart is
 never yanked back by the server, which is what a kart racer on a phone wants to feel like.
 
 **The host owns everything else**, so the race is one race on every screen:
