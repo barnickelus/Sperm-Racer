@@ -47572,6 +47572,7 @@ function useItem(r){
       if(o===r||o.finished||o.shieldT>0)continue;
       const dx=o.x-r.x,dz=o.z-r.z,dd=Math.hypot(dx,dz);
       if(dd<RAD){ const ux=dx/(dd||1),uz=dz/(dd||1);
+        if(NET.on && netVictim(null,o,'clap',{sp:0.9,px:+(ux*10).toFixed(2),pz:+(uz*10).toFixed(2),by:r.nk})) continue;
         o.x+=ux*10; o.z+=uz*10; o.spinT=Math.max(o.spinT,0.9);
         if(o.you){ kickShake(0.6); } }
     }
@@ -48004,8 +48005,13 @@ const BARKS={guido:'Ay, madone!', irish:'Luck\'s on my side, lads!', latin:'Gidd
   dragoTony:'Ay, you just got TOASTED!', rastaDragon:'Easy now... BASS DROP!', punk:'OI!', sheikh:'YALLA!', desi:'Hero entry!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
+  if(NET.on && netVictim(null,vic,'whip',{sp:0.5,sl:0.55,px:+(dx/d*5).toFixed(2),pz:+(dz/d*5).toFixed(2),by:atk.nk})) return;
   vic.x+=dx/d*5; vic.z+=dz/d*5; vic.spd*=0.55; vic.spinT=Math.max(vic.spinT,0.5);
   atk.spd=Math.min(BOOSTV, atk.spd+8); atk._whip=performance.now();
+  whipFx(atk,vic);
+}
+// the look and sound of a landed whip, shared with a hit that arrived over the network
+function whipFx(atk,vic){
   const mx=(atk.x+vic.x)/2, my=(atk.y+vic.y)/2+3, mz=(atk.z+vic.z)/2;
   const big=atk.you||vic.you;                      // bigger, punchier version when it's YOUR fight
   burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
@@ -48047,6 +48053,8 @@ function whipSide(r){
 }
 function whipStart(r, lock){
   r._whip=performance.now(); r._whipN=(r._whipN||0)+1;
+  if(NET.on && NET.auth && !NET.host && r.you) netSend({t:'whip', lock:lock?lock.nk:null});   // the hit is the host's call
+
   if(isDragonRacer(r)){
     r._wh={t:0, side:whipSide(r), hit:[], lock:r.you?null:(lock||null)};
     return;
@@ -48103,6 +48111,8 @@ function collide(){
       const am=a.megaT>0, bm=b.megaT>0;
       if(am!==bm){
         const big=am?a:b, sml=am?b:a, sgn=am?1:-1;
+        if(NET.on && sml.spinT<=0 && sml.shieldT<=0 &&
+           netVictim(null,sml,'ram',{sp:0.8,sl:0.5,px:+(ux*sgn*push*2.4).toFixed(2),pz:+(uz*sgn*push*2.4).toFixed(2),by:big.nk})) continue;
         sml.x+=ux*sgn*push*2.4; sml.z+=uz*sgn*push*2.4;
         if(sml.spinT<=0 && sml.shieldT<=0){ sml.spinT=0.8; sml.spd*=0.5;
           burst(sml.x,sml.y+2,sml.z,0xffb44a,14,50,0.5,4);
@@ -48125,15 +48135,16 @@ function collide(){
       }
       const now=performance.now();
       const atk = a.spd>=b.spd ? a : b, vic = a.spd>=b.spd ? b : a;
-      if(!atk.you && !atk._wh && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) whipStart(atk,vic); // AI auto whip
+      if(!atk.you && !atk.remote && !atk._wh && d<6 && vic.spinT<=0 && (now-(atk._whip||0))>900) whipStart(atk,vic); // AI auto whip (a remote kart's whips are its owner's)
     }
   }
   // item pickup
   for(const it of items){
-    if(!it.live){ it.respawn-=1/60; if(it.respawn<=0){it.live=true;it.mesh.visible=true;} continue; }
+    if(!it.live){ it.respawn-=1/60; if(it.respawn<=0){it.live=true;it.mesh.visible=true; if(NET.on) netBoxLive(it);} continue; }
     for(const r of racers){
       if(r.finished)continue;
       if(Math.hypot(r.x-it.base.x,r.z-it.base.z)<6 && !r.item){
+        if(NET.on && netBoxTouch(it,r)) continue;   // networked: the host grants (see netBoxTouch)
         giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
         burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
         if(r.you){ kickShake(0.25); flashFx(0.15,'#6df2d0'); SFX.item(); }
@@ -48179,7 +48190,9 @@ function collide(){
         // same class of bug the wall-collision cooldown fixed earlier)
         (h.hit||(h.hit=new Set()));
         if(!h.hit.has(r) && Math.hypot(r.x-h.x,r.z-h.z)<7){
-          h.hit.add(r); r.spd*=0.45; burst(r.x,r.y+1,r.z,0x3ab0ff,10,26,0.4,3);
+          h.hit.add(r);
+          if(NET.on && netVictim(h,r,'slow',{sl:0.45})) continue;
+          r.spd*=0.45; burst(r.x,r.y+1,r.z,0x3ab0ff,10,26,0.4,3);
           if(r.you){ kickShake(0.2); SFX.bump&&SFX.bump(); }
         }
       } else if(h.dam){
@@ -48190,6 +48203,8 @@ function collide(){
         const dx=r.x-h.x, dz=r.z-h.z;
         const along=dx*h.tx+dz*h.tz, lat=dx*h.nx+dz*h.nz;
         if(Math.abs(along)<3.5 && Math.abs(lat)<h.halfW && (r._trapCD||0)<=0){
+          if(NET.on){ const nv=netVictim(h,r,'trap',{sl:0.25,gl:1.2,cd:'trap',px:+(-h.tx*6).toFixed(2),pz:+(-h.tz*6).toFixed(2),pop:h.drop?1:0});
+            if(nv){ if(nv===1 && h.drop) h.life=Math.min(h.life,0.5); continue; } }
           r._trapCD=1.2; r.spd*=0.25; r.glueT=Math.max(r.glueT||0,1.2);
           r.x-=h.tx*6; r.z-=h.tz*6;   // shoved back out of the membrane
           burst(r.x,r.y+2,r.z,0x7dffd0,16,44,0.5,4);
@@ -48197,6 +48212,9 @@ function collide(){
           if(h.drop) h.life=Math.min(h.life,0.5);   // a dropped dam catches one racer, then pops
         }
       } else if((r._hzCD||0)<=0 && Math.hypot(r.x-h.x,r.z-h.z)<5){
+        if(NET.on){ const nv=netVictim(h,r,h.critter?'crab':h.pill?'pill':'spin',
+            h.critter?{sp:1.1,cd:'hz'}:h.pill?{sp:1.1,cd:'hz',bk:8,sl:0.5}:{sp:1.1});
+          if(nv){ if(nv===1 && !(h.critter||h.pill)) h.life=0; continue; } }
         r.spinT=1.1;
         if(h.critter||h.pill) r._hzCD=2.2;   // ticks only once the spin is over: no chain-spinning on the same hazard
         if(h.critter){   // crabs ATTACK and keep hunting — they never die from contact
@@ -48225,6 +48243,8 @@ function collide(){
     const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z);
     for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;
       if(Math.hypot(r.x-p.x,r.z-p.z)<5){
+        if(NET.on){ const nv=netVictim(p,r,p.glue?'glue':'spin',p.glue?{gl:3.5}:{sp:1.2});
+          if(nv){ if(nv===1) p.life=0; continue; } }
         if(p.glue){ r.glueT=3.5; burst(r.x,r.y+2,r.z,0x7ddb4a,16,40,0.6,4);
           if(r.you){ kickShake(0.3); showToast('GLUED!','t-green'); SFX.bump&&SFX.bump(); } }
         else r.spinT=1.2;
@@ -49183,9 +49203,9 @@ function syncLeader(){
   const sig=order.map(r=>r._li+(r.finished?'f':'')).join('|');
   if(sig===lb._sig) return; lb._sig=sig;     // only rebuild when standings change
   lb.innerHTML=order.map((r,i)=>
-    `<div class="lrow${r.you?' you':''}${r.remote?' human':''}"><span class="lp">${i+1}</span>`+
+    `<div class="lrow${r.you?' you':''}${r.remote&&r.human?' human':''}"><span class="lp">${i+1}</span>`+
     `<span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}`+
-    `${r.remote?'<span class="lhum">●</span>':''}</div>`).join('');
+    `${r.remote&&r.human?'<span class="lhum">●</span>':''}</div>`).join('');
 }
 function syncHUD(){
   const me=racers.find(r=>r.you);
@@ -49452,24 +49472,31 @@ function frame(now){
  * Switch with ?net=local|peer|relay, or the button in the lobby. To move to a relay, fill in
  * NET_RELAY_URL and pick 'relay' — no other change anywhere.
  *
- * Ownership model, deliberately simple for a friends-and-room-codes game: every peer
- * simulates ITS OWN kart and broadcasts the result; everyone else renders that kart from
- * snapshots. No authority and no rollback, so it is trivially cheatable — fine here, and
- * the star topology means an authoritative host can be dropped in later without a rewrite.
+ * Ownership model: every human simulates ITS OWN kart and broadcasts the result (no
+ * rollback — a hit arrives as a message the owner applies to itself), and the HOST owns
+ * everything else: the AI karts, the item boxes, every hazard and projectile, and the
+ * verdict on every hit. Clients play all of that back. If the host disappears mid-race the
+ * clients fall back to simulating the AI and their items locally so the race can finish.
  * ======================================================================================= */
-const NET_RELAY_URL = '';                 // e.g. 'wss://your-worker.example.workers.dev/room/'
+const NET_RELAY_DEFAULT = '';             // e.g. 'wss://race-wars-relay.you.workers.dev/room' (see relay/README.md)
+const NET_RELAY_PARAM = new URLSearchParams(location.search).get('relay') || '';   // ?relay=ws://... for a local server
+const NET_RELAY_URL = NET_RELAY_PARAM || NET_RELAY_DEFAULT;
 const NET_PEER_LIB  = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
 
 const NET = {
-  on:false,            // true once a networked race is actually running
+  on:false,            // true once a networked race is actually running (and through its results screen)
   lobby:false,         // true while sitting in the lobby
   host:false,
   room:'', self:'', name:'',
   fillAI:true,         // host's choice: pad the grid with AI or run humans-only
   players:new Map(),   // id -> {id,name,typeId,last,snap,gone}
-  lineup:null,         // frozen at race start
+  lineup:null,         // frozen at race start; every slot carries its key `k`, AI slots have ai:true
   t:null,              // active transport
   _acc:0, SEND_HZ:15, _hb:null, _sweep:0,
+  // host authority (see netVictim): who the host is, whether it is still with us, whether
+  // the race has been run (results screen, room still open for a rematch), the next
+  // entity id the host hands out, and every live host-owned hazard/projectile by id
+  hostId:'', auth:false, done:false, nid:1, ents:new Map(),
   status(m){ const el=document.getElementById('mpstatus'); if(el) el.textContent=m; },
 };
 function netId(){ return Math.random().toString(36).slice(2,8); }
@@ -49558,16 +49585,26 @@ function relayTransport(){
     async open(room, isHost, selfId, h){
       if(!NET_RELAY_URL){ NET.status('No relay URL is configured in this build.'); return false; }
       return await new Promise(res=>{
-        try { ws=new WebSocket(NET_RELAY_URL.replace(/\/$/,'')+'/'+room); }
-        catch(e){ NET.status('Bad relay URL.'); return res(false); }
-        const to=setTimeout(()=>{ NET.status('Relay did not answer.'); res(false); }, 12000);
-        ws.onopen=()=>{ clearTimeout(to); res(true); };
-        ws.onerror=()=>{ clearTimeout(to); NET.status('Could not reach the relay.'); res(false); };
-        ws.onmessage=e=>{ try{ const m=JSON.parse(e.data); if(m.from!==selfId) h.data(m); }catch(err){} };
+        let settled=false;
+        const done=v=>{ if(!settled){ settled=true; res(v); } };
+        let sock;
+        try { sock=ws=new WebSocket(NET_RELAY_URL.replace(/\/$/,'')+'/'+room); }
+        catch(e){ NET.status('Bad relay URL.'); return done(false); }
+        const to=setTimeout(()=>{ NET.status('Relay did not answer.'); done(false); }, 12000);
+        sock.onopen=()=>{ clearTimeout(to); done(true); };
+        sock.onerror=()=>{ clearTimeout(to); if(!settled) NET.status('Could not reach the relay.'); done(false); };
+        // the server (or the network) hanging up after we were connected: say so, and let the
+        // 15s liveness sweep on the other peers retire this kart the way it would any other
+        sock.onclose=()=>{ clearTimeout(to); if(ws===sock){ ws=null; if(settled && NET.t) NET.status('Relay connection closed.'); } done(false); };
+        sock.onmessage=e=>{
+          if(typeof e.data!=='string') return;             // the contract is JSON text frames only
+          let m=null; try{ m=JSON.parse(e.data); }catch(err){ return; }
+          if(m && typeof m==='object' && m.from!==selfId) h.data(m);
+        };
       });
     },
     send(m){ if(ws && ws.readyState===1) ws.send(JSON.stringify(m)); },
-    close(){ if(ws){ try{ws.close();}catch(e){} ws=null; } } };
+    close(){ if(ws){ const s=ws; ws=null; try{s.close();}catch(e){} } } };
 }
 
 const NET_TRANSPORTS={local:localTransport(), peer:peerTransport(), relay:relayTransport()};
@@ -49588,6 +49625,7 @@ async function netStart(host, room){
   netLeave(true);
   NET.t=NET_TRANSPORTS[netPick];
   NET.host=host; NET.room=room; NET.self=netId();
+  NET.hostId=host?NET.self:''; NET.auth=false; NET.done=false;
   NET.name=(document.getElementById('mpname')||{}).value || (host?'Host':'Racer');
   NET.status(host?'Opening room '+room+'…':'Joining '+room+'…');
   const ok=await NET.t.open(room, host, NET.self, netHandlers());
@@ -49635,11 +49673,13 @@ function netLeave(quiet){
   clearInterval(NET._hb); NET._hb=null;
   if(NET.t){ if(!quiet) netSend({t:'bye', id:NET.self}); NET.t.close(); }
   NET.t=null; NET.on=false; NET.lobby=false; NET.host=false;
+  NET.hostId=''; NET.auth=false; NET.done=false; NET.ents.clear();
   NET.players.clear(); NET.lineup=null;
+  netRaceDoneUI();
 }
 
 function netBroadcastRoster(){
-  netSend({t:'roster', fillAI:NET.fillAI, track:selTrack,
+  netSend({t:'roster', fillAI:NET.fillAI, track:selTrack, host:NET.self,
     players:[...NET.players.values()].filter(p=>!p.gone).map(p=>({id:p.id,name:p.name,typeId:p.typeId}))});
 }
 
@@ -49651,8 +49691,15 @@ function netDropPeer(pid){
   if(r && r.remote) netNoteFinish(r, r._snap);   // their closing snapshot may still be waiting for the next frame
   // a driver who has already crossed the line is not abandoning anything: leaving after the
   // finish (their race screen going up sends 'bye') keeps their name and their own time
-  if(r && !r.finished){ if(NET.fillAI){ r.remote=false; r.name=r.name+' (AI)'; }
-         else { r.finished=true; r.finishT=raceTime; } }
+  if(r && !r.finished){
+    if(NET.fillAI){
+      r.name=r.name+' (AI)'; r.human=false; r.netId=null;
+      // an AI kart now, and AI karts are the host's: a client keeps playing it back from the
+      // host's batch; the host (or a client whose host this was) simulates it from here
+      r.remote = NET.auth && !NET.host && pid!==NET.hostId;
+    } else { r.finished=true; r.finishT=raceTime; }
+  }
+  if(pid===NET.hostId){ if(NET.on) netHostLost(); else NET.status('The host left the room — go back and join another.'); }
   if(NET.host) netBroadcastRoster();
   netRenderLobby();
 }
@@ -49672,7 +49719,7 @@ function netRecv(m){
       break;
     case 'roster':
       if(NET.host) break;                     // the host IS the source of truth
-      NET.fillAI=m.fillAI;
+      NET.fillAI=m.fillAI; NET.hostId=m.host||m.from;
       for(const q of m.players)
         if(!NET.players.has(q.id))
           NET.players.set(q.id, {id:q.id, name:q.name, typeId:q.typeId, last:performance.now()});
@@ -49689,13 +49736,45 @@ function netRecv(m){
       break;
     case 'start':
       if(NET.host) break;
-      selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup;
+      if(state==='race'||state==='count') break;   // not while we are still driving the last one
+      selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
       netBeginRace();
       break;
-    case 's': {                               // a kart snapshot
+    case 's': {                               // a human's own kart
       const q=NET.players.get(m.from); if(q) q.snap=m;
       const r=racers.find(x=>x.netId===m.from);
       if(r && r.remote){ r._snap=m; r._snapT=performance.now(); }
+      break;
+    }
+    case 'S': {                               // the host's karts (the AI), and where its shots are
+      if(NET.host || !NET.auth) break;
+      const now=performance.now();
+      for(const s of m.a||[]){ const r=netKart(s.k); if(r && r.remote && !r.human){ r._snap=s; r._snapT=now; } }
+      for(const q of m.pj||[]){ const p=NET.ents.get(q.id); if(p && p.spd){ p.x+=(q.x-p.x)*0.5; p.z+=(q.z-p.z)*0.5; p.head=q.h; } }
+      break;
+    }
+    case 'box': netHostBox(m); break;         // a client touched an item box
+    case 'boxst': {                           // the host: a box is taken / is back
+      if(NET.host || !NET.auth) break;
+      const it=items[m.k]; if(!it) break;
+      if(m.live){ it.live=true; it.mesh.visible=true; it.respawn=0; }
+      else { it.live=false; it.mesh.visible=false; it.respawn=(m.rs||4)+3; }   // +3: the host's own 'live' normally lands first
+      break;
+    }
+    case 'item': {                            // the host rolled our pickup
+      if(m.to!==NET.self) break;
+      const me=racers.find(r=>r.you); if(!me) break;
+      me._pend=null;
+      if(m.item){ me.item=m.item; me._roll=Math.max(me._roll||0, 0.25); }   // the roulette settles on it
+      else if(!me.item) me._roll=0;                                           // beaten to the box
+      break;
+    }
+    case 'use': netHostUseMsg(m); break;      // a client fired an item
+    case 'whip': netHostWhipMsg(m); break;    // a client threw a whip
+    case 'spawn': netSpawnRecv(m); break;     // the host made a hazard / projectile / clap
+    case 'hit': if(!NET.host) netHitRecv(m); break;
+    case 'gone': {                            // the host retired an entity: expire it here the same way
+      const e=NET.ents.get(m.id); if(e){ NET.ents.delete(m.id); e.life=0; }
       break;
     }
     case 'hb': break;              // liveness only; the timestamp above is the payload
@@ -49730,12 +49809,22 @@ function netRenderLobby(){
 function netHostStart(){
   if(!NET.host) return;
   const ps=[...NET.players.values()].filter(p=>!p.gone);
-  NET.lineup=ps.map(p=>({id:p.id, typeId:p.typeId, name:p.name}));
-  netSend({t:'start', track:selTrack, fillAI:NET.fillAI, lineup:NET.lineup});
+  const lineup=ps.map((p,k)=>({id:p.id, typeId:p.typeId, name:p.name, k}));
+  // The AI padding is drawn HERE, once, and travels with the grid. Each peer used to draw
+  // its own five, so "the field" was a different set of people on every screen.
+  if(NET.fillAI){
+    const taken=new Set(lineup.map(p=>p.typeId));
+    const pool=SPERM_TYPES.filter(t=>!taken.has(t.id) && !t.hidden);
+    for(let i=pool.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
+    while(lineup.length<6 && pool.length){ const t=pool.shift(); lineup.push({id:null, ai:true, typeId:t.id, name:t.name, k:lineup.length}); }
+  }
+  NET.lineup=lineup;
+  netSend({t:'start', track:selTrack, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
   netBeginRace();
 }
 function netBeginRace(){
-  NET.on=true; NET.lobby=false;
+  NET.on=true; NET.lobby=false; NET.auth=true; NET.done=false;
+  NET.ents.clear(); NET.nid=1;
   // the grid sits silent through the countdown and track build; don't count that as absence
   const t0=performance.now();
   for(const p of NET.players.values()) p.last=t0;
@@ -49750,21 +49839,40 @@ function netBeginRace(){
 /* ---- per-frame: publish my kart, and drop peers that have gone quiet ---- */
 // `ft` is the finish time on MY clock, so the others' results boards show the time this
 // driver actually saw rather than the moment the packet happened to land there.
+function netSnapOf(r){
+  const o={k:r.nk, x:+r.x.toFixed(2), y:+r.y.toFixed(2), z:+r.z.toFixed(2),
+    h:+r.head.toFixed(3), sp:+r.spd.toFixed(1), sl:+(r.slip||0).toFixed(3),
+    bk:+(r._bank||0).toFixed(3), lap:r.lap, tot:+r.total.toFixed(3), prog:+r.prog.toFixed(4),
+    bo:r.boostT>0?1:0, dr:r.drift||0, fin:r.finished?1:0, wh:r._whipN||0,
+    ft:(r.finished&&isFinite(r.finishT))?+r.finishT.toFixed(2):undefined};
+  // status flags, only when set, so an idle kart costs nothing extra on the wire: the host
+  // reads them when it settles hits, everyone draws them (shield, swell, drip, shocked face)
+  if(r.shieldT>0) o.sh=1; if(r.megaT>0) o.mg=1; if(r.glueT>0) o.gl=1; if(r.spinT>0) o.sn=1;
+  return o;
+}
 function netSendSnap(){
   const me=racers.find(r=>r.you);
-  if(me) netSend({t:'s', x:+me.x.toFixed(2), y:+me.y.toFixed(2), z:+me.z.toFixed(2),
-    h:+me.head.toFixed(3), sp:+me.spd.toFixed(1), sl:+(me.slip||0).toFixed(3),
-    bk:+(me._bank||0).toFixed(3), lap:me.lap, tot:+me.total.toFixed(3), prog:+me.prog.toFixed(4),
-    bo:me.boostT>0?1:0, dr:me.drift||0, fin:me.finished?1:0, wh:me._whipN||0,
-    ft:(me.finished&&isFinite(me.finishT))?+me.finishT.toFixed(2):undefined});
+  if(me) netSend(Object.assign({t:'s'}, netSnapOf(me)));
+}
+// host only: every kart it simulates besides its own (the AI, and any human's kart it has
+// taken over), plus where its projectiles are, in one packet
+function netSendBatch(){
+  if(!NET.host || !NET.auth) return;
+  const a=[]; for(const r of racers) if(!r.you && !r.remote) a.push(netSnapOf(r));
+  const pj=[]; for(const p of projectiles) if(p.nid) pj.push({id:p.nid, x:+p.x.toFixed(1), z:+p.z.toFixed(1), h:+p.head.toFixed(3)});
+  if(a.length || pj.length) netSend({t:'S', a, pj});
 }
 function netTick(dt){
   if(!NET.on || !NET.t) return;
   NET._acc+=dt;
   if(NET._acc >= 1/NET.SEND_HZ){
     NET._acc=0;
-    netSendSnap();
+    netSendSnap(); netSendBatch();
   }
+  netSweepEnts();
+  // a box grant that never came back (lost packet, host gone): give the slot up
+  const me=racers.find(r=>r.you);
+  if(me && me._pend!=null && performance.now()-me._pendT>2500){ me._pend=null; if(!me.item) me._roll=0; }
 }
 
 /* Remote karts are not simulated — they are played back from snapshots. Extrapolating along
@@ -49785,11 +49893,208 @@ function netApplySnap(r, dt){
   r.spd=s.sp; r.slip=s.sl; r._bank=s.bk;
   r.lap=s.lap; r.total=s.tot; r.prog=s.prog;
   r.boostT=s.bo?0.6:0; r.drift=s.dr;
-  // a whip thrown on their machine: play the lash here (its hit is settled over there)
-  if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen && isDragonRacer(r))
+  // Status the owner reports: shield, mega swell, glue crawl, a spin. The host skips a kart
+  // that is already spinning or shielded when it settles hits, so these stand in for the
+  // timers it cannot see — except for a moment after it has just told this kart it was hit,
+  // when the owner's older packets would clear the prediction and let the same hazard land twice.
+  if(performance.now()-(r._predT||0)>600){
+    r.shieldT=s.sh?1:0; r.megaT=s.mg?1:0; r.glueT=s.gl?1:0; r.spinT=s.sn?1:0;
+  }
+  if(s.gl && Math.random()<0.25) burst(r.x,r.y+1,r.z,0x7ddb4a,2,10,0.3,2);   // the drip a local kart sheds
+  r._trapCD=Math.max(0,(r._trapCD||0)-dt);
+  if(!(r.spinT>0)) r._hzCD=Math.max(0,(r._hzCD||0)-dt);
+  // a whip thrown on their machine: play the lash here. Its hit is the host's call, and the
+  // host is already running the real strike on this kart when the counter arrives (see 'whip').
+  if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen && isDragonRacer(r) && !r._wh)
     r._wh={t:0, side:whipSide(r), hit:[], lock:null, net:true};
     r._whipSeen=s.wh; }
   netNoteFinish(r,s);
+}
+
+/* ---- host authority -------------------------------------------------------------------
+ * The host owns the AI karts, the item boxes and every hazard and projectile. Each human
+ * still drives its own kart, but a hit on it is decided by the host against the positions
+ * it has, and arrives as a 'hit' message the owner applies to itself. The collision code
+ * stays where it is; each of its hit sites asks netVictim first and gets back:
+ *   0  settle it here, exactly as single player does (solo; the host for a kart it simulates)
+ *   1  the host has sent the hit to the kart's owner — do the entity's side of it, skip the kart's
+ *   2  a client: nothing is settled here, the host will say
+ * Kart key: r.nk, the slot's index in the host's lineup, the same number on every peer. */
+function netKart(k){ return racers.find(r=>r.nk===k); }
+function netVictim(ent, r, fx, ex){
+  if(!NET.on || !NET.auth) return 0;
+  if(!NET.host) return 2;
+  const m=Object.assign({t:'hit', id:ent&&ent.nid||undefined, v:r.nk, fx}, ex||{});
+  netSend(m);
+  if(!r.remote) return 0;
+  // predicted state on the host's copy, so the same entity cannot catch them again before
+  // their own snapshot confirms it (netApplySnap holds off the flags for 600ms)
+  r._predT=performance.now();
+  if(m.gl) r.glueT=1; if(m.sp) r.spinT=1;
+  if(m.cd==='trap') r._trapCD=1.2; else if(m.cd==='hz') r._hzCD=2.2;
+  netHitRecv(m);                                   // we do not hear our own packet: play it here
+  return 1;
+}
+// what each hit looks and feels like — the same bursts, shakes, toasts and sounds the local
+// code plays, so a networked hit is indistinguishable from a solo one
+const NET_HIT_FX={
+  slow:{c:0x3ab0ff,n:10,sp:26,l:0.4,s:3,yo:1, shake:0.2, sfx:'bump'},
+  trap:{c:0x7dffd0,n:16,sp:44,l:0.5,s:4,yo:2, shake:0.5, toast:'DENTAL DAM!', cls:'t-green', sfx:'hit'},
+  glue:{c:0x7ddb4a,n:16,sp:40,l:0.6,s:4,yo:2, shake:0.3, toast:'GLUED!', cls:'t-green', sfx:'bump'},
+  crab:{c:0xd8503a,n:14,sp:45,l:0.5,s:4,yo:2, shake:0.6, toast:'CRABS!', cls:'t-red', sfx:'hit'},
+  pill:{c:0xff5d8f,n:16,sp:46,l:0.5,s:4,yo:2, shake:0.55, toast:'PLAN B!', cls:'t-red', sfx:'hit'},
+  ram: {c:0xffb44a,n:14,sp:50,l:0.5,s:4,yo:2, shake:0.5, sfx:'bump'},
+  clap:{shake:0.6}, spin:{},
+};
+function netHitRecv(m){
+  const v=netKart(m.v); if(!v) return;
+  const atk=(m.by!==undefined&&m.by!==null)?netKart(m.by):null;
+  const e=m.id?NET.ents.get(m.id):null;
+  if(e && m.pop && e.dam) e.life=Math.min(e.life,0.5);   // a dropped dam catches one racer, then pops
+  if(v.you && !v.finished){
+    // our shield / swell is ours to know about first: a hit the host settled against a packet
+    // older than the shield simply bounces off (a whip and a mega ram go through, as locally)
+    if(m.fx!=='whip' && m.fx!=='ram' && (v.shieldT>0 || v.megaT>0)) return;
+    if(m.px){ v.x+=m.px; v.z+=m.pz; }
+    if(m.bk){ v.x-=Math.sin(v.head)*m.bk; v.z-=Math.cos(v.head)*m.bk; }
+    if(m.sl) v.spd*=m.sl;
+    if(m.sp) v.spinT=Math.max(v.spinT||0, m.sp);
+    if(m.gl) v.glueT=Math.max(v.glueT||0, m.gl);
+    if(m.cd==='trap') v._trapCD=1.2; else if(m.cd==='hz') v._hzCD=2.2;
+    if(m.fx==='whip' && atk) v._lastAtk=atk;
+  }
+  if(m.fx==='whip'){
+    if(atk){ if(!atk.remote){ atk.spd=Math.min(BOOSTV, atk.spd+8); atk._whip=performance.now(); } whipFx(atk,v); }
+    return;
+  }
+  const f=NET_HIT_FX[m.fx]||{};
+  if(f.c) burst(v.x,v.y+f.yo,v.z,f.c,f.n,f.sp,f.l,f.s);
+  if(v.you || (atk&&atk.you)){
+    if(f.shake) kickShake(f.shake);
+    if(f.toast && v.you) showToast(f.toast,f.cls);
+    if(f.sfx && SFX[f.sfx]) SFX[f.sfx]();
+  }
+}
+// host: an entity that the loops have retired (expired, or spent on a hit) is retired everywhere
+function netSweepEnts(){
+  if(!NET.host || !NET.auth || !NET.ents.size) return;
+  for(const [id,e] of NET.ents)
+    if(!hazards.includes(e) && !projectiles.includes(e)){ NET.ents.delete(id); netSend({t:'gone', id}); }
+}
+/* item boxes: a client hides the box the moment it touches it and asks; the host grants
+ * (first touch wins), rolls the item with the usual luck — it knows the places — and tells
+ * everyone the box is gone and when it is back. The host's own and the AI's pickups take
+ * the local path and only announce. */
+function netBoxTouch(it, r){
+  if(!NET.auth) return 0;
+  if(r.remote) return 2;                                 // reported by the machine that drives it
+  const k=items.indexOf(it);
+  if(NET.host){ netSend({t:'boxst', k, live:0, rs:4}); return 0; }
+  if(r._pend!=null) return 2;                            // one ask at a time
+  it.live=false; it.mesh.visible=false; it.respawn=7;    // hidden at once; the host's word brings it back
+  r._pend=k; r._pendT=performance.now(); r._roll=0.8;    // the roulette spins while the host rolls
+  netSend({t:'box', k});
+  burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
+  kickShake(0.25); flashFx(0.15,'#6df2d0'); SFX.item();
+  return 2;
+}
+function netBoxLive(it){ if(NET.host && NET.auth) netSend({t:'boxst', k:items.indexOf(it), live:1}); }
+function netHostBox(m){
+  if(!NET.host || !NET.auth) return;
+  const it=items[m.k], r=racers.find(x=>x.netId===m.from);
+  if(it && it.live && r && !r.finished){
+    giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
+    burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
+    netSend({t:'boxst', k:m.k, live:0, rs:4});
+    netSend({t:'item', to:m.from, item:r.item});
+  } else netSend({t:'item', to:m.from, item:null});
+}
+/* item use. Boost, shield and mega only change the user's own kart and travel as snapshot
+ * flags. Everything that becomes an entity or a hit — the shots, the drops, the clap — is
+ * made by the host: a client sends 'use' and keeps nothing, the host runs the real useItem
+ * and broadcasts 'spawn', and every peer builds the same visual with the same builders. */
+const _useItem=useItem;
+useItem=function(r){
+  if(!NET.on || !NET.auth) return _useItem(r);
+  if(r.you && r._roll>0) return;
+  if(!r.item) return;
+  if(NET.host) return netHostUse(r);
+  if(r.item==='boost'||r.item==='shield'||r.item==='mega') return _useItem(r);
+  netSend({t:'use', item:r.item, x:+r.x.toFixed(2), y:+r.y.toFixed(2), z:+r.z.toFixed(2), h:+r.head.toFixed(3), idx:r.idx});
+  r.item=null;
+};
+function netHostUse(r){
+  const item=r.item, nh=hazards.length, np=projectiles.length;
+  const pose={x:+r.x.toFixed(2), y:+r.y.toFixed(2), z:+r.z.toFixed(2), h:+r.head.toFixed(3), idx:r.idx};
+  _useItem(r);
+  for(const e of hazards.slice(nh).concat(projectiles.slice(np))){
+    e.nid='e'+(NET.nid++); NET.ents.set(e.nid,e);
+    netSend(Object.assign({t:'spawn', id:e.nid, kind:item, o:r.nk}, pose));
+  }
+  if(item==='clap') netSend(Object.assign({t:'spawn', kind:'clap', o:r.nk}, pose));
+}
+function netHostUseMsg(m){
+  if(!NET.host || !NET.auth) return;
+  const r=racers.find(x=>x.netId===m.from); if(!r || r.finished) return;
+  // their pose at the moment they fired is truer than our eased copy of it
+  r.x=m.x; r.y=m.y; r.z=m.z; r.head=m.h; r.idx=m.idx|0; r.item=m.item;
+  netHostUse(r);
+}
+function netHostWhipMsg(m){
+  if(!NET.host || !NET.auth) return;
+  const r=racers.find(x=>x.netId===m.from); if(!r || r.finished) return;
+  const lock=(m.lock!==undefined&&m.lock!==null)?netKart(m.lock):null;
+  // a dragon's lash may already be playing from their snapshot counter: make that one the
+  // real strike (whipTick skips a net:true lash); anyone else gets the usual start
+  if(isDragonRacer(r) && r._wh){ r._wh.net=false; r._wh.lock=lock||null; }
+  else whipStart(r, lock);
+}
+function netSpawnRecv(m){
+  if(NET.host || !NET.auth) return;
+  const o=netKart(m.o); if(!o) return;
+  if(m.kind==='clap'){
+    burst(m.x,m.y+2,m.z,0xffe08a,30,90,0.7,6); burst(m.x,m.y+2,m.z,0xff5d8f,20,70,0.6,5);
+    if(o.you){ kickShake(0.5); flashFx(0.3,'#ffe08a'); SFX.whip(); }
+    return;
+  }
+  // the real builder, fed the owner's pose at the moment it fired instead of the kart
+  const proxy={x:m.x, y:m.y, z:m.z, head:m.h, idx:m.idx|0, surfY:o.surfY, id:o.id, item:m.kind, you:false};
+  const nh=hazards.length, np=projectiles.length;
+  _useItem(proxy);
+  for(const e of hazards.slice(nh).concat(projectiles.slice(np))){ e.nid=m.id; e.owner=o; NET.ents.set(m.id,e); }
+  if(o.you){
+    if(m.kind==='dam'){ showToast('Dental Dam!','t-green'); SFX.item(); }
+    else if(m.kind==='signature') showToast((SIGNATURE_ITEMS[o.id]||SIGNATURE_ITEMS.guido).name+'!','t-gold');
+  }
+}
+/* the host is gone: whatever it owned is ours now. The AI karts go back to local simulation
+ * and the hazards on the road become plain local hazards (netVictim answers 0 from here), so
+ * the race can still be finished — it just stops being the same race on every screen. */
+function netHostLost(){
+  if(!NET.auth) return;
+  NET.auth=false; NET.hostId='';
+  for(const r of racers){
+    if(r.remote && !r.human) r.remote=false;
+    if(r.you && r._pend!=null){ r._pend=null; if(!r.item) r._roll=0; }
+  }
+  if(state==='race'||state==='count') showToast('Host left — racing locally','t-red');
+  netRaceDoneUI();
+}
+/* the results screen of a networked race: the room stays open. The host's "Race again" is a
+ * Rematch that re-sends 'start' to everyone; a client waits for it. Main menu / Change racer
+ * still leave the room. */
+function netRaceDoneUI(){
+  const ab=document.getElementById('againbtn'), gp=document.getElementById('gpbtn'); if(!ab) return;
+  if(NET.on && NET.auth){
+    ab.disabled=!NET.host; ab.style.opacity=NET.host?'':'0.6';
+    ab.textContent=NET.host?'Rematch':'Waiting for host…';
+    if(gp) gp.style.display='none';
+  } else { ab.disabled=false; ab.style.opacity=''; ab.textContent='Race again'; }
+}
+function netInviteURL(){
+  return location.origin+location.pathname+'?room='+NET.room
+    +(netPick!=='peer'?'&net='+netPick:'')
+    +(NET_RELAY_PARAM?'&relay='+encodeURIComponent(NET_RELAY_PARAM):'');
 }
 
 /* ---- lobby wiring ---- */
@@ -49809,14 +50114,16 @@ function netApplySnap(r, dt){
   // tap copies a join URL, and ?room=CODE auto-fills so the other player never types it.
   $$('mpcode').onclick=()=>{
     if(!NET.room) return;
-    const url=location.origin+location.pathname+'?room='+NET.room;
+    const url=netInviteURL();
     const done=()=>{ NET.status('Invite link copied — send it to your friend.'); };
     if(navigator.clipboard&&navigator.clipboard.writeText)
       navigator.clipboard.writeText(url).then(done, ()=>NET.status(url));
     else NET.status(url);
   };
+  // the iOS share sheet when there is one (Messages, AirDrop…), the clipboard otherwise
   $$('mpshare').onclick=()=>{
-    const url=location.origin+location.pathname+'?room='+NET.room;
+    if(!NET.room) return;
+    const url=netInviteURL();
     if(navigator.share) navigator.share({title:'Race Wars', text:'Race me — room '+NET.room, url}).catch(()=>{});
     else $$('mpcode').onclick();
   };
@@ -49825,13 +50132,16 @@ function netApplySnap(r, dt){
     const code=(prompt('Room code from your host:', pre)||'').trim().toUpperCase();
     if(!code) return;
     $$('mpcode').textContent=code;
-    await netStart(false, code);
+    if(await netStart(false, code)) $$('mpshare').style.display='block';
   };
-  // arrived on an invite link: open the lobby with the code already in hand
+  // arrived on an invite link (?room=CODE, plus &net= / &relay= when the host used them):
+  // open the lobby and join straight away, nothing to type
   {
     const q=(new URLSearchParams(location.search).get('room')||'').trim().toUpperCase();
     if(q){ show(); $$('mpcode').textContent=q;
-           NET.status('Invited to room '+q+' — press Join to connect.'); }
+           NET.status('Invited to room '+q+' — connecting…');
+           netStart(false, q).then(ok=>{ if(ok) $$('mpshare').style.display='block';
+                                         else NET.status('Could not join '+q+' — press Join to try again.'); }); }
   }
   $$('mpfill').onclick=()=>{ NET.fillAI=!NET.fillAI; if(NET.host) netBroadcastRoster(); netRenderLobby(); };
   $$('mptrans').onclick=()=>{
@@ -49976,7 +50286,9 @@ function endRace(){
     }
   }
   $('finish').classList.remove('hidden');
-  if(NET.on){ netSendSnap(); netLeave(); }   // the room is over once everyone is home (a last snapshot first, so the finish is on record before 'bye'); solo races after it must not see it
+  // networked: a last snapshot (and the host's last batch, with the AI's times) so the finish
+  // is on record everywhere, then the room STAYS OPEN for a rematch — see netRaceDoneUI
+  if(NET.on){ netSendSnap(); netSendBatch(); NET.done=true; netRaceDoneUI(); }
   if(!wasUnlocked && localStorage.getItem('sr_gp_done')) setupSelect(true);   // rebuild cards so the unlock shows without a reload
 }
 // start a Grand Prix: lock the lineup, race every circuit in order, tally points
@@ -50223,10 +50535,10 @@ buildRacers = function(){
     // pile of code downstream (camera, HUD, engine audio, item roulette) keys off racers[0]
     // being you. Padding with AI is the host's lobby choice, not a default.
     const mine=NET.lineup.filter(p=>p.id===NET.self);
-    const rest=NET.lineup.filter(p=>p.id!==NET.self);
+    const rest=NET.lineup.filter(p=>p.id!==NET.self);   // the other humans, then the host's AI slots (ai:true)
     netSlots=[...mine, ...rest];
     lineup=netSlots.map(p=>SPERM_TYPES.find(t=>t.id===p.typeId)||SPERM_TYPES[0]);
-    if(NET.fillAI){
+    if(NET.fillAI){   // (a no-op when the host sent its AI slots; kept for a grid that arrives short)
       const taken=new Set(lineup.map(t=>t.id));
       const pool=SPERM_TYPES.filter(t=>!taken.has(t.id) && !t.hidden);
       for(let i=pool.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
@@ -50277,8 +50589,11 @@ buildRacers = function(){
     shadow.rotation.x=-Math.PI/2; scene.add(shadow);
     return {you, id:t.id, name:(np&&np.name)||t.name, hue:t.hue, obj, shadow,
       netId: np ? np.id : null,
-      remote: !!(np && np.id!==NET.self),
-      human: !!np,
+      // nk: the kart's key on the wire — its slot in the host's lineup, the same on every peer.
+      // An AI slot is simulated by the host and played back (remote) on every client.
+      nk: np ? np.k : k,
+      remote: !!(np && (np.ai ? !NET.host : np.id!==NET.self)),
+      human: !!(np && !np.ai),
       x:pos.x, z:pos.z, y:pos.y, surfY:gSurf, _bank:-(sg.bank||0)/0.85,
       head:Math.atan2(sg.t.x,sg.t.z),    // facing along the road where it stands
       spd:0, idx:2, prog:s.u, lap:0, total:0,
@@ -50287,7 +50602,7 @@ buildRacers = function(){
       finished:false, finishT:0, place:k+1, phase:Math.random()*9, _li:k,
       skill: you ? ((t.stats&&t.stats.skill)||1) : (DIFF[difficulty]-0.03+Math.random()*0.06),
       // every human drives with their own character's stats, not just the local one
-      ...((you || (np && np.id!==NET.self)) ? (t.stats||{}) : {})
+      ...((you || (np && !np.ai && np.id!==NET.self)) ? (t.stats||{}) : {})
     };
   });
   // Mark the humans AFTER the array exists, so the marker can read the final name and hue.
@@ -50666,7 +50981,9 @@ $('circuitbtn').onclick=()=>{ initAudio(); pendingGP=true; showSelect(); };
 $('selback').onclick=()=>{
   if(NET.picking){ NET.picking=false; $('select').classList.add('hidden'); $('mp').classList.remove('hidden'); return; }
   pendingGP=false; $('select').classList.add('hidden'); $('start').classList.remove('hidden'); };
-$('againbtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); countdown(); };
+$('againbtn').onclick=()=>{ gpActive=false;
+  if(NET.on && NET.auth){ if(NET.host) netHostStart(); return; }   // Rematch: same room, same grid; clients follow the host's 'start'
+  if(NET.on) netLeave(); countdown(); };
 $('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); state='menu'; pendingGP=false; showSelect(); };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
 $('nextgpbtn').onclick=()=>{ gpIndex++; selTrack=gpIndex; $('finish').classList.add('hidden'); countdown(); };
@@ -51025,9 +51342,15 @@ window.srNet={
         drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
         tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null, swing:curStyle.swing||0},
       mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
-  get race(){ return {state, laps:LAPS, karts:racers.map(r=>({name:r.name, you:!!r.you,
-    remote:!!r.remote, netId:r.netId||null, lap:r.lap,
-    x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1)}))}; },
+  get race(){ return {state, laps:LAPS, time:+raceTime.toFixed(2), auth:NET.auth, hostId:NET.hostId||null,
+    karts:racers.map(r=>({name:r.name, id:r.id, you:!!r.you, nk:r.nk,
+      remote:!!r.remote, human:!!r.human, netId:r.netId||null, lap:r.lap, prog:+(r.prog||0).toFixed(3),
+      x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1), item:r.item||null, pend:r._pend!=null,
+      spinT:+(r.spinT||0).toFixed(2), glueT:+(r.glueT||0).toFixed(2), shieldT:+(r.shieldT||0).toFixed(2), megaT:+(r.megaT||0).toFixed(2),
+      finished:!!r.finished, finishT:r.finished?+r.finishT.toFixed(2):null})),
+    boxes:items.map(it=>it.live?1:0),
+    ents:hazards.concat(projectiles).filter(e=>e.nid).map(e=>({id:e.nid, kind:e.dam?'dam':e.slick?'slick':e.glue?'glue':e.spd?'shot':'cyst',
+      owner:e.owner?e.owner.nk:null, x:+e.x.toFixed(1), z:+e.z.toFixed(1), life:+e.life.toFixed(2)}))}; },
 };
 })();
 </script>
