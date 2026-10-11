@@ -22,10 +22,11 @@ Codes avoid `I`, `O`, `0` and `1`, because they get read aloud over voice chat.
 ## Ownership model
 
 **Each human simulates its own kart** and broadcasts a snapshot at 15 Hz; everyone else
-plays that kart back, extrapolating along the last heading to cover the gap between packets
-and easing onto corrections so they read as a slide rather than a teleport. There is no
-rollback: your kart is never yanked back by the server, which is what a kart racer on a phone
-wants to feel like.
+plays that kart back, extrapolating along the last heading to cover the gap between packets.
+The drawn kart rides that extrapolated position; when a packet corrects it, the gap is kept as
+a residual that melts over ~100 ms, so a correction reads as a slide rather than a teleport and
+the kart never trails the truth by an easing lag at speed. There is no rollback: your kart is
+never yanked back by the server, which is what a kart racer on a phone wants to feel like.
 
 **The host owns everything else**, so the race is one race on every screen:
 

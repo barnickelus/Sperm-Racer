@@ -49886,7 +49886,15 @@ function netApplySnap(r, dt){
   const age=Math.min(0.5, (performance.now()-(r._snapT||0))/1000);
   const px=s.x+Math.sin(s.h)*s.sp*age, pz=s.z+Math.cos(s.h)*s.sp*age;
   const k=Math.min(1, 10*dt);
-  r.x+=(px-r.x)*k; r.z+=(pz-r.z)*k; r.y+=(s.y-r.y)*k;
+  // The kart rides the extrapolated position itself, not an easing toward it: easing the
+  // position trailed the truth by speed/rate (10+ units flat out) all race long. Instead,
+  // when a packet lands, the gap between where the kart is drawn and where it should be is
+  // kept as a residual that melts away over ~100ms — continuous on screen, no lag at speed.
+  if(s!==r._snapSeen){ r._snapSeen=s; r._ex=r.x-px; r._ez=r.z-pz;
+    if(Math.hypot(r._ex,r._ez)>40){ r._ex=0; r._ez=0; } }   // a teleport (respawn) is a teleport
+  const melt=Math.exp(-dt/0.1);
+  r._ex=(r._ex||0)*melt; r._ez=(r._ez||0)*melt;
+  r.x=px+r._ex; r.z=pz+r._ez; r.y+=(s.y-r.y)*k;
   let dh=s.h-r.head; while(dh>Math.PI)dh-=6.2832; while(dh<-Math.PI)dh+=6.2832;
   r.head+=dh*k;
   r.spd=s.sp; r.slip=s.sl; r._bank=s.bk;
