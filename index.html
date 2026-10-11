@@ -49889,8 +49889,14 @@ function netNoteFinish(r, s){
 function netApplySnap(r, dt){
   const s=r._snap; if(!s) return;
   const now=performance.now();
-  // where a snapshot says the kart is `a` seconds on: along its arc when it was turning
-  const ext=(q,a)=>{ const w=q.w||0, hm=q.h+w*a*0.5; return [q.x+Math.sin(hm)*q.sp*a, q.z+Math.cos(hm)*q.sp*a, q.h+w*a]; };
+  // where a snapshot says the kart is `a` seconds on: along its arc when it was turning, and
+  // through the whirl when it was spinning (16 rad/s, speed ×0.2 per second — the same
+  // step updateRacer takes), which otherwise read as a straight overshoot the size of a kart
+  const ext=(q,a)=>{
+    if(q.sn){ let x=q.x, z=q.z, h=q.h, sp=q.sp; const n=4, d=a/n;
+      for(let i=0;i<n;i++){ h+=d*16; sp*=Math.pow(0.2,d); x+=Math.sin(h)*sp*d; z+=Math.cos(h)*sp*d; }
+      return [x,z,h]; }
+    const w=q.w||0, hm=q.h+w*a*0.5; return [q.x+Math.sin(hm)*q.sp*a, q.z+Math.cos(hm)*q.sp*a, q.h+w*a]; };
   const [px,pz,ph]=ext(s, Math.min(0.5, (now-(r._snapT||0))/1000));
   const k=Math.min(1, 10*dt);
   // The kart rides the extrapolated position itself, not an easing toward it: easing the
