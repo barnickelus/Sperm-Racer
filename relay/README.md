@@ -1,12 +1,27 @@
 # Race Wars relay
 
 A WebSocket fan-out for the game's `relay` transport: whatever JSON text a client sends to
-`/room/<CODE>` is echoed to every other client in that room. One Cloudflare Worker, one
-Durable Object class, no storage, no accounts. It fits in the free plan.
+`/room/<CODE>` is echoed to every other client in that room — plus the open-room registry
+behind **Quick Race** (`GET /open`). One Cloudflare Worker, two Durable Object classes (a
+`Room` per code, one `Lobby` for the registry), no accounts. It fits in the free plan.
 
-Why bother, when the default `peer` transport is free and serverless: the public PeerJS
-broker has no uptime promise, and roughly one network in ten (strict corporate / some
-mobile NAT) cannot open a direct WebRTC channel at all. A relay sidesteps NAT entirely.
+## Already deployed? Deploy again (one command)
+
+The registry is new. A worker deployed before it answers `/open` with 404, and the game then
+says *Open rooms need the updated relay (see relay/README.md)* and hosts an ordinary coded
+room instead. To turn Quick Race on:
+
+```sh
+cd relay && wrangler deploy
+```
+
+That is all: `wrangler.toml` carries the `v2` migration that adds the `Lobby` class, and the
+URL does not change.
+
+Why bother, when the `peer` transport is free and serverless: the public PeerJS broker has
+no uptime promise, roughly one network in ten (strict corporate / some mobile NAT) cannot
+open a direct WebRTC channel at all, and open rooms need somewhere to be listed. A relay
+sidesteps NAT entirely and the registry rides on it.
 
 ## Deploy (once, ~5 minutes)
 
@@ -53,6 +68,22 @@ is that server, written for Cloudflare.
 - There is no room state. A room "exists" while someone is connected to it and is gone the
   moment the last socket closes; the Durable Object hibernates between packets, so an idle
   lobby costs nothing.
+
+### Open rooms (Quick Race)
+
+- `GET /open` → `{"room":"ABCD","join":true}` names an open room that is still waiting: not
+  started, fewer than six humans, refreshed within the last 45 s. The fullest room comes first,
+  so people pool; the oldest of equals, so no room waits forever. With nothing open it answers
+  `{"room":"WXYZ","join":false}`: a fresh four-letter code (the game's alphabet, no `I/O/0/1`)
+  that the caller hosts.
+- `POST /open/<CODE>` with JSON `{"humans":3,"started":false}` → `{"ok":true}`. The host sends
+  it when it opens the room and every 5 s after; `started:true` (lights-out), `humans>=6` or
+  `humans:0` take the room off the list, and 45 s without a POST expires it.
+- Both answer with `Access-Control-Allow-Origin: *` (the game is on another origin) and
+  `OPTIONS` with 204. The registry is advisory: a room is still only an echo room, and a joiner
+  that finds it empty or already racing asks `/open` again.
+- Anything else under `/open` is 404. `scratchpad/mp_relay_srv.js` (the Node stand-in used by
+  the tests) implements the same endpoints with the identical `openRegistry()` function.
 
 ## Limits
 
