@@ -476,11 +476,13 @@
   .go-main{padding-left:.36em;line-height:1;}
   .go-sub{font-size:9.5px;letter-spacing:.16em;font-weight:700;color:#07453b;text-transform:uppercase;white-space:nowrap;max-width:94%;overflow:hidden;text-overflow:ellipsis;}
   @keyframes goPulse{0%,100%{box-shadow:0 0 0 1px rgba(155,249,226,.5),0 10px 30px -8px rgba(109,242,208,.45)}50%{box-shadow:0 0 0 1px rgba(155,249,226,.7),0 10px 40px -2px rgba(109,242,208,.75)}}
-  .dk-sec{order:6;flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
-  .sec{margin:0!important;padding:5px 4px;min-height:48px;border-radius:14px;border:1.5px solid var(--c);color:var(--c);background:rgba(8,34,42,.55);
+  .dk-sec{order:6;flex:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;}
+  .sec{margin:0!important;padding:5px 3px;min-height:48px;border-radius:14px;border:1.5px solid var(--c);color:var(--c);background:rgba(8,34,42,.55);
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.1;text-transform:none;letter-spacing:0;font-weight:400;}
   .sec b{font-size:11px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;}
   .sec small{font-size:9px;opacity:.72;letter-spacing:.06em;white-space:nowrap;}
+  /* four tiles across a phone: the labels shrink before they would clip */
+  @media (max-width:440px){ .dk-sec{gap:5px;} .sec b{font-size:9.5px;letter-spacing:.03em;} .sec small{font-size:8px;letter-spacing:.02em;} }
   .dk-l .keys{display:none;order:7;margin:0;font-size:10.5px;line-height:1.8;text-align:center;}
   /* settings sheet */
   .sheet{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;justify-content:center;}
@@ -812,6 +814,7 @@
       </section>
       <section class="dk-diff"><div class="tag">difficulty</div><div id="diffpick"></div></section>
       <nav class="dk-sec">
+        <button class="go alt sec" id="quickbtn" style="--c:#ffd84a"><b>Quick Race</b><small>open rooms</small></button>
         <button class="go alt sec" id="mpbtn" style="--c:#9be74e"><b>Multiplayer</b><small>race a friend</small></button>
         <button class="go alt sec" id="circuitbtn" style="--c:#ff9ec4"><b>🥚 Circuit Cup</b><small>every egg</small></button>
         <button class="go alt sec" id="demobtn" style="--c:#6df2d0" onclick="location.href='demo.html'"><b>🧪 Lab</b><small>drive &amp; fx</small></button>
@@ -862,12 +865,13 @@
 <!-- MULTIPLAYER LOBBY -->
 <div class="screen hidden" id="mp">
   <div class="tag">race war · online</div>
-  <h1>MULTIPLAYER<small>— room code —</small></h1>
+  <h1>MULTIPLAYER<small id="mpsub">— room code —</small></h1>
   <div id="mpcode" title="tap to copy an invite link">----</div>
   <div id="mpstatus">not connected</div>
   <input id="mpname" maxlength="12" placeholder="your name" autocomplete="off">
   <div id="mplist"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px">
+    <button class="go" id="mpquick">Quick Race</button>
     <button class="go alt" id="mphost">Host a race</button>
     <button class="go alt" id="mpjoin">Join with code</button>
   </div>
@@ -49496,8 +49500,19 @@ const NET = {
   // the race has been run (results screen, room still open for a rematch), the next
   // entity id the host hands out, and every live host-owned hazard/projectile by id
   hostId:'', auth:false, done:false, nid:1, ents:new Map(),
+  // open rooms (Quick Race, see netQuick): the room came from the relay's /open registry, the
+  // host starts it on a timer and keeps the registry fresh, and the lobby hides the code
+  // machinery. order: the last roster's player ids, the join order everyone agrees on, which
+  // picks the next host if this one leaves the lobby. openT/openAt: the countdown as last told.
+  open:false, finding:false, openDue:0, openT:null, openAt:0, order:[], _openPost:null, _openJoin:null,
+  // start sync: the host holds the lights until every human's track is built (up to NET_READY_WAIT)
+  ready:new Set(), goSeen:false, _go:null, _readyT:0,
   status(m){ const el=document.getElementById('mpstatus'); if(el) el.textContent=m; },
 };
+const NET_OPEN_WAIT=20, NET_OPEN_LATE=8, NET_OPEN_ALONE=25, NET_OPEN_FULL=6;   // seconds; the auto-start rules
+const NET_OPEN_POST=5000, NET_READY_WAIT=8000;                                   // ms
+// the registry lives on the relay: ws(s)://host/room -> http(s)://host/open
+function netOpenBase(){ return NET_RELAY_URL.replace(/^ws(s?):\/\//,'http$1://').replace(/\/room\/?$/,''); }
 function netId(){ return Math.random().toString(36).slice(2,8); }
 function netRoomCode(){
   const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';    // no I/O/0/1 — these get read aloud
@@ -49620,20 +49635,22 @@ function netHandlers(){
   };
 }
 
-async function netStart(host, room){
+async function netStart(host, room, open){
   netLeave(true);
   NET.t=NET_TRANSPORTS[netPick];
   NET.host=host; NET.room=room; NET.self=netId();
   NET.hostId=host?NET.self:''; NET.auth=false; NET.done=false;
+  NET.open=!!open; if(open){ NET.fillAI=true; if(host) NET.openDue=performance.now()+NET_OPEN_ALONE*1000; }
   NET.name=(document.getElementById('mpname')||{}).value || (host?'Host':'Racer');
   NET.status(host?'Opening room '+room+'…':'Joining '+room+'…');
   const ok=await NET.t.open(room, host, NET.self, netHandlers());
-  if(!ok){ NET.t=null; return false; }
+  if(!ok){ NET.t=null; NET.open=false; return false; }
   NET.lobby=true;
   NET.players.clear();
   NET.players.set(NET.self, {id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido', last:performance.now(), self:true});
   netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'});
   if(NET.host) netBroadcastRoster();
+  if(NET.open && NET.host) netOpenHosting();
   NET.status(host ? 'Room '+room+' is open. Share the code.' : 'Connected to '+room+'.');
   // Heartbeat, and the liveness sweep with it. Both have to run OUTSIDE the race loop:
   // a client sends nothing at all between joining the lobby and the lights going out, so
@@ -49658,6 +49675,8 @@ async function netStart(host, room){
     // stall a peer for several seconds without it having gone anywhere.
     for(const q of [...NET.players.values()])
       if(q.id!==NET.self && now-q.last>15000) netDropPeer(q.id);
+    // an open lobby ticks: the host checks its deadline and everyone redraws the countdown
+    if(NET.open && NET.lobby){ if(NET.host) netOpenTick(); else netRenderLobby(); }
   }, 1000);
   netRenderLobby();
   return true;
@@ -49665,21 +49684,28 @@ async function netStart(host, room){
 
 // Closing the tab, navigating away or backgrounding on mobile: say goodbye while we still
 // can, so the other players see the kart hand over immediately instead of after the timeout.
-addEventListener('pagehide', ()=>{ if(NET.t) netSend({t:'bye', id:NET.self}); });
+addEventListener('pagehide', ()=>{ if(NET.t){ netSend({t:'bye', id:NET.self}); netOpenUnlist(); } });
 addEventListener('beforeunload', ()=>{ if(NET.t) netSend({t:'bye', id:NET.self}); });
 
 function netLeave(quiet){
   clearInterval(NET._hb); NET._hb=null;
-  if(NET.t){ if(!quiet) netSend({t:'bye', id:NET.self}); NET.t.close(); }
+  if(NET.t){ if(!quiet) netSend({t:'bye', id:NET.self}); netOpenUnlist(); NET.t.close(); }
   NET.t=null; NET.on=false; NET.lobby=false; NET.host=false;
   NET.hostId=''; NET.auth=false; NET.done=false; NET.ents.clear();
   NET.players.clear(); NET.lineup=null;
+  clearInterval(NET._openPost); NET._openPost=null;
+  if(NET._openJoin){ const f=NET._openJoin; NET._openJoin=null; f(false); }
+  NET.open=false; NET.openDue=0; NET.openT=null; NET.openAt=0; NET.order=[];
+  NET._go=null; NET.goSeen=false; NET.ready.clear();
   netRaceDoneUI();
 }
 
 function netBroadcastRoster(){
-  netSend({t:'roster', fillAI:NET.fillAI, track:selTrack, host:NET.self,
-    players:[...NET.players.values()].filter(p=>!p.gone).map(p=>({id:p.id,name:p.name,typeId:p.typeId}))});
+  const m={t:'roster', fillAI:NET.fillAI, track:selTrack, host:NET.self,
+    players:[...NET.players.values()].filter(p=>!p.gone).map(p=>({id:p.id,name:p.name,typeId:p.typeId}))};
+  if(NET.open){ m.open=1; m.openT=+Math.max(0,(NET.openDue-performance.now())/1000).toFixed(1); }
+  if(NET.on) m.on=1;     // a latecomer learns the race is already running
+  netSend(m);
 }
 
 function netDropPeer(pid){
@@ -49698,8 +49724,13 @@ function netDropPeer(pid){
       r.remote = NET.auth && !NET.host && pid!==NET.hostId;
     } else { r.finished=true; r.finishT=raceTime; }
   }
-  if(pid===NET.hostId){ if(NET.on) netHostLost(); else NET.status('The host left the room — go back and join another.'); }
+  if(pid===NET.hostId){
+    if(NET.on) netHostLost();
+    else if(NET.open && NET.lobby) netOpenHandover();
+    else NET.status('The host left the room — go back and join another.');
+  }
   if(NET.host) netBroadcastRoster();
+  if(NET.host) netReadyCheck();                  // nobody waits for a driver who has gone
   netRenderLobby();
 }
 
@@ -49708,14 +49739,16 @@ function netRecv(m){
   const p=NET.players.get(m.from);
   if(p) p.last=performance.now();
   switch(m.t){
-    case 'hello':
-      if(!NET.players.has(m.id))
-        NET.players.set(m.id, {id:m.id, name:m.name, typeId:m.typeId, last:performance.now()});
+    case 'hello': {
+      const fresh=!NET.players.has(m.id);     // a renamed player says hello again: not an arrival
+      if(fresh) NET.players.set(m.id, {id:m.id, name:m.name, typeId:m.typeId, last:performance.now()});
+      else Object.assign(NET.players.get(m.id), {name:m.name, typeId:m.typeId});
       // answer so the newcomer learns about us too (mesh transports have no join event)
-      if(NET.host){ netBroadcastRoster(); }
+      if(NET.host){ if(fresh) netOpenArrival(); netBroadcastRoster(); }
       else netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'});
       netRenderLobby();
       break;
+    }
     case 'roster':
       if(NET.host) break;                     // the host IS the source of truth
       NET.fillAI=m.fillAI; NET.hostId=m.host||m.from;
@@ -49726,7 +49759,17 @@ function netRecv(m){
       for(const id of [...NET.players.keys()])
         if(id!==NET.self && !m.players.some(q=>q.id===id)) NET.players.delete(id);
       if(m.track!==undefined && m.track!==selTrack){ selTrack=m.track; }
+      NET.order=m.players.map(q=>q.id);       // the join order, the same on every screen
+      if(m.open){ NET.open=true; NET.openT=m.openT; NET.openAt=performance.now(); }
+      // Quick Race, waiting to hear whether this room will have us: in the lobby and listed, yes
+      if(NET._openJoin){ const f=NET._openJoin; NET._openJoin=null; f(!m.on && m.players.some(q=>q.id===NET.self)); }
       netRenderLobby();
+      break;
+    case 'ready':                             // a human's track is built: the host may light the lights
+      if(NET.host){ NET.ready.add(m.from); netReadyCheck(); }
+      break;
+    case 'go':                                // the host's lights: start now, or as soon as we are built
+      if(!NET.host){ NET.goSeen=true; if(NET._go) NET._go(); }
       break;
     case 'pick':
       if(NET.players.has(m.id)) NET.players.get(m.id).typeId=m.typeId;
@@ -49792,21 +49835,154 @@ function netRenderLobby(){
            `<b>${p.name||'racer'}</b><span class="mpty">${ty?ty.name:'—'}</span>`+
            `${p.id===NET.self?'<span class="mpme">you</span>':''}</div>`;
   }).join('') : '<div class="mprow"><i>waiting for players…</i></div>';
+  // open mode (Quick Race): no code, no host/join/start/fill/connection buttons — the room
+  // starts itself; the status line carries the countdown. Everything else is the same lobby.
+  const open=NET.open||NET.finding, el=id=>document.getElementById(id);
+  for(const id of ['mpcode','mpquick','mphost','mpjoin','mptrans']){ const e=el(id); if(e) e.style.display=open?'none':''; }
+  const sub=el('mpsub'); if(sub) sub.textContent=open?'— open race —':'— room code —';
+  if(open){ const T=netOpenLeft();
+    NET.status(!NET.t ? 'Finding racers…'
+      : 'Open race · '+(ps.length<2?'waiting for racers':ps.length+' racers')+(T!=null?' · starting in '+T+' s':'')); }
   const code=document.getElementById('mpcode'); if(code) code.textContent=NET.room||'----';
   const go=document.getElementById('mpgo');
-  if(go){ go.style.display=NET.host?'block':'none';
+  if(go){ go.style.display=NET.host&&!open?'block':'none';
           go.textContent='Start race ('+ps.length+' human'+(ps.length===1?'':'s')+')'; }
   const fb=document.getElementById('mpfill');
-  if(fb){ fb.style.display=NET.host?'block':'none';
+  if(fb){ fb.style.display=NET.host&&!open?'block':'none';
           fb.textContent='Fill empty slots with AI: '+(NET.fillAI?'ON':'OFF');
           fb.classList.toggle('on', NET.fillAI); }
   const tb=document.getElementById('mptrans');
   if(tb) tb.textContent='Connection: '+NET_TRANSPORTS[netPick].label;
 }
+// seconds until an open room starts, as this screen knows it: the host from its deadline,
+// a client from the last roster's openT counted down since it arrived
+function netOpenLeft(){
+  if(!NET.open || !NET.t) return null;
+  const left=NET.host ? (NET.openDue-performance.now())/1000 : NET.openT!=null ? NET.openT-(performance.now()-NET.openAt)/1000 : null;
+  return left==null ? null : Math.max(0, Math.ceil(left));
+}
+
+/* ---- open rooms (Quick Race) ---------------------------------------------------------------
+ * No codes: GET /open on the relay names a room that is waiting for people (or a fresh code
+ * to host), the lobby opens in open mode, and the HOST'S CLIENT starts the race on a timer:
+ *   - a 2nd human arrives            -> 20 s countdown (NET_OPEN_WAIT)
+ *   - each later arrival             -> the remaining time is cut to at most 8 s (NET_OPEN_LATE)
+ *   - 6 humans                       -> start at once (NET_OPEN_FULL)
+ *   - the host alone for 25 s        -> start anyway, against AI (NET_OPEN_ALONE)
+ * Fill-with-AI is forced on. The host POSTs /open/<CODE> {humans,started} every 5 s so the
+ * registry stays fresh, and started:true at lights-out takes the room off the list. Everyone
+ * sees the countdown through the roster's openT. If the host leaves the lobby, the
+ * earliest-joined remaining player (first in the roster order everyone has) becomes host,
+ * re-registers the room and carries the countdown on. Only the relay transport can do this
+ * (the registry is on the relay), so Quick Race switches to it whatever was picked. */
+async function netQuick(){
+  if(NET.finding) return;
+  const $m=id=>document.getElementById(id);
+  const plain=(msg)=>{ NET.finding=false; netRenderLobby(); NET.status(msg); };
+  if(!NET_RELAY_URL) return plain('Quick Race needs a relay (see relay/README.md).');
+  netLeave(true); netPick='relay'; NET.finding=true; netRenderLobby();
+  const tok=NET._quickTok={};                      // Back during the search cancels it
+  const live=()=>NET._quickTok===tok;
+  // netStart, unless the search was cancelled while it connected (then that room is left again)
+  const enter=async(host,room,open)=>{ const ok=await netStart(host,room,open); if(!live()){ if(ok) netLeave(true); return null; } return ok; };
+  try{
+    for(let attempt=0; attempt<2; attempt++){
+      let res=null; try{ res=await fetch(netOpenBase()+'/open', {cache:'no-store'}); }catch(e){}
+      if(!live()) return;
+      if(res && res.status===404){                 // a relay deployed before the registry existed
+        const code=netRoomCode(); NET.finding=false; $m('mpcode').textContent=code;
+        if(await enter(true, code)){ $m('mpshare').style.display='block';
+          NET.status('Open rooms need the updated relay (see relay/README.md) — hosting room '+code+' instead.'); }
+        return;
+      }
+      let o=null; try{ o=res && res.ok ? await res.json() : null; }catch(e){}
+      if(!o || !o.room) return plain('Could not reach the relay — try again, or host a race.');
+      const room=String(o.room).toUpperCase();
+      if(!o.join){ const ok=await enter(true, room, true); if(ok) return netQuickIn(); if(ok===false) plain($m('mpstatus').textContent); return; }
+      { const ok=await enter(false, room, true); if(!ok){ if(ok===false) plain($m('mpstatus').textContent); return; } }
+      // the host answers our hello with its roster; one that never comes (its entry outlived
+      // it), or one that says the race is running, is a miss — ask the registry once more
+      const ok=await new Promise(res=>{ NET._openJoin=res; setTimeout(()=>{ if(NET._openJoin===res){ NET._openJoin=null; res(false); } }, 4000); });
+      if(!live()) return;
+      if(ok) return netQuickIn();
+      netLeave(true);
+    }
+    // twice unlucky: open a room of our own (the registry learns of it from the first POST)
+    const ok=await enter(true, netRoomCode(), true);
+    if(ok) return netQuickIn();
+    if(ok===false) plain($m('mpstatus').textContent);
+  } finally { if(live()){ NET.finding=false; netRenderLobby(); } }
+}
+function netQuickIn(){ NET.finding=false; document.getElementById('mpshare').style.display='block'; netRenderLobby(); }
+// the host's side of the registry: list the room now and every 5 s while the lobby lasts
+function netOpenHosting(){
+  clearInterval(NET._openPost);
+  netOpenPost(false);
+  NET._openPost=setInterval(()=>{ if(NET.open && NET.host && NET.lobby && !NET.on) netOpenPost(false); else { clearInterval(NET._openPost); NET._openPost=null; } }, NET_OPEN_POST);
+}
+function netOpenPost(started){
+  if(!NET.open || !NET.host || !NET.room) return;
+  const body=JSON.stringify({humans:NET.players.size, started:!!started});   // a string body: no CORS preflight
+  try{ fetch(netOpenBase()+'/open/'+NET.room, {method:'POST', body, keepalive:true}).catch(()=>{}); }catch(e){}
+}
+// leaving an open lobby alone: take the room off the list now rather than 45 s from now.
+// With others still in it the next host re-registers within a second.
+function netOpenUnlist(){ if(NET.open && NET.host && NET.lobby && !NET.on && NET.players.size<=1) netOpenPost(true); }
+function netOpenArrival(){                         // host: a new human is in the lobby
+  if(!NET.open || !NET.host || !NET.lobby) return;
+  const now=performance.now(), n=NET.players.size;
+  if(n===2) NET.openDue=now+NET_OPEN_WAIT*1000;
+  else if(n>2) NET.openDue=Math.min(NET.openDue, now+NET_OPEN_LATE*1000);
+  if(n>=NET_OPEN_FULL) netHostStart();
+}
+function netOpenTick(){                            // host, once a second
+  if(!NET.open || !NET.host || !NET.lobby) return;
+  if(performance.now()>=NET.openDue || NET.players.size>=NET_OPEN_FULL){ netHostStart(); return; }
+  netBroadcastRoster(); netRenderLobby();           // the countdown everyone sees
+}
+function netOpenHandover(){                        // the host left the lobby: the earliest-joined player takes over
+  const order=NET.order.filter(id=>NET.players.has(id));
+  for(const id of NET.players.keys()) if(!order.includes(id)) order.push(id);   // anyone the last roster had not listed yet
+  const next=order[0]; if(!next) return;
+  NET.hostId=next;
+  if(next!==NET.self){ NET.status('Open race · new host…'); return; }
+  const now=performance.now();
+  NET.host=true; NET.fillAI=true;
+  NET.openDue=NET.openT!=null ? Math.max(now+1000, NET.openAt+NET.openT*1000) : now+NET_OPEN_ALONE*1000;
+  const m=new Map(); for(const id of order) m.set(id, NET.players.get(id)); NET.players=m;   // keep the agreed order
+  netOpenHosting();
+  netBroadcastRoster();
+}
+
+/* ---- start sync ---------------------------------------------------------------------------
+ * Each peer builds the course when 'start' arrives, which takes seconds on a phone, so the host
+ * holds its lights until every human has said 'ready' (or NET_READY_WAIT has passed), then sends
+ * 'go'. A peer that hears 'go' before it is built starts the moment it is. */
+function netHoldStart(begin){
+  if(!NET.on || !NET.auth) return false;
+  if(NET.host){
+    NET._go=begin; NET._readyT=performance.now();
+    setTimeout(()=>netReadyCheck(), NET_READY_WAIT+50);
+    netReadyCheck();                              // nobody to wait for, or everyone already in
+    return !!NET._go;
+  }
+  netSend({t:'ready'});
+  if(NET.goSeen) return false;
+  NET._go=begin;
+  setTimeout(()=>{ if(NET._go===begin) begin(); }, NET_READY_WAIT+4000);   // no 'go' came: the host is gone or the packet was lost
+  return true;
+}
+function netReadyCheck(){
+  if(!NET.host || !NET._go) return;
+  const waiting=(NET.lineup||[]).some(p=>!p.ai && p.id!==NET.self && NET.players.has(p.id) && !NET.ready.has(p.id));
+  if(waiting && performance.now()-NET._readyT<NET_READY_WAIT) return;
+  netSend({t:'go'}); NET._go();
+}
 
 /* ---- starting a networked race ---- */
 function netHostStart(){
   if(!NET.host) return;
+  if(NET.open && NET.lobby){ NET.fillAI=true; netOpenPost(true); clearInterval(NET._openPost); NET._openPost=null; }   // off the open list
   const ps=[...NET.players.values()].filter(p=>!p.gone);
   const lineup=ps.map((p,k)=>({id:p.id, typeId:p.typeId, name:p.name, k}));
   // The AI padding is drawn HERE, once, and travels with the grid. Each peer used to draw
@@ -49824,6 +50000,8 @@ function netHostStart(){
 function netBeginRace(){
   NET.on=true; NET.lobby=false; NET.auth=true; NET.done=false;
   NET.ents.clear(); NET.nid=1;
+  NET.ready.clear(); NET.goSeen=false; NET._go=null;   // start sync, per race
+  NET.picking=false;                                   // an open room can start while someone is still on the racer grid
   // the grid sits silent through the countdown and track build; don't count that as absence
   const t0=performance.now();
   for(const p of NET.players.values()) p.last=t0;
@@ -50106,6 +50284,7 @@ function netHostLost(){
     if(r.you && r._pend!=null){ r._pend=null; if(!r.item) r._roll=0; }
   }
   if(state==='race'||state==='count') showToast('Host left — racing locally','t-red');
+  if(NET._go) NET._go();                           // no 'go' is coming: light the lights ourselves
   netRaceDoneUI();
 }
 /* the results screen of a networked race: the room stays open. The host's "Race again" is a
@@ -50131,9 +50310,12 @@ function netInviteURL(){
   const $$=id=>document.getElementById(id);
   const show=()=>{ $$('start').classList.add('hidden'); $$('mp').classList.remove('hidden');
                    netRenderLobby(); };
-  const back=()=>{ netLeave(); $$('mp').classList.add('hidden'); $$('start').classList.remove('hidden'); };
+  const back=()=>{ NET.finding=false; NET._quickTok=null; netLeave(); $$('mp').classList.add('hidden'); $$('start').classList.remove('hidden'); };
   $$('mpbtn').onclick=show;
   $$('mpback').onclick=back;
+  // Quick Race: straight into an open room, from the home screen or from the lobby
+  $$('quickbtn').onclick=()=>{ initAudio(); show(); netQuick(); };
+  $$('mpquick').onclick=()=>netQuick();
   $$('mphost').onclick=async()=>{
     const code=netRoomCode();
     $$('mpcode').textContent=code;
@@ -50407,7 +50589,7 @@ countdown = function(){
   buildRacers(); // will use chosenType now
   $('start').classList.add('hidden'); $('select').classList.add('hidden'); $('finish').classList.add('hidden');
   $('cd').classList.remove('hidden');
-  const cd=$('count'); cd.textContent='3'; SFX.count(false);
+  const cd=$('count'); cd.textContent='3';
   const pulse=()=>{ cd.style.animation='none'; void cd.offsetWidth; cd.style.animation=''; };
   pulse();
   state='count'; let n=3;
@@ -50426,7 +50608,9 @@ countdown = function(){
       kickShake(0.5);
     }
   };
-  setTimeout(tick,750);
+  // networked, the lights wait for the other humans' builds (netHoldStart); solo they go now
+  const begin=()=>{ NET._go=null; cd.textContent='3'; pulse(); SFX.count(false); setTimeout(tick,750); };
+  if(netHoldStart(begin)) cd.textContent='…'; else begin();
 };
 
 // ---- track-hazard model builders (crab / Plan B pill / dental dam) ----
@@ -51354,8 +51538,8 @@ requestAnimationFrame(frame);
    Nothing here mutates game state; it is a window, not a lever. */
 window.srNet={
   get status(){ return {transport:netPick, transports:Object.keys(NET_TRANSPORTS),
-    room:NET.room||null, host:NET.host, self:NET.self||null, connected:!!NET.t,
-    lobby:NET.lobby, racing:NET.on, fillAI:NET.fillAI,
+    room:NET.room||null, host:NET.host, hostId:NET.hostId||null, self:NET.self||null, connected:!!NET.t,
+    lobby:NET.lobby, racing:NET.on, fillAI:NET.fillAI, open:NET.open, finding:NET.finding, openT:netOpenLeft(),
     players:[...NET.players.values()].map(p=>({id:p.id, name:p.name, typeId:p.typeId,
       quietMs:Math.round(performance.now()-p.last)}))}; },
   // What is actually playing: which tune, and whose arrangement of it. Read-only, and the
