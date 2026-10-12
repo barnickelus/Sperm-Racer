@@ -368,6 +368,8 @@
   #mpcode{cursor:pointer;font:900 46px ui-monospace,monospace;letter-spacing:.22em;color:var(--signal);
     text-shadow:0 0 22px rgba(46,210,255,.5);margin:2px 0 4px}
   #mpstatus{color:var(--bone);opacity:.8;font:600 12px ui-monospace,monospace;min-height:16px;margin-bottom:10px}
+  /* an open room (Quick Race): no code to read out, no host/join/connection buttons */
+  #mp.open #mpcode,#mp.open #mpquick,#mp.open #mphost,#mp.open #mpjoin,#mp.open #mptrans{display:none!important}
   #mpname{font:700 14px ui-monospace,monospace;text-align:center;color:var(--bone);
     background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:10px;
     padding:9px 12px;width:200px;margin-bottom:10px;outline:none}
@@ -49761,8 +49763,10 @@ function netRecv(m){
       if(m.track!==undefined && m.track!==selTrack){ selTrack=m.track; }
       NET.order=m.players.map(q=>q.id);       // the join order, the same on every screen
       if(m.open){ NET.open=true; NET.openT=m.openT; NET.openAt=performance.now(); }
-      // Quick Race, waiting to hear whether this room will have us: in the lobby and listed, yes
-      if(NET._openJoin){ const f=NET._openJoin; NET._openJoin=null; f(!m.on && m.players.some(q=>q.id===NET.self)); }
+      // Quick Race, waiting to hear whether this room will have us: a roster that lists us says
+      // yes, one from a running race says no; one that predates our hello (the host's once-a-
+      // second lobby roster) says nothing yet
+      if(NET._openJoin && (m.on || m.players.some(q=>q.id===NET.self))){ const f=NET._openJoin; NET._openJoin=null; f(!m.on); }
       netRenderLobby();
       break;
     case 'ready':                             // a human's track is built: the host may light the lights
@@ -49838,7 +49842,7 @@ function netRenderLobby(){
   // open mode (Quick Race): no code, no host/join/start/fill/connection buttons — the room
   // starts itself; the status line carries the countdown. Everything else is the same lobby.
   const open=NET.open||NET.finding, el=id=>document.getElementById(id);
-  for(const id of ['mpcode','mpquick','mphost','mpjoin','mptrans']){ const e=el(id); if(e) e.style.display=open?'none':''; }
+  const mp=el('mp'); if(mp) mp.classList.toggle('open', open);   // #mp.open hides the code machinery (CSS)
   const sub=el('mpsub'); if(sub) sub.textContent=open?'— open race —':'— room code —';
   if(open){ const T=netOpenLeft();
     NET.status(!NET.t ? 'Finding racers…'
@@ -49905,7 +49909,7 @@ async function netQuick(){
       const ok=await new Promise(res=>{ NET._openJoin=res; setTimeout(()=>{ if(NET._openJoin===res){ NET._openJoin=null; res(false); } }, 4000); });
       if(!live()) return;
       if(ok) return netQuickIn();
-      netLeave(true);
+      netLeave();                                  // with a bye, so the host does not keep a ghost for 15 s
     }
     // twice unlucky: open a room of our own (the registry learns of it from the first POST)
     const ok=await enter(true, netRoomCode(), true);
