@@ -44902,11 +44902,11 @@ function dressRick(g, K){
 }
 /* per-frame: the smile/grin swap, the disco point and the flip-off. The disco point goes off when
  * he picks up an item, finishes, or lights a boost at speed (that one opens with a full twirl of
- * the head). The flip-off is for a SOLID pass for the LEAD and nothing else: he takes first place off someone
- * (his race total goes past theirs), keeps it for RK_FLIP.hold seconds without them taking it
- * back, and by then (or within RK_FLIP.win of the pass) has them RK_FLIP.gap units behind him
- * along his heading, still within RK_FLIP.near, and nobody else is still ahead of him. A swap in a
- * pack, a pass for any place but first, or a flicker at the line never gets there. Then the arm comes up with the middle finger turned back at them, held about a
+ * the head). The flip-off is for TAKING FIRST PLACE and nothing else: his place (rank(), the HUD's
+ * 1ST) becomes 1 off the driver who was leading, he keeps it RK_FLIP.hold seconds, and by then (or
+ * within RK_FLIP.win of taking it) that driver is RK_FLIP.gap units behind him along his heading,
+ * still within RK_FLIP.near. Passes for any other place, leading from the start, a flicker at the
+ * line, or a lead after someone has already finished never get there. Then the arm comes up with the middle finger turned back at them, held about a
  * second, and drops; at most once every RK_FLIP.cd seconds. The two gestures share the arm and
  * never overlap. Player and CPU alike, purely local. */
 const _rkV=new T.Vector3(), _rkQ=new T.Quaternion(), _rkE=new T.Euler();
@@ -44915,23 +44915,22 @@ function rickGo(st, now, spin){
   if(now-st.t0<(spin?6:3.5) || now-st.f0<RK_FL) return;
   st.t0=now; st.spin=spin; st.burst=false;
 }
-// solid-pass bookkeeping, one record per rival: are we ahead of them, and since when
+// lead-change bookkeeping: the flip-off belongs to the moment he TAKES FIRST PLACE (the same
+// place the HUD shows, from rank()) off the driver who had it, and to nothing else
 function rickPass(st, r, now){
-  if(state!=='race' || r.finished || racers.indexOf(r)<0){ st.pass.clear(); return null; }
-  let hit=null;
-  for(const q of racers){ if(q===r) continue;
-    const ahead=!q.finished && (r.total||0)>(q.total||0); let p=st.pass.get(q);
-    if(!p){ st.pass.set(q, {a:ahead, t:-1}); continue; }
-    if(ahead && !p.a) p.t=now; else if(!ahead) p.t=-1;     // a place taken off them / given back
-    p.a=ahead;
-    if(p.t<0 || now-p.t<RK_FLIP.hold) continue;
-    if(now-p.t>RK_FLIP.win){ p.t=-1; continue; }            // it never opened up: not a solid pass
-    const dx=q.x-r.x, dz=q.z-r.z, lon=dx*Math.sin(r.head)+dz*Math.cos(r.head);
-    if(lon<-RK_FLIP.gap && Math.hypot(dx,dz)<RK_FLIP.near && !hit) hit=q;
-  }
-  // ...and only when that pass puts him in FIRST place: anyone still ahead of him cancels it
-  if(hit){ const tot=r.total||0; for(const q of racers){ if(q!==r && (q.total||0)>tot){ hit=null; break; } } }
-  if(hit && !(r.spinT>0) && now-st.f0>=RK_FLIP.cd && now-st.t0>=(st.spin?RK_SPIN:0)+RK_PT){ st.pass.get(hit).t=-1; return hit; }
+  if(state!=='race' || r.finished || racers.indexOf(r)<0){ st.lead=false; st.from=null; return null; }
+  const first=r.place===1;
+  if(!first){                                               // remember who is leading, for when we pass them
+    st.lead=false; st.from=null;
+    st.leader=racers.find(q=>q!==r && q.place===1)||null; return null; }
+  if(!st.lead){ st.lead=true; st.leadT=now; st.from=st.leader; }   // just took first, off st.leader
+  const q=st.from;
+  if(!q || racers.indexOf(q)<0 || q.finished) return null;  // led from the start, or the old leader is gone
+  if(now-st.leadT<RK_FLIP.hold) return null;                // must hold first place a moment (no flicker)
+  if(now-st.leadT>RK_FLIP.win){ st.from=null; return null; } // never opened a real gap: let it go
+  const dx=q.x-r.x, dz=q.z-r.z, lon=dx*Math.sin(r.head)+dz*Math.cos(r.head);
+  if(lon<-RK_FLIP.gap && Math.hypot(dx,dz)<RK_FLIP.near && !(r.spinT>0)
+     && now-st.f0>=RK_FLIP.cd && now-st.t0>=(st.spin?RK_SPIN:0)+RK_PT){ st.from=null; return q; }
   return null;
 }
 function tickRick(o, r, now){
@@ -44940,7 +44939,7 @@ function tickRick(o, r, now){
   if(pm&&mo&&mb){ const sy=mo.scale.y/mb.y, sx=mo.scale.x/mb.x, show=sy>1.12 || (sx>1.15 && sy<0.7);
     if(pm.grin.visible!==show){ pm.grin.visible=show; pm.smile.visible=!show; } }
   if(!k || !r) return;
-  const st=ud._rk||(ud._rk={t0:-99, spin:false, burst:false, item:r.item, cel:r.celebT>0, bo:r.boostT>0, f0:-99, fq:null, pass:new Map()});
+  const st=ud._rk||(ud._rk={t0:-99, spin:false, burst:false, item:r.item, cel:r.celebT>0, bo:r.boostT>0, f0:-99, fq:null, lead:false, leadT:0, leader:null, from:null});
   const fq=rickPass(st, r, now);
   if(fq){ st.f0=now; st.fq=fq; }
   if(r.item && !st.item) rickGo(st, now, false);
@@ -51000,8 +50999,8 @@ function setupTrackPick(){
   wrap.innerHTML='';
   const cards=[];
   // display order only (TRACKS indices stay put: saved picks, Grand Prix and lobbies key off them):
-  // these three sit at the end of the strip, in this order
-  const LAST=['Seraphina','Delilah','Bianca'];
+  // these sit at the end of the strip, in this order (Valentina and Clara last)
+  const LAST=['Seraphina','Delilah','Bianca','Valentina','Clara'];
   const ord=TRACKS.map((t,i)=>i).filter(i=>!LAST.includes(TRACKS[i].name))
     .concat(LAST.map(n=>TRACKS.findIndex(t=>t.name===n)).filter(i=>i>=0));
   const posOf=i=>ord.indexOf(i);
