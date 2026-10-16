@@ -44696,6 +44696,7 @@ function rickMerge(items){
   out.setAttribute('uv', new T.Float32BufferAttribute(uv,2)); out.setIndex(idx); return out;
 }
 const RK_SKIN=0x3c2414, RK_SKINE=0x0e0603;
+const RK_SH=[2.75,3.25,-5.45];   // Super Freak's left shoulder (model space), seated on the collar; the right one mirrors it
 function dressRick(g, K){
   const {head, eyeMat, mouth, tailMesh, nuc, glow}=K;
   const TX=rickTextures(), sway=[]; g.userData.sway=sway;
@@ -44851,51 +44852,84 @@ function dressRick(g, K){
     col.add(new T.Mesh(kingMerge(pipe), GOLD));
     sway.push({o:col, bx:0, bz:0, amp:0.025, f:2.2, ph:0.3, drag:-0.25, side:0.3}); }
 
-  // --- the disco-point arm: a sequin bell sleeve with a gold-trimmed cuff, a brown hand pointing
-  // a finger at the sky. Arm frame: +y runs from the shoulder to the fingertip. Hidden in the
-  // collar until tickRick pops it out; bodyPart, so it stays on the body as the head turns.
-  { const root=bodyPart(new T.Group()); root.position.set(3.1,4.0,-4.6); root.rotation.set(0.18,0,-0.62); root.scale.setScalar(1.9); g.add(root);
+  // --- the arm, shared by the disco point and the flip-off, in the jumpsuit's sequins: a puffed
+  // shoulder seated on the collar just behind the butterfly wing, the upper arm, a rounded elbow
+  // and a forearm that flares into a bell cuff with a gold rim; out of it a cartoon hand in his
+  // brown with an ink line: a thick palm (a fleshy mound at the root of the thumb, a softer one
+  // under the little finger, the back arched a little), four tapered fingers of three bones each
+  // (a ball at every knuckle, index to little finger stepping down in length) and a two-bone
+  // thumb that swings out of the side of the palm and folds across it. Every joint is a pivot, so
+  // tickRick blends the hand between a fist, the disco point and the flip-off, and the arm is
+  // posed by 2-bone IK (gjArm, Guido Tony's). Built as his LEFT arm in the root frame (the
+  // shoulder at the origin, +x out from his side, +y up, +z forward); tickRick mirrors the whole
+  // rig onto his right side (root.scale.x -1) when the gesture belongs there. The hand's frame:
+  // the wrist at the origin, +y to the fingertips, +z the palm, the thumb on -x. bodyPart: it stays
+  // on the body as the head turns. Hidden until a gesture.
+  { const LU=3.0, LF=2.8;
+    const root=bodyPart(new T.Group()); root.position.fromArray(RK_SH); g.add(root);
     const arm=new T.Group(); arm.visible=false; root.add(arm);
-    const sl=[[0.01,-0.4],[0.62,-0.35],[0.7,0.2],[0.6,1.2],[0.66,1.7],[0.95,2.1],[1.12,2.36],[1.02,2.42]].map(p=>new T.Vector2(p[0],p[1]));
-    arm.add(new T.Mesh(new T.LatheGeometry(sl,18), SEQ));
-    arm.add(new T.Mesh(new T.TorusGeometry(1.08,0.1,6,20).rotateX(Math.PI/2).translate(0,2.4,0), GOLD));
-    const Me=(x,y,z,sx,sy,sz,rx,ry,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)), V(sx,sy,sz));
-    const S=()=>new T.SphereGeometry(1,14,10);
-    const parts=[[new T.CylinderGeometry(0.36,0.42,1.0,12), Me(0,2.45,0,1,1,1)],
-      [S(), Me(0,3.05,0.04,0.64,0.68,0.56)],                                                     // the fist
-      [new T.CylinderGeometry(0.2,0.23,1.45,10), Me(0.1,4.15,0.1,1,1,1,0,0,-0.03)],              // the index finger, straight up the line of the arm
-      [S(), Me(0.12,4.88,0.1,0.21,0.23,0.21)],                                                    // its tip
-      [S(), Me(-0.5,3.12,0.3,0.25,0.44,0.27,0,0,0.35)]];                                          // the thumb
-    for(let i=0;i<3;i++) parts.push([S(), Me(-0.36+i*0.24,3.48,0.32,0.18,0.17,0.21)]);             // curled knuckles
+    // lathed sequin sleeves, the sequins the size of the suit's: one tile round, rows by arc length
+    const sleeve=(prof,n)=>{ const pts=prof.map(p=>new T.Vector2(p[0],p[1])), geo=new T.LatheGeometry(pts,n), uv=geo.attributes.uv, arc=[0];
+      for(let j=1;j<pts.length;j++) arc.push(arc[j-1]+pts[j].distanceTo(pts[j-1]));
+      for(let i=0;i<=n;i++) for(let j=0;j<pts.length;j++) uv.setXY(i*pts.length+j, i/n/3, arc[j]/3.2);
+      return geo; };
+    const puff=new T.SphereGeometry(0.8,16,12).scale(1,0.9,1), pu=puff.attributes.uv;
+    for(let i=0;i<pu.count;i++) pu.setXY(i, pu.getX(i)/3, pu.getY(i)*0.75);
+    const upper=new T.Mesh(rickMerge([[sleeve([[0.01,-0.5],[0.36,-0.42],[0.56,-0.15],[0.62,0.3],[0.6,LU*0.44],[0.56,LU*0.76],[0.54,LU-0.2],[0.42,LU+0.16],[0.01,LU+0.3]],18)],[puff]]), SEQ);
+    const fore=new T.Mesh(sleeve([[0.01,-0.48],[0.34,-0.42],[0.53,-0.15],[0.52,0.5],[0.49,LF-1.25],[0.54,LF-0.85],[0.72,LF-0.5],[0.97,LF-0.2],[1.1,LF+0.02],[1.06,LF+0.1]],18), SEQ);
+    fore.add(new T.Mesh(new T.TorusGeometry(1.08,0.09,6,22).rotateX(Math.PI/2).translate(0,LF+0.07,0), GOLD));
+    arm.add(upper, fore);
+    const hand=new T.Group(); hand.scale.setScalar(1.3); arm.add(hand);
     const skinM=P({color:RK_SKIN, emissive:RK_SKINE, shininess:28, specular:0x4a3020}), inkM=new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide});
-    // a hand with an ink line (the same shape pushed out along its normals, back faces only)
-    const hand=(geo)=>{ const grp=new T.Group(); grp.add(new T.Mesh(geo, skinM));
+    // a skin piece with its ink line (the same shape pushed out along its normals, back faces only)
+    const piece=(par,geo,w)=>{ par.add(new T.Mesh(geo, skinM));
       const og=geo.clone(), op=og.attributes.position, on=og.attributes.normal;
-      for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*0.07, op.getY(i)+on.getY(i)*0.07, op.getZ(i)+on.getZ(i)*0.07);
-      const ol=new T.Mesh(og, inkM); ol.userData.isOutline=true; grp.add(ol); arm.add(grp); return grp; };
-    const point=hand(kingMerge(parts));
-    // the flip-off: the same wrist and fist with the back of the hand to -z (the way he turns it at
-    // whoever he just passed), one thick middle finger straight up with a nail on its back, the
-    // other three knuckled over and curled into the palm, the thumb folded across them
-    const fl=[[new T.CylinderGeometry(0.36,0.42,1.0,12), Me(0,2.45,0,1,1,1)],
-      [S(), Me(0,3.08,0.04,0.68,0.64,0.56)],                                                     // the fist
-      [new T.CylinderGeometry(0.28,0.31,1.75,10), Me(0,4.35,-0.04,1,1,1)],                        // the middle finger
-      [S(), Me(0,5.22,-0.04,0.28,0.3,0.28)],                                                     // its tip
-      [S(), Me(0,3.55,-0.12,0.3,0.24,0.28)],                                                      // its knuckle
-      [S(), Me(-0.18,3.18,0.5,0.4,0.16,0.18,0,0,0.25)],                                           // the thumb, across the curled fingers
-      [S(), Me(-0.62,3.0,0.18,0.2,0.36,0.24,0,0,0.3)]];                                           // the thumb's heel
-    [[-0.4,0.95],[0.37,0.95],[0.66,0.82]].forEach(([x,k])=>{                                       // index, ring, pinky: curled over
-      fl.push([S(), Me(x,3.48,-0.08,0.2*k,0.19*k,0.24*k)]); fl.push([S(), Me(x*0.95,3.36,0.38,0.17*k,0.22*k,0.18*k)]); });
-    const flip=hand(kingMerge(fl)); flip.visible=false;
-    const nail=new T.Mesh(new T.SphereGeometry(1,10,8), P({color:0xc89a84, emissive:0x2a1810, shininess:90, specular:0xffffff}));
-    nail.position.set(0,5.07,-0.29); nail.scale.set(0.21,0.27,0.06); flip.add(nail);
+      for(let i=0;i<op.count;i++) op.setXYZ(i, op.getX(i)+on.getX(i)*w, op.getY(i)+on.getY(i)*w, op.getZ(i)+on.getZ(i)*w);
+      const ol=new T.Mesh(og, inkM); ol.userData.isOutline=true; par.add(ol); };
+    // a finger bone up +y from its joint (0) to the next (L): a knuckle ball round the joint, a
+    // slight waist, a rounded end that the next bone's ball overlaps, so a bent joint stays round
+    const bone=(L,r0,r1)=>{ const pts=[];
+      for(let i=0;i<=5;i++){ const q=-Math.PI/2+i*Math.PI/10; pts.push(new T.Vector2(Math.cos(q)*r0*1.06, Math.sin(q)*r0*1.06)); }
+      for(let i=1;i<=3;i++){ const t=i/4; pts.push(new T.Vector2((r0+(r1-r0)*t)*(1-0.05*Math.sin(Math.PI*t)), t*L)); }
+      for(let i=0;i<=5;i++){ const q=i*Math.PI/10; pts.push(new T.Vector2(Math.cos(q)*r1, L+Math.sin(q)*r1)); }
+      return new T.LatheGeometry(pts,12); };
+    // the palm: a rounded block, narrower at the wrist, the back arched, the knuckle line dropping
+    // toward the index and little fingers; the thumb's mound, the heel under the little finger, the wrist
+    { const a=1.0, b=0.97, c=0.42, ex=0.55, sp=(w,e)=>Math.sign(w)*Math.pow(Math.abs(w),e);
+      const core=gridGeo(22,16,(u,v)=>{ const th=(v-0.5)*Math.PI, ph=u*Math.PI*2, ct=sp(Math.cos(th),ex);
+        let x=a*ct*sp(Math.cos(ph),ex), y=b*sp(Math.sin(th),ex), z=c*ct*sp(Math.sin(ph),ex);
+        const t=(y+b)/(2*b), q=x/a; x*=0.84+0.16*t; y-=0.12*q*q*Math.max(0,y/b);
+        z*= z<0 ? 1+0.18*(1-q*q) : 0.92;
+        return [x, y+1.0, z+0.02]; });
+      const nm=core.attributes.normal;                                                  // weld the normals along the u seam
+      for(let j=0;j<=16;j++){ const p=j*23, q=p+22; const x=nm.getX(p)+nm.getX(q), y=nm.getY(p)+nm.getY(q), z=nm.getZ(p)+nm.getZ(q), l=Math.hypot(x,y,z)||1;
+        nm.setXYZ(p,x/l,y/l,z/l); nm.setXYZ(q,x/l,y/l,z/l); }
+      const Me=(x,y,z,sx,sy,sz,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(0,0,rz||0)), V(sx,sy,sz));
+      piece(hand, kingMerge([[core, new T.Matrix4()],
+        [new T.SphereGeometry(1,14,10), Me(-0.5,0.62,0.2,0.42,0.62,0.36,0.45)],                 // the thumb's mound
+        [new T.SphereGeometry(1,12,8), Me(0.58,0.64,0.12,0.34,0.56,0.3,-0.1)],                  // the heel of the hand
+        [new T.CylinderGeometry(0.44,0.38,0.9,14,1,true), Me(0,-0.15,0,1,1,1)]]), 0.08); }      // the wrist, up into the cuff
+    // fingers: index, middle, ring, little - knuckle position, radius, bone lengths
+    const FG=[[-0.74,1.83,-0.12,0.28,[0.82,0.57,0.48]], [-0.25,1.93,-0.14,0.3,[0.9,0.62,0.52]], [0.24,1.88,-0.13,0.27,[0.84,0.58,0.48]], [0.7,1.72,-0.1,0.235,[0.66,0.47,0.42]]];
+    const nailM=P({color:0xc89a84, emissive:0x2a1810, shininess:90, specular:0xffffff}), fingers=[];
+    FG.forEach(([x,y,z,r,Ls],fi)=>{ const js=[]; let par=hand, rr=r;
+      for(let s=0;s<3;s++){ const j=new T.Group(); if(s) j.position.y=Ls[s-1]; else { j.position.set(x,y,z); j.rotation.order='ZXY'; }
+        par.add(j); const r1=rr*(s===2?0.86:0.93); piece(j, bone(Ls[s], rr, r1), 0.07); js.push(j); par=j;
+        if(s===2 && fi<2){ const nl=new T.Mesh(new T.SphereGeometry(1,10,8), nailM);         // a nail on the two gesture fingers, on the back
+          nl.position.set(0, Ls[2]*0.66, -r1*0.84); nl.scale.set(r1*0.74, Ls[2]*0.4, 0.07); nl.rotation.x=-0.12; j.add(nl); }
+        rr=r1; }
+      fingers.push(js); });
+    // the thumb: out of the mound on the side of the palm; its base takes a full orientation
+    const thumb=[]; { let par=hand, rr=0.33; const Ls=[0.62,0.5];
+      for(let s=0;s<2;s++){ const j=new T.Group(); if(s) j.position.y=Ls[0]; else j.position.set(-0.78,0.66,0.24);
+        par.add(j); const r1=rr*(s?0.82:0.94); piece(j, bone(Ls[s], rr, r1), 0.07); thumb.push(j); par=j; rr=r1; } }
     // sparkle burst off the fingertip (model space, so it hangs in the air where he pointed)
     const spk=bodyPart(new T.Group()); g.add(spk); const sparks=[];
     const SC=[0xffe680,0xff6ae0,0x9ee8ff,0xffffff];
     for(let i=0;i<10;i++){ const sp=new T.Sprite(new T.SpriteMaterial({map:TX.star, color:SC[i%4], transparent:true, blending:T.AdditiveBlending, depthWrite:false}));
       sp.visible=false; spk.add(sp); const a=i*2.39996, e=0.25+0.55*((i*7)%10)/10;
       sparks.push({sp, d:V(Math.cos(a)*Math.cos(e), Math.sin(e)+0.3, Math.sin(a)*Math.cos(e)).normalize(), v:10+4*((i*3)%5)/5}); }
-    g.userData.rkKit={root, arm, sparks, tip:V(0.12,5.15,0.1), point, flip};
+    g.userData.rkKit={root, arm, upper, fore, fist:hand, LU, LF, fingers, thumb, sparks, tipNode:fingers[0][2], tip:V(0,0.66,0), mode:'point'};
   }
   g.userData.tick=tickRick;
   return true;
@@ -44933,6 +44967,48 @@ function rickPass(st, r, now){
      && now-st.f0>=RK_FLIP.cd && now-st.t0>=(st.spin?RK_SPIN:0)+RK_PT){ st.from=null; return q; }
   return null;
 }
+// the arm's poses in the root frame (the shoulder at the origin, +x out from his side, +y up, +z
+// forward): wrist targets and elbow poles, tucked into the collar, the flip-off (the elbow out
+// and down, the forearm up beside his head) and the disco point (all but straight, up and out)
+const RK_W={tuck:[0.75,0.45,0.15], flip:[3.0,4.5,0.3], point:[3.3,4.6,0.6]}, RK_P={tuck:[1,-1,0], flip:[1,-0.45,-0.55], point:[1,-0.7,-0.5]};
+// the hand's poses: per finger (index, middle, ring, little) [knuckle, middle joint, end joint,
+// splay]; the thumb: its direction and the way its pad faces (hand frame), and its end joint
+const RK_HAND={
+  fist:{f:[[1.42,1.62,0.85,-0.04],[1.48,1.62,0.85,0],[1.48,1.62,0.85,0.03],[1.4,1.6,0.85,0.07]], th:[0.72,0.5,0.48, -0.2,-0.3,-0.93, 0.5]},
+  flip:{f:[[1.42,1.65,0.85,-0.06],[-0.05,0.03,0.03,0],[1.48,1.65,0.85,0.06],[1.42,1.6,0.85,0.1]], th:[0.72,0.5,0.48, -0.2,-0.3,-0.93, 0.5]},
+  point:{f:[[-0.02,0.02,0.02,0.04],[1.48,1.62,0.85,0],[1.48,1.62,0.85,0.03],[1.4,1.6,0.85,0.07]], th:[0.72,0.55,0.45, -0.2,-0.3,-0.93, 0.45]}};
+const _rkW=new T.Vector3(), _rkP=new T.Vector3(), _rkF=new T.Vector3(), _rkX=new T.Vector3(), _rkY=new T.Vector3(), _rkZ=new T.Vector3(), _rkM=new T.Matrix4(), _rkR=new T.Quaternion();
+// the fingers and thumb: pose A blended toward B by h (h may overshoot a little: a springy finger)
+function rkFingers(k, A, B, h){
+  for(let i=0;i<4;i++){ const a=A.f[i], b=B.f[i], j=k.fingers[i];
+    j[0].rotation.set(a[0]+(b[0]-a[0])*h, 0, a[3]+(b[3]-a[3])*h);
+    j[1].rotation.x=a[1]+(b[1]-a[1])*h; j[2].rotation.x=a[2]+(b[2]-a[2])*h; }
+  const a=A.th, b=B.th;
+  _rkY.set(a[0]+(b[0]-a[0])*h, a[1]+(b[1]-a[1])*h, a[2]+(b[2]-a[2])*h).normalize();
+  _rkZ.set(a[3]+(b[3]-a[3])*h, a[4]+(b[4]-a[4])*h, a[5]+(b[5]-a[5])*h); _rkZ.addScaledVector(_rkY, -_rkZ.dot(_rkY)).normalize();
+  k.thumb[0].quaternion.setFromRotationMatrix(_rkM.makeBasis(_rkX.crossVectors(_rkY,_rkZ), _rkY, _rkZ));
+  k.thumb[1].rotation.x=a[6]+(b[6]-a[6])*h;
+}
+// the arm's frame: the shoulder on his left (side 1) or mirrored onto his right (-1), kept upright
+// through the bank and pitch the racer has on, s its scale out of the collar
+function rkFrame(k, o, side, s){
+  _rkV.set(0,1,0).applyQuaternion(_rkQ.copy(o.quaternion).invert());
+  const cx=Math.max(-0.8,Math.min(0.8,Math.atan2(_rkV.x,_rkV.y))), cz=Math.max(-0.6,Math.min(0.6,Math.atan2(_rkV.z,_rkV.y)));
+  k.root.position.set(RK_SH[0]*side, RK_SH[1], RK_SH[2]); k.root.rotation.set(cz, 0, -cx); k.root.scale.set(side*s, s, s);
+}
+// a model-frame direction into the arm's (mirrored) root frame
+function rkToRoot(k, side, v){ v.applyQuaternion(_rkR.copy(k.root.quaternion).invert()); v.x*=side; return v; }
+const rkLerp3=(out,A,B,t)=>out.set(A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t, A[2]+(B[2]-A[2])*t);
+// the wrist toward W with the elbow toward P (root frame, 2-bone IK), then the hand turned so its
+// fingers run up the forearm blended toward straight up by wu, the palm toward pz (root frame)
+function rkArm(k, W, P, wu, pz){
+  gjArm(k, W, P);
+  const h=k.fist; _rkY.set(0,1,0).applyQuaternion(h.quaternion).multiplyScalar(1-wu); _rkY.y+=wu; _rkY.normalize();
+  _rkZ.copy(pz).addScaledVector(_rkY, -pz.dot(_rkY)).normalize();
+  h.quaternion.setFromRotationMatrix(_rkM.makeBasis(_rkX.crossVectors(_rkY,_rkZ), _rkY, _rkZ));
+}
+// a springy 0 -> 1 over [t0, t0+d] (ease-out-back, a small overshoot)
+const rkSpring=(t,t0,d)=>{ const u=Math.max(0,Math.min(1,(t-t0)/d))-1; return 1+2.2*u*u*u+1.2*u*u; };
 function tickRick(o, r, now){
   const ud=o.userData, k=ud.rkKit;
   const pm=ud.rickMouth, mo=ud.mouth, mb=ud.mouthBase;
@@ -44946,34 +45022,42 @@ function tickRick(o, r, now){
   if(r.celebT>0 && !st.cel) rickGo(st, now, false);
   if(r.boostT>0 && !st.bo && Math.abs(r.spd||0)>40) rickGo(st, now, true);
   st.item=r.item; st.cel=r.celebT>0; st.bo=r.boostT>0;
-  // --- the flip-off: up with a springy pop, a jab, held about a second, then down
+  // --- the flip-off: up with a springy pop as a fist, the middle finger springs up out of it, a
+  // jab, held about a second, then it curls back as the arm drops
   const fs=now-st.f0;
   if(fs<RK_FL && st.fq){
     const a=k.arm; let e;
     if(fs<0.22){ const t=fs/0.22-1; e=Math.max(0,1+2.70158*t*t*t+1.70158*t*t); }
     else e=fs<RK_FL-0.3 ? 1 : Math.max(0,(RK_FL-fs)/0.3);
     const ee=Math.min(1,e), jab=fs>0.2 && fs<0.5 ? Math.sin((fs-0.2)/0.3*Math.PI) : 0;
-    a.visible=e>0.02; k.point.visible=false; k.flip.visible=true;
-    // where they are, in the model's frame (atan2: 0 dead ahead, +-PI dead behind)
+    a.visible=e>0.02; k.mode='flip';
+    // where they are, in the model's frame (atan2: 0 dead ahead, +-PI dead behind); he gives it
+    // from their side (the arm on that side, looking back over that shoulder), latched per gesture
     _rkQ.copy(o.quaternion).invert();
     _rkV.set(st.fq.x-o.position.x, 0, st.fq.z-o.position.z).applyQuaternion(_rkQ);
     const al=Math.atan2(_rkV.x,_rkV.z);
-    let yw=al+Math.PI; if(yw>Math.PI) yw-=2*Math.PI;            // turn the back of the hand (the arm's -z) at them
-    _rkV.set(0,1,0).applyQuaternion(_rkQ);                      // and keep it upright through bank and pitch
-    const cx=Math.max(-0.8,Math.min(0.8,Math.atan2(_rkV.x,_rkV.y))), cz=Math.max(-0.6,Math.min(0.6,Math.atan2(_rkV.z,_rkV.y)));
-    k.root.rotation.order='YXZ'; k.root.rotation.set(-0.12+cz, Math.max(-1,Math.min(1,yw*0.85)), -0.45-cx);
-    a.position.set(0,-3.1*(1-ee)+0.35*jab,0); a.rotation.set(-0.15*jab,0,0.5*(1-ee));
-    a.scale.set(0.4+0.6*ee, (0.4+0.6*ee)*(1+0.08*jab), 0.4+0.6*ee);
+    if(st.fk!==st.f0){ st.fk=st.f0; st.fsd=al<0?-1:1; }
+    const sd=st.fsd;
+    if(a.visible){
+      // the back of the hand at them: turned from dead behind toward them, as far as a forearm twists
+      let yw=al+Math.PI; if(yw>Math.PI) yw-=2*Math.PI; yw=Math.max(-1,Math.min(1,yw*0.85));
+      rkFrame(k, o, sd, 0.3+0.7*ee);
+      rkToRoot(k, sd, _rkF.set(Math.sin(yw), 0, Math.cos(yw)));      // the palm: away from them
+      rkLerp3(_rkW, RK_W.tuck, RK_W.flip, e); _rkW.y+=0.55*jab; _rkW.addScaledVector(_rkF, -0.3*jab);
+      rkLerp3(_rkP, RK_P.tuck, RK_P.flip, ee);
+      rkArm(k, _rkW, _rkP, 0.6, _rkF);
+      const hu=rkSpring(fs,0.07,0.2)*(fs<RK_FL-0.3 ? 1 : Math.min(1,e/0.7));
+      rkFingers(k, RK_HAND.fist, RK_HAND.flip, hu); }
     for(const q of k.sparks) if(q.sp.visible) q.sp.visible=false;
     if(pm){ pm.grin.visible=true; pm.smile.visible=false; }        // the gold-tooth grin
-    // look back over the shoulder at them, chin up
+    // look back over that shoulder at them, chin up
     const nk=ud.neck;
-    if(nk && r._lk){ const yaw=Math.sign(al||1)*Math.min(1.35, Math.abs(al))*0.85*ee;
-      _rkQ.setFromEuler(_rkE.set(-0.14*ee, yaw, 0.08*Math.sign(al||1)*ee, 'YXZ')); nk.quaternion.premultiply(_rkQ);
+    if(nk && r._lk){ const yaw=sd*Math.min(1.35, Math.abs(al))*0.85*ee;
+      _rkQ.setFromEuler(_rkE.set(-0.14*ee, yaw, 0.08*sd*ee, 'YXZ')); nk.quaternion.premultiply(_rkQ);
       nk.position.copy(NECK_PIV).sub(_rkV.copy(NECK_PIV).applyQuaternion(nk.quaternion)); }
     return;
   }
-  if(st.fq){ st.fq=null; k.flip.visible=false; k.point.visible=true; k.root.rotation.order='XYZ'; }
+  if(st.fq){ st.fq=null; k.mode='point'; }
   // --- the disco point
   const s=now-st.t0, sp=st.spin ? RK_SPIN : 0, sa=s-sp;
   let e=0, th=0;
@@ -44985,17 +45069,18 @@ function tickRick(o, r, now){
   }
   const a=k.arm; a.visible=e>0.02;
   if(a.visible){ const ee=Math.min(1,e);
-    // point at the SKY, not along the body: take out the bank and pitch the racer has on (a lean
-    // through a bend can be 30 degrees or more, which laid the arm flat)
-    _rkV.set(0,1,0).applyQuaternion(_rkQ.copy(o.quaternion).invert());
-    const cx=Math.max(-0.8,Math.min(0.8,Math.atan2(_rkV.x,_rkV.y))), cz=Math.max(-0.6,Math.min(0.6,Math.atan2(_rkV.z,_rkV.y)));
-    k.root.rotation.set(0.18+cz, 0, -0.62-cx);
-    a.position.set(0,-3.1*(1-ee),0);
-    a.rotation.set(0,0,0.5*(1-ee)-0.12*th);
-    a.scale.set(0.4+0.6*ee, (0.4+0.6*ee)*(1+0.07*th), 0.4+0.6*ee); }
-  // --- the sparkle burst, once per point, as the arm reaches the top
+    // the side: the one his head is turned toward when it starts (the braids swing the other way)
+    if(st.pk!==st.t0){ st.pk=st.t0; const nk=ud.neck; st.psd=1;
+      if(nk){ _rkV.set(0,0,1).applyQuaternion(nk.quaternion); if(Math.atan2(_rkV.x,_rkV.z)<-0.3) st.psd=-1; } }
+    // point at the SKY, not along the body (rkFrame takes out the bank and pitch)
+    rkLerp3(_rkW, RK_W.tuck, RK_W.point, e); _rkW.multiplyScalar(1+0.12*th);
+    rkLerp3(_rkP, RK_P.tuck, RK_P.point, ee);
+    rkFrame(k, o, st.psd, 0.3+0.7*ee);
+    rkArm(k, _rkW, _rkP, 0.25+0.2*th, rkToRoot(k, st.psd, _rkF.set(0,0,1)));
+    rkFingers(k, RK_HAND.fist, RK_HAND.point, rkSpring(sa,0.05,0.2)*(sa<RK_PT-0.3 ? 1 : Math.min(1,e/0.7))); }
+  // --- the sparkle burst, once per point, as the arm reaches the top: off the index fingertip
   if(!st.burst && sa>=0.2 && sa<RK_PT){ st.burst=true; st.bt=now;
-    k.root.updateMatrix(); a.updateMatrix(); _rkV.copy(k.tip).applyMatrix4(a.matrix).applyMatrix4(k.root.matrix); st.bp=_rkV.clone(); }
+    _rkV.copy(k.tip); for(let n=k.tipNode; n && n!==o; n=n.parent){ n.updateMatrix(); _rkV.applyMatrix4(n.matrix); } st.bp=_rkV.clone(); }
   const bs=st.burst ? now-st.bt : 9;
   for(const q of k.sparks){
     if(bs>0.8){ if(q.sp.visible) q.sp.visible=false; continue; }
@@ -45008,7 +45093,7 @@ function tickRick(o, r, now){
   if(nk && r._lk && s<sp+RK_PT){
     let yaw=0, pitch=0, roll=0;
     if(st.spin && s<sp){ const t=Math.max(0,s)/sp; yaw=Math.PI*2*t*t*(3-2*t); }
-    const ee=Math.min(1,e); pitch=-0.22*ee; roll=-0.1*ee;
+    const ee=Math.min(1,e); pitch=-0.22*ee; roll=-0.1*ee*(st.psd||1);
     if(yaw||pitch||roll){ _rkQ.setFromEuler(_rkE.set(pitch,yaw,roll,'YXZ')); nk.quaternion.premultiply(_rkQ);
       nk.position.copy(NECK_PIV).sub(_rkV.copy(NECK_PIV).applyQuaternion(nk.quaternion)); }
   }
