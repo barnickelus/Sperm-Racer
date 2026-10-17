@@ -27150,6 +27150,17 @@ const TRACKS=[
    ctrl:[[336,6,124],[447,12,-116],[280,30,-329],[40,50,-399],[-200,58,-330],
          [-381,40,-157],[-360,14,39],[-240,6,170],[-188,6,358],[40,8,420],
          [269,6,369]]},
+  {name:'Rosalie', exact:true, laps:4, shore:true, key:0, tempo:190, sky:0xead2b2,
+   tunnels:[[0.506,0.556]], critters:[0.62], pills:[0.86], jumps:[0.36],
+   pads:[0.07,0.17,0.205,0.42,0.47,0.58,0.68,0.79,0.93],
+   items:[0.04,0.125,0.21,0.30,0.385,0.47,0.56,0.64,0.73,0.82,0.905],
+   ctrl:[[-520,10,160],[-220,10,160],[60,10,160],[173,11,113],[220,12,0],[220,14,-320],[220,16,-650],
+         [220,16.8,-905],[220,17,-975],[231.4,17.5,-1032.4],[263.9,18,-1081.1],[312.6,18,-1113.6],
+         [370,18,-1125],[427.4,18,-1113.6],[476.1,18,-1081.1],[508.6,17.5,-1032.4],[520,17,-975],
+         [521,16.8,-905],[537,16,-700],[578,15,-420],[645,13,-170],[715,12,40],[735,12,240],[730,12,460],
+         [680,16,610],[550,22,680],[400,30,660],[250,38,720],[130,44,870],[-30,46,940],[-200,42,880],
+         [-330,36,900],[-490,30,990],[-680,26,960],[-850,22,830],[-960,16,640],[-970,12,450],[-900,10,290],
+         [-770,10,190],[-650,10,160]]},
 ];
 // Samples per course. 700 everywhere except where a course asks for more (Eve's run is ~26k
 // units long and carries 2,600 to keep the same ~10-unit spacing). Set on EVERY buildTrack.
@@ -27177,6 +27188,7 @@ let skyDome=null;
    offset would fold the short segments back on themselves and make a corner undrivable. */
 (function lengthenTracks(){
   for(const t of TRACKS){
+    if(t.exact) continue;                         // drawn to the unit (Rosalie's pier and boardwalk): no scale, no inserted corners
     const loop = t.loop!==false;
     const src = t.ctrl, n = src.length;
     const SC = (loop ? 1.15 : 1.06) * (t.sc||1);    // t.sc: a course's own extra scale (race-length pass)
@@ -29766,6 +29778,1068 @@ function hanaGrain(on){
     app.appendChild(el); _hanaGrainEl=el;
   }
   _hanaGrainEl.style.display='block';
+}
+
+/* ============== LINOCUT KIT (Rosalie) ============== *
+ * Rosalie is the boardwalk at Salt Point cut in lino and pulled as a poster: a warm cream
+ * sheet, a forest-green key block that does all the drawing, a vermilion block for the sun
+ * and the lettering, and one gold for the chain. A print has no grey, so nothing here is
+ * shaded in the photographic sense. Every surface is MeshBasic and its shade is CUT, the way
+ * a cutter states form:
+ *   paper surfaces turning from the light take ink hatching, single, then crossed;
+ *   ink surfaces turning toward it have white line carved out of them, and their solid ink
+ *   is flecked where the block starved;
+ *   red and gold take the green hatching overprinted, as a second pass would lay it.
+ * The cuts are in screen space at a fixed pitch, so a line is the same weight on the page
+ * near and far and never beats into moire. Every solid wears an inverted-hull keyline whose
+ * width grows with distance, and the key block is pulled a hair out of register (the hull
+ * sits ~2 px down-right of its fill), the cheapest single cue that this is a print.
+ * Value plan, light to dark: sky paper, sand, plank road, the red sun, the sea, and the key
+ * block's silhouettes. The light comes out of the sun, low over the sea, so the run out
+ * along the pier is contre-jour: the wheel and the pavilion stand dark against the disc.
+ * Paper grain is the shared screen overlay (hanaGrain).
+ * ---------------------------------------------------------------------------------- */
+const SH={PAPER:0xead2b2, PAPERL:0xf2e2c6, SAND:0xe7cda8, INK:0x163f2e, INK2:0x2e5b45, RED:0xc63f2f, REDD:0xa62b22, GOLD:0xe2ad49};
+const SH_LIGHT=new T.Vector3(0.30,0.58,-0.76).normalize();   // the print's light: out of the sun, over the sea
+const SH_SUN={az:-Math.PI/2, el:0.072, r:0.215};             // the disc: due north up the pier, low, huge
+const SH_T={value:0}, SH_PX={value:1};                       // one clock; device px per css px for the cuts
+const SH_TEX={};
+const shLin=h=>new T.Color(h).convertSRGBToLinear();
+// the shore wobbles a little along its length; terrain, foam and placement all read this one line
+const shShore=x=>10*Math.sin(x/300)+6*Math.sin(x/97+1);
+const SH_GLSL=`
+  const vec3 SH_L=vec3(${SH_LIGHT.x.toFixed(4)},${SH_LIGHT.y.toFixed(4)},${SH_LIGHT.z.toFixed(4)});
+  const vec3 SH_INKC=${arcL3(SH.INK)}; const vec3 SH_PAPC=${arcL3(SH.PAPERL)};
+  float shH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+  float shLn(float v,float P,float w){ float f=abs(fract(v/P)-0.5)*P; return 1.0-smoothstep(w-0.6,w+0.6,f); }
+  vec3 shCut(vec3 c, vec3 N, float k){
+    float hk=dot(N,SH_L); vec2 fp=gl_FragCoord.xy/uPx;
+    float lum=dot(c,vec3(0.2126,0.7152,0.0722)), d1=fp.x+fp.y, d2=fp.x-fp.y;
+    if(lum>0.28){
+      float s=smoothstep(0.34,-0.12,hk)*k;
+      float m=shLn(d1,5.0,0.3+0.9*s)*step(0.03,s);
+      m=max(m, shLn(d2,5.0,0.3+0.6*smoothstep(-0.08,-0.5,hk))*step(hk,-0.08)*k);
+      c=mix(c,SH_INKC,m*0.9);
+    } else if(lum<0.06){
+      float s=smoothstep(0.42,0.95,hk)*k;
+      c=mix(c,SH_PAPC,shLn(fp.y,4.5,0.2+0.55*s)*step(0.03,s)*0.8);
+      c=mix(c,SH_PAPC,step(0.986,shH(floor(fp/1.5)))*0.55);
+    } else {
+      float s=smoothstep(0.22,-0.25,hk)*k;
+      c=mix(c,SH_INKC,shLn(d1,4.5,0.3+0.7*s)*step(0.03,s)*0.85);
+      c=mix(c,SH_PAPC,step(0.99,shH(floor(fp/1.5)))*0.4);
+    }
+    return c; }
+`;
+/* One vertex path for every Rosalie material (the Hana scheme): instance matrix applied by
+   hand so the fragment gets a world normal for the cut, optional sway by world position for
+   grass and pennants, and the back-face hull pushed out along a proper normal by a width
+   that grows with view depth, then shifted off register. */
+function shPatch(mat, name, o){
+  o=o||{};
+  const U={uInk:{value:o.ink||0}, uInkMax:{value:o.inkMax||2.2}};
+  const cutK=o.cutK!=null?o.cutK:1;
+  mat.onBeforeCompile=sh=>{
+    sh.uniforms.uT=SH_T; sh.uniforms.uPx=SH_PX; Object.assign(sh.uniforms,U);
+    const decl='uniform float uT; uniform float uInk; uniform float uInkMax; varying vec3 vSN; varying vec3 vSW;'
+      +(o.sway?'attribute float aSw;':'')+(o.inkAttr?'attribute float aInk;':'');
+    const body=`vec4 hp=vec4(transformed,1.0); vec3 hn=normal;
+      #ifdef USE_INSTANCING
+        mat3 hm=mat3(instanceMatrix);
+        hn=hm*(hn/vec3(dot(hm[0],hm[0]),dot(hm[1],hm[1]),dot(hm[2],hm[2])));
+        hp=instanceMatrix*hp;
+      #endif
+      vec4 hw=modelMatrix*hp;
+      ${o.sway?'{ float sk=aSw*clamp(transformed.y,0.0,1.0); hw.x+=sk*sin(uT*1.1+hw.x*0.05+hw.z*0.03); hw.z+=sk*0.6*sin(uT*0.8+hw.z*0.04+1.3); }':''}
+      vSN=normalize(mat3(modelMatrix)*hn); vSW=hw.xyz;
+      vec4 mvPosition=viewMatrix*hw;
+      ${o.hull?`{ vec3 vn=normalize((viewMatrix*vec4(vSN,0.0)).xyz); float dd=-mvPosition.z;
+        mvPosition.xyz+=vn*clamp(dd*uInk,0.07,uInkMax)${o.inkAttr?'*aInk':''};
+        mvPosition.xy+=vec2(0.0024,-0.0017)*dd; }`:''}
+      gl_Position=projectionMatrix*mvPosition;`;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+decl).replace('#include <project_vertex>',body);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>',
+      '#include <common>\nvarying vec3 vSN; varying vec3 vSW; uniform float uT; uniform float uPx;\n'+SH_GLSL+(o.fragPre||''));
+    if(!o.hull) sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n'+(o.frag||'')+(o.cut===false?'':`diffuseColor.rgb=shCut(diffuseColor.rgb, normalize(vSN), ${cutK.toFixed(2)});`));
+  };
+  const key=['sh',o.frag?name:(o.hull?'hull':'fill'),o.hull?1:0,o.sway?1:0,o.inkAttr?1:0,o.cut===false?0:1,cutK].join('-');
+  mat.customProgramCacheKey=()=>key;
+  return mat;
+}
+// The Hana hull: the fill's geometry with its normals welded, so the shell has no cracks
+function shHullGeo(geo){ return hanaHullGeo(geo); }
+/* Same record shape as hanaBatch ({x,y,z,s,sy,sz,rx,ry,rz,o|q,c}) and the same two draws
+   (fill, and the ink hull sharing its instance matrices). Big lists are cut into a grid of
+   450-unit chunks, each with its own world bounding sphere, so the frustum drops whatever
+   is behind the camera; this course is long and thin (the pier) and angular sectors would
+   have lumped the pier head in with the boardwalk. */
+function shBatch(geo, list, o){
+  o=o||{}; if(!list.length) return null;
+  const groups=[];
+  if(list.length>40 && !o.noChunk){ const M=new Map();
+    for(const v of list){ const k=Math.floor(v.x/450)+','+Math.floor(v.z/450); let a=M.get(k); if(!a){ a=[]; M.set(k,a); } a.push(v); }
+    for(const g of M.values()) groups.push(g); }
+  else groups.push(list);
+  const fm=shPatch(new T.MeshBasicMaterial({color:0xffffff, map:o.map||null, side:o.side||T.FrontSide, alphaTest:o.alphaTest||0}),
+    o.name||'fill', {sway:o.sway, cut:o.cut, cutK:o.cutK, frag:o.frag});
+  const hmat=o.ink===false ? null : shPatch(new T.MeshBasicMaterial({color:shLin(o.inkCol||SH.INK), side:T.BackSide}),
+    (o.name||'fill')+'-hull', {hull:true, ink:o.ink||0.0030, inkMax:o.inkMax||2.2, sway:o.sway});
+  let first=null;
+  groups.forEach((L,gi)=>{
+    const g=gi?geo.clone():geo, n=L.length;
+    const m=new T.InstancedMesh(g, fm, n);
+    const d=new T.Object3D(), c=new T.Color();
+    let cx=0,cy=0,cz=0; for(const v of L){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=n; cy/=n; cz/=n;
+    let r=0;
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z);
+      if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
+      d.scale.set(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+      c.setHex(v.c==null?0xffffff:v.c).convertSRGBToLinear(); m.setColorAt(i,c);
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.max(v.s, v.sy!=null?v.sy:v.s, v.sz!=null?v.sz:v.s)*1.6+3); });
+    m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+    if(o.sway) g.setAttribute('aSw', new T.InstancedBufferAttribute(new Float32Array(L.map(v=>v.sw||0)),1));
+    const culled=!o.noCull;
+    if(culled) g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    m.frustumCulled=culled; (o.parent||trackGroup).add(m);
+    let h=null;
+    if(hmat){
+      const hg=shHullGeo(g); if(o.sway) hg.setAttribute('aSw', g.getAttribute('aSw'));
+      if(culled) hg.boundingSphere=g.boundingSphere.clone();
+      h=new T.InstancedMesh(hg, hmat, n); h.instanceMatrix=m.instanceMatrix; h.frustumCulled=culled;
+      (o.parent||trackGroup).add(h);
+    }
+    if(!first) first={m,h};
+  });
+  return first;
+}
+function shTex(key, w, h, draw){
+  if(SH_TEX[key]) return SH_TEX[key];
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  draw(cv.getContext('2d'), w, h);
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return SH_TEX[key]=t;
+}
+const shCss=h=>'#'+(h>>>0).toString(16).padStart(6,'0');
+
+/* THE SKY, one sheet. Plain paper, the mottle of the sheet itself and nothing else, because
+   the only thing the poster's sky holds is the sun: a vermilion disc sitting on the sea,
+   cut across its lower half by cream cloud bands with puffed ends, and red streaks carried
+   out of it across the paper either side. Low on the land horizon, the town of Salt Point
+   in the second green. Below the horizon on the sea side, the far water in the same bands
+   the sea sheet draws (shSeaBand), so the two meet without a seam. */
+const SH_SEABAND=`
+  vec3 shSeaBand(float D, float az, float t){
+    float w=log(max(D,1.0))*9.0+0.6*sin(az*5.0+log(max(D,1.0))*3.0)+t*0.05;
+    float f=fract(w), k=floor(w);
+    float j=fract(sin(k*91.7)*4375.85);
+    vec3 c=${arcG3(SH.INK)};
+    if(f>0.30+0.25*j && f<0.42+0.25*j) c=${arcG3(SH.INK2)};
+    if(f>0.70 && f<0.70+0.10*smoothstep(1500.0,300.0,D)) c=${arcG3(SH.PAPERL)};
+    return c; }`;
+function shSky(){
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uT:SH_T },
+    vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(h21(i),h21(i+vec2(1.0,0.0)),f.x),mix(h21(i+vec2(0.0,1.0)),h21(i+vec2(1.0,1.0)),f.x),f.y); }
+      float wrapA(float a){ return a-6.2831853*floor((a+3.14159265)/6.2831853); }
+      ${SH_SEABAND}
+      void main(){
+        vec3 d=normalize(vP-cameraPosition);
+        float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
+        vec3 PAP=${arcG3(SH.PAPER)}, RED=${arcG3(SH.RED)}, INK=${arcG3(SH.INK)};
+        vec3 c=PAP*(1.0-0.03*vn(vec2(az*7.0,el*11.0))-0.02*vn(vec2(az*31.0,el*47.0)));
+        c=mix(c,${arcG3(SH.PAPERL)},smoothstep(0.25,0.9,el)*0.5);
+        // the sun, in sun-relative angle: x across (scaled by cos el), y up
+        float dz=wrapA(az-(${SH_SUN.az.toFixed(4)}))*cos(el), ey=el-${SH_SUN.el.toFixed(4)};
+        float rr=length(vec2(dz,ey)), R=${SH_SUN.r.toFixed(4)};
+        float inSun=step(rr,R);
+        vec3 sunC=RED*(1.0-0.05*vn(vec2(dz*60.0,ey*60.0)));
+        // paper showing through the red where the block took too little ink
+        float fl=step(0.80,h21(floor(vec2(dz,ey)*900.0)))*step(0.6,vn(vec2(dz,ey)*40.0));
+        sunC=mix(sunC,PAP,fl*0.55);
+        // the cloud bands: [height, thickness, left, right] relative to the disc
+        float cut=0.0, streak=0.0;
+        for(int k=0;k<6;k++){
+          float fk=float(k);
+          float y0=-0.155+fk*0.042+0.008*sin(fk*2.3);
+          float th=0.0075+0.004*fract(fk*0.618);
+          float x0=-0.42+0.10*fract(fk*0.37+0.2), x1=0.10+0.22*fract(fk*0.73+0.4);
+          float bump=0.0028*abs(sin(dz*95.0+fk*1.7));
+          float inY=step(abs(ey-y0),th*0.5+bump);
+          float ends=step(x0,dz)*step(dz,x1);
+          // puffed rounded ends
+          float cap=step(length(vec2((dz-x0)*0.35,ey-y0)),th*0.75)+step(length(vec2((dz-x1)*0.35,ey-y0)),th*0.75);
+          float on=max(inY*ends,min(cap,1.0));
+          cut=max(cut,on);
+          // the same band runs on outside the disc as a red streak, thinner, further left
+          float sx0=x0-0.25-0.12*fract(fk*0.41);
+          streak=max(streak, step(abs(ey-y0-0.004),th*0.32)*step(sx0,dz)*step(dz,x0+0.02)*step(0.5,fract(fk*0.5+0.25)));
+        }
+        if(inSun>0.5) c = cut>0.5 ? PAP : sunC;
+        else if(streak>0.5) c=RED;
+        // two long red streaks well clear of the disc, on the left, as in the poster
+        float s1=step(abs(ey-0.135),0.0042)*step(-0.62,dz)*step(dz,-0.30);
+        float s2=step(abs(ey-0.175),0.0030)*step(-0.50,dz)*step(dz,-0.34);
+        if(inSun<0.5 && s1+s2>0.5) c=RED;
+        // the town on the land horizon, in the second green: roofs, the odd tree, a tower
+        float la=wrapA(az-1.5708);
+        if(abs(la)<1.62 && el>-0.02){
+          float hill=0.008+0.010*vn(vec2(az*6.0,1.0))+0.004*vn(vec2(az*23.0,4.0));
+          float bx=floor(az*70.0), hb=0.012+0.012*h21(vec2(bx,3.0))*step(0.45,h21(vec2(bx,7.0)));
+          float tree=0.022*smoothstep(0.55,0.0,abs(fract(az*40.0)-0.5))*step(0.74,h21(vec2(floor(az*40.0),9.0)));
+          float town=max(hb,tree)*smoothstep(0.75,0.2,abs(wrapA(az-1.25)));
+          float top=max(hill,town)*smoothstep(1.62,1.25,abs(la));
+          if(el<top){ c=${arcG3(SH.INK2)};
+            if(el>top-0.0018) c=INK;
+            else if(h21(floor(vec2(az*700.0,el*700.0)))>0.92) c=mix(c,PAP,0.55);
+            else if(fract(el*1400.0)<0.18) c=mix(c,PAP,0.35); }
+        }
+        if(el<0.0){ float D=max(cameraPosition.y,4.0)/max(-el,0.0004); c=shSeaBand(D,az,uT); }
+        if(abs(el)<0.0012) c=INK;
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,64,32), mat); m.frustumCulled=false; return m;
+}
+
+/* THE SEA. One sheet at y=0 cut the way the poster cuts water: solid key-block green with
+   long white strokes carved along it in rows parallel to the shore, each stroke tapering at
+   both ends, the rows drifting a little sideways and the whole sheet heaving a few units on
+   two slow swells. At the beach the strokes break into foam bands that roll in. Past ~300
+   units it hands over to the banded far water the sky dome also draws. */
+function shSea(){
+  const mat=new T.ShaderMaterial({ fog:false, extensions:{derivatives:true}, uniforms:{ uT:SH_T },
+    vertexShader:`varying vec3 vW; void main(){ vW=(modelMatrix*vec4(position,1.0)).xyz;
+      gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.0); }`,
+    fragmentShader:`
+      varying vec3 vW; uniform float uT;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      ${SH_SEABAND}
+      void main(){
+        vec2 dv=vW.xz-cameraPosition.xz; float D=length(dv), az=atan(dv.y,dv.x);
+        float zz=vW.z+5.0*sin(vW.x*0.012+uT*0.21)+2.5*sin(vW.x*0.041-uT*0.33);
+        float P=9.0, row=floor(zz/P), fy=fract(zz/P);
+        float L=30.0+30.0*h21(vec2(row,1.7));
+        float sx=vW.x/L+h21(vec2(row,3.1))*9.0+uT*0.03*(h21(vec2(row,5.3))-0.5);
+        float si=floor(sx), fx=fract(sx);
+        float on=step(0.32,h21(vec2(si,row)));
+        float w=(0.10+0.10*h21(vec2(si,row+4.0)))*pow(max(sin(3.14159*fx),0.0),0.7)*on;
+        float aa=0.02+D*0.0009;
+        float stroke=1.0-smoothstep(w-aa,w+aa,abs(fy-0.5));
+        vec3 near=${arcG3(SH.INK)};
+        near=mix(near,${arcG3(SH.INK2)},step(0.62,h21(vec2(row,8.0)))*step(fy,0.30));
+        near=mix(near,${arcG3(SH.PAPERL)},stroke*(1.0-smoothstep(160.0,300.0,D)));
+        // foam: bands rolling in over the last ~30 units before the sand
+        float sh=10.0*sin(vW.x/300.0)+6.0*sin(vW.x/97.0+1.0);
+        float t=sh-vW.z;
+        if(t<32.0){ float ph=fract((t+uT*2.2)/9.0+0.15*sin(vW.x*0.03));
+          float fb=step(ph,0.22+0.20*smoothstep(32.0,0.0,t));
+          near=mix(near,${arcG3(SH.PAPERL)},fb*smoothstep(32.0,8.0,t)); }
+        vec3 c=mix(near, shSeaBand(D,az,uT), smoothstep(240.0,420.0,D));
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const g=new T.PlaneGeometry(3400,3400,1,1); g.rotateX(-Math.PI/2);
+  const m=new T.Mesh(g, mat); m.position.set(0,0,-200); m.frustumCulled=false;
+  return m;
+}
+
+/* THE FIELD. A height grid over the shore and the dunes, every vertex classified against
+   the whole centreline (the Hana field):
+     - inside the drivable corridor (48.4 infield / 28.2 outside / 28.2 in the arcade) it is
+       held under the banked road plane, so nothing a kart can reach is ever under ground;
+     - where the road runs as boardwalk (the straight, the pier, the arcade) the land is left
+       where it lies, under the deck, and the deck stands over it on piles;
+     - where it runs on the land the ground comes up to the corridor and the dunes rise
+       away from it, in cut banks the hatching can find.
+   The base land: a beach rising from the waterline, a step up to the town behind the
+   boardwalk, and dunes inland that grow toward the bluff in the south. It answers
+   groundAt/footAt/clear/intrudes exactly as Hana's does. */
+function shBase(x,z){
+  const t=z-shShore(x);
+  if(t<0) return Math.max(-9, -1.4+t*0.08);
+  let y=1.3*arcSS(0,22,t)+t*0.018;                                   // beach
+  y+=5.2*arcSS(150,230,t);                                           // the town level behind the boardwalk
+  const ridge=Math.exp(-((x+60)*(x+60))/(2*560*560));
+  const dune=arcSS(250,620,t)*(14+30*ridge*arcSS(380,820,t)+9*(arcFbm(x/150+2,z/150+5)-0.4))
+            +arcSS(160,320,t)*4*(arcFbm(x/45,z/45)-0.5);
+  y+=dune*(1-arcSS(1180,1420,z))*(1-arcSS(1050,1300,Math.abs(x+90)));
+  return y;
+}
+function shField(inS, ccx, ccz, tunIdx, deckFn){
+  const CS=14, N=SAMP.length;
+  const inTun=j=>tunIdx.some(([a,b])=>j>=a&&j<=b);
+  const SJ=SAMP.map((s,j)=>({x:s.p.x,y:s.p.y,z:s.p.z,nx:s.n.x,nz:s.n.z,tx:s.t.x,tz:s.t.z,sb:Math.sin(s.bank||0),tun:inTun(j),deck:deckFn(j)}));
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const s of SJ){ x0=Math.min(x0,s.x); x1=Math.max(x1,s.x); z0=Math.min(z0,s.z); z1=Math.max(z1,s.z); }
+  x0=Math.floor((x0-460)/CS)*CS; x1+=460; z0=-260; z1+=440;
+  const NX=Math.ceil((x1-x0)/CS)+1, NZ=Math.ceil((z1-z0)/CS)+1;
+  const H=new Float32Array(NX*NZ), INK=new Float32Array(NX*NZ);
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){
+    const x=x0+ix*CS, z=z0+iz*CS, base=shBase(x,z);
+    let nd=1e9, nj=-1, hi=1e9, corr=false;
+    for(let j=0;j<N;j++){
+      const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
+      if(d2>90000) continue;
+      const d=Math.sqrt(d2); if(d<nd){ nd=d; nj=j; }
+      const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
+      if(d<lim+CS*0.75){ const lc=Math.max(-lim,Math.min(lim,lat));
+        hi=Math.min(hi, s.y+s.sb*lc-(s.deck?1.6:0.7)-Math.abs(s.sb)*CS*0.75); corr=true; }
+    }
+    let h=base;
+    if(nj>=0){
+      const s=SJ[nj], lat=(x-s.x)*s.nx+(z-s.z)*s.nz, inner=lat*inS>0;
+      const lim=inner?(s.tun?HW*1.28:HW*2.2):HW*1.28, e=Math.max(0,nd-lim);
+      const sfE=s.y+s.sb*Math.max(-lim,Math.min(lim,lat))-(s.deck?1.6:0.7);
+      if(s.deck) h=Math.min(base, sfE+Math.max(0,e-2)*0.9);              // never above the deck near its edge
+      else { const t=arcSS(4,inner?90:60,e);                               // the land meets the road, dunes rise away
+        const dn=Math.max(0,arcFbm(x/85+1,z/85+3)-0.33)*(inner?20:30)*arcSS(10,55,e)*(1-arcSS(220,340,e));
+        h=sfE+(base+dn-sfE)*t; }
+    }
+    if(corr && h>hi) h=hi;
+    H[iz*NX+ix]=h; INK[iz*NX+ix]=corr?0:1;
+  }
+  const hAt=(ix,iz)=>H[Math.max(0,Math.min(NZ-1,iz))*NX+Math.max(0,Math.min(NX-1,ix))];
+  const groundAt=(x,z)=>{ const gx=(x-x0)/CS, gz=(z-z0)/CS;
+    if(gx<0||gz<0||gx>NX-1||gz>NZ-1) return Math.min(shBase(x,z),0.4);
+    const ix=Math.floor(gx), iz=Math.floor(gz), fx=gx-ix, fz=gz-iz;
+    const a=hAt(ix,iz), b=hAt(ix+1,iz), c=hAt(ix,iz+1), d=hAt(ix+1,iz+1);
+    return (fx+fz<=1) ? a+(b-a)*fx+(c-a)*fz : d+(c-d)*(1-fx)+(b-d)*(1-fz); };
+  const footAt=(x,z,r)=>Math.min(groundAt(x,z),groundAt(x-r,z-r),groundAt(x+r,z-r),groundAt(x-r,z+r),groundAt(x+r,z+r));
+  const clear=(x,z,r)=>{ let m=1e9;
+    for(const s of SJ){ const dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>90000) continue;
+      const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
+      const v=Math.sqrt(d2)-lim; if(v<m) m=v; }
+    return m-(r||0); };
+  const nearest=(x,z)=>{ let bi=-1, bd=1e18; for(let j=0;j<N;j++){ const s=SJ[j], d=(x-s.x)**2+(z-s.z)**2; if(d<bd){ bd=d; bi=j; } } return bi; };
+  const intrudes=(x,y,z)=>{ const bi=nearest(x,z);
+    const s=SJ[bi], lat=(x-s.x)*s.nx+(z-s.z)*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28, yr=y-(s.y+s.sb*lat);
+    return Math.abs(lat)<lim+0.8 && yr<21.5 && yr>-1.5; };
+  return {CS,x0,z0,NX,NZ,H,INK,groundAt,footAt,clear,intrudes,nearest,SJ,inS,ccx,ccz,tunIdx,
+          signs:[], B:{pine:[], paper:[], ink:[], red:[], gold:[], pile:[], rail:[], post:[], roof:[], cone:[], umbR:[], umbG:[], tuft:[], slat:[], ball:[], cyl:[], lamp:[], flag:[], awn:[]}};
+}
+/* The land, one mesh: paper sand stippled with ink where it is near enough to read, a
+   ruled wet band at the waterline, and the cut doing the rest (dune faces turned from the
+   sun take the hatching). The hull keylines the ridges against the sky and is switched off
+   inside the corridor. Beyond the grid a flat paper plain carries the land to the fog. */
+function shTerrain(F){
+  const {NX,NZ,CS,x0,z0,H,INK}=F, P=new Float32Array(NX*NZ*3), I=[];
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){ const k=iz*NX+ix;
+    P[k*3]=x0+ix*CS; P[k*3+1]=H[k]; P[k*3+2]=z0+iz*CS; }
+  for(let iz=0;iz<NZ-1;iz++) for(let ix=0;ix<NX-1;ix++){
+    const a=iz*NX+ix, b=a+1, c=a+NX, d=c+1;
+    if(H[a]<-3&&H[b]<-3&&H[c]<-3&&H[d]<-3) continue;               // under the sea: never seen
+    I.push(a,c,b, b,c,d); }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.BufferAttribute(P,3));
+  g.setAttribute('aInk',new T.BufferAttribute(INK,1));
+  g.setIndex(I); g.computeVertexNormals();
+  const frag=`{ float y=vSW.y; float dist=length(vSW-cameraPosition);
+      vec3 col=${arcL3(SH.SAND)};
+      vec2 q=vSW.xz/1.7; vec2 qi=floor(q), qf=fract(q)-0.5; float r=shH(qi);
+      float dd=length(qf+vec2(r-0.5,shH(qi+3.1)-0.5)*0.5);
+      col=mix(col,SH_INKC,(1.0-smoothstep(0.09,0.15,dd))*step(0.70,r)*(1.0-smoothstep(50.0,140.0,dist))*0.85);
+      if(y<0.9){ float l=shLn(vSW.z+3.0*sin(vSW.x*0.05),2.6,0.32); col=mix(${arcL3(SH.PAPERL)},SH_INKC,l*0.8*(1.0-smoothstep(80.0,200.0,dist))); }
+      diffuseColor.rgb=col; }`;
+  const m=new T.Mesh(g, shPatch(new T.MeshBasicMaterial({color:0xffffff}), 'terrain', {frag, cutK:0.85}));
+  m.frustumCulled=false; trackGroup.add(m);
+  const hull=new T.Mesh(g, shPatch(new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.BackSide}),
+    'terrain-hull', {hull:true, ink:0.0024, inkMax:1.5, inkAttr:true}));
+  hull.frustumCulled=false; trackGroup.add(hull);
+  // the plain beyond the grid, a hair under it, and only landward of the beach
+  const pg=new T.PlaneGeometry(7000,3600,1,1); pg.rotateX(-Math.PI/2);
+  const pl=new T.Mesh(pg, new T.MeshBasicMaterial({color:shLin(SH.SAND)}));
+  pl.position.set(0,0.35,40+1800); pl.frustumCulled=false; trackGroup.add(pl);
+  return m;
+}
+/* THE ROAD: boardwalk planks running with the lap, printed as paper with the seams cut in
+   ink, butt joints and nail pairs on an irregular cadence, the odd carved grain line. Hemmed
+   in a heavy ink rule with a vermilion line inside it, the lettering's own outline, and a
+   red centre dash for the racing line. Every wobble is a whole number of cycles per sheet. */
+function shRoadTex(){ return shTex('road',128,512,(g,W,H)=>{
+  const R=harbRnd(0x5E0A), TAU=Math.PI*2;
+  g.fillStyle='#f0dcbd'; g.fillRect(0,0,W,H);
+  const P=[33,64,95];
+  for(let k=0;k<P.length;k++){ const x0=P[k];
+    g.fillStyle='rgba(22,63,46,0.62)';
+    for(let y=0;y<H;y+=4){ if(R()<0.22) continue; g.fillRect(x0+Math.sin(y*TAU*2/H+k)*0.6, y, 1.0, 4); } }
+  // the board ends, ticked along both hems: the comb you read your speed off
+  g.fillStyle='#163f2e';
+  for(let y=2;y<H;y+=7){ const l=(y/7)%3===0?9:5; g.fillRect(14,y,l,1.4); g.fillRect(W-14-l,y,l,1.4); }
+  // butt joints and nail pairs, plank by plank
+  for(let k=0;k<P.length-1;k++){ const a=P[k]+1.5, b=P[k+1];
+    let y=R()*160; while(y<H){ g.fillStyle='rgba(22,63,46,0.55)'; g.fillRect(a,y,b-a,1.0);
+      g.beginPath(); g.arc(a+3.2,y+3.6,0.8,0,6.3); g.fill(); g.beginPath(); g.arc(b-3.2,y+3.6,0.8,0,6.3); g.fill();
+      y+=150+R()*220; } }
+  // carved grain: thin broken lines in a few planks
+  g.globalAlpha=0.30; g.strokeStyle='#163f2e'; g.lineWidth=0.8;
+  for(let i=0;i<14;i++){ const k=(R()*(P.length-1))|0, x=P[k]+3+R()*(P[k+1]-P[k]-6), y0=R()*H, L=40+R()*120, ph=R()*6;
+    g.beginPath(); for(let y=0;y<=L;y+=6){ const yy=(y0+y)%H, xx=x+Math.sin(y*0.05+ph)*1.4; if(y===0||yy<6) g.moveTo(xx,yy); else g.lineTo(xx,yy); } g.stroke(); }
+  g.globalAlpha=1;
+  g.fillStyle='#163f2e'; g.fillRect(0,0,7,H); g.fillRect(W-7,0,7,H);
+  g.fillStyle='#c63f2f'; g.fillRect(9.5,0,3.2,H); g.fillRect(W-12.7,0,3.2,H);
+  g.fillStyle='#c63f2f'; for(const y of [60,316]) g.fillRect(W/2-2.5,y,5,64);
+}); }
+// the apron deck: wider, quieter planks, the deck's own edge in ink
+function shDeckTex(){ return shTex('deck',128,256,(g,W,H)=>{
+  const R=harbRnd(0xDEC4);
+  g.fillStyle='#e9d2ad'; g.fillRect(0,0,W,H);
+  g.fillStyle='#163f2e';
+  for(let x=10;x<W-4;x+=13+((R()*3)|0)){ for(let y=0;y<H;y+=4){ if(R()<0.08) continue; g.fillRect(x,y,1.2,4); }
+    let y=R()*90; while(y<H){ g.fillRect(x+1.2,y,12,1.3); y+=60+R()*120; } }
+  g.fillRect(0,0,4,H); g.fillRect(W-4,0,4,H);
+}); }
+// the gold chain, drawn as the poster draws it: a run of S links, gold in a green outline
+function shChainTex(){ return shTex('chain',256,32,(g,W,H)=>{
+  g.clearRect(0,0,W,H);
+  for(let i=0;i<8;i++){ const x=i*32+16;
+    g.lineCap='round';
+    g.strokeStyle='#163f2e'; g.lineWidth=11; g.beginPath(); g.moveTo(x-9,9); g.bezierCurveTo(x+6,0,x-14,32,x+9,23); g.stroke();
+    g.strokeStyle='#e2ad49'; g.lineWidth=6; g.beginPath(); g.moveTo(x-9,9); g.bezierCurveTo(x+6,0,x-14,32,x+9,23); g.stroke(); }
+}); }
+// Clear evening over the sea: a warm paper fill, a key out of the sun low in the north and
+// lifted, so the karts are lit from the same quarter the print is cut from.
+function applyShoreLighting(){
+  hemi.color.setHex(0xfff0dc); hemi.groundColor.setHex(0x8a7a5c); hemi.intensity=0.86;
+  sun.color.setHex(0xffe2c4);  sun.intensity=0.95; sun.position.copy(SH_LIGHT).multiplyScalar(200).setY(150);
+  rim.color.setHex(0xffb08a);  rim.intensity=0.40; rim.position.set(-SH_LIGHT.x*150,50,-SH_LIGHT.z*150);
+  fill.color.setHex(0xffffff); fill.intensity=0.0; fill.position.set(0,0,0);
+  flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+}
+/* THE BOARDWALK. Where the lap runs as boardwalk (the straight, the pier, the arcade) the
+   apron is plank deck, laid on the banked road plane from the outer rail line to the
+   infield one (wider along the straight, where the shops stand on it), with an ink fascia
+   under each edge to give it a thickness, and pile bents down to the sand or the sea floor
+   on an irregular pitch — the long comb of legs the poster's pier stands on. */
+function shDeck(F, inS, isDeck, wideFn){
+  const B=F.B, R=harbRnd(0xB0A4D), OUT=29.6;
+  const runs=[]; { let cur=null; for(let i=0;i<STEPS;i++){ if(isDeck(i)){ if(!cur){ cur=[i,i]; runs.push(cur); } else cur[1]=i; } else cur=null; }
+    if(runs.length>1 && runs[0][0]===0 && runs[runs.length-1][1]===STEPS-1){ const last=runs.pop(); runs[0][0]=last[0]-STEPS; } }
+  const tex=shDeckTex();
+  for(const [a,b] of runs){
+    for(const side of [-1,1]){
+      const pp=[], pu=[], pi=[]; let v=0, prev=null;
+      for(let i=a-1;i<=b+1;i++){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0);
+        if(prev) v+=s.p.distanceTo(prev); prev=s.p;
+        const lo=side<0?-OUT:HW-0.5, hi=side<0?-(HW-0.5):wideFn((i+STEPS)%STEPS);
+        for(const L of [lo,hi]){ const l=L*inS; pp.push(s.p.x+s.n.x*l, s.p.y+sb*l+0.02, s.p.z+s.n.z*l); }
+        pu.push(side<0?0:0.05, v/90, side<0?0.12:1, v/90); }
+      const n=pp.length/6; for(let k=0;k<n-1;k++){ const q=k*2; pi.push(q,q+1,q+2, q+1,q+3,q+2); }
+      const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(pp,3));
+      dg.setAttribute('uv',new T.Float32BufferAttribute(pu,2)); dg.setIndex(pi); dg.computeBoundingSphere();
+      const dm=new T.Mesh(dg, new T.MeshBasicMaterial({map:tex, side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1}));
+      trackGroup.add(dm);
+      // the fascia under the edge
+      const fp=[], fi=[];
+      for(let i=a-1;i<=b+1;i++){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0), L=(side<0?-OUT:wideFn((i+STEPS)%STEPS))*inS;
+        fp.push(s.p.x+s.n.x*L, s.p.y+sb*L+0.05, s.p.z+s.n.z*L, s.p.x+s.n.x*L, s.p.y+sb*L-3.4, s.p.z+s.n.z*L); }
+      for(let k=0;k<fp.length/6-1;k++){ const q=k*2; fi.push(q,q+1,q+2, q+1,q+3,q+2); }
+      const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(fp,3)); fg.setIndex(fi); fg.computeBoundingSphere();
+      trackGroup.add(new T.Mesh(fg, new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.DoubleSide})));
+    }
+    // pile bents
+    for(let i=a+1;i<b;i+=3+((R()*4)|0)){ const s=SAMP[(i+STEPS)%STEPS], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+      const wide=wideFn((i+STEPS)%STEPS), lats=[-27.5,-14,0,14,29,44]; for(let l=58;l<wide-4;l+=15) lats.push(l);
+      let lo=1e9, hiL=-1e9, cnt=0;
+      for(const lat of lats){ if(R()<0.12 && Math.abs(lat)>1) continue;
+        const l=lat*inS, x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l, top=s.p.y+sb*l-1.0, g=Math.max(F.footAt(x,z,0.8),-2.5);
+        if(top-g<1.2) continue;
+        B.pile.push({x, y:(top+g)/2, z, s:1.0+R()*0.35, sy:top-g, sz:1.0+R()*0.35, ry, c:SH.INK});
+        lo=Math.min(lo,lat); hiL=Math.max(hiL,lat); cnt++; }
+      if(cnt>=2){ const mid=(lo+hiL)/2*inS;
+        B.ink.push({x:s.p.x+s.n.x*mid, y:s.p.y+sb*mid-1.9, z:s.p.z+s.n.z*mid, s:hiL-lo+2, sy:1.3, sz:1.8, ry:ry+Math.PI/2, rz:0, c:SH.INK}); }
+    }
+  }
+  return runs;
+}
+/* RAILS. The outer rail stands just past the 28.2 line on posts at an irregular pitch, a
+   paper top rail on them, and the gold chain hung in swags from post to post: the one
+   metallic thing on the course, and the scalloped line you read your speed off. */
+function shRails(F, inS, runs, chainGeo){
+  const B=F.B, R=harbRnd(0x7A11), OUT=30.2, cp=[], cu=[], ci=[];
+  for(const [a,b] of runs){
+    let last=null;
+    for(let i=a;i<=b;){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0), l=-OUT*inS;
+      const x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l, y=s.p.y+sb*l, ry=Math.atan2(s.t.x,s.t.z);
+      B.post.push({x, y:y+2.1, z, s:0.9, sy:4.2, sz:0.9, ry, c:SH.PAPERL});
+      if(last){ const dl=Math.hypot(x-last.x,z-last.z), yaw=Math.atan2(x-last.x,z-last.z), dy=y-last.y;
+        B.rail.push({x:(x+last.x)/2, y:(y+last.y)/2+4.1, z:(z+last.z)/2, s:0.75, sy:0.6, sz:dl+0.5, rx:-Math.atan2(dy,dl), ry:yaw, o:'YXZ', c:SH.PAPERL});
+        // the swag: a ribbon of S links hanging between the posts, facing the road
+        const K=8, base=cp.length/3;
+        for(let k=0;k<=K;k++){ const f=k/K, sag=2.4*Math.sin(Math.PI*f);
+          const px=last.x+(x-last.x)*f, pz=last.z+(z-last.z)*f, py=last.y+(y-last.y)*f+3.1-sag;
+          cp.push(px,py+0.75,pz, px,py-0.75,pz); cu.push(f*dl/7,1, f*dl/7,0); }
+        for(let k=0;k<K;k++){ const q=base+k*2; ci.push(q,q+1,q+2, q+1,q+3,q+2); } }
+      last={x,z,y};
+      i+=1+((R()*2)|0);
+    }
+  }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(cp,3));
+  g.setAttribute('uv',new T.Float32BufferAttribute(cu,2)); g.setIndex(ci); g.computeBoundingSphere();
+  const m=new T.Mesh(g, new T.MeshBasicMaterial({map:shChainTex(), side:T.DoubleSide, alphaTest:0.5}));
+  trackGroup.add(m);
+}
+/* LETTERING. The poster's fat red script: the word in a heavy italic face, cased in cream
+   and keyed in green, the casing drawn as fat round strokes so any bold italic on the
+   device reads as sign-painter's script. Boards share one atlas (2 x 8 cells of 512x128),
+   so every sign on the course is one mesh and one draw. */
+const SH_WORDS=['Arcade','Saltwater Taffy','Pizza','Rides','Custard','Fried Dough','Prizes','Clams',
+                'Lemonade','Fudge','Bingo','Souvenirs','Games','Salt Point','Pier','Win!'];
+function shLetter(g, word, x, y, fs, face){
+  g.font=`italic 900 ${fs}px ${face||'Georgia,"Times New Roman",serif'}`; g.textAlign='center'; g.textBaseline='middle'; g.lineJoin='round'; g.lineCap='round';
+  g.lineWidth=fs*0.34; g.strokeStyle='#163f2e'; g.strokeText(word,x,y);
+  g.lineWidth=fs*0.18; g.strokeStyle='#f2e2c6'; g.strokeText(word,x,y);
+  g.fillStyle='#c63f2f'; g.fillText(word,x,y);
+}
+function shAtlasTex(){ return shTex('atlas',1024,1024,(g,W,H)=>{
+  SH_WORDS.forEach((w,k)=>{ const cx=(k%2)*512, cy=Math.floor(k/2)*128;
+    g.fillStyle='#f2e2c6'; g.fillRect(cx,cy,512,128);
+    g.strokeStyle='#163f2e'; g.lineWidth=9; g.strokeRect(cx+6,cy+6,500,116); g.lineWidth=2.5; g.strokeRect(cx+17,cy+17,478,94);
+    let fs=78; g.font=`italic 900 ${fs}px Georgia,"Times New Roman",serif`;
+    const tw=g.measureText(w).width; if(tw>400) fs*=400/tw;
+    shLetter(g,w,cx+256,cy+66,fs); });
+}); }
+// one mesh of sign boards: {x,y,z,ry,w,h,k} -> two faces each (the back reads too), atlas cell k
+function shSigns(list){
+  if(!list.length) return null;
+  const P=[], U=[], I=[];
+  for(const b of list){ const cs=Math.cos(b.ry), sn=Math.sin(b.ry), u0=(b.k%2)*0.5, v1=1-Math.floor(b.k/2)/8, v0=v1-1/8;
+    for(const face of [1,-1]){ const base=P.length/3, dz=face*0.36;
+      const pts=[[-b.w/2,-b.h/2],[b.w/2,-b.h/2],[b.w/2,b.h/2],[-b.w/2,b.h/2]];
+      pts.forEach(([lx,ly],q)=>{ const X=lx*face; P.push(b.x+X*cs+dz*sn, b.y+ly, b.z-X*sn+dz*cs);
+        U.push(q===0||q===3?u0+0.004:u0+0.496, q<2?v0+0.002:v1-0.002); });
+      I.push(base,base+1,base+2, base,base+2,base+3); } }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  g.setAttribute('uv',new T.Float32BufferAttribute(U,2)); g.setIndex(I); g.computeBoundingSphere();
+  const m=new T.Mesh(g, new T.MeshBasicMaterial({map:shAtlasTex()})); trackGroup.add(m); return m;
+}
+function shStripeTex(key, n, a, b){ return shTex(key,128,8,(g,W,H)=>{ for(let i=0;i<n;i++){ g.fillStyle=i%2?b:a; g.fillRect(i*W/n,0,W/n+0.5,H); } }); }
+// a tiny merge for the gondola: positions and normals of non-indexed parts in one geometry
+function shMerge(geos){
+  const P=[], N=[];
+  for(const g0 of geos){ const g=g0.index?g0.toNonIndexed():g0; P.push(...g.attributes.position.array); N.push(...g.attributes.normal.array); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('normal',new T.Float32BufferAttribute(N,3)); return g;
+}
+const shRoofGeo=()=>{ const g=new T.ConeGeometry(Math.SQRT1_2,1,4,1); g.rotateY(Math.PI/4); g.translate(0,0.5,0); return g; };
+const shLeg=(a,b,r,c)=>{ const d=new T.Vector3().subVectors(b,a), L=d.length(); d.divideScalar(L);
+  return {x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2, s:r, sy:L, sz:r, q:new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),d), c}; };
+
+/* THE WHEEL. Stands astride the pier, its plane square to the road, so the drive out is
+   straight at its face with the sun behind it and then under its rim: hub 92 over the
+   deck, radius 62, so the rim clears the deck by 30 and the cabins hanging from it by 24
+   (the corridor stops at 21.5). The A-frames splay their feet to 80 either side, which puts
+   every leg outside 48.4 by the time it is down to corridor height, and they stand in the
+   sea on ink caissons. The rim and spokes are the key block: a solid green drawing against
+   the paper and the red disc. It turns once every two minutes; the cabins hang level. */
+function shWheel(F, inS, iW){
+  const s=SAMP[iW], B=F.B, TAU=Math.PI*2;
+  const up=new T.Vector3(0,1,0), t=new T.Vector3(s.t.x,0,s.t.z).normalize(), n=new T.Vector3(s.n.x*inS,0,s.n.z*inS).normalize();
+  const HUB=92, RW=62, hub=new T.Vector3(s.p.x, s.p.y+HUB, s.p.z);
+  const grp=new T.Group(); grp.position.copy(hub);
+  grp.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(n, up, t));
+  const rot=new T.Group(); grp.add(rot); trackGroup.add(grp);
+  const L=[], NS=24, NR=48;
+  for(const az of [-5.5,5.5]){
+    for(let k=0;k<NR;k++){ const am=(k+0.5)/NR*TAU, ch=2*RW*Math.sin(Math.PI/NR), rr=RW*Math.cos(Math.PI/NR);
+      L.push({x:Math.cos(am)*rr, y:Math.sin(am)*rr, z:az, s:1.7, sy:ch+0.5, sz:1.7, rz:am, c:SH.INK});
+      const ri=RW*0.40, ci=2*ri*Math.sin(Math.PI/NR);
+      L.push({x:Math.cos(am)*ri, y:Math.sin(am)*ri, z:az, s:1.1, sy:ci+0.4, sz:1.1, rz:am, c:SH.INK}); }
+    for(let k=0;k<NS;k++){ const a=k/NS*TAU;
+      L.push({x:Math.cos(a)*RW*0.52, y:Math.sin(a)*RW*0.52, z:az, s:0.8, sy:RW*0.96, sz:0.8, rz:a-Math.PI/2, c:SH.INK});
+      // the diagonal truss between the rims, a zigzag the poster cuts as a row of little crosses
+      const a2=(k+0.5)/NS*TAU; L.push({x:Math.cos(a2)*RW*0.70, y:Math.sin(a2)*RW*0.70, z:az, s:0.6, sy:RW*0.62, sz:0.6, rz:a2-Math.PI/2+0.32*(az>0?1:-1), c:SH.INK}); } }
+  for(let k=0;k<NS;k++){ const a=k/NS*TAU; L.push({x:Math.cos(a)*RW, y:Math.sin(a)*RW, z:0, s:0.9, sy:0.9, sz:11, c:SH.INK}); }
+  L.push({x:0,y:0,z:0,s:7.5,sy:7.5,sz:13,rz:Math.PI/4,c:SH.INK});
+  shBatch(new T.BoxGeometry(1,1,1), L, {name:'wheel', noChunk:true, noCull:true, parent:rot, ink:0.0022, inkMax:1.4});
+  // the A-frames, fore and aft of the wheel, splayed across the road and down into the sea
+  const W=new T.Vector3(), toW=(lx,ly,lz)=>W.copy(hub).addScaledVector(n,lx).addScaledVector(up,ly).addScaledVector(t,lz).clone();
+  const footY=0.5;
+  for(const az of [-9,9]) for(const sd of [-1,1]){
+    const a=toW(0,0,az*0.55), b=toW(sd*80,footY-hub.y,az*1.9);
+    B.ink.push(shLeg(a,b,2.4,SH.INK));
+    // a strut tying the pair halfway down, and the caisson the foot stands on
+    B.ink.push({x:b.x, y:footY-2+4, z:b.z, s:8, sy:8, sz:8, ry:Math.atan2(t.x,t.z), c:SH.INK2});
+  }
+  for(const az of [-9,9]){ const f=0.66, a=toW(-80*f,(footY-hub.y)*f,az*(0.55+1.35*f)), b=toW(80*f,(footY-hub.y)*f,az*(0.55+1.35*f));
+    B.ink.push(shLeg(a,b,1.6,SH.INK)); }
+  B.ink.push({x:hub.x, y:hub.y, z:hub.z, s:3, sy:3, sz:24, ry:Math.atan2(t.x,t.z), c:SH.INK});
+  // the cabins: level lanterns hung off the rim, every third one red
+  const cab=shMerge([new T.BoxGeometry(3.4,3.8,3.0).translate(0,-2.6,0), new T.ConeGeometry(2.7,2.0,4).rotateY(Math.PI/4).translate(0,0.4,0)]);
+  const cl=[]; for(let k=0;k<NS;k++) cl.push({x:0,y:0,z:0,s:1,c:k%3===1?SH.RED:SH.PAPERL});
+  const cb=shBatch(cab, cl, {name:'cabin', noChunk:true, noCull:true, parent:grp, ink:0.0026, inkMax:1.4});
+  return {rot, cab:cb.m, NS, RW, d:new T.Object3D()};
+}
+function shWheelTick(W,t){
+  const a=t*0.052; W.rot.rotation.z=a;
+  for(let k=0;k<W.NS;k++){ const b=a+k/W.NS*Math.PI*2;
+    W.d.position.set(Math.cos(b)*W.RW, Math.sin(b)*W.RW, 0); W.d.rotation.set(0,0,Math.sin(t*0.9+k)*0.05); W.d.updateMatrix(); W.cab.setMatrixAt(k,W.d.matrix); }
+  W.cab.instanceMatrix.needsUpdate=true;
+}
+
+/* THE PAVILION at the pier head: the poster's two-storey hall on a round deck, the hairpin
+   sweeping round it. Paper walls with the windows cut in ink, a colonnade, a deep gallery
+   roof, an upper storey, a cupola, and on top a flagstaff with a red pennant and a weather
+   vane. The deck stands on its own piles in the sea. */
+function shPavilion(F, inS, C, R0, y0, ry){
+  const B=F.B, R=harbRnd(0x9A71);
+  const cs=Math.cos(ry), sn=Math.sin(ry), P=(lx,lz)=>({x:C.x+lx*cs+lz*sn, z:C.z-lx*sn+lz*cs});
+  B.cyl.push({x:C.x, y:y0-1.3, z:C.z, s:2*R0, sy:2.6, sz:2*R0, c:SH.PAPERL});
+  for(let r=12;r<R0-4;r+=17) for(let a=0;a<Math.PI*2;a+=17/r){ const x=C.x+Math.cos(a+r)*r, z=C.z+Math.sin(a+r)*r;
+    B.pile.push({x, y:(y0-2.6-1.5)/2, z, s:1.3, sy:y0-2.6+1.5, sz:1.3, c:SH.INK}); }
+  for(let a=0;a<Math.PI*2;a+=0.07){ const x=C.x+Math.cos(a)*(R0-1.5), z=C.z+Math.sin(a)*(R0-1.5);
+    B.pile.push({x, y:(y0-2.6-1.5)/2, z, s:1.2, sy:y0-2.6+1.5, sz:1.2, c:SH.INK}); }
+  const HW1=34, HD1=22, H1=15, put=(lx,ly,lz,w,h,d,c,list,rot)=>{ const p=P(lx,lz); (list||B.paper).push({x:p.x, y:y0+ly, z:p.z, s:w, sy:h, sz:d, ry:ry+(rot||0), c}); };
+  put(0,H1/2,0,HW1*2,H1,HD1*2,SH.PAPERL);
+  // windows: tall ink lights in pairs down each side
+  for(let k=-3;k<=3;k++){ put(k*9,H1*0.52,HD1+0.2,4.2,7.5,0.8,SH.INK,B.ink); put(k*9,H1*0.52,-HD1-0.2,4.2,7.5,0.8,SH.INK,B.ink); }
+  for(let k=-1;k<=1;k++){ put(HW1+0.2,H1*0.52,k*12,0.8,7.5,4.2,SH.INK,B.ink); put(-HW1-0.2,H1*0.52,k*12,0.8,7.5,4.2,SH.INK,B.ink); }
+  // colonnade
+  for(let k=-4;k<=4;k++) for(const sd of [-1,1]) put(k*8.6,H1/2,sd*(HD1+5),1.3,H1,1.3,SH.PAPERL);
+  for(let k=-2;k<=2;k++) for(const sd of [-1,1]) put(sd*(HW1+5),H1/2,k*9.6,1.3,H1,1.3,SH.PAPERL);
+  put(0,H1+0.7,0,HW1*2+13,1.4,HD1*2+13,SH.RED,B.red);
+  B.roof.push({...P(0,0), y:y0+H1+1.2, s:(HW1*2+18)*1.12, sy:13, sz:(HD1*2+18)*1.12, ry, c:SH.INK});
+  const H2=11, U=y0+H1+7;
+  put(0,U-y0+H2/2,0,40,H2,26,SH.PAPERL);
+  for(let k=-1;k<=1;k++){ put(k*11,U-y0+H2*0.55,13.2,4,6,0.8,SH.INK,B.ink); put(k*11,U-y0+H2*0.55,-13.2,4,6,0.8,SH.INK,B.ink); }
+  B.roof.push({...P(0,0), y:U+H2, s:54, sy:12, sz:38, ry, c:SH.INK});
+  put(0,U+H2+9-y0,0,8,7,8,SH.PAPERL);
+  B.roof.push({...P(0,0), y:U+H2+12.4, s:12.5, sy:8, sz:12.5, ry, c:SH.RED});
+  const top=U+H2+20.4;
+  put(0,top+7-y0,0,0.6,14,0.6,SH.INK,B.ink);
+  // the weather vane: an arrow and its letters' arms, cut in ink
+  put(0,top+11-y0,0,0.5,0.5,9,SH.INK,B.ink); put(0,top+11-y0,4.6,2.6,1.8,0.5,SH.INK,B.ink);
+  B.ink.push({...P(0,0), y:top+9.4, s:6, sy:0.4, sz:0.4, ry, c:SH.INK});
+  const fp=P(0,0); B.flag.push({x:fp.x+cs*3.6, y:top+12.4, z:fp.z-sn*3.6, s:7, sy:3.6, sz:0.3, ry, sw:0.7, c:SH.RED});
+}
+
+/* THE START: a sign over the boardwalk on two pylons, "Rosalie's" in the poster's fat red
+   script facing the grid. Board bottom at 24 over the deck; the pylons stand outside the
+   rail (36 out) and past the infield line (58 in). Pennants on the pylons. */
+function shStartTex(){ return shTex('start',1024,256,(g,W,H)=>{
+  g.fillStyle='#f2e2c6'; g.fillRect(0,0,W,H);
+  g.strokeStyle='#163f2e'; g.lineWidth=16; g.strokeRect(8,8,W-16,H-16); g.lineWidth=4; g.strokeRect(28,28,W-56,H-56);
+  g.fillStyle='#c63f2f'; for(let x=46;x<W-40;x+=32){ g.beginPath(); g.arc(x,44,4,0,6.3); g.arc(x,H-44,4,0,6.3); g.fill(); }
+  shLetter(g,"Rosalie's",W/2,H*0.53,150);
+  g.strokeStyle='#163f2e'; g.lineWidth=13; g.lineCap='round'; g.beginPath(); g.moveTo(170,H*0.80); g.quadraticCurveTo(520,H*0.98,860,H*0.74); g.stroke();
+  g.strokeStyle='#c63f2f'; g.lineWidth=6; g.stroke();
+}); }
+function shStartArch(F, inS, iS){
+  const s=SAMP[iS], B=F.B, ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
+  const at=(lat)=>({x:s.p.x+s.n.x*lat*inS, z:s.p.z+s.n.z*lat*inS, y:s.p.y+sb*lat*inS});
+  const L0=-37, L1=58, mid=at((L0+L1)/2), Wd=L1-L0+8, by=s.p.y+24+9;
+  for(const lat of [L0,L1]){ const q=at(lat), g=F.footAt(q.x,q.z,2), h=by+12-g;
+    B.paper.push({x:q.x, y:g+h/2, z:q.z, s:6, sy:h, sz:6, ry, c:SH.PAPERL});
+    for(let k=0;k<4;k++) B.red.push({x:q.x, y:g+h*0.25+k*h*0.17, z:q.z, s:6.6, sy:1.6, sz:6.6, ry, c:SH.RED});
+    B.roof.push({x:q.x, y:by+12, z:q.z, s:9.5, sy:7, sz:9.5, ry, c:SH.INK});
+    B.ink.push({x:q.x, y:by+23, z:q.z, s:0.5, sy:8, sz:0.5, c:SH.INK});
+    B.flag.push({x:q.x+Math.sin(ry+Math.PI/2)*2.6, y:by+25.4, z:q.z+Math.cos(ry+Math.PI/2)*2.6, s:5, sy:2.6, sz:0.3, ry:ry+Math.PI/2, sw:0.6, c:SH.RED}); }
+  B.ink.push({x:mid.x, y:by+9.6, z:mid.z, s:1.6, sy:1.6, sz:Wd, ry:ry+Math.PI/2, c:SH.INK});
+  const board=new T.Mesh(new T.PlaneGeometry(Wd-10,(Wd-10)/4), new T.MeshBasicMaterial({map:shStartTex(), side:T.DoubleSide}));
+  board.position.set(mid.x-s.t.x*0.7, by, mid.z-s.t.z*0.7); board.rotation.y=ry+Math.PI; trackGroup.add(board);
+  B.ink.push({x:mid.x+s.t.x*0.2, y:by, z:mid.z+s.t.z*0.2, s:Wd-8, sy:(Wd-10)/4+2.4, sz:1.2, ry:ry+Math.PI, c:SH.INK});
+  // the line itself: an ink band across the planks with a paper stripe in it
+  const s0=SAMP[0], up=new T.Vector3().crossVectors(s0.t,s0.bn).normalize(), fw=new T.Vector3().crossVectors(s0.bn,up).normalize();
+  const qd=new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(s0.bn,up,fw));
+  for(const [w,c,dy] of [[5,SH.INK,0.12],[1.6,SH.PAPERL,0.14]]){
+    const l=new T.Mesh(new T.PlaneGeometry(HW*2,w).rotateX(-Math.PI/2), new T.MeshBasicMaterial({color:shLin(c)}));
+    l.quaternion.copy(qd); l.position.copy(s0.p).addScaledVector(up,dy); trackGroup.add(l); }
+}
+
+/* THE ARCADE: Ocean Row's covered amusement arcade, the course's tunnel. Outside it is a
+   long barrel roof in the awning stripes; inside, the key block takes over — a dark vault
+   with its ribs and the skylight band carved out in paper, the compression before the dunes
+   open up. Walls at 31 (the corridor closes to 28.2 in here), the crown 30 over the deck.
+   A façade at each end with the opening cut out of it and the sign on its parapet. */
+function shVaultTex(){ return shTex('vault',256,256,(g,W,H)=>{
+  g.fillStyle='#163f2e'; g.fillRect(0,0,W,H);
+  g.fillStyle='#f2e2c6';
+  for(let x=W*0.45;x<W*0.55;x+=6) g.fillRect(x,0,2.2,H);                 // the skylight, ruled
+  for(let y=0;y<H;y+=64){ g.fillRect(0,y,W,5); g.fillRect(0,y+9,W,1.6); }  // ribs
+  g.fillStyle='#c63f2f'; for(let y=24;y<H;y+=64){ g.fillRect(W*0.06,y,W*0.10,18); g.fillRect(W*0.84,y,W*0.10,18); }
+}); }
+function shArcade(F, inS, i0, i1){
+  const B=F.B, WL=31, HWALL=12, CROWN=30, K=14;
+  const prof=[]; prof.push([-WL,0]);
+  for(let k=0;k<=K;k++){ const a=Math.PI*(1-k/K); prof.push([Math.cos(a)*WL, HWALL+Math.sin(a)*(CROWN-HWALL)]); }
+  prof.push([WL,0]);
+  const ip=[], iu=[], op=[], ou=[], ix=[];
+  let v=0, prev=null; const NP=prof.length;
+  let cum=[0]; for(let k=1;k<NP;k++) cum.push(cum[k-1]+Math.hypot(prof[k][0]-prof[k-1][0],prof[k][1]-prof[k-1][1]));
+  for(let i=i0;i<=i1;i++){ const s=SAMP[i%STEPS]; if(prev) v+=s.p.distanceTo(prev); prev=s.p;
+    for(let k=0;k<NP;k++){ const [lat,h]=prof[k], l=lat*inS;
+      ip.push(s.p.x+s.n.x*l, s.p.y+h, s.p.z+s.n.z*l); iu.push(cum[k]/cum[NP-1], v/64);
+      const lo=lat*1.04*inS; op.push(s.p.x+s.n.x*lo, s.p.y+h*1.03+0.4, s.p.z+s.n.z*lo); ou.push(cum[k]/cum[NP-1]*6, v/30); } }
+  const rows=i1-i0+1;
+  for(let j=0;j<rows-1;j++) for(let k=0;k<NP-1;k++){ const a=j*NP+k, b=a+1, c=a+NP, d=c+1; ix.push(a,c,b, b,c,d); }
+  const mk=(P,U,mat)=>{ const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    g.setAttribute('uv',new T.Float32BufferAttribute(U,2)); g.setIndex(ix); g.computeBoundingSphere(); const m=new T.Mesh(g,mat); trackGroup.add(m); return m; };
+  mk(ip,iu,new T.MeshBasicMaterial({map:shVaultTex(), side:T.DoubleSide}));
+  const st=shStripeTex('awning',8,'#c63f2f','#f2e2c6');
+  mk(op,ou,new T.MeshBasicMaterial({map:st, side:T.FrontSide}));
+  // façades
+  const sh=new T.Shape(); const FW=50, FH=48;
+  sh.moveTo(-FW,-2); sh.lineTo(-WL-1,-2);
+  for(let k=0;k<=K;k++){ const a=Math.PI*(1-k/K); sh.lineTo(Math.cos(a)*(WL+1), HWALL+Math.sin(a)*(CROWN-HWALL+1)); }
+  sh.lineTo(WL+1,-2); sh.lineTo(FW,-2); sh.lineTo(FW,FH-8); sh.lineTo(FW-8,FH-8); sh.lineTo(FW-8,FH-2);
+  for(let k=1;k<=6;k++){ const x=FW-8-k*(2*FW-16)/6, xm=x+(2*FW-16)/12; sh.quadraticCurveTo(xm,FH+5,x,FH-2); }
+  sh.lineTo(-FW,FH-8); sh.lineTo(-FW,-2);
+  const fg=new T.ExtrudeGeometry(sh,{depth:3,bevelEnabled:false,curveSegments:6});
+  for(const [i,dir] of [[i0,-1],[i1,1]]){ const s=SAMP[i%STEPS], ry=Math.atan2(s.t.x,s.t.z);
+    const m=new T.Mesh(fg, shPatch(new T.MeshBasicMaterial({color:shLin(SH.PAPERL)}),'facade',{}));
+    m.position.set(s.p.x, s.p.y, s.p.z); m.rotation.y=ry+(inS<0?Math.PI:0); m.position.addScaledVector(s.t, dir>0?0:-3); trackGroup.add(m);
+    const hm=new T.Mesh(shHullGeo(fg), shPatch(new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.BackSide}),'facade-hull',{hull:true, ink:0.003, inkMax:1.8}));
+    hm.position.copy(m.position); hm.rotation.copy(m.rotation); trackGroup.add(hm);
+    const fo=dir>0?3.4:-3.4;
+    F.signs.push({x:s.p.x+s.t.x*fo, y:s.p.y+CROWN+8.5, z:s.p.z+s.t.z*fo, ry, w:40, h:10, k:0});
+    for(const sd of [-1,1]){ const l=sd*(FW-4)*inS, q={x:s.p.x+s.n.x*l+s.t.x*fo*0.5, z:s.p.z+s.n.z*l+s.t.z*fo*0.5};
+      B.red.push({x:q.x, y:s.p.y+(FH-8)/2, z:q.z, s:8, sy:FH-8, sz:4.4, ry, c:SH.RED});
+      B.roof.push({x:q.x, y:s.p.y+FH-8, z:q.z, s:11, sy:8, sz:8, ry, c:SH.INK});
+      B.ink.push({x:q.x, y:s.p.y+FH+3, z:q.z, s:0.5, sy:9, sz:0.5, c:SH.INK});
+      B.flag.push({x:q.x+s.t.x*2.4, y:s.p.y+FH+6, z:q.z+s.t.z*2.4, s:4.4, sy:2.4, sz:0.25, ry:ry+Math.PI/2, sw:0.6, c:SH.RED});
+      const l2=sd*(WL+4)*inS; B.ink.push({x:s.p.x+s.n.x*l2+s.t.x*fo*0.5, y:s.p.y+HWALL/2, z:s.p.z+s.n.z*l2+s.t.z*fo*0.5, s:1.2, sy:HWALL, sz:4, ry, c:SH.INK}); }
+    // the arch rule: a red band following the opening
+    for(let k=0;k<K;k++){ const a0=Math.PI*(1-k/K), a1=Math.PI*(1-(k+1)/K), am=(a0+a1)/2, rr=WL+2.6, hh=CROWN-HWALL+2.6;
+      const lx=Math.cos(am)*rr, ly=HWALL+Math.sin(am)*hh, l=lx*inS, len=Math.hypot(Math.cos(a1)*rr-Math.cos(a0)*rr, Math.sin(a1)*hh-Math.sin(a0)*hh);
+      B.red.push({x:s.p.x+s.n.x*l+s.t.x*fo*0.5, y:s.p.y+ly, z:s.p.z+s.n.z*l+s.t.z*fo*0.5, s:len+0.6, sy:2.2, sz:3.8, ry, rz:Math.atan2(Math.sin(a1)*hh-Math.sin(a0)*hh, (Math.cos(a1)-Math.cos(a0))*rr)*inS, c:SH.RED}); } }
+  // lamps hung in the vault, high
+  for(let i=i0+4;i<i1-2;i+=5){ const s=SAMP[i%STEPS]; B.lamp.push({x:s.p.x, y:s.p.y+24.5, z:s.p.z, s:1.6, c:SH.PAPERL});
+    B.ink.push({x:s.p.x, y:s.p.y+27.6, z:s.p.z, s:0.3, sy:4.6, sz:0.3, c:SH.INK}); }
+}
+/* THE VERGE. On the boardwalk: the chain rail outside, lamps along the infield line on an
+   irregular pitch, and on the pier a plain inner rail as well. */
+function shVerge(F, inS){
+  const B=F.B, R=harbRnd(0x7E26E);
+  shRails(F, inS, F.runs);
+  for(const [a,b] of F.runs){
+    for(let i=a+2;i<b;){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0), l=51*inS;
+      const x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l, y=s.p.y+sb*l;
+      if(F.clear(x,z,1)>=0.5){ B.ink.push({x, y:y+5, z, s:0.7, sy:10, sz:0.7, c:SH.INK}); B.lamp.push({x, y:y+10.8, z, s:1.5, c:SH.PAPERL});
+        B.roof.push({x, y:y+11.9, z, s:2.6, sy:1.6, sz:2.6, c:SH.RED}); }
+      i+=4+((R()*5)|0); }
+    let last=null;
+    for(let i=a;i<=b;i+=2){ const ii=(i+STEPS)%STEPS, s=SAMP[ii]; if(F.wide(ii)>60){ last=null; continue; }
+      const sb=Math.sin(s.bank||0), l=49.9*inS, x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l, y=s.p.y+sb*l;
+      B.post.push({x, y:y+1.8, z, s:0.8, sy:3.6, sz:0.8, c:SH.PAPERL});
+      if(last){ const dl=Math.hypot(x-last.x,z-last.z); B.rail.push({x:(x+last.x)/2, y:(y+last.y)/2+3.5, z:(z+last.z)/2, s:0.6, sy:0.5, sz:dl+0.4, rx:-Math.atan2(y-last.y,dl), ry:Math.atan2(x-last.x,z-last.z), o:'YXZ', c:SH.PAPERL}); }
+      last={x,y,z}; }
+  }
+}
+const shCirc=(A,Bp,Cp)=>{ const ax=A.x,az=A.z,bx=Bp.x,bz=Bp.z,cx=Cp.x,cz=Cp.z, d=2*(ax*(bz-cz)+bx*(cz-az)+cx*(az-bz));
+  return {x:((ax*ax+az*az)*(bz-cz)+(bx*bx+bz*bz)*(cz-az)+(cx*cx+cz*cz)*(az-bz))/d, z:((ax*ax+az*az)*(cx-bx)+(bx*bx+bz*bz)*(ax-cx)+(cx*cx+cz*cz)*(bx-ax))/d}; };
+/* SCENERY: the wheel on the pier and the pavilion at its head; the beach under the
+   boardwalk with umbrellas in loose family groups and the lifeguard stands on their own
+   rhythm; the shops along the wide deck of the opening straight, each with its board. */
+function shScenery(F, inS){
+  const B=F.B, R=harbRnd(0x5A17), P={}, N=STEPS, S=SAMP;
+  const iW=Math.round(0.20*N);
+  P.wheel=shWheel(F, inS, iW);
+  { let top=Math.round(0.25*N);
+    for(let i=Math.round(0.25*N);i<Math.round(0.36*N);i++) if(S[i].p.z<S[top].p.z) top=i;
+    const C=shCirc(S[top-18].p,S[top].p,S[top+18].p); let R0=1e9, y0=1e9;
+    for(let i=Math.round(0.24*N);i<Math.round(0.36*N);i++){ const s=S[i];
+      R0=Math.min(R0, Math.hypot(s.p.x-C.x,s.p.z-C.z)-48.4-3); y0=Math.min(y0, s.p.y+Math.sin(s.bank||0)*48.4*inS); }
+    const t=S[iW].t; shPavilion(F, inS, C, Math.min(R0,95), y0-0.4, Math.atan2(t.x,t.z)); P.pier={C,R0}; }
+  // beach umbrellas, in groups
+  for(let g=0, tries=0; g<64 && tries<900; tries++){
+    const x=-1080+R()*2000, tt=18+R()*96, z=shShore(x)+tt;
+    if(F.clear(x,z,10)<1) continue;
+    const n=2+((R()*4)|0); let placed=0;
+    for(let k=0;k<n;k++){ const ux=x+(R()-0.5)*22, uz=z+(R()-0.5)*14; if(F.clear(ux,uz,6)<1) continue;
+      const gy=F.footAt(ux,uz,1), r=4.2+R()*1.8, tl=(R()-0.5)*0.32;
+      B.ink.push({x:ux, y:gy+3.8, z:uz, s:0.35, sy:7.6, sz:0.35, rz:tl*0.5, c:SH.INK});
+      (R()<0.62?B.umbR:B.umbG).push({x:ux, y:gy+8.3, z:uz, s:r, sy:2.3, sz:r, rx:tl, rz:(R()-0.5)*0.3, ry:R()*6.3, c:0xffffff});
+      if(R()<0.6) (R()<0.5?B.red:B.paper).push({x:ux+(R()-0.5)*6, y:gy+0.15, z:uz+(R()-0.5)*6, s:5.5, sy:0.3, sz:2.8, ry:R()*3, c:R()<0.5?SH.RED:SH.PAPERL});
+      placed++; }
+    if(placed) g++; }
+  // lifeguard stands, facing the water
+  for(let x=-1020; x<900; x+=170+R()*120){ const z=shShore(x)+58+R()*14;
+    if(F.clear(x,z,9)<1) continue;
+    const gy=F.footAt(x,z,3), h=9;
+    for(const [dx,dz] of [[-2.2,-1.6],[2.2,-1.6],[-2.2,1.6],[2.2,1.6]]) B.paper.push({x:x+dx, y:gy+h/2, z:z+dz, s:0.7, sy:h, sz:0.7, rx:dz*0.05, c:SH.PAPERL});
+    B.paper.push({x, y:gy+h, z, s:5.6, sy:0.7, sz:4.4, c:SH.PAPERL});
+    B.paper.push({x, y:gy+h+2.6, z:z+1.9, s:4.4, sy:4.4, sz:0.5, c:SH.PAPERL});
+    B.red.push({x, y:gy+h+1.2, z:z-0.2, s:4.0, sy:1.0, sz:2.6, c:SH.RED});
+    for(let k=0;k<4;k++) B.paper.push({x, y:gy+1.5+k*2, z:z-2.6, s:4.0, sy:0.35, sz:0.9, c:SH.PAPERL});
+    B.ink.push({x:x+2.6, y:gy+h+6, z:z+1.9, s:0.35, sy:12, sz:0.35, c:SH.INK});
+    B.flag.push({x:x+4.6, y:gy+h+10.6, z:z+1.9, s:4, sy:2.4, sz:0.25, sw:0.6, c:SH.RED}); }
+  // shops on the wide deck of the opening straight
+  { const arch=30; let i=4;
+    while(i<N){ const s=S[i]; if(F.wide(i)<60){ i++; continue; }
+      const w=15+R()*12, step=Math.max(2,Math.round((w+5+R()*12)/(SAMP[1].p.distanceTo(SAMP[0].p))));
+      if(Math.abs(i-arch)<4){ i+=step; continue; }
+      const ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0), lat=74, l=lat*inS;
+      const x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l, gy=s.p.y+sb*l, h=10+R()*6, d=26;
+      if(F.wide((i+step)%N)<60) break;
+      const red=R()<0.22, col=red?SH.RED:SH.PAPERL, fx=s.p.x+s.n.x*(lat-d/2)*inS, fz=s.p.z+s.n.z*(lat-d/2)*inS;
+      (red?B.red:B.paper).push({x, y:gy+h/2, z, s:d, sy:h, sz:w, ry, c:col});
+      B.ink.push({x, y:gy+h+0.4, z, s:d+0.8, sy:0.8, sz:w+0.8, ry, c:SH.INK});
+      // false front with the board on it, door and windows cut in ink, the striped awning
+      const ff=h+3+R()*6;
+      B.paper.push({x:fx, y:gy+ff/2, z:fz, s:0.9, sy:ff, sz:w, ry, c:SH.PAPERL});
+      B.ink.push({x:fx-s.n.x*0.5*inS, y:gy+3.4, z:fz-s.n.z*0.5*inS, s:0.4, sy:6.8, sz:3.2, ry, c:SH.INK});
+      for(const o of [-w*0.32,w*0.32]){ const ox=s.t.x*o, oz=s.t.z*o; B.ink.push({x:fx+ox-s.n.x*0.5*inS, y:gy+4.6, z:fz+oz-s.n.z*0.5*inS, s:0.4, sy:4.4, sz:w*0.22, ry, c:SH.INK}); }
+      const ax=fx-s.n.x*2.6*inS, az=fz-s.n.z*2.6*inS;
+      B.awn.push({x:ax, y:gy+8.2, z:az, s:5.6, sy:0.5, sz:w*0.96, ry, rz:0.42*inS, c:0xffffff});
+      F.signs.push({x:fx-s.n.x*0.6*inS, y:gy+ff-3.4, z:fz-s.n.z*0.6*inS, ry:Math.atan2(s.n.x,s.n.z), w:w*0.82, h:w*0.205, k:1+((R()*12)|0)});
+      i+=step; } }
+  shLand(F, inS, P, R);
+  return P;
+}
+/* THE COASTER: a wooden out-and-back up on the dunes behind the town, its lattice the
+   finest drawing on the course against the paper sky. It runs out over the back road and
+   comes home over it again, so the lap passes under it twice: wherever its track crosses
+   the corridor it is carried on a truss (bottom chord 29 over the deck, the corridor stops
+   at 21.5) between heavy towers that stand outside the walls. Elsewhere it stands on bents
+   of two splayed posts with X-bracing every ~11 units. Track heights are given over the
+   local ground; any point near the corridor is lifted to 36 over the road it crosses.
+   A five-car train works its way round on a slow gravity sum. */
+const SH_COASTER=[[-300,5,700],[-230,7,700],[-160,30,706],[-100,52,716],[-52,56,762],[-28,40,830],[-12,36,935],
+  [8,20,1040],[70,22,1094],[150,20,1066],[178,22,996],[160,30,900],[132,30,790],[84,14,710],
+  [4,28,656],[-86,10,640],[-176,20,650],[-258,7,670],[-322,5,690]];
+function shCoaster(F, inS, P){
+  const B=F.B, pts=SH_COASTER.map(([x,h,z])=>{ let y=F.groundAt(x,z)+h; const d=F.clear(x,z,0);
+    if(d<34){ const s=F.SJ[F.nearest(x,z)]; y=Math.max(y, s.y+36); } return new T.Vector3(x,y,z); });
+  const cv=new T.CatmullRomCurve3(pts,true,'catmullrom',0.5); const L=cv.getLength(), n=Math.round(L/11);
+  const over=(x,z)=>F.clear(x,z,4)<1;
+  let prev=null, prevOver=false;
+  for(let k=0;k<=n;k++){ const u=(k%n)/n, p=cv.getPointAt(u), t=cv.getTangentAt(u), side=new T.Vector3(t.z,0,-t.x).normalize();
+    const ov=over(p.x,p.z), gy=F.footAt(p.x,p.z,4), h=p.y-gy;
+    if(!ov && h>2){ const heavy=prev && prevOver!==ov, spread=(heavy?5:2.6)+h*0.10;
+      for(const sd of [-1,1]) for(const al of (heavy?[-3,3]:[0])){
+        const a=p.clone().addScaledVector(side,sd*2.6).addScaledVector(t,al).setY(p.y-0.6), b=p.clone().addScaledVector(side,sd*spread).addScaledVector(t,al*1.6).setY(gy-0.5);
+        if(F.clear(b.x,b.z,1.5)>=1) B.paper.push(shLeg(a,b,heavy?1.3:0.8,SH.PAPERL)); }
+      for(let y=gy+9;y<p.y-4;y+=11){ const f0=(y-gy)/h, f1=Math.min(1,(y+9-gy)/h), w0=spread+(2.6-spread)*f0, w1=spread+(2.6-spread)*f1;
+        const a=p.clone().addScaledVector(side,-w0).setY(y), b=p.clone().addScaledVector(side,w1).setY(Math.min(y+9,p.y-1));
+        B.paper.push(shLeg(a,b,0.45,SH.PAPERL)); } }
+    if(prev){ const a=prev, b=p, d=b.clone().sub(a), dl=d.length(), mid={x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2};
+      const rx=-Math.atan2(d.y,Math.hypot(d.x,d.z)), ry=Math.atan2(d.x,d.z);
+      B.paper.push({...mid, s:6.6, sy:0.9, sz:dl+0.4, rx, ry, o:'YXZ', c:SH.PAPERL});
+      B.ink.push({x:mid.x, y:mid.y+1.0, z:mid.z, s:0.5, sy:1.1, sz:dl+0.4, rx, ry, o:'YXZ', c:SH.INK});
+      if(ov||prevOver){ // the truss under the track where it spans the road
+        B.ink.push({x:mid.x, y:mid.y-7, z:mid.z, s:5.6, sy:0.9, sz:dl+0.4, rx, ry, o:'YXZ', c:SH.INK});
+        for(const sd of [-1,1]){ const o=side.clone().multiplyScalar(sd*2.8);
+          B.ink.push(shLeg(new T.Vector3(a.x+o.x,a.y-0.6,a.z+o.z), new T.Vector3(a.x+o.x,a.y-7,a.z+o.z), 0.7, SH.INK));
+          B.ink.push(shLeg(new T.Vector3(a.x+o.x,a.y-7,a.z+o.z), new T.Vector3(b.x+o.x,b.y-0.6,b.z+o.z), 0.5, SH.INK)); } } }
+    prev=p; prevOver=ov; }
+  // the station shed at the foot of the lift
+  const st=pts[0], sg=F.footAt(st.x,st.z,12); B.red.push({x:st.x, y:sg+5, z:st.z, s:40, sy:10, sz:14, c:SH.RED});
+  B.roof.push({x:st.x, y:sg+10, z:st.z, s:46, sy:7, sz:18, c:SH.INK});
+  F.signs.push({x:st.x, y:sg+20, z:st.z+7.4, ry:0, w:30, h:7.5, k:3});
+  const cars=[]; for(let k=0;k<5;k++) cars.push({x:0,y:0,z:0,s:1,c:k===0?SH.RED:SH.PAPERL});
+  const car=shMerge([new T.BoxGeometry(5.2,2.4,6.2).translate(0,1.4,0), new T.BoxGeometry(5.2,1.6,1.0).translate(0,2.8,-2.4)]);
+  const cb=shBatch(car, cars, {name:'car', noChunk:true, noCull:true, ink:0.003, inkMax:1.3});
+  let hmax=-1e9; for(const p of pts) hmax=Math.max(hmax,p.y);
+  P.coaster={cv, L, m:cb.m, s:0, hmax, d:new T.Object3D()};
+}
+function shCoasterTick(C,dt){
+  const p=C.cv.getPointAt(((C.s%C.L)+C.L)%C.L/C.L);
+  const v=9+Math.sqrt(Math.max(0,2*30*(C.hmax-p.y)))*0.8;
+  C.s+=v*Math.min(dt,0.1);
+  for(let k=0;k<5;k++){ const u=(((C.s-k*7)%C.L)+C.L)%C.L/C.L, q=C.cv.getPointAt(u), t=C.cv.getTangentAt(u);
+    C.d.position.copy(q); C.d.rotation.set(-Math.asin(Math.max(-1,Math.min(1,t.y))), Math.atan2(t.x,t.z), 0, 'YXZ'); C.d.updateMatrix(); C.m.setMatrixAt(k,C.d.matrix); }
+  C.m.instanceMatrix.needsUpdate=true;
+}
+/* BILLBOARDS on the dune road: the town announcing itself in the poster's script, on two
+   posts each, angled to the oncoming lap and standing well clear of the walls. */
+function shBillboards(F, inS){
+  const B=F.B;
+  for(const [u,lat,k] of [[0.585,72,13],[0.765,-48,5],[0.875,74,3],[0.655,-50,1]]){
+    const i=Math.round(u*STEPS)%STEPS, s=SAMP[i], l=lat*inS, x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l;
+    if(F.clear(x,z,15)<1) continue;
+    const g=F.footAt(x,z,10), ry=Math.atan2(-s.t.x,-s.t.z)+(lat>0?-0.45:0.45)*inS, W=30, Hh=7.5, cy=g+15;
+    const cx=Math.cos(ry), cz=-Math.sin(ry);
+    for(const o of [-W*0.36,W*0.36]) B.paper.push({x:x+cx*o, y:(cy-Hh/2)/2+g/2, z:z+cz*o, s:0.9, sy:cy-Hh/2-g, sz:0.9, c:SH.PAPERL});
+    B.ink.push({x, y:cy, z, s:W+1.6, sy:Hh+1.6, sz:0.5, ry, c:SH.INK});
+    F.signs.push({x:x+Math.sin(ry)*0.5, y:cy, z:z+Math.cos(ry)*0.5, ry, w:W, h:Hh, k}); }
+}
+/* THE CAROUSEL: a striped tent roof on a ring of posts over a turning platform of horses,
+   cut as little ink silhouettes on their poles. */
+function shCarousel(F, inS, P, x, z){
+  const B=F.B, g=F.footAt(x,z,15);
+  if(F.clear(x,z,24)<1) return;
+  B.cyl.push({x, y:g+0.8, z, s:30, sy:1.6, sz:30, c:SH.PAPERL});
+  for(let k=0;k<12;k++){ const a=k/12*Math.PI*2; B.paper.push({x:x+Math.cos(a)*14.5, y:g+6, z:z+Math.sin(a)*14.5, s:0.8, sy:10, sz:0.8, c:SH.PAPERL}); }
+  B.red.push({x, y:g+6, z, s:4.2, sy:10, sz:4.2, c:SH.RED});
+  B.umbR.push({x, y:g+19.2, z, s:18.5, sy:8.6, sz:18.5, c:0xffffff});
+  B.ink.push({x, y:g+11.4, z, s:30.5, sy:1.2, sz:30.5, ry:0.26, c:SH.INK});
+  B.ink.push({x, y:g+21.5, z, s:0.5, sy:6, sz:0.5, c:SH.INK});
+  B.flag.push({x:x+1.8, y:g+23.6, z, s:3.6, sy:2.0, sz:0.25, sw:0.6, c:SH.RED});
+  const grp=new T.Group(); grp.position.set(x,g,z); trackGroup.add(grp);
+  const hs=[];
+  for(let k=0;k<10;k++){ const a=k/10*Math.PI*2, r=10, bob=(k%2)*1.2, ry=-a;
+    const hx=Math.cos(a)*r, hz=Math.sin(a)*r;
+    hs.push({x:hx, y:4.4+bob, z:hz, s:1.4, sy:2.2, sz:4.6, ry, c:k%3===0?SH.RED:SH.PAPERL});
+    hs.push({x:hx+Math.sin(ry)*2.2, y:6.0+bob, z:hz+Math.cos(ry)*2.2, s:1.0, sy:2.8, sz:1.4, ry, rx:-0.5, c:k%3===0?SH.RED:SH.PAPERL});
+    hs.push({x:hx, y:6.5, z:hz, s:0.3, sy:10, sz:0.3, c:SH.INK}); }
+  shBatch(new T.BoxGeometry(1,1,1), hs, {name:'horse', noChunk:true, parent:grp, ink:0.003, inkMax:1.2});
+  (P.spin=P.spin||[]).push({g:grp, w:0.32});
+}
+/* SALT POINT: the town behind the boardwalk and up into the dunes. Cottages with hipped
+   roofs and a door and two windows cut in ink, the odd one painted red; a water tower with
+   the town's name on it; and on the west point a banded lighthouse on its rocks. */
+function shCottage(F, x, z, ry, R){
+  const B=F.B, w=10+R()*6, d=8+R()*4, h=5+R()*2.5, g=F.footAt(x,z,Math.max(w,d)*0.6)-0.2, red=R()<0.2;
+  (red?B.red:B.paper).push({x, y:g+h/2, z, s:w, sy:h, sz:d, ry, c:red?SH.RED:SH.PAPERL});
+  B.roof.push({x, y:g+h, z, s:w*1.45, sy:5+R()*2.5, sz:d*1.5, ry, c:R()<0.75?SH.INK:SH.INK2});
+  const fx=Math.sin(ry), fz=Math.cos(ry);
+  B.ink.push({x:x+fx*(d/2+0.1), y:g+2.2, z:z+fz*(d/2+0.1), s:2, sy:4.2, sz:0.3, ry, c:SH.INK});
+  for(const o of [-w*0.3,w*0.3]) B.ink.push({x:x+fx*(d/2+0.1)+Math.cos(ry)*o, y:g+h*0.6, z:z+fz*(d/2+0.1)-Math.sin(ry)*o, s:2.2, sy:2.2, sz:0.3, ry, c:SH.INK});
+}
+function shLand(F, inS, P, R){
+  const B=F.B, N=STEPS, S=SAMP;
+  shCoaster(F, inS, P);
+  shBillboards(F, inS);
+  shCarousel(F, inS, P, -150, 330);
+  shCarousel(F, inS, P, 330, 300);
+  // the water tower
+  { const x=260, z=430, g=F.footAt(x,z,10);
+    if(F.clear(x,z,16)>=1){ const H=44;
+      for(const [dx,dz] of [[-7,-7],[7,-7],[-7,7],[7,7]]) B.ink.push(shLeg(new T.Vector3(x+dx*0.6,g+H,z+dz*0.6), new T.Vector3(x+dx,g-0.5,z+dz), 1.1, SH.INK));
+      for(let y=g+12;y<g+H-4;y+=12) for(const [a,b] of [[[-1,-1],[1,-1]],[[1,-1],[1,1]],[[1,1],[-1,1]],[[-1,1],[-1,-1]]]){ const f=(y-g)/H, r=7-2.8*f;
+        B.ink.push(shLeg(new T.Vector3(x+a[0]*r,y,z+a[1]*r), new T.Vector3(x+b[0]*r,y,z+b[1]*r), 0.5, SH.INK)); }
+      B.cyl.push({x, y:g+H+6, z, s:22, sy:12, sz:22, c:SH.PAPERL});
+      B.cyl.push({x, y:g+H+0.6, z, s:22.6, sy:1.2, sz:22.6, c:SH.INK});
+      B.roof.push({x, y:g+H+12, z, s:24, sy:8, sz:24, ry:0.4, c:SH.RED});
+      F.signs.push({x:x, y:g+H+6.5, z:z-11.4, ry:0, w:17, h:4.25, k:13});
+      F.signs.push({x:x-11.4, y:g+H+6.5, z, ry:Math.PI/2, w:17, h:4.25, k:13}); } }
+  // the lighthouse on the west point
+  { const x=-1120, z=shShore(-1120)+20, g=F.footAt(x,z,8);
+    for(let k=0;k<7;k++) B.ink.push({x:x+(R()-0.5)*26, y:g-1, z:z-6+(R()-0.5)*20, s:6+R()*6, sy:4+R()*3, sz:6+R()*6, ry:R()*3, c:SH.INK2});
+    const Hh=64, NB=8;
+    for(let k=0;k<NB;k++){ const y0=g+k*Hh/NB, r=7.5-4*(k+0.5)/NB; (k%2?B.paper:B.red).push({x, y:y0+Hh/NB/2, z, s:r*2, sy:Hh/NB+0.05, sz:r*2, c:k%2?SH.PAPERL:SH.RED}); }
+    B.cyl.push({x, y:g+Hh+0.6, z, s:12, sy:1.2, sz:12, c:SH.INK});
+    B.cyl.push({x, y:g+Hh+4.2, z, s:6.4, sy:6, sz:6.4, c:SH.PAPERL});
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2; B.ink.push({x:x+Math.cos(a)*3.2, y:g+Hh+4.2, z:z+Math.sin(a)*3.2, s:0.4, sy:6, sz:0.4, c:SH.INK}); }
+    B.roof.push({x, y:g+Hh+7.2, z, s:9, sy:5, sz:9, c:SH.INK});
+    for(let k=0;k<12;k++){ const a=k/12*Math.PI*2; B.post.push({x:x+Math.cos(a)*5.8, y:g+Hh+2, z:z+Math.sin(a)*5.8, s:0.4, sy:2.4, sz:0.4, c:SH.PAPERL}); }
+    shCottage(F, x+22, z+18, 0.4, R); }
+  // cottages: Salt Point behind the boardwalk, thinning out into the dunes
+  let nc=0;
+  for(let t=0;t<2400&&nc<96;t++){ const x=-900+R()*1600, z=250+R()*560;
+    if(arcFbm(x/140+7,z/140+1)<0.42) continue;
+    if(F.clear(x,z,16)<1) continue;
+    if(B.paper.concat(B.red).some(w=>w.sy>4 && w.sy<9 && Math.hypot(w.x-x,w.z-z)<22)) continue;
+    if(Math.hypot(x+150,z-330)<34 || Math.hypot(x-330,z-300)<34 || Math.hypot(x-260,z-430)<26) continue;
+    if(x>-340 && x<200 && z>620 && z<1110) continue;          // the coaster's ground
+    const g0=F.groundAt(x,z); let flat=true; for(const [dx,dz] of [[7,7],[-7,7],[7,-7],[-7,-7]]) if(Math.abs(F.groundAt(x+dx,z+dz)-g0)>4.5) flat=false;
+    if(!flat) continue;
+    const s=S[F.nearest(x,z)]; shCottage(F, x, z, Math.atan2(s.t.x,s.t.z)+((R()*4)|0)*Math.PI/2+(R()-0.5)*0.2, R); nc++; }
+  // dune fences in short leaning runs, and marram grass, both on the land stretch
+  const land=i=>!F.isDeck(i);
+  for(let i=0;i<N;i+=5+((R()*9)|0)){ if(!land(i) || R()<0.35) continue;
+    const s=S[i], sd=R()<0.5?1:-1, lat=(sd>0?58:36)+R()*40, l=lat*sd*inS;
+    let x=s.p.x+s.n.x*l, z=s.p.z+s.n.z*l; const ang=Math.atan2(s.t.x,s.t.z)+(R()-0.5)*0.9, len=24+R()*40;
+    const dx=Math.sin(ang), dz=Math.cos(ang), lean=(R()-0.5)*0.3;
+    for(let k=0;k<len;k+=1.6){ const px=x+dx*k, pz=z+dz*k; if(F.clear(px,pz,1)<1) break;
+      const g=F.groundAt(px,pz), h=4.4+Math.sin(k*0.9)*0.4-(R()<0.12?1.6:0);
+      B.slat.push({x:px, y:g+h/2-0.6, z:pz, s:0.55, sy:h, sz:0.22, ry:ang+Math.PI/2, rz:lean, c:SH.PAPERL}); }
+    }
+  const grass=(x,z)=>arcFbm(x/90+3,z/90+1)*0.7+arcFbm(x/28,z/28)*0.3;
+  for(let k=0, tries=0;k<2600&&tries<26000;tries++){ const i=(R()*N)|0; if(!land(i)) continue;
+    const s=S[i], sd=R()<0.5?1:-1, lat=(sd>0?52:31)+Math.pow(R(),1.4)*190, l=lat*sd*inS;
+    const x=s.p.x+s.n.x*l+(R()-0.5)*8, z=s.p.z+s.n.z*l+(R()-0.5)*8;
+    if(grass(x,z)<0.47+R()*0.08) continue;
+    if(F.clear(x,z,2)<1) continue; const g=F.groundAt(x,z);
+    B.tuft.push({x, y:g-0.3, z, s:2.0+R()*2.0, sy:2.8+R()*3.4, sz:2.0+R()*2.0, ry:R()*6.3, sw:0.5+R()*0.4, c:SH.INK}); k++; }
+  // pitch pines in clumps on the dunes: the darkest masses on the land, the same ink as the pier
+  for(let c=0, tries=0;c<26&&tries<900;tries++){ const i=(R()*N)|0; if(!land(i)) continue;
+    const s=S[i], sd=R()<0.62?1:-1, lat=(sd>0?70:52)+R()*170, l=lat*sd*inS;
+    const cx=s.p.x+s.n.x*l, cz=s.p.z+s.n.z*l; if(F.clear(cx,cz,14)<1) continue;
+    const n=3+((R()*6)|0); let k2=0;
+    for(let k=0;k<n;k++){ const x=cx+(R()-0.5)*34, z=cz+(R()-0.5)*34; if(F.clear(x,z,7)<1) continue;
+      const g=F.footAt(x,z,1.5), h=12+R()*14, w=5+R()*4;
+      B.ink.push({x, y:g+h*0.3, z, s:0.9, sy:h*0.6, sz:0.9, c:SH.INK});
+      for(let j=0;j<3;j++){ const yy=g+h*(0.45+j*0.2), ww=w*(1-j*0.22);
+        B.pine.push({x:x+(R()-0.5)*1.5, y:yy, z:z+(R()-0.5)*1.5, s:ww, sy:ww*0.55, sz:ww*(0.8+R()*0.3), ry:R()*6.3, sw:0.25, c:j===2?SH.INK:(R()<0.5?SH.INK:SH.INK2)}); }
+      k2++; }
+    if(k2) c++; }
+  // the beach grass along the foot of the boardwalk too, seaward, sparse
+  for(let k=0;k<160;k++){ const x=-1000+R()*1150, z=shShore(x)+100+R()*30; if(F.clear(x,z,2)<1) continue;
+    B.tuft.push({x, y:F.groundAt(x,z)-0.3, z, s:2+R()*1.6, sy:2.6+R()*2.4, sz:2+R()*1.6, ry:R()*6.3, sw:0.5, c:SH.INK}); }
+  P.gulls=shGulls(F, R);
+  P.boats=shBoats(F, R);
+}
+// a tuft of marram: five tapering blades fanned from a point, one ink shape
+function shTuftGeo(){
+  const P=[]; for(let k=0;k<5;k++){ const a=(k-2)*0.36, r=0.16, c=Math.cos(k*1.3), s=Math.sin(k*1.3);
+    const bx=Math.sin(a), by=Math.cos(a);
+    P.push(-r*c,0,-r*s, r*c,0,r*s, bx*0.9,by,0.2*s); P.push(r*c,0,r*s, -r*c,0,-r*s, bx*0.9,by,0.2*s); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.computeVertexNormals(); return g;
+}
+/* GULLS: little ink marks wheeling slowly over the beach and the pier in loose flocks,
+   each on its own circle and its own pace, the wings a flat "m" that never flaps faster
+   than a gull does. One Points draw. */
+function shGulls(F, R){
+  const n=46, P=new Float32Array(n*3), A=new Float32Array(n*4);
+  const C=[[300,-300],[-300,40],[420,-860],[-760,120],[650,-100]];
+  for(let k=0;k<n;k++){ const c=C[k%C.length]; P.set([c[0]+(R()-0.5)*60, 34+R()*46, c[1]+(R()-0.5)*60],k*3);
+    A.set([18+R()*55, R()*6.3, (0.05+R()*0.07)*(R()<0.5?-1:1), R()*6.3],k*4); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(P,3)); g.setAttribute('aG',new T.BufferAttribute(A,4));
+  const cv=document.createElement('canvas'); cv.width=64; cv.height=32; const x=cv.getContext('2d');
+  x.strokeStyle='#163f2e'; x.lineWidth=4.2; x.lineCap='round'; x.beginPath(); x.moveTo(5,20); x.quadraticCurveTo(17,4,31,18); x.quadraticCurveTo(45,4,59,20); x.stroke();
+  const tex=new T.CanvasTexture(cv);
+  const mat=new T.ShaderMaterial({ transparent:true, depthWrite:false, uniforms:{uT:SH_T, uMap:{value:tex}, uPx:SH_PX},
+    vertexShader:`attribute vec4 aG; uniform float uT; uniform float uPx; varying float vF;
+      void main(){ float a=aG.y+uT*aG.z; vec3 p=position+vec3(cos(a)*aG.x, sin(uT*0.4+aG.w)*3.0, sin(a)*aG.x);
+        vec4 mv=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv; gl_PointSize=clamp(2600.0/-mv.z,3.0,26.0)*uPx;
+        vF=0.75+0.25*sin(uT*3.1+aG.w*5.0); }`,
+    fragmentShader:`uniform sampler2D uMap; varying float vF;
+      void main(){ vec2 q=gl_PointCoord; q.y=0.5+(q.y-0.5)*2.0/vF; if(q.y<0.0||q.y>1.0) discard; vec4 c=texture2D(uMap,vec2(q.x,q.y));
+        if(c.a<0.5) discard; gl_FragColor=vec4(${arcG3(SH.INK)},1.0); }`});
+  const pts=new T.Points(g,mat); pts.frustumCulled=false; trackGroup.add(pts);
+  return mat;
+}
+// sails on the horizon, drifting: an ink hull, a paper sail with a red band
+function shBoats(F, R){
+  const L=[];
+  const bs=[[-700,-1250,0.0],[180,-1450,1.3],[900,-1150,2.1],[-1300,-900,3.3]];
+  for(const [x,z,ph] of bs){ L.push({x, y:1, z, s:4, sy:2.4, sz:20, c:SH.INK, b:ph});
+    L.push({x, y:14, z:z+1, s:0.4, sy:24, sz:12, c:SH.PAPERL, b:ph}); L.push({x, y:9, z:z+1, s:0.5, sy:2.4, sz:12.4, c:SH.RED, b:ph});
+    L.push({x, y:14, z:z-5, s:0.5, sy:26, sz:0.5, c:SH.INK, b:ph}); }
+  const bt=shBatch(new T.BoxGeometry(1,1,1), L, {name:'boat', noChunk:true, noCull:true, ink:0.0024, inkMax:2.2});
+  return {m:bt.m, L, d:new T.Object3D()};
+}
+function shBoatsTick(Bt,t){
+  Bt.L.forEach((v,i)=>{ const dx=Math.sin(t*0.011+v.b)*60; Bt.d.position.set(v.x+dx, v.y+Math.sin(t*0.6+v.b)*0.5, v.z);
+    Bt.d.rotation.set(Math.sin(t*0.5+v.b)*0.04,0,Math.sin(t*0.7+v.b*2)*0.05); Bt.d.scale.set(v.s,v.sy,v.sz); Bt.d.updateMatrix(); Bt.m.setMatrixAt(i,Bt.d.matrix); });
+  Bt.m.instanceMatrix.needsUpdate=true;
+}
+function shFlush(F){
+  const B=F.B, box=()=>new T.BoxGeometry(1,1,1);
+  shBatch(box(), B.paper, {name:'paper'});
+  shBatch(box(), B.ink, {name:'ink'});
+  shBatch(box(), B.red, {name:'red'});
+  shBatch(box(), B.gold, {name:'gold'});
+  shBatch(new T.CylinderGeometry(0.5,0.6,1,6,1,true), B.pile, {name:'pile', ink:0.0026});
+  shBatch(box(), B.post, {name:'post', ink:0.0024, inkMax:1.2});
+  shBatch(box(), B.rail, {name:'rail', ink:0.0024, inkMax:1.2});
+  shBatch(new T.CylinderGeometry(0.5,0.5,1,8), B.cyl, {name:'cyl'});
+  shBatch(new T.SphereGeometry(1,10,6), B.lamp, {name:'lamp'});
+  shBatch(new T.SphereGeometry(1,12,8), B.ball, {name:'ball'});
+  shBatch(shRoofGeo(), B.roof, {name:'roof'});
+  shBatch(box(), B.flag, {name:'flag', sway:true, ink:0.0022, inkMax:1});
+  const umb=new T.ConeGeometry(1,1,12,1,true).translate(0,-0.5,0);
+  shBatch(umb, B.umbR, {name:'umbR', map:shStripeTex('umbR',12,'#c63f2f','#f2e2c6'), side:T.DoubleSide, cutK:0.6});
+  shBatch(umb.clone(), B.umbG, {name:'umbG', map:shStripeTex('umbG',12,'#163f2e','#f2e2c6'), side:T.DoubleSide, cutK:0.6});
+  shBatch(box(), B.awn, {name:'awn', map:shStripeTex('awning',8,'#c63f2f','#f2e2c6'), cutK:0.6});
+  shBatch(box(), B.slat, {name:'slat', ink:0.0022, inkMax:0.9});
+  shBatch(shTuftGeo(), B.tuft, {name:'tuft', sway:true, ink:false, side:T.DoubleSide, cut:false});
+  shBatch(new T.IcosahedronGeometry(1,1), B.pine, {name:'pine', sway:true, ink:0.0028, inkMax:1.6});
+  shSigns(F.signs);
+}
+// Background life, all of it slow: the wheel turns once in two minutes, the train works the
+// coaster, the carousels go round, gulls wheel, sails drift, the sea heaves in its shader.
+function shTick(P,t){
+  const dt=P._t!=null?Math.max(0,Math.min(0.1,t-P._t)):0; P._t=t;
+  SH_T.value=t; SH_PX.value=renderer.getPixelRatio();
+  if(P.wheel) shWheelTick(P.wheel,t);
+  if(P.coaster) shCoasterTick(P.coaster,dt);
+  if(P.spin) for(const c of P.spin) c.g.rotation.y=t*c.w;
+  if(P.boats) shBoatsTick(P.boats,t);
 }
 
 /* ============== NEON VECTOR KIT (Vera) ============== *
@@ -36176,10 +37250,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -36203,7 +37277,9 @@ function buildTrack(idx){
   if(TRACKS[idx].eden) scene.fog.color.copy(edenLin(EDEN.hor));
   // Pixie: the land fades into the blood-plum band the skyline stands on (decoded, as Eve's)
   if(TRACKS[idx].bit8) scene.fog.color.setHex(PIX_HOR).convertSRGBToLinear();
-  hanaGrain(!!TRACKS[idx].hana);         // the paper overlay: on for Hana, off for every other build
+  // Rosalie: the land fades into the sheet, which the dome writes raw, so the fog takes it decoded
+  if(TRACKS[idx].shore) scene.fog.color.setHex(SH.PAPER).convertSRGBToLinear();
+  hanaGrain(!!TRACKS[idx].hana || !!TRACKS[idx].shore);   // the paper overlay: on for the two prints, off for every other build
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -36225,11 +37301,13 @@ function buildTrack(idx){
   const hana  =!!TRACKS[idx].hana;       // ...or as a Hokusai woodblock of a coast road
   const eden  =!!TRACKS[idx].eden;       // ...or as a bioluminescent garden at night
   const pix   =!!TRACKS[idx].bit8;       // ...and on Pixie, the voxel dressing in a world of its own
+  const sho   =!!TRACKS[idx].shore;      // ...or as a linocut poster of a boardwalk and its pier
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   let MK=null;                           // Lily's ground oracle + prop bag, likewise
   let AK=null;                           // Trixie's block field + prop bag, likewise
   let HK=null;                           // Hana's height grid + prop bag, likewise
   let EK=null;                           // Eve's height oracle + prop bag, likewise
+  let SK=null;                           // Rosalie's height grid + prop bag, likewise
   applyTrackLighting(bead, pool, coil, paint, felt, macro, TRACKS[idx]);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   if(loom) applyLoomLighting();          // likewise: a low sun in the north-west
@@ -36237,6 +37315,7 @@ function buildTrack(idx){
   if(arc) applyArcadeLighting();         // likewise
   if(hana) applyHanaLighting();          // likewise
   if(eden) applyEdenLighting();          // likewise: a moon, and the garden's own glow
+  if(sho) applyShoreLighting();          // likewise: the low sun over the sea
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
   FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
@@ -36255,7 +37334,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix;   // Lily lays its own pond; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !sho;   // Lily lays its own pond; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -36322,6 +37401,12 @@ function buildTrack(idx){
         s.bn.set(s.n.x*Math.cos(ba), Math.sin(ba), s.n.z*Math.cos(ba)); }
     }
   }
+  // Rosalie is a boardwalk and a pier: decks are laid near level, so her camber is held to
+  // a third of the shared superelevation (bank is height and roll only, never grip)
+  if(sho && loop){
+    for(const s of SAMP){ const ba=Math.max(-0.13,Math.min(0.13,(s.bank||0)*0.36)); s.bank=ba;
+      s.bn.set(s.n.x*Math.cos(ba), Math.sin(ba), s.n.z*Math.cos(ba)); }
+  }
 
   // ---- understructure: tube, viaduct, lattice, strata, basin, or painted hulls ----
   if(oph){
@@ -36342,6 +37427,20 @@ function buildTrack(idx){
     hanaTerrain(HK);
     trackGroup.add(hanaSea(ccx, ccz));
     TRACK_PULSE.hana={rainZone:[105,235], rainOp:0};
+  } else if(sho){
+    // Rosalie: the printed sky, the shore's ground grid, the sea, the deck and its piles (LINOCUT KIT)
+    skyDome=shSky(); trackGroup.add(skyDome);
+    const tunIdx=(TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]);
+    const dA=Math.floor(0.95*STEPS), dB=Math.floor(0.558*STEPS);
+    const isDeck=i=>i>=dA||i<=dB;
+    SK=shField(innerSign, ccx, ccz, tunIdx, isDeck);
+    SK.isDeck=isDeck;
+    // the deck is wide along the opening straight, where the shops stand on it
+    SK.wide=i=>{ const s=SAMP[i]; return (s.p.z>120 && s.p.z<200 && s.p.x<120) ? 96 : 49.6; };
+    shTerrain(SK);
+    trackGroup.add(shSea());
+    SK.runs=shDeck(SK, innerSign, isDeck, SK.wide);
+    TRACK_PULSE.shore={};
   } else if(eden){
     // Eve: the night sky, the height oracle, the water, and the whole garden's PLAN — every
     // prop decided as positions before the ground is built, because the ground carries the
@@ -36870,6 +37969,8 @@ function buildTrack(idx){
     /* the stream draws itself in ophWaterMat; nothing to paint into rc here */
   } else if(hana){
     /* the beaten earth is hanaRoadTex(), cached; nothing to paint into rc here */
+  } else if(sho){
+    /* the planks are shRoadTex(), cached; nothing to paint into rc here */
   } else if(eden){
     /* the clay path and its light sheet are edenRoadTex(); nothing to paint into rc here */
   } else if(paint){
@@ -37165,6 +38266,8 @@ function buildTrack(idx){
   if(eden){ const et=edenRoadTex(); rt=et.map; edenEmi=et.emi;
     let L=0; for(let i=1;i<STEPS;i++) L+=SAMP[i].p.distanceTo(SAMP[i-1].p);
     rt.repeat.set(1, L/(40*48)); edenEmi.repeat.copy(rt.repeat); EK.len=L; }
+  // Rosalie: 38 sheets a lap (an integer, so the planks close at the line)
+  if(sho){ rt=shRoadTex(); rt.repeat.set(1, 38/40); }
   if(hana){ rt=hanaRoadTex(); rt.repeat.set(1, 1.25);
     const [a,b]=HK.tunIdx[0], rc2=[];
     for(let i=0;i<=LAST;i++){ const k=Math.max(0,Math.min(1,(i-a)/10+0.2,(b-i)/10+0.2));
@@ -37177,6 +38280,8 @@ function buildTrack(idx){
     ? (TRACK_PULSE.oph.water=ophWaterMat(OK.geo.userData.lap))
     : hana
     ? new T.MeshBasicMaterial({map:rt, color:0xffffff, vertexColors:true, side:T.DoubleSide})
+    : sho
+    ? new T.MeshBasicMaterial({map:rt, color:0xffffff, side:T.DoubleSide})
     : eden
     // glossy clay that catches the moon, with its markings in a separate light sheet
     ? new T.MeshPhongMaterial({map:rt, emissiveMap:edenEmi, emissive:0xffffff, color:0xffffff,
@@ -37237,7 +38342,7 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt && !oph && !macro && !arc && !hana && !eden) for(const side of [HW,-HW]){   // Eve: a glowing kerb (edenKerb)
+  if(!felt && !oph && !macro && !arc && !hana && !eden && !sho) for(const side of [HW,-HW]){   // Eve: a glowing kerb (edenKerb)
      // Hana: the road hems itself in ink
     // Lily: the glazed lip is its edge
     const ep=[];
@@ -37357,7 +38462,7 @@ function buildTrack(idx){
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  motes.visible=!hana && !eden;          // additive sparks have no place in a print; Eve has her own fireflies
+  motes.visible=!hana && !eden && !sho;          // additive sparks have no place in a print; Eve has her own fireflies
   TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
@@ -37444,6 +38549,8 @@ function buildTrack(idx){
     TRACK_PULSE.arc.bulbs=arcGantry(AK, innerSign);   // the arcade marquee (see arcGantry)
   } else if(hana){
     hanaStartBridge(HK, innerSign, 36);  // the timber arch and its cartouche, ahead of the grid
+  } else if(sho){
+    shStartArch(SK, innerSign, 30);      // the sign over the boardwalk, ahead of the grid
   } else if(eden){
     /* the root arch and ringed medallion were planned with the garden (edenGate) */
   } else if(pix){
@@ -37742,6 +38849,8 @@ function buildTrack(idx){
     arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
   } else if(hana){
     hanaVerge(HK, innerSign);             // fence outside 28.2, shrubs outside 48.4
+  } else if(sho){
+    shVerge(SK, innerSign);               // rails and chain on the boardwalk, dune fence on the land
   } else if(eden){
     edenKerb();                           // glowing cord on each edge; the verge is in the plan
   } else if(pix){
@@ -37897,6 +39006,8 @@ function buildTrack(idx){
     veraTunnels(tun);                     // Tempest webs: banked hoops at 31 and rails over the top
   } else if(arc){
     TRACK_PULSE.arc.torch=arcTunnel(AK, innerSign);   // castle gate through the hill
+  } else if(sho){
+    const [a0,a1]=SK.tunIdx[0]; shArcade(SK, innerSign, a0, a1);   // the covered arcade on Ocean Row
   } else if(hana){
     // the breaker over the first, the timber bridge along the second
     const [w0,w1]=HK.tunIdx[0], [b0,b1]=HK.tunIdx[1];
@@ -37989,7 +39100,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !sho){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -38077,11 +39188,13 @@ function buildTrack(idx){
     pad.material.polygonOffset=true; pad.material.polygonOffsetFactor=-2; pad.material.polygonOffsetUnits=-2;
     // Hana: an additive glow on pale paper is invisible — print the chevrons in vermilion
     if(hana){ pad.material.blending=T.NormalBlending; pad.material.color.set(hanaLin(0xd0482c)); }
+    // Rosalie: likewise on paper planks: the chevrons are printed in the vermilion
+    if(sho){ pad.material.blending=T.NormalBlending; pad.material.color.set(shLin(SH.RED)); }
     // Iris: the same on her full-chroma bands — added light vanishes on the yellow and green
     // ones and the chevrons read as broken blobs, so print them in the kerb's dark rope brown
     if(coil){ pad.material.blending=T.NormalBlending; pad.material.color.setHex(0x4a2a1c).convertSRGBToLinear(); }
     trackGroup.add(pad);
-    const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana) trackGroup.add(halo);
+    const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana && !sho) trackGroup.add(halo);
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
   }
   if(padProbe) padProbe.material.dispose();
@@ -38131,6 +39244,7 @@ function buildTrack(idx){
       const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
         oph ? new T.MeshLambertMaterial({color:ophLin(0x5e4c38)})     // Ophelia: a weathered plank ramp
             : hana ? new T.MeshLambertMaterial({color:hanaLin(0x7a6048)})   // Hana: a timber ramp
+            : sho ? new T.MeshBasicMaterial({color:shLin(SH.REDD)})          // Rosalie: a ramp in the red block
             : new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
       const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
@@ -38143,7 +39257,7 @@ function buildTrack(idx){
       mark.rotation.set(Math.PI/2-0.42, Math.PI, 0);
       mark.position.set(0, 3.45+Math.cos(0.42)*0.08, 2.08-Math.sin(0.42)*0.08); grp.add(mark);
       trackGroup.add(grp);
-      const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana) trackGroup.add(halo);
+      const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana && !sho) trackGroup.add(halo);
       jumpPads.push({x:sp.p.x+sp.t.x*3, z:sp.p.z+sp.t.z*3, r:12});
     }
   }
@@ -39095,6 +40209,9 @@ function buildTrack(idx){
     trackGroup.add(beadBatch(orbs));
   } else if(wire){
     Object.assign(TRACK_PULSE.vera, veraScenery(innerSign, ccx, ccz));   // phage, helices, cells, solids, obstacles
+  } else if(sho){
+    Object.assign(TRACK_PULSE.shore, shScenery(SK, innerSign));
+    shFlush(SK);                          // every pile, post, plank and roof above
   } else if(hana){
     const P=hanaScenery(HK, innerSign);
     Object.assign(TRACK_PULSE.hana, P);
@@ -39201,6 +40318,8 @@ function buildTrack(idx){
     // Hana: tawara, straw rice bales roped at the ends, stacked by the road
     const BALEG = hana ? new T.CylinderGeometry(1,1,2.3,10).rotateZ(Math.PI/2) : null;
     const BALEM = hana ? [0xd8c07e,0xc9ae6a,0xe0cc92].map(c=>new T.MeshLambertMaterial({color:hanaLin(c)})) : null;
+    // Rosalie: beach balls in the poster's three inks, hatched on the shade side like everything else
+    const SHB = sho ? [SH.RED,SH.PAPERL,SH.INK2].map(c=>shPatch(new T.MeshBasicMaterial({color:shLin(c)}),'ball',{})) : null;
     for(let k=0;k<NB;k++){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
       const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
@@ -39237,7 +40356,7 @@ function buildTrack(idx){
           : vox ? new T.BoxGeometry(r*1.9,r*1.9,r*1.9)
           : oph ? POSYG
           : hana ? BALEG
-          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : oph ? POSY[(k+c)%4] : hana ? BALEM[(k+c)%3] : m);
+          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : oph ? POSY[(k+c)%4] : hana ? BALEM[(k+c)%3] : sho ? SHB[(k+c)%3] : m);
         // Ophelia: three flat flower heads lying on the water, each with its eye
         blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6);
         if(oph){ blob.scale.set(r*1.05,1,r*1.05); blob.position.y=-0.3+c*0.04; blob.rotation.y=Math.random()*6.28;
@@ -39248,7 +40367,7 @@ function buildTrack(idx){
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:sho?8:300+hue});
     }
   }
 
@@ -50359,6 +51478,8 @@ function frame(now){
   if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
   if(TRACK_PULSE.hana) hanaTick(TRACK_PULSE.hana, tsec);
+  // Rosalie: the wheel turns, the coaster runs, the carousel goes round, gulls wheel, the sea heaves
+  if(TRACK_PULSE.shore) shTick(TRACK_PULSE.shore, tsec);
   // Eve: glow breathes, fronds sway, water ripples, fireflies drift
   if(TRACK_PULSE.eden) edenTick(TRACK_PULSE.eden, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
