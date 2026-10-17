@@ -29878,21 +29878,23 @@ function shPatch(mat, name, o){
 // The Hana hull: the fill's geometry with its normals welded, so the shell has no cracks
 function shHullGeo(geo){ return hanaHullGeo(geo); }
 /* Same record shape as hanaBatch ({x,y,z,s,sy,sz,rx,ry,rz,o|q,c}) and the same two draws
-   (fill, and the ink hull sharing its instance matrices). Big lists are cut into a grid of
-   450-unit chunks, each with its own world bounding sphere, so the frustum drops whatever
-   is behind the camera; this course is long and thin (the pier) and angular sectors would
-   have lumped the pier head in with the boardwalk. */
+   (fill, and the ink hull sharing its instance matrices). Big lists (over 300) are cut into
+   a grid of 800-unit chunks, each with its own world bounding sphere, so the frustum drops
+   whatever is behind the camera; this course is long and thin (the pier) and angular
+   sectors would have lumped the pier head in with the boardwalk. Small families stay one
+   batch: a chunk is a draw (two, with its hull), and draws cost more than the culling saves. */
 function shBatch(geo, list, o){
   o=o||{}; if(!list.length) return null;
   const groups=[];
-  if(list.length>40 && !o.noChunk){ const M=new Map();
-    for(const v of list){ const k=Math.floor(v.x/450)+','+Math.floor(v.z/450); let a=M.get(k); if(!a){ a=[]; M.set(k,a); } a.push(v); }
+  if(list.length>300 && !o.noChunk){ const M=new Map();
+    for(const v of list){ const k=Math.floor(v.x/800)+','+Math.floor(v.z/800); let a=M.get(k); if(!a){ a=[]; M.set(k,a); } a.push(v); }
     for(const g of M.values()) groups.push(g); }
   else groups.push(list);
   const fm=shPatch(new T.MeshBasicMaterial({color:0xffffff, map:o.map||null, side:o.side||T.FrontSide, alphaTest:o.alphaTest||0}),
     o.name||'fill', {sway:o.sway, cut:o.cut, cutK:o.cutK, frag:o.frag});
+  const iw=list.some(v=>v.iw!=null);
   const hmat=o.ink===false ? null : shPatch(new T.MeshBasicMaterial({color:shLin(o.inkCol||SH.INK), side:T.BackSide}),
-    (o.name||'fill')+'-hull', {hull:true, ink:o.ink||0.0030, inkMax:o.inkMax||2.2, sway:o.sway});
+    (o.name||'fill')+'-hull', {hull:true, ink:o.ink||0.0030, inkMax:o.inkMax||2.2, sway:o.sway, inkAttr:iw});
   let first=null;
   groups.forEach((L,gi)=>{
     const g=gi?geo.clone():geo, n=L.length;
@@ -29909,12 +29911,13 @@ function shBatch(geo, list, o){
     if(o.sway) g.setAttribute('aSw', new T.InstancedBufferAttribute(new Float32Array(L.map(v=>v.sw||0)),1));
     const culled=!o.noCull;
     if(culled) g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
-    m.frustumCulled=culled; (o.parent||trackGroup).add(m);
+    m.frustumCulled=culled; m.name=o.name||'fill'; (o.parent||trackGroup).add(m);
     let h=null;
     if(hmat){
       const hg=shHullGeo(g); if(o.sway) hg.setAttribute('aSw', g.getAttribute('aSw'));
+      if(iw) hg.setAttribute('aInk', new T.InstancedBufferAttribute(new Float32Array(L.map(v=>v.iw!=null?v.iw:1)),1));
       if(culled) hg.boundingSphere=g.boundingSphere.clone();
-      h=new T.InstancedMesh(hg, hmat, n); h.instanceMatrix=m.instanceMatrix; h.frustumCulled=culled;
+      h=new T.InstancedMesh(hg, hmat, n); h.instanceMatrix=m.instanceMatrix; h.frustumCulled=culled; h.name=m.name+"-hull";
       (o.parent||trackGroup).add(h);
     }
     if(!first) first={m,h};
@@ -29962,10 +29965,14 @@ function shSky(){
         vec3 d=normalize(vP-cameraPosition);
         float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
         vec3 PAP=${arcG3(SH.PAPER)}, RED=${arcG3(SH.RED)}, INK=${arcG3(SH.INK)};
-        vec3 c=PAP*(1.0-0.03*vn(vec2(az*7.0,el*11.0))-0.02*vn(vec2(az*31.0,el*47.0)));
+        if(el<0.0){ float D=max(cameraPosition.y,4.0)/max(-el,0.0004); vec3 cs=shSeaBand(D,az,uT);
+          float la0=wrapA(az-1.5708); if(abs(la0)<1.62 && el>-0.02) cs=INK; if(el>-0.0012) cs=INK;
+          gl_FragColor=vec4(cs,1.0); return; }
+        vec3 c=PAP*(1.0-0.04*vn(vec2(az*9.0,el*14.0)));
         c=mix(c,${arcG3(SH.PAPERL)},smoothstep(0.25,0.9,el)*0.5);
         // the sun, in sun-relative angle: x across (scaled by cos el), y up
         float dz=wrapA(az-(${SH_SUN.az.toFixed(4)}))*cos(el), ey=el-${SH_SUN.el.toFixed(4)};
+        if(abs(dz)<1.0 && ey<0.32){
         float rr=length(vec2(dz,ey)), R=${SH_SUN.r.toFixed(4)};
         float inSun=step(rr,R);
         vec3 sunC=RED*(1.0-0.05*vn(vec2(dz*60.0,ey*60.0)));
@@ -29996,13 +30003,14 @@ function shSky(){
         float s1=step(abs(ey-0.135),0.0042)*step(-0.62,dz)*step(dz,-0.30);
         float s2=step(abs(ey-0.175),0.0030)*step(-0.50,dz)*step(dz,-0.34);
         if(inSun<0.5 && s1+s2>0.5) c=RED;
-        for(int k=0;k<5;k++){ float fk=float(k), a0=1.1+fk*1.23+uT*0.0016, e0=0.10+0.055*fract(fk*0.618+0.1);
+        }
+        if(el>0.08 && el<0.17) for(int k=0;k<5;k++){ float fk=float(k), a0=1.1+fk*1.23+uT*0.0016, e0=0.10+0.055*fract(fk*0.618+0.1);
           float dd=wrapA(az-a0)*cos(el), ln=0.30+0.25*fract(fk*0.37);
           float th=0.0030+0.0016*fract(fk*0.71)-0.0022*smoothstep(ln*0.6,ln,abs(dd));
           if(abs(dd)<ln && abs(el-e0)<th && abs(wrapA(az+1.5708))>0.6) c=RED; }
         // the town on the land horizon, in the second green: roofs, the odd tree, a tower
         float la=wrapA(az-1.5708);
-        if(abs(la)<1.62 && el>-0.02){
+        if(abs(la)<1.62 && el<0.05){
           float hill=0.010+0.012*vn(vec2(az*6.0,1.0))+0.005*vn(vec2(az*23.0,4.0));
           float crown=0.008*smoothstep(0.5,0.0,abs(fract(az*55.0)-0.5))*step(0.45,h21(vec2(floor(az*55.0),2.0)));
           float bx=floor(az*70.0), hb=0.016+0.012*h21(vec2(bx,3.0))*step(0.45,h21(vec2(bx,7.0)));
@@ -30013,8 +30021,7 @@ function shSky(){
             if(h21(floor(vec2(az*700.0,el*700.0)))>0.95) c=mix(c,PAP,0.5);
             else if(fract(el*900.0)<0.12 && el<top-0.004) c=mix(c,PAP,0.45); }
         }
-        if(el<0.0){ float D=max(cameraPosition.y,4.0)/max(-el,0.0004); c=shSeaBand(D,az,uT); }
-        if(abs(el)<0.0012) c=INK;
+        if(el<0.0012) c=INK;
         gl_FragColor=vec4(c,1.0);
       }`});
   const m=new T.Mesh(new T.SphereGeometry(1150,64,32), mat); m.frustumCulled=false; return m;
@@ -30150,6 +30157,19 @@ function shTerrain(F){
   g.setAttribute('position',new T.BufferAttribute(P,3));
   g.setAttribute('aInk',new T.BufferAttribute(INK,1));
   g.setIndex(I); g.computeVertexNormals();
+  // cut into tiles (one shared vertex buffer, an index range each) with their own bounds
+  const TL=3, tiles=[];
+  for(let tz=0;tz<TL;tz++) for(let tx=0;tx<TL;tx++){ const J=[];
+    const ix0=Math.floor(tx*(NX-1)/TL), ix1=Math.floor((tx+1)*(NX-1)/TL), iz0=Math.floor(tz*(NZ-1)/TL), iz1=Math.floor((tz+1)*(NZ-1)/TL);
+    let lo=1e9, hi=-1e9;
+    for(let iz=iz0;iz<iz1;iz++) for(let ix=ix0;ix<ix1;ix++){ const a=iz*NX+ix, b=a+1, c=a+NX, d=c+1;
+      if(H[a]<-3&&H[b]<-3&&H[c]<-3&&H[d]<-3) continue; J.push(a,c,b, b,c,d); lo=Math.min(lo,H[a]); hi=Math.max(hi,H[a]); }
+    if(!J.length) continue;
+    const tg=new T.BufferGeometry(); tg.setAttribute('position',g.attributes.position); tg.setAttribute('normal',g.attributes.normal); tg.setAttribute('aInk',g.attributes.aInk);
+    tg.setIndex(J);
+    const cx=x0+(ix0+ix1)/2*CS, cz=z0+(iz0+iz1)/2*CS, hx=(ix1-ix0)/2*CS, hz=(iz1-iz0)/2*CS;
+    tg.boundingSphere=new T.Sphere(new T.Vector3(cx,(lo+hi)/2,cz), Math.hypot(hx,hz,(hi-lo)/2)+4);
+    tiles.push(tg); }
   const frag=`{ float y=vSW.y; float dist=length(vSW-cameraPosition);
       vec3 col=${arcL3(SH.SAND)};
       vec2 q=vSW.xz/1.7; vec2 qi=floor(q), qf=fract(q)-0.5; float r=shH(qi);
@@ -30157,11 +30177,11 @@ function shTerrain(F){
       col=mix(col,SH_INKC,(1.0-smoothstep(0.09,0.15,dd))*step(0.70,r)*(1.0-smoothstep(50.0,140.0,dist))*0.85);
       if(y<0.9){ float l=shLn(vSW.z+3.0*sin(vSW.x*0.05),2.6,0.32); col=mix(${arcL3(SH.PAPERL)},SH_INKC,l*0.8*(1.0-smoothstep(80.0,200.0,dist))); }
       diffuseColor.rgb=col; }`;
-  const m=new T.Mesh(g, shPatch(new T.MeshBasicMaterial({color:0xffffff}), 'terrain', {frag, cutK:0.85}));
-  m.frustumCulled=false; trackGroup.add(m);
-  const hull=new T.Mesh(g, shPatch(new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.BackSide}),
-    'terrain-hull', {hull:true, ink:0.0024, inkMax:1.5, inkAttr:true}));
-  hull.frustumCulled=false; trackGroup.add(hull);
+  const fm=shPatch(new T.MeshBasicMaterial({color:0xffffff}), 'terrain', {frag, cutK:0.85});
+  const hm=shPatch(new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.BackSide}), 'terrain-hull', {hull:true, ink:0.0024, inkMax:1.5, inkAttr:true});
+  let m=null;
+  for(const tg of tiles){ const f=new T.Mesh(tg, fm); trackGroup.add(f); if(!m) m=f;
+    trackGroup.add(new T.Mesh(tg, hm)); }
   // the plain beyond the grid, a hair under it, and only landward of the beach
   const pg=new T.PlaneGeometry(7000,3600,1,1); pg.rotateX(-Math.PI/2);
   const pl=new T.Mesh(pg, new T.MeshBasicMaterial({color:shLin(SH.SAND)}));
@@ -30231,27 +30251,21 @@ function shDeck(F, inS, isDeck, wideFn){
   const B=F.B, R=harbRnd(0xB0A4D), OUT=29.6;
   const runs=[]; { let cur=null; for(let i=0;i<STEPS;i++){ if(isDeck(i)){ if(!cur){ cur=[i,i]; runs.push(cur); } else cur[1]=i; } else cur=null; }
     if(runs.length>1 && runs[0][0]===0 && runs[runs.length-1][1]===STEPS-1){ const last=runs.pop(); runs[0][0]=last[0]-STEPS; } }
-  const tex=shDeckTex();
+  const tex=shDeckTex(), pp=[], pu=[], pi=[], fp=[], fi=[];      // all decks one mesh, all fascias another
   for(const [a,b] of runs){
     for(const side of [-1,1]){
-      const pp=[], pu=[], pi=[]; let v=0, prev=null;
+      let v=0, prev=null; const base=pp.length/3;
       for(let i=a-1;i<=b+1;i++){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0);
         if(prev) v+=s.p.distanceTo(prev); prev=s.p;
         const lo=side<0?-OUT:HW-0.5, hi=side<0?-(HW-0.5):wideFn((i+STEPS)%STEPS);
         for(const L of [lo,hi]){ const l=L*inS; pp.push(s.p.x+s.n.x*l, s.p.y+sb*l+0.02, s.p.z+s.n.z*l); }
         pu.push(side<0?0:0.05, v/90, side<0?0.12:1, v/90); }
-      const n=pp.length/6; for(let k=0;k<n-1;k++){ const q=k*2; pi.push(q,q+1,q+2, q+1,q+3,q+2); }
-      const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(pp,3));
-      dg.setAttribute('uv',new T.Float32BufferAttribute(pu,2)); dg.setIndex(pi); dg.computeBoundingSphere();
-      const dm=new T.Mesh(dg, new T.MeshBasicMaterial({map:tex, side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1}));
-      trackGroup.add(dm);
+      const n=(pp.length/3-base)/2; for(let k=0;k<n-1;k++){ const q=base+k*2; pi.push(q,q+1,q+2, q+1,q+3,q+2); }
       // the fascia under the edge
-      const fp=[], fi=[];
+      const fb=fp.length/3;
       for(let i=a-1;i<=b+1;i++){ const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0), L=(side<0?-OUT:wideFn((i+STEPS)%STEPS))*inS;
         fp.push(s.p.x+s.n.x*L, s.p.y+sb*L+0.05, s.p.z+s.n.z*L, s.p.x+s.n.x*L, s.p.y+sb*L-3.4, s.p.z+s.n.z*L); }
-      for(let k=0;k<fp.length/6-1;k++){ const q=k*2; fi.push(q,q+1,q+2, q+1,q+3,q+2); }
-      const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(fp,3)); fg.setIndex(fi); fg.computeBoundingSphere();
-      trackGroup.add(new T.Mesh(fg, new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.DoubleSide})));
+      const fn=(fp.length/3-fb)/2; for(let k=0;k<fn-1;k++){ const q=fb+k*2; fi.push(q,q+1,q+2, q+1,q+3,q+2); }
     }
     // pile bents
     for(let i=a+1;i<b;i+=3+((R()*4)|0)){ const s=SAMP[(i+STEPS)%STEPS], ry=Math.atan2(s.t.x,s.t.z), sb=Math.sin(s.bank||0);
@@ -30266,6 +30280,11 @@ function shDeck(F, inS, isDeck, wideFn){
         B.ink.push(shLeg(e(lo-1), e(hiL+1), 1.5, SH.INK)); }
     }
   }
+  const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(pp,3));
+  dg.setAttribute('uv',new T.Float32BufferAttribute(pu,2)); dg.setIndex(pi); dg.computeBoundingSphere();
+  trackGroup.add(new T.Mesh(dg, new T.MeshBasicMaterial({map:tex, side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1})));
+  const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(fp,3)); fg.setIndex(fi); fg.computeBoundingSphere();
+  trackGroup.add(new T.Mesh(fg, new T.MeshBasicMaterial({color:shLin(SH.INK), side:T.DoubleSide})));
   return runs;
 }
 /* RAILS. The outer rail stands just past the 28.2 line on posts at an irregular pitch, a
@@ -30823,25 +30842,21 @@ function shBoatsTick(Bt,t){
 }
 function shFlush(F){
   const B=F.B, box=()=>new T.BoxGeometry(1,1,1);
-  shBatch(box(), B.paper, {name:'paper'});
-  shBatch(box(), B.ink, {name:'ink'});
-  shBatch(box(), B.red, {name:'red'});
-  shBatch(box(), B.gold, {name:'gold'});
+  // every box on the course in one family (one fill and one hull per chunk); thin members
+  // carry a lighter keyline through the per-instance ink width
+  for(const v of B.post) v.iw=0.75; for(const v of B.rail) v.iw=0.75; for(const v of B.slat) v.iw=0.7;
+  shBatch(box(), [].concat(B.paper,B.ink,B.red,B.gold,B.post,B.rail,B.slat), {name:'box'});
   shBatch(new T.CylinderGeometry(0.5,0.6,1,6,1,true), B.pile, {name:'pile', ink:0.0026});
-  shBatch(box(), B.post, {name:'post', ink:0.0024, inkMax:1.2});
-  shBatch(box(), B.rail, {name:'rail', ink:0.0024, inkMax:1.2});
   shBatch(new T.CylinderGeometry(0.5,0.5,1,8), B.cyl, {name:'cyl'});
-  shBatch(new T.SphereGeometry(1,10,6), B.lamp, {name:'lamp'});
-  shBatch(new T.SphereGeometry(1,12,8), B.ball, {name:'ball'});
+  shBatch(new T.SphereGeometry(1,6,4), [].concat(B.lamp,B.ball), {name:'lamp'});
   shBatch(shRoofGeo(), B.roof, {name:'roof'});
   shBatch(box(), B.flag, {name:'flag', sway:true, ink:0.0022, inkMax:1});
   const umb=new T.ConeGeometry(1,1,12,1,true).translate(0,-0.5,0);
   shBatch(umb, B.umbR, {name:'umbR', map:shStripeTex('umbR',12,'#c63f2f','#f2e2c6'), side:T.DoubleSide, cutK:0.6});
   shBatch(umb.clone(), B.umbG, {name:'umbG', map:shStripeTex('umbG',12,'#163f2e','#f2e2c6'), side:T.DoubleSide, cutK:0.6});
   shBatch(box(), B.awn, {name:'awn', map:shStripeTex('awning',8,'#c63f2f','#f2e2c6'), cutK:0.6});
-  shBatch(box(), B.slat, {name:'slat', ink:0.0022, inkMax:0.9});
   shBatch(shTuftGeo(), B.tuft, {name:'tuft', sway:true, ink:false, side:T.DoubleSide, cut:false});
-  shBatch(new T.IcosahedronGeometry(1,1), B.pine, {name:'pine', sway:true, ink:0.0028, inkMax:1.6});
+  shBatch(new T.IcosahedronGeometry(1,0), B.pine, {name:'pine', sway:true, ink:0.0028, inkMax:1.6});
   shSigns(F.signs);
 }
 // Background life, all of it slow: the wheel turns once in two minutes, the train works the
@@ -40334,7 +40349,8 @@ function buildTrack(idx){
     const BALEG = hana ? new T.CylinderGeometry(1,1,2.3,10).rotateZ(Math.PI/2) : null;
     const BALEM = hana ? [0xd8c07e,0xc9ae6a,0xe0cc92].map(c=>new T.MeshLambertMaterial({color:hanaLin(c)})) : null;
     // Rosalie: beach balls in the poster's three inks, hatched on the shade side like everything else
-    const SHB = sho ? [SH.RED,SH.PAPERL,SH.INK2].map(c=>shPatch(new T.MeshBasicMaterial({color:shLin(c)}),'ball',{})) : null;
+    const SHB = sho ? [SH.RED,SH.PAPERL,SH.INK2].map(c=>new T.MeshBasicMaterial({color:shLin(c)})) : null;
+    const SHBM = sho ? shPatch(new T.MeshBasicMaterial({vertexColors:true}),'ball',{}) : null;
     for(let k=0;k<NB;k++){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
       const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
@@ -40381,6 +40397,15 @@ function buildTrack(idx){
         if(vox) blob.rotation.y=Math.random()*0.6;
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
+      // Rosalie: the three balls of a cluster baked into one mesh with their inks as vertex
+      // colours, so a cluster is one draw instead of three
+      if(sho){ const parts=grp.children.map(b=>{ b.updateMatrix(); const g=b.geometry.clone().applyMatrix4(b.matrix).toNonIndexed();
+          const c=b.material.color, n=g.attributes.position.count, cc=new Float32Array(n*3); for(let q=0;q<n;q++){ cc[q*3]=c.r; cc[q*3+1]=c.g; cc[q*3+2]=c.b; }
+          g.setAttribute('color',new T.BufferAttribute(cc,3)); return g; });
+        const P=[], Nn=[], C=[]; for(const g of parts){ P.push(...g.attributes.position.array); Nn.push(...g.attributes.normal.array); C.push(...g.attributes.color.array); }
+        const mg=new T.BufferGeometry(); mg.setAttribute('position',new T.Float32BufferAttribute(P,3)); mg.setAttribute('normal',new T.Float32BufferAttribute(Nn,3)); mg.setAttribute('color',new T.Float32BufferAttribute(C,3));
+        for(const b of [...grp.children]){ grp.remove(b); b.geometry.dispose(); }
+        grp.add(new T.Mesh(mg, SHBM)); }
       trackGroup.add(grp);
       breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:sho?8:300+hue});
     }
