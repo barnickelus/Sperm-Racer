@@ -22015,25 +22015,48 @@ SONG_ENGINE.songs.underTheWave=(function(){
           ts+=per*(0.94+Math.random()*0.12); i++; }
         P.setValueAtTime(pP,ts); P.exponentialRampToValueAtTime(0.0001,ts+1.2); Q.setValueAtTime(pQ,ts); Q.exponentialRampToValueAtTime(0.0001,ts+0.1);
         g.connect(to); sends(g,p,C.odaiko); },
-      taiko(t,p){ const v=p.v||1, side=p.side|0, f=p.f||(side?142:120), d=p.d||0.55, to=side?C.taiko.R:C.taiko.L;
-        const g=G(0), o=O('sine',f*1.38,t,t+d+0.1,g); o.frequency.exponentialRampToValueAtTime(f*1.03,t+0.028); o.frequency.exponentialRampToValueAtTime(f*0.97,t+d);
-        AD(g,t,0.002,0.8*v,d); g.connect(to);
-        if(!lite){ const g2=G(0); O('sine',f*1.62,t,t+0.25,g2); AD(g2,t,0.002,0.22*v,0.18); g2.connect(to); }
-        const ng=G(0), bp=F('bandpass',p.bright?1300:850,0.9); N(t,0.045,bp); bp.connect(ng); AD(ng,t,0.0008,1.0*v,0.04); ng.connect(to);
+      /* The drums are struck, not triggered: each drum is one voice re-struck stroke by stroke (a
+         stroke stops the ring of the one before it, as it does on a real head), so a beat of
+         sixteenths costs a few oscillators. hits: [[step, velocity, ...]], timed from the first;
+         each stroke ends at its own decay or at the next stroke on the same drum. */
+      taiko(t,p,sd){ const H=p.hits, s0=H[0][0], side=p.side|0, f=side?142:120, to=side?C.taiko.R:C.taiko.L;
+        const T=H.map(h=>t+(h[0]-s0)*sd+(h[0]>s0?(Math.random()-0.5)*0.004:0)), end=T[T.length-1]+0.65;
+        const g=G(0), o=O('sine',f*1.38,t,end,g), q=o.frequency, P=g.gain; g.connect(to);
+        let g2=null; if(!lite){ g2=G(0); O('sine',f*1.62,t,end,g2); g2.connect(to); g2.gain.setValueAtTime(0.0001,t); }
+        const ng=G(0), bp=F('bandpass',850,0.9); N(t,end-t,bp); bp.connect(ng); ng.connect(to);
+        P.setValueAtTime(0.0001,t); ng.gain.setValueAtTime(0.0001,t);
+        H.forEach(([s,v,bright,d],i)=>{ const ts=T[i], nx=i+1<T.length?T[i+1]-0.002:1e9, e=Math.min(ts+(d||0.55),nx);
+          q.setValueAtTime(f*1.38,ts); q.exponentialRampToValueAtTime(f*1.03,Math.min(ts+0.028,e)); q.exponentialRampToValueAtTime(f*0.97,e);
+          P.setValueAtTime(0.0001,ts); P.exponentialRampToValueAtTime(0.8*v,ts+0.002); P.exponentialRampToValueAtTime(0.0001,e);
+          if(g2){ g2.gain.setValueAtTime(0.0001,ts); g2.gain.exponentialRampToValueAtTime(0.22*v,ts+0.002); g2.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.18,e)); }
+          bp.frequency.setValueAtTime(bright?1300:850,ts);
+          ng.gain.setValueAtTime(0.0001,ts); ng.gain.exponentialRampToValueAtTime(v,ts+0.0008); ng.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.04,e)); });
         sends(g,p,C.taiko); },
       ka(t,p){ const v=p.v||1, to=p.side?C.taiko.R:C.taiko.L, g=G(0), bp=F('bandpass',2500,2.6); N(t,0.03,bp); bp.connect(g); AD(g,t,0.0005,0.75*v,0.018);
         const tg=G(0); O('triangle',1020,t,t+0.05,tg); AD(tg,t,0.0006,0.3*v,0.028); g.connect(to); tg.connect(to); },
-      shime(t,p){ const v=p.v||1, f=p.f||(p.side?560:520), to=p.side?C.shime.R:C.shime.L, g=G(0), o=O('triangle',f*1.12,t,t+0.12,g);
-        o.frequency.exponentialRampToValueAtTime(f,t+0.012); AD(g,t,0.0008,0.42*v,0.065); g.connect(to);
-        if(!lite && v>0.7){ const g2=G(0); O('sine',f*2.21,t,t+0.06,g2); AD(g2,t,0.0006,0.13*v,0.035); g2.connect(to); }
-        const ng=G(0), bp=F('bandpass',3400,1.4); N(t,0.025,bp); bp.connect(ng); AD(ng,t,0.0005,0.55*v,0.016); ng.connect(to); },
-      /* atarigane: a thick brass dish's clangour as FM (one modulator at an inharmonic ratio,
-         its index falling as the ring dies); open rings a little, damped by the palm is a click */
-      kane(t,p){ const v=p.v||1, open=!!p.o, f=(p.f||1900)*(1+(Math.random()-0.5)*0.004), d=open?(p.d||0.4):0.045, to=C.kane.in, g=G(0), end=t+d+0.05;
-        const car=O('sine',f,t,end,g), mg=G(0); O('sine',f*2.76,t,end,mg); mg.connect(car.frequency);   // every partial above the carrier: 1.9, 3.3, 7.1, 8.6 kHz
-        mg.gain.setValueAtTime(f*2.76*(open?1.2:0.7),t); mg.gain.exponentialRampToValueAtTime(f*2.76*(open?0.3:0.5),t+d);
-        AD(g,t,0.0008,0.2*v,d); g.connect(to);
-        const cg=G(0), hp=F('highpass',4500,0.7); N(t,0.012,hp); hp.connect(cg); AD(cg,t,0.0004,(open?0.3:0.45)*v,0.008); cg.connect(to);
+      shime(t,p,sd){ const H=p.hits, s0=H[0][0], side=p.side|0, f=side?560:520, to=side?C.shime.R:C.shime.L;
+        const T=H.map(h=>t+(h[0]-s0)*sd+(h[0]>s0?(Math.random()-0.5)*0.004:0)), end=T[T.length-1]+0.12;
+        const g=G(0), o=O('triangle',f*1.12,t,end,g), q=o.frequency, P=g.gain; g.connect(to);
+        let g2=null; if(!lite && H.some(h=>h[1]>0.7)){ g2=G(0); O('sine',f*2.21,t,end,g2); g2.connect(to); g2.gain.setValueAtTime(0.0001,t); }   // the accents' ring
+        const ng=G(0), bp=F('bandpass',3400,1.4); N(t,end-t,bp); bp.connect(ng); ng.connect(to);
+        P.setValueAtTime(0.0001,t); ng.gain.setValueAtTime(0.0001,t);
+        H.forEach(([s,v],i)=>{ const ts=T[i], nx=i+1<T.length?T[i+1]-0.002:1e9;
+          q.setValueAtTime(f*1.12,ts); q.exponentialRampToValueAtTime(f,ts+0.012);
+          P.setValueAtTime(0.0001,ts); P.exponentialRampToValueAtTime(0.42*v,ts+0.0008); P.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.066,nx));
+          if(g2 && v>0.7){ g2.gain.setValueAtTime(0.0001,ts); g2.gain.exponentialRampToValueAtTime(0.13*v,ts+0.0006); g2.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.036,nx)); }
+          ng.gain.setValueAtTime(0.0001,ts); ng.gain.exponentialRampToValueAtTime(0.55*v,ts+0.0005); ng.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.0165,nx)); }); },
+      /* atarigane: a thick brass dish's clangour as FM (one modulator at an inharmonic ratio, its
+         index falling as the ring dies), every partial above the carrier (1.9, 3.3, 7.1, 8.6 kHz).
+         hits [step, velocity, open, ring]: open (chan) rings a little, damped by the palm (chiki) is a click */
+      kane(t,p,sd){ const H=p.hits, s0=H[0][0], f=1900*(1+(Math.random()-0.5)*0.004), to=C.kane.in;
+        const T=H.map(h=>t+(h[0]-s0)*sd+(h[0]>s0?(Math.random()-0.5)*0.004:0)), lh=H[H.length-1], end=T[T.length-1]+(lh[2]?(lh[3]||0.4):0.045)+0.06;
+        const g=G(0), car=O('sine',f,t,end,g), mg=G(0), P=g.gain, I=mg.gain, M=f*2.76; O('sine',M,t,end,mg); mg.connect(car.frequency); g.connect(to);
+        const cg=G(0), hp=F('highpass',4500,0.7); N(t,end-t,hp); hp.connect(cg); cg.connect(to);
+        P.setValueAtTime(0.0001,t); cg.gain.setValueAtTime(0.0001,t);
+        H.forEach(([s,v,open,d],i)=>{ const ts=T[i], nx=i+1<T.length?T[i+1]-0.002:1e9, e=Math.min(ts+(open?(d||0.4):0.045),nx);
+          I.setValueAtTime(M*(open?1.2:0.7),ts); I.exponentialRampToValueAtTime(M*(open?0.3:0.5),e);
+          P.setValueAtTime(0.0001,ts); P.exponentialRampToValueAtTime(0.2*v,ts+0.0008); P.exponentialRampToValueAtTime(0.0001,e);
+          cg.gain.setValueAtTime(0.0001,ts); cg.gain.exponentialRampToValueAtTime((open?0.3:0.45)*v,ts+0.0004); cg.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.0084,nx)); });
         sends(g,p,C.kane); },
       chappa(t,p){ const v=p.v||1, d=p.d||(lite?0.9:1.4), g=G(0), hp=F('highpass',3200,0.7), to=C.metal.in;
         N(t,Math.min(2,d+0.05),hp); hp.connect(g);
@@ -22045,10 +22068,11 @@ SONG_ENGINE.songs.underTheWave=(function(){
       /* tsugaru-jamisen. k: 'b' the bachi struck down through string and skin, 'u' sukui (scooped
          up: lighter, no skin), 'h' hajiki (plucked by the left hand), 's' suri (slid in from
          `from`), 'c' struck across the strings in ns. trem: re-struck for l steps (cresc grows).
-         bend: oshi, pressed up `bend` semitones bt steps after the strike. */
+         bend: oshi, pressed up `bend` semitones bt steps after the strike. dl: the left hand damps it
+         after dl steps (the quick notes do not ring into the next ones). */
       shami(t,p,sd,hz){ const v=p.v||1, k=p.k||'b', ns=p.ns||[p.n], top=ns[ns.length-1], f=hz(top), to=C.shami.in;
         const trem=p.trem?Math.max(0.12,(p.l||4)*sd):0, struck=k==='b'||k==='c'||k==='s';
-        const dec=p.d||(trem?trem+0.4:k==='h'?0.3:k==='u'?0.5:Math.min(1.2,0.5+110/f)), end=t+dec+0.1;
+        const dec=p.d||(trem?trem+0.4:Math.min(k==='h'?0.3:k==='u'?0.5:Math.min(1.2,0.5+110/f),p.dl?Math.max(0.25,p.dl*sd):9)), end=t+dec+0.1;   // dl: damped after dl steps
         const g=G(0), lp=F('lowpass',Math.min(12000,f*22),0.9), P=g.gain, Fq=lp.frequency;
         const pk=(k==='h'?0.13:k==='u'?0.2:k==='c'?0.24:0.28)*v/(ns.length>1?Math.sqrt(ns.length*0.8):1);
         const strs=lite&&ns.length>2?ns.slice(-2):ns, oscs=[];
@@ -22241,8 +22265,8 @@ SONG_ENGINE.songs.underTheWave=(function(){
         while(s<s1-0.01){ E(s,'shime',{v:Math.min(1.1,(0.4+0.6*(s-(o.from||0))/(s1-(o.from||0)))*v),side:Math.round(s*4)&1}); s+=d; d=Math.max(lite?0.5:0.25,d*(o.acc||0.86)); } return; }
       for(const [s,vv] of SHP[k]) E(s,'shime',{v:hum(vv*v),side:(s>>1)&1}); };
     const kane=(k,o)=>{ o=o||{}; const v=o.v||1;
-      if(k==='chanchiki') for(let q=0;q<4;q++){ E(q*4,'kane',{o:1,v:hum((q%2?0.8:1)*v)}); E(q*4+2,'kane',{v:hum(0.55*v)}); if(!lite||q%2) E(q*4+3,'kane',{v:hum(0.45*v)}); }
-      else if(k==='chan') for(const s of [0,4,8,12]) E(s,'kane',{o:1,v:hum((s%8?0.75:1)*v)});
+      if(k==='chanchiki') for(let q=0;q<4;q++){ E(q*4,'kane',(o.big&&!q)?{o:1,v:1,d:0.6}:{o:1,v:hum((q%2?0.8:1)*v)}); E(q*4+2,'kane',{v:hum(0.55*v)}); if(!lite||q%2) E(q*4+3,'kane',{v:hum(0.45*v)}); }
+      else if(k==='chan') for(const s of [0,4,8,12]) E(s,'kane',(o.big&&!s)?{o:1,v:1,d:0.6}:{o:1,v:hum((s%8?0.75:1)*v)});
       else if(k==='off') for(const s of [2,6,10,14]) E(s,'kane',{o:1,v:hum(0.7*v)}); };
     const kick=(k,o)=>{ o=o||{}; const v=o.v||1, S={four:[0,4,8,12], row:[0,8,11], half:[0,8], drop:[0,4,8,12,15]}[k];
       for(const s of S) E(s,'kick',{v:hum((s%4?0.7:1)*v)}); };
@@ -22266,7 +22290,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
     // ---- shamisen
     const shamiJi=(o)=>{ o=o||{}; const v=o.v||1;                       // the rowing ji: the pull struck on the open strings, the recovery scooped
       for(let m=0;m<2;m++){ const c=cs[m], V=VO[c], s=m*8;
-        E(s,'shami',{ns:V,k:'c',v:hum(v)}); E(s+4,'shami',{n:V[2],k:'b',v:hum(0.75*v)}); E(s+6,'shami',{n:V[1],k:'u',v:hum(0.7*v)});
+        E(s,'shami',{ns:V,k:'c',v:hum(v)}); E(s+4,'shami',{n:V[2],k:'b',v:hum(0.75*v),dl:3}); E(s+6,'shami',{n:V[1],k:'u',v:hum(0.7*v),dl:3});
         if(!lite){ if(R()<0.6) E(s+2,'shami',{n:upY(V[2]),k:'h',v:hum(0.5*v)}); if(R()<0.5) E(s+7,'shami',{n:upY(V[1]),k:'h',v:hum(0.45*v)}); } } };
     const shamiLine=(L,o)=>{ o=o||{}; if(!L) return; const v=o.v||1, oc=o.oct||0;
       L.forEach(([s,x,l],i)=>{ const y=x+oc, prev=i?L[i-1][1]+oc:null;
@@ -22275,16 +22299,16 @@ SONG_ENGINE.songs.underTheWave=(function(){
         if(l>=4 && R()<(o.suri!=null?o.suri:0.35)){ k='s'; from=dnY(y); }
         else if(prev!=null && l<=2 && s%4!==0 && y<prev && R()<(o.hajiki!=null?o.hajiki:0.4)) k='h';   // a falling quick note, plucked by the left hand
         else if(l<=2 && s%4===2) k=R()<0.5?'u':'b';
-        E(s,'shami',{n:y,k,from,v:hum((s%4===0?1:0.82)*v),throw:o.throw||0});
+        E(s,'shami',{n:y,k,from,v:hum((s%4===0?1:0.82)*v),throw:o.throw||0,dl:l<=2?l+2:0});
         if(o.fill && l>=4 && !lite) for(let j=2;j<l;j+=2) E(s+j,'shami',{n:y,k:'h',v:hum(0.42*v)}); }); };
     const shamiHook=(L,o)=>{ o=o||{}; const v=o.v||1, oc=o.oct||0;    // the hook struck in chords: the melody on top of the strings below it
       for(const [s,x,l] of L){ const y=x+oc, c=cs[s>=8?1:0];
         if(s%8===0 && l>=4){ const lo=VO[c].filter(z=>z<=y-3).slice(-2); E(s,'shami',{ns:lo.concat([y]),k:'c',v:hum(v)}); }
-        else E(s,'shami',{n:y,k:s%4===2?'u':'b',v:hum(0.85*v)});
+        else E(s,'shami',{n:y,k:s%4===2?'u':'b',v:hum(0.85*v),dl:l+2});
         if(l>=8 && !lite) for(let j=4;j<l;j+=2) E(s+j,'shami',{n:y,k:j%4?'u':'b',v:hum(0.5*v)}); } };   // a long note kept alive by re-strikes
     const shamiArp=(o)=>{ o=o||{}; const v=o.v||1;                      // sukui-hajiki: struck, scooped, and now and then a left-hand pluck
       for(let q=0;q<4;q++){ const V=VO[cs[q>=2?1:0]];
-        for(const [s,i,k] of [[0,0,'b'],[2,2,'u'],[3,1,'h']]){ if(k==='h' && (lite || R()<0.5)) continue; E(q*4+s,'shami',{n:V[i],k,v:hum((s===0?0.8:0.5)*v)}); } } };
+        for(const [s,i,k] of [[0,0,'b'],[2,2,'u'],[3,1,'h']]){ if(k==='h' && (lite || R()<0.5)) continue; E(q*4+s,'shami',{n:V[i],k,v:hum((s===0?0.8:0.5)*v),dl:4}); } } };
     const shamiOff=(o)=>{ o=o||{}; const v=o.v||1;                      // ura: the chord struck off the beat
       for(const s of [2,6,10,14]){ const V=VO[cs[s>=8?1:0]]; if(s%4===2 && (s===2||s===10)) E(s,'shami',{ns:V,k:'c',v:hum(0.8*v)}); else E(s,'shami',{n:V[2],k:'u',v:hum(0.6*v)}); } };
     const ladderAt=(x)=>{ let bi=0; for(let i=0;i<LAD.length;i++) if(Math.abs(LAD[i]-x)<Math.abs(LAD[bi]-x)) bi=i; return bi; };
@@ -22296,7 +22320,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
         for(const [s,d,k] of cell){ const j=Math.max(lo,Math.min(hi,idx+d)), x=LAD[j];
           if(lite && k==='h') continue;
           if(k==='c') E(q*4+s,'shami',{ns:VO[c].filter(z=>z<=x-3).slice(-2).concat([x]),k:'c',v:hum(0.9*v)});
-          else E(q*4+s,'shami',{n:x,k,v:hum((s===0?1:0.78)*v),from:k==='s'?LAD[Math.max(0,j-1)]:null}); }
+          else E(q*4+s,'shami',{n:x,k,v:hum((s===0?1:0.78)*v),from:k==='s'?LAD[Math.max(0,j-1)]:null,dl:3}); }
         idx=Math.max(lo,Math.min(hi,idx+cell[cell.length-1][1]+(o.up?1:(R()<0.5?1:-1)))); } };
     // ---- flute
     const fueLine=(L,o)=>{ o=o||{}; if(!L) return; const v=o.v||1, oc=o.oct||0;
@@ -22318,11 +22342,11 @@ SONG_ENGINE.songs.underTheWave=(function(){
     // ---- the sections
     if(id==='intro'){
       /* the groove from the first beat; the flute calls at bar 4 */
-      if(b===0){ E(0,'odaiko',{v:1.1,spr:0.6}); E(0,'kane',{o:1,v:1}); A_(0,{a:'hp',f:20,tc:0.01}); A_(0,{a:'lp',f:20000,q:0.9,tc:0.01}); }
+      if(b===0){ E(0,'odaiko',{v:1.1,spr:0.6}); A_(0,{a:'hp',f:20,tc:0.01}); A_(0,{a:'lp',f:20000,q:0.9,tc:0.01}); }
       else oda(b%2?'one':'pull',{v:0.9});
       kick(b<2?'half':(b<4?'row':'four'),{v:0.9});
       shime(b<4?'ten':'16',{v:0.72});
-      kane(b<2?'chan':'chanchiki',{v:0.75});
+      kane(b<2?'chan':'chanchiki',{v:0.75,big:b===0});
       if(b>=2) taiko(b<4?0:1,{v:0.78,ghost:b>=4?0.15:0});
       bass(b<2?'pulse':'row',{v:0.9});
       if(b!==6) shamiJi({v:b===0?1.1:0.9});
@@ -22343,7 +22367,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
       kane(second?'chanchiki':'chan',{v:0.72});
       bass('row',{v:1});
       if(!second){ shamiLine(mel,{v:1,suri:0.3}); if(ANS[hb]) fueLine(ANS[hb],{v:0.78,throw:hb===7?0:0.3,uchi:0.4,fall:0}); }
-      else { fueLine(mel,{oct:(hb===4||hb===5)?0:12,v:0.95,throw:hb%4===3?0.25:0.08}); shamiLine(deco(mel,0.45),{v:0.8,hajiki:0.6}); }
+      else { fueLine(mel,{oct:(hb===4||hb===5)?0:12,v:0.95,throw:hb%4===3?0.25:0}); shamiLine(deco(mel,0.45),{v:0.8,hajiki:0.6}); }
       if(hb===7) fill(pass+(second?1:0)); else if(hb===3) fill(2+pass);
     }
     else if(id==='pines'||id==='pines2'){
@@ -22356,7 +22380,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
       shime('8',{v:0.6});
       kane('chan',{v:0.5});
       bass('long',{v:0.9});
-      if(!two){ fueLine(mel,{v:1,throw:b%4===3?0.35:0.12,yuri:20,oshi:0.5}); shamiArp({v:0.85}); }
+      if(!two){ fueLine(mel,{v:1,throw:b%4===3?0.35:0,yuri:20,oshi:0.5}); shamiArp({v:0.85}); }
       else { shamiLine(mel,{oct:-12,trem:true,v:1,throw:b%4===3?0.15:0}); fueLine(mel.filter(q=>q[2]>=4),{v:0.62,uchi:0.5,yuri:22,throw:0.2}); }
       if(last) fill(1+pass);
     }
@@ -22380,17 +22404,17 @@ SONG_ENGINE.songs.underTheWave=(function(){
       /* the wave breaks: the hook struck in chords with the flute an octave over it (in the
          barrel, a descant), every drum, the kick and the sub; the barrel ends in a tsugaru solo */
       const two=id==='barrel', isSolo=two&&b>=8, hb=b%8, mel=HOOK[hb];
-      if(b===0){ E(0,'boom',{v:1}); E(0,'chappa',{v:1}); E(0,'kane',{o:1,v:1,d:0.6}); E(0,'odaiko',{v:1.15,spr:0.6,d:2.4}); A_(0,{a:'hp',f:20,tc:0.004}); A_(0,{a:'lp',f:20000,q:0.9,tc:0.004}); }
+      if(b===0){ E(0,'boom',{v:1}); E(0,'chappa',{v:1}); E(0,'odaiko',{v:1.15,spr:0.6,d:2.4}); A_(0,{a:'hp',f:20,tc:0.004}); A_(0,{a:'lp',f:20000,q:0.9,tc:0.004}); }
       if(b===4||b===8){ E(0,'chappa',{v:0.75}); E(0,'boom',{v:0.6}); }
       kick('drop',{v:1});
       if(b>0) oda(hb%2?'drive':'pull');
       taiko(2+(b+pass)%3,{v:0.95,ghost:0.25});
       shime('16',{v:0.85});
-      kane('chanchiki',{v:0.9});
+      kane('chanchiki',{v:0.9,big:b===0});
       bass('drive',{v:1,grit:0.5});
       if(!isSolo){ shamiHook(mel,{v:1});
-        if(two) fueLine(DESC[hb],{v:0.85,throw:hb%4===3?0.3:0.1,yuri:18,oshi:0.4,fall:0});
-        else fueLine(mel,{oct:(hb===4||hb===5)?0:12,v:0.9,throw:hb%4===3?0.3:0.1}); }
+        if(two) fueLine(DESC[hb],{v:0.85,throw:hb%4===3?0.3:0,yuri:18,oshi:0.4,fall:0});
+        else fueLine(mel,{oct:(hb===4||hb===5)?0:12,v:0.9,throw:hb%4===3?0.3:0}); }
       else { M.shami=1.15; solo({at:b===8?17:null,up:b===11,v:1}); if(b===11) fueLine([[8,26,2],[10,29,2],[12,31,2],[14,36,2]],{v:0.8,uchi:0.6,throw:0.3}); }
       if(last||hb===7) fill(two&&last?3:pass+hb); else if(hb===3) fill(1);
     }
@@ -22403,7 +22427,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
       if(call){ kane('chanchiki',{v:1}); shime('ten',{v:0.6}); E(0,'odaiko',{v:0.9}); claps([14],{v:0.6}); }
       else { claps([0,4,8,10,12],{v:0.85}); shime('8',{v:0.55}); E(0,'odaiko',{v:0.7}); E(8,'taiko',{v:0.7,side:0}); E(12,'taiko',{v:0.8,side:1}); }
       if(b>=4) claps([4,12],{v:0.7});
-      if(b<4){ M.shami=0.85; for(let q=0;q<4;q++){ const pat=RAIN[(q+b)%4]; for(let s=0;s<4;s++){ if(lite&&s%2) continue; E(q*4+s,'shami',{n:pat[s],k:s%2?'h':'u',v:hum((s?0.5:0.65))}); } } }
+      if(b<4){ M.shami=0.85; for(let q=0;q<4;q++){ const pat=RAIN[(q+b)%4]; for(let s=0;s<4;s++){ if(lite&&s%2) continue; E(q*4+s,'shami',{n:pat[s],k:s%2?'h':'u',v:hum((s?0.5:0.65)),dl:3}); } } }
       else { shamiOff({v:0.9}); fueLine(BRK[b%2],{v:0.82,trill:0.7,uchi:0.4,throw:b===7?0.3:0.12,fall:0}); }
       if(last) fill(3); else if(b===3) fill(0);
     }
@@ -22419,7 +22443,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
       if(b<4) claps([4,12],{v:0.65});
       bass('row',{v:1});
       if(b<4){ shamiLine(mel,{oct:-12,v:1.05,suri:0.4,fill:true}); fueLine(MCNT[b],{v:0.75,yuri:18,throw:0.15,fall:0}); }
-      else { fueLine(mel,{oct:12,v:0.95,throw:b===7?0.3:0.1,uchi:0.35}); shamiOff({v:0.85}); }
+      else { fueLine(mel,{oct:12,v:0.95,throw:b===7?0.3:0,uchi:0.35}); shamiOff({v:0.85}); }
       if(last) fill(pass+2); else if(b===3) fill(0);
     }
     else if(id==='trough'){
@@ -22458,16 +22482,16 @@ SONG_ENGINE.songs.underTheWave=(function(){
          the clappers on the backbeat */
       kx=2; tempo=1.02;
       const half=b>=8, hb=b%8;
-      if(b===0||b===8){ E(0,'boom',{v:1}); E(0,'chappa',{v:1}); E(0,'kane',{o:1,v:1,d:0.6}); E(0,'odaiko',{v:1.15,spr:0.6,d:2.4}); A_(0,{a:'hp',f:20,tc:0.004}); }
+      if(b===0||b===8){ E(0,'boom',{v:1}); E(0,'chappa',{v:1}); E(0,'odaiko',{v:1.15,spr:0.6,d:2.4}); A_(0,{a:'hp',f:20,tc:0.004}); }
       kick('drop',{v:1});
       if(b!==0&&b!==8) oda(hb%2?'drive':'pull');
       taiko(2+(b+pass)%3,{v:0.95,ghost:0.3});
       shime('16',{v:0.88});
-      kane('chanchiki',{v:0.9});
+      kane('chanchiki',{v:0.9,big:b===0||b===8});
       claps([4,12],{v:0.8});
       bass('drive',{v:1.05,grit:0.6});
-      if(!half){ shamiHook(HOOK[hb],{v:1.05}); fueLine(HOOK[hb],{oct:(hb===4||hb===5)?0:12,v:0.95,throw:hb%4===3?0.3:0.1}); }
-      else { fueLine(BTH[hb],{v:1.05,throw:hb%4===3?0.35:0.12,yuri:20,oshi:0.5}); shamiLine(BTH[hb],{oct:-12,trem:true,v:0.95}); }
+      if(!half){ shamiHook(HOOK[hb],{v:1.05}); fueLine(HOOK[hb],{oct:(hb===4||hb===5)?0:12,v:0.95,throw:hb%4===3?0.3:0}); }
+      else { fueLine(BTH[hb],{v:1.05,throw:hb%4===3?0.35:0,yuri:20,oshi:0.5}); shamiLine(BTH[hb],{oct:-12,trem:true,v:0.95}); }
       if(hb===7) fill(half?3:pass); else if(hb===3) fill(1+pass);
     }
     else if(id==='land'){
@@ -22483,6 +22507,17 @@ SONG_ENGINE.songs.underTheWave=(function(){
         E(0,'shami',{ns:VO.I,k:'c',v:1.15,d:2.6}); E(0,'bass',{n:-24,l:10,v:1}); E(0,'taiko',{v:1,side:0,bright:1}); E(0,'taiko',{v:1,side:1});
         E(0,'fue',{n:36,l:9,v:0.95,yuri:24,fall:3,throw:0.5}); }
     }
+    // each drum is one voice, re-struck: its strokes in a beat (half a bar for the chū-daiko) become one event
+    const gather=(v,span,hit)=>{ const by=new Map();
+      for(const e of ev){ if(e.v!==v) continue; const k=(e.p.side|0)+':'+Math.floor(e.s/span+1e-9); if(!by.has(k)) by.set(k,[]); by.get(k).push(e); }
+      if(!by.size) return;
+      for(let i=ev.length-1;i>=0;i--) if(ev[i].v===v) ev.splice(i,1);
+      for(const L of by.values()){ L.sort((x,y)=>x.s-y.s); const H=[];
+        for(const e of L){ const h=hit(e), q=H[H.length-1]; if(q && h[0]-q[0]<0.05){ if(h[1]>q[1]) H[H.length-1]=h; } else H.push(h); }
+        E(H[0][0],v,{hits:H,side:L[0].p.side|0}); } };
+    gather('shime',4,e=>[e.s,e.p.v||1]);
+    gather('kane',4,e=>[e.s,e.p.v||1,e.p.o?1:0,e.p.d||0]);
+    gather('taiko',8,e=>[e.s,e.p.v||1,e.p.bright?1:0,e.p.d||0]);
     if(pass>0 && id!=='land' && id!=='trough') tempo*=1+0.01*Math.min(pass,2);         // warmed up
     if(kx) for(const e of ev){ const p=e.p; if(p.n!=null) p.n+=kx; if(p.from!=null) p.from+=kx; if(p.gr!=null) p.gr+=kx; if(p.ns) p.ns=p.ns.map(x=>x+kx); }
     A_(-0.2,{a:'mix',m:M,tc:0.008});
@@ -22496,16 +22531,16 @@ SONG_ENGINE.songs.underTheWave=(function(){
     mix:{ makeup:0.85, lowMid:-2, air:3, echoFb:0.32, echoRet:0.5, springRet:0,
       channels:{
         odaiko:{level:0.19, pan:0,     spring:0.3,  chain:[['hp',30],['peak',150,2.5,1],['peak',400,-4,1],['lp',5000]]},
-        taiko: {level:0.42, pan:0, spread:0.45, spring:0.28, chain:[['hp',60],['peak',180,2,1],['peak',550,-3,1],['peak',2200,2,1]]},
+        taiko: {level:0.5,  pan:0, spread:0.45, spring:0.28, chain:[['hp',60],['peak',180,2,1],['peak',550,-3,1],['peak',2200,2,1]]},
         shime: {level:1.55, pan:0.05, spread:0.3, spring:0.18, chain:[['hp',220],['peak',3500,2,1]]},
-        kane:  {level:0.87, pan:0.3,   spring:0.2,  chain:[['hp',900]]},
+        kane:  {level:1.25, pan:0.3,   spring:0.2,  chain:[['hp',900]]},
         metal: {level:0.9,  pan:-0.25, spring:0.3,  chain:[['hp',1500]]},
         clap:  {level:1.2,  pan:-0.12, spring:0.32, chain:[['hp',400],['peak',1500,2,1]]},
         kick:  {level:0.4,  pan:0,     spring:0.02, chain:[['hp',30],['peak',55,2,1.1],['lp',6000]]},
         bass:  {level:0.7,  pan:0,     spring:0,    chain:[['hp',35],['peak',80,1.5,1],['peak',300,-3,1],['lp',2400],['trim',0.12]]},
         boom:  {level:0.45, pan:0,     spring:0.04, chain:[['hp',25]]},
         shami: {level:3.0,  pan:0.2,   echo:0.04, spring:0.22, chain:[['hp',150],['peak',320,1.5,1],['peak',900,2,1],['peak',2900,3.5,1.3]]},
-        fue:   {level:0.56, pan:-0.15, echo:0.14, spring:0.32, chain:[['hp',400],['peak',2500,2,1],['hshelf',8000,-2]]},
+        fue:   {level:0.56, pan:-0.15, echo:0.07, spring:0.32, chain:[['hp',400],['peak',2500,2,1],['hshelf',8000,-2]]},
         fx:    {level:0.7,  pan:0,     echo:0.2,  spring:0.35, chain:[['hp',200]]},
       } },
   };
