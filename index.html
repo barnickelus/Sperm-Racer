@@ -29937,6 +29937,31 @@ function tcBatch(geo, list, mat, chunk, hull){
       trackGroup.add(h); }
   }
   return out; }
+// Everything that stands still goes into ONE mesh: each record's geometry baked to world space
+// with its colour in the vertices (times any vertex colour of its own), drawn with one fill and
+// one keyline. Two draw calls for every hut, umbrella, towel, ball, board, the light, the castle
+// and the gate, where instancing them family by family cost two each.
+let TC_STATIC=[];
+function tcStatic(geo, list){ if(list.length) TC_STATIC.push([geo, list]); }
+function tcFlushStatic(){
+  const P=[], N=[], C=[], M=new T.Matrix4(), NM=new T.Matrix3(), q=new T.Quaternion(), e=new T.Euler(), pv=new T.Vector3(), sv=new T.Vector3(), v=new T.Vector3(), c=new T.Color(), vc=new T.Color();
+  for(const [geo0, list] of TC_STATIC){
+    const geo=geo0.index?geo0.toNonIndexed():geo0; if(!geo.attributes.normal) geo.computeVertexNormals();
+    const pos=geo.attributes.position, nor=geo.attributes.normal, col=geo.attributes.color;
+    for(const r of list){
+      pv.set(r.x,r.y,r.z); if(r.q) q.copy(r.q); else q.setFromEuler(e.set(r.rx||0, r.ry||0, r.rz||0, r.o||'XYZ'));
+      sv.set(r.s, r.sy!=null?r.sy:r.s, r.sz!=null?r.sz:r.s); M.compose(pv,q,sv); NM.getNormalMatrix(M);
+      c.copy(tcLin(r.c==null?0xffffff:r.c));
+      for(let i=0;i<pos.count;i++){ v.fromBufferAttribute(pos,i).applyMatrix4(M); P.push(v.x,v.y,v.z);
+        v.fromBufferAttribute(nor,i).applyMatrix3(NM).normalize(); N.push(v.x,v.y,v.z);
+        if(col){ vc.fromBufferAttribute(col,i); C.push(vc.r*c.r, vc.g*c.g, vc.b*c.b); } else C.push(c.r,c.g,c.b); } } }
+  TC_STATIC=[];
+  if(!P.length) return;
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('normal',new T.Float32BufferAttribute(N,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+  g.computeBoundingSphere();
+  trackGroup.add(new T.Mesh(g, tcFlat('static',{mat:{vertexColors:true, side:T.DoubleSide}})));
+  trackGroup.add(new T.Mesh(hanaHullGeo(g), tcHull('static')));
+}
 
 /* THE SKY: the sunset in the card's colours. Bands by height, arched over the sun (their
    spacing grows toward it, so the warm bars stand tall in the south-west and lie thin along the
@@ -30172,6 +30197,7 @@ function tcSea(F){
   const m=new T.Mesh(g, mat); m.position.set(0,F.SEA,200); m.frustumCulled=false; trackGroup.add(m);
 }
 function tcGround(inS, tunIdx){
+  TC_STATIC=[];
   TC_F=tcField(inS, tunIdx);
   tcTerrain(TC_F); tcSea(TC_F);
   return TC_F;
@@ -30261,8 +30287,7 @@ function tcGate(inS){
   for(const lat of [Lo,Li]){ const p=at(lat,0), g=F.footAt(p.x,p.z,3)-2, h=top+2-g; P.push({x:p.x,y:g+h/2,z:p.z,s:4.5,sy:h,sz:4.5,ry,c:TC_INK}); }
   for(let b=0;b<7;b++){ const lat=mid-span/2+span*(b+0.5)/7;
     const p=at(lat,(bot+top)/2); L.push({x:p.x,y:p.y,z:p.z,s:span/7,sy:top-bot,sz:3.4,ry,c:TC_BARS[6-b]}); }
-  tcBatch(new T.BoxGeometry(1,1,1), L, tcFlat('gate'), 0, tcHull('gate'));
-  tcBatch(new T.BoxGeometry(1,1,1), P, tcFlat('gatepost'), 0);
+  tcStatic(new T.BoxGeometry(1,1,1), L.concat(P));
 }
 
 /* THE WAVE: the road dives into a breaking wave. The barrel stands only over the physics'
@@ -30460,7 +30485,7 @@ function tcLightGeo(){
 function tcScenery(inS, tunIdx){
   const F=TC_F, R=harbRnd(0x5A4D7E), N=STEPS;
   const S=u=>SAMP[((Math.round(u*N)%N)+N)%N];
-  const palms=[[],[],[]], bodies=[], roofs=[], doors=[], umbA=[], umbB=[], poles=[], towels=[[],[]], balls=[], boards=[], strg=[];
+  const palms=[[],[],[]], bodies=[], roofs=[], doors=[], umbA=[], umbB=[], poles=[], towels=[], balls=[], boards=[], strg=[];
   const castS=[], castC=[], castI=[], flags=[];
   // push a footprint outward along the sample's normal until it clears every leg of the deck;
   // give up at the water
@@ -30487,9 +30512,12 @@ function tcScenery(inS, tunIdx){
           const h=62+R()*70, ry=Math.atan2(-P.s.n.z*side, P.s.n.x*side)+(R()-0.5)*1.6;   // the bend leans away from the road
           palms[(k+j)%3].push({x, y:F.footAt(x,z,3)-1.5, z, s:h, ry, rz:(R()-0.5)*0.12}); } }
       u+=0.010+R()*0.022; k++; } }
-  tcBatch(tcPalmGeo(0.16,8,11), palms[0], tcFlat('palm',{sway:true, flat:false, mat:{color:tcLin(TC_INK), side:T.DoubleSide}}), 700);
-  tcBatch(tcPalmGeo(0.26,7,23), palms[1], tcFlat('palm',{sway:true, flat:false, mat:{color:tcLin(TC_INK), side:T.DoubleSide}}), 700);
-  tcBatch(tcPalmGeo(0.08,9,37), palms[2], tcFlat('palm',{sway:true, flat:false, mat:{color:tcLin(TC_INK), side:T.DoubleSide}}), 700);
+  // one batch per family, unchunked: on a phone a draw call costs more than the few thousand
+  // triangles that culling the far side of the island would save
+  const palmMat=tcFlat('palm',{sway:true, flat:false, mat:{color:tcLin(TC_INK), side:T.DoubleSide}});
+  tcBatch(tcPalmGeo(0.16,8,11), palms[0], palmMat, 0);
+  tcBatch(tcPalmGeo(0.26,7,23), palms[1], palmMat, 0);
+  tcBatch(tcPalmGeo(0.08,9,37), palms[2], palmMat, 0);
   // HUTS: a row of seven in the bars' order, gables to the road
   const hutRow=(u,side,out)=>{
     const s0=S(u), W=17, HH=19, DD=15, span=7*W+6*3;
@@ -30508,9 +30536,7 @@ function tcScenery(inS, tunIdx){
     q(f[0],f[2],b[2]); q(f[0],b[2],b[0]); q(f[1],b[1],b[2]); q(f[1],b[2],f[2]); q(f[0],b[0],b[1]); q(f[0],b[1],f[1]);
     roof.setAttribute('position',new T.Float32BufferAttribute(P,3)); roof.computeVertexNormals(); }
   const door=new T.BoxGeometry(1,1,1); door.translate(0,0.5,0);
-  tcBatch(hutBody, bodies, tcFlat('hut'), 900, tcHull('hut'));
-  tcBatch(roof, roofs, tcFlat('roof'), 900, tcHull('roof'));
-  tcBatch(door, doors, tcFlat('door',{flat:false}), 900);
+  tcStatic(hutBody, bodies); tcStatic(roof, roofs); tcStatic(door, doors);
   // UMBRELLAS: clusters on the beaches
   const UC=[[0.02,-1,48,5],[0.05,-1,44,4],[0.145,-1,60,3],[0.205,1,70,3],[0.30,-1,50,4],[0.415,-1,46,3],[0.545,-1,50,4],
             [0.66,1,72,3],[0.78,-1,48,3],[0.905,-1,50,4],[0.95,-1,48,3],[0.335,1,70,3]];
@@ -30524,22 +30550,21 @@ function tcScenery(inS, tunIdx){
       // a towel in the umbrella's shade, laid to the slope of the sand
       if(R()<0.7){ const a=R()*6.28, tx=x+Math.cos(a)*(7+R()*5), tz=z+Math.sin(a)*(7+R()*5);
         if(tcClear(tx,tz,tunIdx)>10 && F.dry(tx,tz,9)){ const ty=F.groundAt(tx,tz), gx=(F.groundAt(tx+4,tz)-F.groundAt(tx-4,tz))/8, gz=(F.groundAt(tx,tz+4)-F.groundAt(tx,tz-4))/8;
-          towels[(R()*2)|0].push({x:tx, y:ty+0.35, z:tz, s:9, sy:1, sz:17, q:new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), new T.Vector3(-gx,1,-gz).normalize()).multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0), R()*6.28))}); } } } }
+          towels.push({x:tx, y:ty+0.35, z:tz, s:9, sy:1, sz:17, q:new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), new T.Vector3(-gx,1,-gz).normalize()).multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0), R()*6.28))}); } } } }
   const pole=new T.CylinderGeometry(0.018,0.018,1.16,5); pole.translate(0,0.58,0);
-  tcBatch(tcUmbGeo(false), umbA, tcFlat('umb',{mat:{side:T.DoubleSide}}), 900, tcHull('umb'));
-  tcBatch(tcUmbGeo(true), umbB, tcFlat('umb',{mat:{side:T.DoubleSide}}), 900, tcHull('umb'));
-  tcBatch(pole, poles, tcFlat('pole',{flat:false}), 900);
-  [[5,1,2],[4,3,6]].forEach((cs,k)=>{ const P=[], C=[], col=new T.Color();
-    for(let j=0;j<5;j++){ const z0=-0.5+j/5, z1=z0+0.2; col.copy(tcLin(j%2?TC_WHITE:TC_BARS[cs[(j>>1)%3]]));
-      for(const v of [[-0.5,0,z0],[-0.5,0,z1],[0.5,0,z1],[-0.5,0,z0],[0.5,0,z1],[0.5,0,z0]]){ P.push(...v); C.push(col.r,col.g,col.b); } }
+  tcStatic(tcUmbGeo(false), umbA); tcStatic(tcUmbGeo(true), umbB); tcStatic(pole, poles);
+  // a towel is the card's six colour bars, white-hemmed at the ends
+  { const P=[], C=[], col=new T.Color(), ST=[TC_WHITE,1,2,3,4,5,6,TC_WHITE].map(c=>c>16?c:TC_BARS[c]);
+    ST.forEach((c,j)=>{ const w=(j===0||j===7)?0.05:0.15, z0=-0.5+(j?0.05+(j-1)*0.15:0), z1=z0+w; col.copy(tcLin(c));
+      for(const v of [[-0.5,0,z0],[-0.5,0,z1],[0.5,0,z1],[-0.5,0,z0],[0.5,0,z1],[0.5,0,z0]]){ P.push(...v); C.push(col.r,col.g,col.b); } });
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3)); g.computeVertexNormals();
-    tcBatch(g, towels[k], tcFlat('towel',{flat:false, mat:{vertexColors:true}}), 900); });
+    tcStatic(g, towels); }
   // BALLS: giants half sunk in the sand
   const BL=[[0.035,1,96,22],[0.17,1,120,18],[0.27,-1,70,26],[0.39,1,100,20],[0.51,1,160,30],[0.63,-1,64,18],[0.72,1,120,24],[0.83,-1,60,20],[0.93,1,110,26],[0.555,-1,90,16]];
   for(const [u,sd,out,r] of BL){ const side=sd*inS, P=seat(u, side, out, r, r, null, out+200); if(!P) continue;
     balls.push({x:P.x, y:P.y+r*0.80, z:P.z, s:r, rx:R()*0.8, ry:R()*6.28, rz:(R()-0.5)*0.8}); }
   const ballGeo=tcBallGeo(), ballMat=tcFlat('ball',{mat:{vertexColors:true}});
-  tcBatch(ballGeo, balls, ballMat, 0, tcHull('ball'));
+  tcStatic(ballGeo, balls);
   // ...and some riding the swell, in the lagoon and off the beaches (animated in tcTick)
   const bob=[];
   { const NXZ=F.NX*F.NZ; let tries=0;
@@ -30557,13 +30582,12 @@ function tcScenery(inS, tunIdx){
       const x=P.x+lx*ca, z=P.z-lx*sa, lean=(R()-0.5)*0.22, yaw=P.ry+(R()-0.5)*0.5, gy=F.footAt(x,z,3)-5;
       boards.push({x, y:gy, z, s:h*0.95, sy:h, sz:h, rz:lean, ry:yaw, o:'YXZ', c});
       strg.push({x, y:gy+h*0.47, z, s:h*0.012, sy:h*0.9, sz:h*0.045, rz:lean, ry:yaw, o:'YXZ', c:TC_INK}); } });
-  tcBatch(tcBoardGeo(), boards, tcFlat('board',{mat:{side:T.DoubleSide}}), 0, tcHull('board'));
-  tcBatch(new T.BoxGeometry(1,1,1), strg, tcFlat('strg',{flat:false}), 0);
+  tcStatic(tcBoardGeo(), boards); tcStatic(new T.BoxGeometry(1,1,1), strg);
   // THE LIGHT on the south-west point
   { let best=null;
     for(let x=-860;x<=-520;x+=20) for(let z=860;z<=1060;z+=20){ if(tcClear(x,z,tunIdx)<30) continue; const g=F.footAt(x,z,16);
       if(g<F.SEA+1.5) continue; const sc=-Math.abs(x+700)*0.2-Math.abs(z-960)*0.2; if(!best||sc>best.sc) best={x,z,g,sc}; }
-    if(best){ const h=170; tcBatch(tcLightGeo(), [{x:best.x, y:best.g-2, z:best.z, s:h}], tcFlat('light',{mat:{vertexColors:true}}), 0, tcHull('light')); } }
+    if(best){ const h=170; tcStatic(tcLightGeo(), [{x:best.x, y:best.g-2, z:best.z, s:h}]); } }
   // THE CASTLE on the lagoon shore: keep, four bucket towers, curtain walls, a gate
   { let best=null;
     const K=1.6;
@@ -30584,19 +30608,20 @@ function tcScenery(inS, tunIdx){
       { const [x,z]=L(0,34.2); castI.push({x,y:g0+9*K,z,s:16*K,sy:18*K,sz:0.6,ry,c:TC_INK}); }
     } }
   const cyl=new T.CylinderGeometry(0.86,1,1,14); cyl.translate(0,0.5,0);
-  tcBatch(cyl, castC, tcFlat('castle',{mat:{color:tcLin(TC_WHITE)}}), 0, tcHull('castle'));
-  tcBatch(new T.BoxGeometry(1,1,1), castS, tcFlat('castle',{mat:{color:tcLin(TC_WHITE)}}), 0, tcHull('castle'));
-  tcBatch(new T.BoxGeometry(1,1,1), castI, tcFlat('door',{flat:false}), 0);
+  for(const r of castC.concat(castS)) r.c=TC_WHITE;
+  tcStatic(cyl, castC); tcStatic(new T.BoxGeometry(1,1,1), castS.concat(castI));
   { const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute([0,1.3,0, 0.9,1.15,0, 0,1.0,0],3)); fg.computeVertexNormals();
-    tcBatch(fg, flags, tcFlat('flag',{flat:false, mat:{side:T.DoubleSide}}), 0); }
+    tcStatic(fg, flags); }
+  tcFlushStatic();
   // GULLS: three loose flocks wheeling over the beaches
-  const gulls=[];
+  // (one batch for all three flocks; tcTick moves them round their centres)
+  const GL=[];
   for(const [u,sd,out] of [[0.03,-1,90],[0.30,-1,120],[0.80,-1,110]]){ const s=S(u), side=sd*inS;
-    const cx=s.p.x+s.n.x*side*out, cz=s.p.z+s.n.z*side*out, grp=new T.Group(); grp.position.set(cx, s.p.y+48, cz);
-    const L=[]; for(let k=0;k<5;k++){ const a=R()*6.28, r=30+R()*40; L.push({x:Math.cos(a)*r, y:(R()-0.5)*14, z:Math.sin(a)*r, s:7+R()*3, ry:-a, rz:(R()-0.5)*0.3, c:TC_INK}); }
-    const m=tcBatch(tcGullGeo(), L, tcFlat('gull',{flat:false, mat:{side:T.DoubleSide}}), 0)[0];
-    trackGroup.remove(m); grp.add(m); trackGroup.add(grp); gulls.push({g:grp, w:0.10+R()*0.06, ph:R()*6}); }
-  return {bob:bob.length?{m:bobMesh, L:bob}:null, gulls};
+    const cx=s.p.x+s.n.x*side*out, cz=s.p.z+s.n.z*side*out, cy=s.p.y+48, w=0.10+R()*0.06, ph=R()*6;
+    for(let k=0;k<5;k++){ const a=R()*6.28, r=30+R()*40, y=cy+(R()-0.5)*14;
+      GL.push({cx,cz,a,r,w,ph, x:cx+Math.cos(a)*r, y, z:cz+Math.sin(a)*r, s:7+R()*3, ry:-a, rz:(R()-0.5)*0.3, c:TC_INK}); } }
+  const gm=tcBatch(tcGullGeo(), GL, tcFlat('gull',{flat:false, mat:{side:T.DoubleSide}}), 0)[0];
+  return {bob:bob.length?{m:bobMesh, L:bob}:null, gulls:{m:gm, L:GL}};
 }
 // background life, all of it slow: the sky's edges melt and its clouds drift, the ripples roll
 // in, the inside of the wave flows, the palms sway — all off TC_T in their own shaders; here
@@ -30606,7 +30631,10 @@ function tcScenery(inS, tunIdx){
 const _tcM=new T.Matrix4(), _tcP=new T.Vector3(), _tcQ=new T.Quaternion(), _tcE=new T.Euler(), _tcS=new T.Vector3();
 function tcTick(P, t){
   TC_T.value=t;
-  if(P.gulls) for(const g of P.gulls) g.g.rotation.y=g.ph-t*g.w;
+  if(P.gulls){ const {m,L}=P.gulls;
+    L.forEach((g,i)=>{ const a=g.a-g.ph+t*g.w; _tcP.set(g.cx+Math.cos(a)*g.r, g.y, g.cz+Math.sin(a)*g.r);
+      _tcQ.setFromEuler(_tcE.set(0,-a,g.rz)); _tcS.setScalar(g.s); m.setMatrixAt(i,_tcM.compose(_tcP,_tcQ,_tcS)); });
+    m.instanceMatrix.needsUpdate=true; }
   if(P.bob){ const {m,L}=P.bob;
     L.forEach((b,i)=>{ _tcP.set(b.x, b.y+1.2*Math.sin(t*0.8+b.ph), b.z);
       _tcQ.setFromEuler(_tcE.set(0.12*Math.sin(t*0.6+b.ph), b.ry+t*0.05, 0.10*Math.sin(t*0.7+b.ph*1.3))); _tcS.setScalar(b.s);
