@@ -27839,6 +27839,300 @@ function pixTick(P, tsec){
     C.m.instanceMatrix.needsUpdate=true; }
 }
 
+/* ============== VECTOR VEIN, second pass (Vera) ============== *
+ * The first cut was right about its language - unlit lines on near-black - and starved of
+ * everything else once the lap doubled: fog at 560 ended the world a few hundred units out,
+ * so there was no horizon at all, the grid underneath covered less than the course, the
+ * floating solids were few and lost, the shoulder pylons stood INSIDE the 28.2 wall, the
+ * infield limit was a filled pink membrane (the one surface on a course with none), and
+ * the start was the shared lit gantry. Second pass, still nothing but lines:
+ *   HORIZON   - the skyline is a HEARTBEAT: an ECG trace runs right round the horizon with
+ *               a monitor's write-head sweeping it once every 24 s, bright where it has just
+ *               drawn and fading behind, over a Battlezone range of faceted peaks. A ringed
+ *               planet turns low in one quarter of the sky; dot stars above. All camera-
+ *               centred (they ride skyDome), so the horizon is at infinity, as on a cabinet.
+ *   CENTRE    - a bacteriophage standing on its six legs in the middle of the infield, head
+ *               slowly turning: the one hot-magenta shape, readable from anywhere on the lap.
+ *   SECTORS   - two DNA helices turning in the outfield (north and south), red cells drawn as
+ *               lathes standing on edge near the road, Battlezone obstacles in districts.
+ *   SPACE     - the tumbling solids, many more and actually tumbling now (one shader batch),
+ *               each on an Elite-scanner stalk to the grid, which is what places a thing
+ *               floating in a void: its height and its spot on the ground, both readable.
+ *   STRUCTURE - the lattice drops all the way to the grid; light masts stand on the grid
+ *               outside both walls on an irregular stride; the infield limit is a dashed line;
+ *               the tunnels are Tempest webs; the start is a vector gate that spells START.
+ * Clearance uses pixClear (8-BIT BLOODSTREAM KIT): every leg of the corridor, not one sample.
+ * ---------------------------------------------------------------------------------- */
+const VERA_G=-40;                       // the grid plane everything stands on
+const VERA_C={mag:0xff2fb9, cyan:0x19d2ff, vio:0x9d5cff, blue:0x1f6fd0};
+// segment list helpers (flat [x,y,z, x,y,z, ...] pairs, as neonBatch takes them)
+function veraSeg(o, a, b){ o.push(a[0],a[1],a[2], b[0],b[1],b[2]); }
+function veraPoly(o, pts, closed){ for(let i=0;i<pts.length-(closed?0:1);i++) veraSeg(o, pts[i], pts[(i+1)%pts.length]); }
+// one batch of lines that move in the vertex shader: every segment carries its centre, an
+// axis and a turn rate, so a field of solids tumbles - each on its own axis - in one draw.
+// Fog comes from the shared chunks, so the field fades into the same black as the grid.
+function veraSpinBatch(list){
+  const P=[],C=[],A=[],K=[];
+  const col=new T.Color();
+  for(const it of list){ col.setHex(it.c).convertLinearToSRGB();   // match what LineBasicMaterial's encode puts on screen
+    for(let i=0;i<it.seg.length;i+=3){ P.push(it.seg[i],it.seg[i+1],it.seg[i+2]); C.push(it.x,it.y,it.z);
+      A.push(it.ax[0],it.ax[1],it.ax[2],it.w); K.push(col.r,col.g,col.b); } }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aC',new T.Float32BufferAttribute(C,3));
+  g.setAttribute('aAx',new T.Float32BufferAttribute(A,4)); g.setAttribute('aCol',new T.Float32BufferAttribute(K,3));
+  const mat=new T.ShaderMaterial({ fog:true, transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+    uniforms:T.UniformsUtils.merge([T.UniformsLib.fog, {uT:{value:0}, uOp:{value:0.66}}]),
+    vertexShader:`attribute vec3 aC; attribute vec4 aAx; attribute vec3 aCol; uniform float uT; varying vec3 vCol;
+      #include <fog_pars_vertex>
+      vec3 rotA(vec3 v, vec3 k, float a){ float c=cos(a), s=sin(a); return v*c+cross(k,v)*s+k*dot(k,v)*(1.0-c); }
+      void main(){ vCol=aCol; vec3 p=aC+rotA(position, aAx.xyz, uT*aAx.w+aC.x*0.013);
+        vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`uniform float uOp; varying vec3 vCol;
+      #include <fog_pars_fragment>
+      void main(){ gl_FragColor=vec4(vCol*uOp,1.0);
+        #include <fog_fragment>
+      }`});
+  const m=new T.LineSegments(g,mat); m.frustumCulled=false; return m; }
+// a geometry's edges in LOCAL space (scaled), for veraSpinBatch
+function veraEdges(geo, sx, sy, sz){ const o=[]; wireAppend(o, geo, new T.Matrix4().makeScale(sx, sy==null?sx:sy, sz==null?sx:sz)); return o; }
+// a red cell as a lathe of its own cross-section (the Evans-Fung profile: thin at the
+// centre, thickest about four fifths of the way out), unit radius
+function veraCellSeg(){
+  const o=[], prof=[]; for(let k=0;k<=16;k++){ const t=k/16; prof.push([t, Math.sqrt(Math.max(0,1-t*t))*(0.1035+1.0015*t*t-0.5615*t*t*t*t)]); }
+  for(let m=0;m<12;m++){ const a=m/12*Math.PI*2, c=Math.cos(a), sn=Math.sin(a);
+    veraPoly(o, prof.map(([r,h])=>[c*r,sn*r,h]).concat(prof.slice(0,16).reverse().map(([r,h])=>[c*r,sn*r,-h])), false); }
+  for(const k of [8,13]){ const [r,h]=prof[k]; for(const hz of [h,-h]){ const ring=[]; for(let q=0;q<28;q++){ const a=q/28*Math.PI*2; ring.push([Math.cos(a)*r,Math.sin(a)*r,hz]); } veraPoly(o,ring,true); } }
+  { const ring=[]; for(let q=0;q<32;q++){ const a=q/32*Math.PI*2; ring.push([Math.cos(a),Math.sin(a),0]); } veraPoly(o,ring,true); }
+  return o; }
+// stroke font on a 4x6 grid, just the letters the course spells
+// (strokes are split where they meet, so every letter is one joined figure)
+const VERA_FONT={S:[[4,6,0,6],[0,6,0,3],[0,3,4,3],[4,3,4,0],[4,0,0,0]], T:[[0,6,2,6],[2,6,4,6],[2,6,2,0]],
+  A:[[0,0,1,3],[1,3,2,6],[2,6,3,3],[3,3,4,0],[1,3,3,3]], R:[[0,0,0,3],[0,3,0,6],[0,6,4,6],[4,6,4,3],[4,3,1.5,3],[1.5,3,0,3],[1.5,3,4,0]]};
+
+/* THE HORIZON, camera-centred (skyDome). The ECG ring carries its azimuth in aU and the
+   write-head position in uHead; brightness is a floor plus an exponential afterglow behind
+   the head, so it reads as phosphor being redrawn, not as a light running round. */
+function veraSky(){
+  const G=new T.Group(), R=pixRnd(0xEC6), TAU=Math.PI*2;
+  const el=(r,e)=>r*Math.tan(e);
+  // the trace: nine beats round the ring, each P, QRS, T with its own amplitude
+  { const r=1100, N=2880, beats=9, P=[], U=[];
+    const amp=[]; for(let b=0;b<beats;b++) amp.push(0.75+R()*0.5);
+    const wave=(u)=>{ const b=Math.floor(u*beats), x=u*beats-b, A=amp[b%beats];
+      const g=(c,w)=>Math.exp(-((x-c)/w)*((x-c)/w));
+      return 0.010+A*(0.006*g(0.30,0.035) - 0.004*g(0.395,0.010) + 0.075*g(0.42,0.011) - 0.012*g(0.445,0.010) + 0.012*g(0.60,0.05)); };
+    for(const dy of [0,1.8]){ let prev=null;
+      for(let k=0;k<=N;k++){ const u=k/N, a=u*TAU, e=wave(u%1), p=[Math.cos(a)*r, el(r,e)+dy, Math.sin(a)*r];
+        if(prev){ P.push(...prev, ...p); U.push((k-1)/N, u); } prev=p; } }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aU',new T.Float32BufferAttribute(U,1));
+    const c=new T.Color(VERA_C.cyan).convertLinearToSRGB();
+    const mat=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
+      uniforms:{uHead:{value:0}, uCol:{value:c}},
+      vertexShader:`attribute float aU; varying float vU; void main(){ vU=aU; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader:`uniform float uHead; uniform vec3 uCol; varying float vU;
+        void main(){ float d=fract(uHead-vU); float k=0.34+0.95*exp(-d*9.0)+0.6*exp(-d*90.0); gl_FragColor=vec4(uCol*k,1.0); }`});
+    const m=new T.LineSegments(g,mat); m.frustumCulled=false; m.renderOrder=-1; G.add(m); G.userData.ecg=mat; }
+  // the range behind it: faceted Battlezone peaks, ridge line plus a facet line to each foot
+  { const r=1150, o=[], N=46, pk=[];
+    for(let k=0;k<N;k++){ const a=(k+R()*0.6)/N*TAU, h=(R()<0.25?0.05:0.022)+R()*0.035; pk.push([a,h]); }
+    for(let k=0;k<N;k++){ const [a,h]=pk[k], [a2]=pk[(k+1)%N], am=(a+ (a2<a?a2+TAU:a2))/2, hv=0.004+R()*0.008;
+      const P0=[Math.cos(a)*r, el(r,h), Math.sin(a)*r], V=[Math.cos(am)*r, el(r,hv), Math.sin(am)*r];
+      const P1=[Math.cos(a2)*r, el(r,pk[(k+1)%N][1]), Math.sin(a2)*r];
+      veraSeg(o,P0,V); veraSeg(o,V,P1);
+      const f=[Math.cos(a+0.012)*r*0.995, el(r,0.004), Math.sin(a+0.012)*r*0.995]; veraSeg(o,P0,f); }
+    const m=neonBatch(o, 0x4a32b0, 0.55); m.material.fog=false; m.renderOrder=-1; G.add(m); }
+  // a ringed planet low in the north-east quarter, turning very slowly
+  { const pl=new T.Group(), o=[], rr=[], a=0.9, e=0.17, d=1050, R0=62;
+    for(let m=0;m<8;m++){ const ph=m/8*Math.PI, pts=[]; for(let k=0;k<=24;k++){ const t=k/24*Math.PI; pts.push([Math.cos(ph)*Math.sin(t)*R0, Math.cos(t)*R0, Math.sin(ph)*Math.sin(t)*R0]); } veraPoly(o,pts,false); }
+    for(const la of [-0.6,-0.25,0.15,0.5]){ const pts=[]; for(let k=0;k<24;k++){ const t=k/24*TAU; pts.push([Math.cos(t)*Math.cos(la)*R0, Math.sin(la)*R0, Math.sin(t)*Math.cos(la)*R0]); } veraPoly(o,pts,true); }
+    for(const k2 of [1.55,1.85]){ const pts=[]; for(let k=0;k<48;k++){ const t=k/48*TAU; pts.push([Math.cos(t)*R0*k2, 0, Math.sin(t)*R0*k2]); } veraPoly(rr,pts,true); }
+    const body=neonBatch(o, VERA_C.mag, 0.42), ring=neonBatch(rr, VERA_C.cyan, 0.5);
+    body.material.fog=false; ring.material.fog=false; body.renderOrder=ring.renderOrder=-1;
+    ring.rotation.set(0.38,0,0.22); pl.add(body); pl.add(ring);
+    pl.position.set(Math.cos(a)*Math.cos(e)*d, Math.sin(e)*d, Math.sin(a)*Math.cos(e)*d); pl.rotation.z=0.3;
+    G.add(pl); G.userData.planet=body; }
+  // dot stars
+  { const P=[]; for(let k=0;k<380;k++){ const a=R()*TAU, e=0.07+Math.pow(R(),0.8)*1.3, r=1000;
+      P.push(Math.cos(a)*Math.cos(e)*r, Math.sin(e)*r, Math.sin(a)*Math.cos(e)*r); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    const m=new T.Points(g, new T.PointsMaterial({color:0xc8e8ff, size:1.6, sizeAttenuation:false, transparent:true, opacity:0.7,
+      blending:T.AdditiveBlending, depthWrite:false, fog:false}));
+    m.renderOrder=-1; G.add(m); G.userData.stars=m.material; }
+  return G; }
+
+// UNDERSTRUCTURE: the grid, wide enough for the doubled lap, a brighter line every fifth;
+// the lattice drops from both deck edges all the way down to it on an irregular stride
+function veraUnder(ccx, ccz){
+  const R=pixRnd(0x1A77), seg=[];
+  for(let i=0;i<STEPS;){ const s=SAMP[i], j=(i+5+((R()*5)|0)), n=SAMP[j%STEPS];
+    const L=s.p.clone().addScaledVector(s.bn,HW), Rr=s.p.clone().addScaledVector(s.bn,-HW);
+    const nL=n.p.clone().addScaledVector(n.bn,HW), nR=n.p.clone().addScaledVector(n.bn,-HW);
+    const mid=(s.p.y+VERA_G)/2;
+    seg.push(L.x,L.y-2,L.z, L.x,VERA_G,L.z,  Rr.x,Rr.y-2,Rr.z, Rr.x,VERA_G,Rr.z);       // from just under the deck edge
+    seg.push(L.x,mid,L.z, nL.x,nL.y-2,nL.z,  Rr.x,mid,Rr.z, nR.x,nR.y-2,nR.z);         // braces up to the next station
+    seg.push(L.x,L.y-2,L.z, Rr.x,Rr.y-2,Rr.z,  L.x,mid,L.z, Rr.x,mid,Rr.z);      // tie-bars under the deck and halfway down
+    i=j; if(i>=STEPS) break; }
+  trackGroup.add(neonBatch(seg, VERA_C.blue, 0.5));
+  const minor=[], major=[], GW=2700, ST=60, x0=Math.round(ccx/ST)*ST, z0=Math.round(ccz/ST)*ST;
+  for(let k=-GW/ST;k<=GW/ST;k++){ const o=(k%5===0)?major:minor, a=k*ST;
+    o.push(x0-GW,VERA_G,z0+a, x0+GW,VERA_G,z0+a,  x0+a,VERA_G,z0-GW, x0+a,VERA_G,z0+GW); }
+  trackGroup.add(neonBatch(minor, 0x1a64b0, 0.6));
+  trackGroup.add(neonBatch(major, 0x3a90e0, 0.65));
+}
+// EDGE: light masts on the grid outside both walls (32 out, 52 in), irregular stride and
+// height, each a tapering braced tower with a ring at the top; and the infield limit as a
+// dashed magenta line at 48.4, where the shortcut ends
+function veraEdge(inS, tunIdx){
+  const R=pixRnd(0xAA57), seg=[], dash=[], inT=i=>tunIdx.some(([a,b])=>i>=a-3&&i<=b+3);
+  for(const side of [1,-1]){ const lat=side===inS?55:33.5;
+    for(let i=(side>0?3:7);i<STEPS;i+=8+((R()*7)|0)){ if(inT(i)) continue;
+      const s=SAMP[i], b=s.p.clone().addScaledVector(s.n, side*lat), top=s.p.y+10+R()*9, h=top-VERA_G;
+      if(!pixClear(b.x,b.z,4.3)) continue;
+      const f=[s.n.x,s.n.z], t=[s.t.x,s.t.z], corner=(w,y)=>[[-1,-1],[1,-1],[1,1],[-1,1]].map(([u,v])=>[b.x+(f[0]*u+t[0]*v)*w, y, b.z+(f[1]*u+t[1]*v)*w]);
+      const lv=Math.max(2,Math.round(h/16)); let prev=corner(3,VERA_G);
+      for(let k=1;k<=lv;k++){ const y=VERA_G+h*k/lv, c=corner(3-2*k/lv,y);
+        for(let q=0;q<4;q++){ veraSeg(seg,prev[q],c[q]); if((q+k)%2===0) veraSeg(seg,prev[q],c[(q+1)%4]); }
+        if(k===lv||k%2===0) veraPoly(seg,c,true);
+        prev=c; }
+      wireRing(seg, b.x, top+1.5, b.z, 2.6, 8, null);
+      for(const p of prev){ const dx=p[0]-b.x, dz=p[2]-b.z, d=Math.hypot(dx,dz)||1; veraSeg(seg,p,[b.x+dx/d*2.6, top+1.5, b.z+dz/d*2.6]); }
+      veraSeg(seg,prev[0],prev[2]); veraSeg(seg,prev[1],prev[3]);
+      veraSeg(seg,[b.x,top,b.z],[b.x,top+5,b.z]); } }
+  for(let i=0;i<STEPS;i+=2){ if(tunIdx.some(([a,b])=>i>=a&&i<=b)) continue;
+    const s=SAMP[i], n=SAMP[(i+1)%STEPS], L=inS*49.2;     // horizontal, as the physics measures it
+    const a=s.p.clone().addScaledVector(s.bn,L/Math.cos(s.bank||0)), c=n.p.clone().addScaledVector(n.bn,L/Math.cos(n.bank||0));
+    dash.push(a.x,a.y+1.2,a.z, c.x,c.y+1.2,c.z); }
+  trackGroup.add(neonBatch(seg, VERA_C.cyan, 0.62));
+  trackGroup.add(neonBatch(dash, VERA_C.mag, 0.7));
+}
+// TUNNELS as Tempest webs. Each hoop is a LEVEL gate, not a ring in the banked frame: a
+// ring leaning with a 0.36 bank swings its high side in across the 28.2 tunnel wall a few
+// units up. So: plumb sides at 31 out (horizontal) standing on the grid, an elliptical crown
+// from 20 over the higher side, alternating colour as before, and rails joining gate to
+// gate across the crown, which is what turns a row of gates into a tube you are inside.
+function veraTunnels(tun){
+  const seg=[], segB=[], rail=[], LAT=31, LEG=20, CR=16, NC=12;
+  for(const sg of tun){ const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS); let prev=null;
+    for(let i=i0;i<=i1;i+=3){ const s=SAMP[i%STEPS], tb=Math.tan(s.bank||0);
+      const at=(lat,y)=>[s.p.x+s.n.x*lat, y, s.p.z+s.n.z*lat];
+      const top=s.p.y+Math.abs(tb)*LAT+LEG, crown=[];
+      for(let k=0;k<=NC;k++){ const th=Math.PI*k/NC; crown.push(at(Math.cos(th)*LAT, top+Math.sin(th)*CR)); }
+      const o=((i/3|0)%2 ? segB : seg);
+      veraPoly(o, crown, false);
+      veraSeg(o, at(LAT,VERA_G), crown[0]); veraSeg(o, at(-LAT,VERA_G), crown[NC]);
+      if(prev) for(let k=1;k<NC;k++) veraSeg(rail, prev[k], crown[k]);
+      prev=crown; } }
+  if(seg.length)  trackGroup.add(neonBatch(seg,  VERA_C.mag, 0.9));
+  if(segB.length) trackGroup.add(neonBatch(segB, VERA_C.cyan, 0.9));
+  if(rail.length) trackGroup.add(neonBatch(rail, 0x6a3cc8, 0.55));
+}
+// THE START: two braced posts on the grid outside both walls, a beam whose underside is 22
+// over the deck, a row of chequers under it, and START in stroke letters on the face the
+// grid looks at
+function veraGate(inS){
+  const s=SAMP[0], o=[], ch=[], tilt=Math.abs(Math.sin(s.bank||0)), bot=s.p.y+25+tilt*56, top=bot+12;
+  const at=(lat,y,f)=>[s.p.x+s.n.x*lat+s.t.x*(f||0), y, s.p.z+s.n.z*lat+s.t.z*(f||0)];
+  const Lo=-inS*36, Li=inS*56;
+  for(const lat of [Lo,Li]){ const c=(w,y)=>[[-1,-1],[1,-1],[1,1],[-1,1]].map(([u,v])=>at(lat+u*w,y,v*w));
+    let prev=c(3.5,VERA_G); const lv=Math.round((top-VERA_G)/14);
+    for(let k=1;k<=lv;k++){ const y=VERA_G+(top-VERA_G)*k/lv, cc=c(3.5,y); for(let q=0;q<4;q++){ veraSeg(o,prev[q],cc[q]); if((q+k)%2) veraSeg(o,prev[q],cc[(q+1)%4]); } veraPoly(o,cc,true); prev=cc; } }
+  for(const f of [-2,2]){ veraSeg(o, at(Lo,bot,f), at(Li,bot,f)); veraSeg(o, at(Lo,top,f), at(Li,top,f));
+    for(const lat of [Lo,Li]) veraSeg(o, at(lat,bot,f), at(lat,top,f)); }      // the beam frame is tied into each post
+  for(let k=0, lat=Math.min(Lo,Li);lat<Math.max(Lo,Li)-0.1;lat+=4,k++){ const a=at(lat,bot,-2), b=at(lat+4,bot,-2), a2=at(lat,bot-3,-2), b2=at(lat+4,bot-3,-2);
+    veraPoly(ch,[a,b,b2,a2],true); if(k%2) { veraSeg(ch,a,b2); veraSeg(ch,b,a2); } }
+  const word='START', sc=1.4, W=word.length*5.5-1.5, txt=[];
+  for(let w=0;w<word.length;w++) for(const [x0,y0,x1,y1] of VERA_FONT[word[w]]){
+    const lx=wx=>-((w*5.5+wx)-W/2)*sc;
+    veraSeg(txt, at(lx(x0), bot+1.2+y0*sc, -2.3), at(lx(x1), bot+1.2+y1*sc, -2.3)); }
+  trackGroup.add(neonBatch(o, VERA_C.cyan, 0.85));
+  trackGroup.add(neonBatch(ch, VERA_C.mag, 0.8));
+  trackGroup.add(neonBatch(txt, 0xeaffff, 0.95));
+}
+// Everything off the deck. Returns the moving parts for veraTick.
+function veraScenery(inS, ccx, ccz){
+  const R=pixRnd(0x7E7A), P={}, spin=[], stalk=[], obs=[], obsF=[];
+  const place=(r, minOut, maxOut, side)=>{ for(let t=0;t<40;t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
+      const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*24, z=s.p.z+s.n.z*sd*out+(R()*2-1)*24;
+      if(pixClear(x,z,r)) return {x,z,s,sd}; } return null; };
+  // THE PHAGE, a little off the centroid: 400 tall, legs spanning 290. It ignores the fog -
+  // it is the one beacon on the course, never nearer than ~600, and at the far side of the
+  // lap it would otherwise be gone - but at a lower opacity, so it never out-shouts the road
+  { const S=1.5; let hx=ccx+60, hz=ccz-40; for(let t=0;t<30&&!pixClear(hx,hz,150);t++){ hx=ccx+(R()*2-1)*260; hz=ccz+(R()*2-1)*260; }
+    const o=[], G0=VERA_G, base=G0+46*S, coll=G0+146*S, Rh=46*S, hexR=(r,y,ph)=>{ const p=[]; for(let k=0;k<6;k++){ const a=k/6*Math.PI*2+(ph||0); p.push([hx+Math.cos(a)*r, y, hz+Math.sin(a)*r]); } return p; };
+    const bp=hexR(18*S,base); veraPoly(o,bp,true); veraPoly(o,hexR(12*S,base+4*S),true);
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, c=Math.cos(a), sn=Math.sin(a);
+      const knee=[hx+c*62*S, G0+74*S, hz+sn*62*S], foot=[hx+c*96*S, G0, hz+sn*96*S];
+      for(const dy of [0,2.2]){ veraSeg(o,[bp[k][0],bp[k][1]+dy,bp[k][2]],[knee[0],knee[1]+dy,knee[2]]); veraSeg(o,[knee[0],knee[1]+dy,knee[2]],[foot[0],foot[1]+dy,foot[2]]); }
+      veraSeg(o,[foot[0]-c*8,G0,foot[2]-sn*8],[foot[0]+c*8,G0,foot[2]+sn*8]);
+      veraSeg(o, bp[k], [hx+c*24*S, G0, hz+sn*24*S]); }                               // tail pins down to the grid
+    for(let y=base+4*S;y<=coll;y+=8*S) veraPoly(o,hexR(9*S,y),true);                // the sheath, striated
+    const ib=hexR(12*S,base+4*S), cb=hexR(16*S,coll);
+    for(let k=0;k<6;k++) veraSeg(o,bp[k],ib[k]);                                        // the baseplate's two decks, joined
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, lo=[hx+Math.cos(a)*9*S,base+4*S,hz+Math.sin(a)*9*S], hi=[hx+Math.cos(a)*9*S,coll,hz+Math.sin(a)*9*S];
+      veraSeg(o,lo,hi); veraSeg(o,lo,ib[k]); veraSeg(o,hi,cb[k]); }                   // seated in the baseplate and the collar
+    veraPoly(o,cb,true); const ct=hexR(16*S,coll+4*S); veraPoly(o,ct,true); for(let k=0;k<6;k++) veraSeg(o,cb[k],ct[k]);
+    for(const p of ct) veraSeg(o,p,[hx,coll+4*S,hz]);                               // the collar's top, which the head sits on
+    const body=neonBatch(o, VERA_C.vio, 0.5); body.material.fog=false; trackGroup.add(body);
+    // a vertex of the capsid points down onto the collar, as a real phage's tail joins its head
+    const hd=[], ig=new T.IcosahedronGeometry(Rh,1).rotateX(Math.atan(1.6180339887)); wireAppend(hd, ig, new T.Matrix4().makeScale(1,1.3,1)); ig.dispose();
+    const head=neonBatch(hd, VERA_C.mag, 0.62); head.material.fog=false; head.position.set(hx, coll+4*S+Rh*1.3, hz); trackGroup.add(head);
+    P.phage=head; }
+  // TWO HELICES in the outfield, north and south; each stands on a ringed plinth and turns
+  P.helix=[];
+  for(const [u,H] of [[0.38,330],[0.80,250]]){ const s=SAMP[Math.floor(u*STEPS)]; let q=null;
+    for(let out=HW*1.28+60;out<520&&!q;out+=12){ const x=s.p.x-s.n.x*inS*out, z=s.p.z-s.n.z*inS*out; if(pixClear(x,z,52)) q={x,z}; }
+    if(!q) continue;
+    const o=[], rung=[], r=26, pitch=118, steps=Math.round(H/pitch*40);
+    const pt=(k,ph)=>{ const t=k/40*Math.PI*2+ph; return [Math.cos(t)*r, 26+k*pitch/40, Math.sin(t)*r]; };
+    for(let k=0;k<steps;k++){ veraSeg(o,pt(k,0),pt(k+1,0)); veraSeg(rung,pt(k,Math.PI),pt(k+1,Math.PI)); if(k%3===0) veraSeg(rung,pt(k,0),pt(k,Math.PI)); }
+    const base=[]; for(const rr of [40,30]){ const p=[]; for(let k=0;k<24;k++){ const a=k/24*Math.PI*2; p.push([Math.cos(a)*rr,0,Math.sin(a)*rr]); } veraPoly(base,p,true); }
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2; veraSeg(base,[Math.cos(a)*40,0,Math.sin(a)*40],[Math.cos(a)*r,26,Math.sin(a)*r]); }
+    { const ring=[]; for(let k=0;k<32;k++){ const a=k/32*Math.PI*2; ring.push([Math.cos(a)*r,26,Math.sin(a)*r]); } veraPoly(o,ring,true); }   // the turntable the strands rise from
+    const g=new T.Group(); g.position.set(q.x, VERA_G, q.z);
+    const A=neonBatch(o, VERA_C.cyan, 0.85), B=neonBatch(rung, VERA_C.mag, 0.7), C=neonBatch(base, VERA_C.vio, 0.7);
+    g.add(A); g.add(B); trackGroup.add(g);
+    C.position.set(q.x, VERA_G, q.z); trackGroup.add(C);
+    P.helix.push({g, w:0.11*(u<0.5?1:-1)}); }
+  // RED CELLS on edge near the road, turning about the vertical (in the spin batch)
+  { const cs=veraCellSeg();
+    for(let k=0,n=0;n<7&&k<200;k++){ const Rr=26+R()*22, q=place(Rr+2, 6, 120); if(!q) continue; n++;
+      spin.push({x:q.x, y:VERA_G+Rr, z:q.z, seg:cs.map(v=>v*Rr), ax:[0,1,0], w:(0.12+R()*0.12)*(R()<0.5?-1:1), c:k%2?0xff3f7a:0xff2fb9}); } }
+  // TUMBLING SOLIDS on scanner stalks
+  { const shapes=[new T.IcosahedronGeometry(1,0), new T.OctahedronGeometry(1,0), new T.BoxGeometry(1.6,1.6,1.6), new T.TetrahedronGeometry(1.2,0), new T.DodecahedronGeometry(1,0)];
+    const loc=shapes.map(g=>veraEdges(g,1));
+    for(let k=0,n=0;n<72&&k<800;k++){ const r=8+R()*20, q=place(r+4, 40, 560); if(!q) continue; n++;
+      const y=VERA_G+40+r+R()*150, ax=new T.Vector3(R()-0.5,R()-0.5,R()-0.5).normalize();
+      spin.push({x:q.x, y, z:q.z, seg:loc[n%loc.length].map(v=>v*r), ax:[ax.x,ax.y,ax.z], w:(0.10+R()*0.25)*(R()<0.5?-1:1), c:n%2?VERA_C.vio:VERA_C.cyan});
+      stalk.push(q.x,y-r*0.9,q.z, q.x,VERA_G,q.z,  q.x-4,VERA_G,q.z, q.x+4,VERA_G,q.z,  q.x,VERA_G,q.z-4, q.x,VERA_G,q.z+4); }
+    for(const g of shapes) g.dispose(); }
+  // BATTLEZONE OBSTACLES in districts: pyramids, blocks and tall slabs standing on the grid
+  { const pyr=new T.ConeGeometry(1,1,4,1), box=new T.BoxGeometry(1,1,1), mt=new T.Matrix4(), qq=new T.Quaternion(), e=new T.Euler();
+    for(let k=0,n=0;n<34&&k<500;k++){ const q=place(60, 20, 480); if(!q) continue; n++;
+      const cnt=3+((R()*5)|0);
+      for(let j=0;j<cnt;j++){ const kind=R(), w=14+R()*34, x=q.x+(R()*2-1)*70, z=q.z+(R()*2-1)*70;
+        const h=kind<0.45?w*(0.8+R()*0.5):kind<0.8?w*(0.6+R()*0.6):w*(2.2+R()*2.4);
+        if(!pixClear(x,z,w*0.75)) continue;
+        e.set(0,R()*1.57,0); qq.setFromEuler(e);
+        mt.compose(new T.Vector3(x,VERA_G+h/2,z), qq, new T.Vector3(kind<0.45?w*0.72:w, h, kind<0.45?w*0.72:w*(0.5+R()*0.6)));
+        wireAppend(kind<0.8&&kind>=0.45?obsF:obs, kind<0.45?pyr:box, mt); } }
+    pyr.dispose(); box.dispose(); }
+  trackGroup.add(neonBatch(obs, 0x2ab8d8, 0.6));
+  trackGroup.add(neonBatch(obsF, 0x6a4ae0, 0.6));
+  trackGroup.add(neonBatch(stalk, 0x3a4aa0, 0.45));
+  const sb=veraSpinBatch(spin); trackGroup.add(sb); P.spin=sb.material;
+  return P; }
+function veraTick(P, tsec){
+  if(P.spin) P.spin.uniforms.uT.value=tsec;
+  if(P.ecg) P.ecg.uniforms.uHead.value=(tsec/24)%1;
+  if(P.planet) P.planet.rotation.y=tsec*0.04;
+  if(P.stars) P.stars.opacity=0.62+0.12*Math.sin(tsec*0.31)+0.06*Math.sin(tsec*1.13);
+  if(P.phage) P.phage.rotation.y=tsec*0.07;
+  if(P.helix) for(const h of P.helix) h.g.rotation.y=tsec*h.w;
+}
+
 /* ============== ARCADE KIT (Trixie) ============== *
  * Trixie is Pixie's circuit taken the whole way: not voxel PROPS standing on a void, but a
  * voxel WORLD — a 16-bit platformer overworld at sunset that the course runs through.
@@ -35864,10 +36158,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].bit8 ? 300 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].bit8 ? 1320 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -36467,29 +36761,11 @@ function buildTrack(idx){
       if(dawn){ cg.userData.dawnKeep=true; TRACK_PULSE.feltCloudsSway=true; }
     }
   } else if(wire){
-    // Hanging wireframe lattice: cross-braced rungs dropping from the roadbed, plus a
-    // horizon grid far below. Reads as structure without a single filled surface.
-    const seg=[];
-    for(let i=0;i<STEPS;i+=8){
-      const s=SAMP[i], n=SAMP[(i+8)%STEPS];
-      const L=s.p.clone().addScaledVector(s.n,HW), R=s.p.clone().addScaledVector(s.n,-HW);
-      const drop=Math.min(46, s.p.y+12);
-      // vertical drop lines at both edges
-      seg.push(L.x,L.y,L.z, L.x,L.y-drop,L.z,  R.x,R.y,R.z, R.x,R.y-drop,R.z);
-      // cross-brace to the next station, forming an X down the flank
-      const nL=n.p.clone().addScaledVector(n.n,HW), nR=n.p.clone().addScaledVector(n.n,-HW);
-      seg.push(L.x,L.y-drop,L.z, nL.x,nL.y,nL.z,  R.x,R.y-drop,R.z, nR.x,nR.y,nR.z);
-      // tie-bar across the underside
-      seg.push(L.x,L.y-drop,L.z, R.x,R.y-drop,R.z);
-    }
-    trackGroup.add(neonBatch(seg, 0x1f6fd0, 0.55));
-    // ground grid, so the void below reads as depth rather than nothing
-    const grid=[], G=900, STEP=60;
-    for(let a=-G;a<=G;a+=STEP){
-      grid.push(-G,-40,a, G,-40,a);
-      grid.push(a,-40,-G, a,-40,G);
-    }
-    trackGroup.add(neonBatch(grid, 0x0e3a6a, 0.5));
+    // Vera: the horizon (a heartbeat over a vector range, camera-centred), the grid, and a
+    // lattice of light dropping from the deck to it (see VECTOR VEIN KIT)
+    skyDome=veraSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.vera={ecg:skyDome.userData.ecg, planet:skyDome.userData.planet, stars:skyDome.userData.stars};
+    veraUnder(ccx, ccz);
   } else if(arc){
     // Trixie: the sky, the land the road is carried on, and the lake (see ARCADE KIT)
     skyDome=arcSky(); trackGroup.add(skyDome);
@@ -37154,6 +37430,8 @@ function buildTrack(idx){
     /* the root arch and ringed medallion were planned with the garden (edenGate) */
   } else if(pix){
     pixGate(innerSign);                   // a block gantry spelling START, posts on the floor
+  } else if(wire){
+    veraGate(innerSign);                  // a vector gate spelling START; nothing lit on this course
   } else {
   // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
   // it parallels the road at 14 up instead of cutting across it level; each post stands from
@@ -37440,21 +37718,8 @@ function buildTrack(idx){
     trackGroup.add(feltBatch(FELT_PUFF, tufts));
     trackGroup.add(feltBatch(FELT_PUFF0, kerb));
   } else if(wire){
-    // Light pylons marching down both shoulders — a tapering wire post topped with a ring,
-    // which is what gives the vector course a readable edge at speed.
-    const seg=[];
-    for(let i=0;i<STEPS;i+=14){
-      const s=SAMP[i];
-      for(const side of [-1,1]){
-        const b=s.p.clone().addScaledVector(s.n, side*(HW+4));
-        const h=9;
-        // four uprights leaning into a point, so it reads as a 3D post not a flat line
-        for(const [dx,dz] of [[-1.6,-1.6],[1.6,-1.6],[1.6,1.6],[-1.6,1.6]])
-          seg.push(b.x+dx,b.y,b.z+dz, b.x,b.y+h,b.z);
-        wireRing(seg, b.x, b.y+h, b.z, 2.6, 8, null);
-      }
-    }
-    trackGroup.add(neonBatch(seg, 0x19d2ff, 0.85));
+    // light masts on the grid outside both walls, and the infield limit as a dashed line
+    veraEdge(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(arc){
     arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
   } else if(hana){
@@ -37611,21 +37876,7 @@ function buildTrack(idx){
     if(legs.length){ const lb=feltBatch(new T.BoxGeometry(1,1,1), legs);
       if(dawn) lb.userData.dawnKeep=true; trackGroup.add(lb); }
   } else if(wire){
-    // Hoops of pure line, banked to the road and alternating colour so the tunnel
-    // stretches strobe past as you drive them.
-    const seg=[], m=new T.Matrix4(), q=new T.Quaternion(), up=new T.Vector3(0,1,0);
-    const segB=[];
-    for(const sg of tun){
-      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
-      for(let i=i0;i<=i1;i+=3){
-        const s=SAMP[i%STEPS];
-        q.setFromUnitVectors(up, s.t);                 // ring plane perpendicular to travel
-        m.compose(s.p.clone().add(new T.Vector3(0,1,0)), q, new T.Vector3(1,1,1));
-        wireRing(((i/3|0)%2 ? segB : seg), 0,0,0, HW+5, 16, m);
-      }
-    }
-    if(seg.length)  trackGroup.add(neonBatch(seg,  0xff2fb9, 0.9));
-    if(segB.length) trackGroup.add(neonBatch(segB, 0x19d2ff, 0.9));
+    veraTunnels(tun);                     // Tempest webs: banked hoops at 31 and rails over the top
   } else if(arc){
     TRACK_PULSE.arc.torch=arcTunnel(AK, innerSign);   // castle gate through the hill
   } else if(hana){
@@ -37720,7 +37971,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -38825,27 +39076,7 @@ function buildTrack(idx){
     }
     trackGroup.add(beadBatch(orbs));
   } else if(wire){
-    // Slowly-tumbling platonic solids in wireframe — the classic vector-arcade backdrop.
-    // Split across two colour batches so the field reads as depth rather than a flat mesh.
-    const near=[], far=[], m=new T.Matrix4(), q=new T.Quaternion(),
-          e=new T.Euler(), one=new T.Vector3(1,1,1);
-    const shapes=[new T.IcosahedronGeometry(1,0), new T.OctahedronGeometry(1,0),
-                  new T.BoxGeometry(1.6,1.6,1.6), new T.TetrahedronGeometry(1.2,0)];
-    for(let k=0;k<90;k++){
-      const s=SAMP[(Math.random()*STEPS|0)];
-      const side=(Math.random()<0.5?-1:1), out=HW*(2.8+Math.random()*6);
-      const r=7+Math.random()*20;
-      e.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-      q.setFromEuler(e);
-      m.compose(new T.Vector3(
-        s.p.x+s.n.x*side*out+(Math.random()*2-1)*40,
-        s.p.y-6+Math.random()*70,
-        s.p.z+s.n.z*side*out+(Math.random()*2-1)*40), q, one.clone().multiplyScalar(r));
-      wireAppend(k%2?near:far, shapes[k%shapes.length], m);
-    }
-    for(const g2 of shapes) g2.dispose();
-    trackGroup.add(neonBatch(near, 0x9d5cff, 0.75));
-    trackGroup.add(neonBatch(far,  0x19d2ff, 0.45));
+    Object.assign(TRACK_PULSE.vera, veraScenery(innerSign, ccx, ccz));   // phage, helices, cells, solids, obstacles
   } else if(hana){
     const P=hanaScenery(HK, innerSign);
     Object.assign(TRACK_PULSE.hana, P);
@@ -49926,6 +50157,8 @@ function frame(now){
   if(TRACK_PULSE.arc) arcTick(TRACK_PULSE.arc, tsec);
   // Pixie: the heart beats and turns, red cells turn like coins, copper bars drift
   if(TRACK_PULSE.pix) pixTick(TRACK_PULSE.pix, tsec);
+  // Vera: the ECG write-head sweeps the horizon, solids tumble, the phage and helices turn
+  if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
   if(TRACK_PULSE.hana) hanaTick(TRACK_PULSE.hana, tsec);
   // Eve: glow breathes, fronds sway, water ripples, fireflies drift
