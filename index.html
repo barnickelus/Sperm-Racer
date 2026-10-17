@@ -51271,6 +51271,94 @@ function emDraw(kind){
   else if(kind==='det'){ x.beginPath(); x.moveTo(8,-28); x.lineTo(-14,4); x.lineTo(-1,4); x.lineTo(-8,28); x.lineTo(16,-6); x.lineTo(3,-6); x.closePath(); fill('#ffe14a'); }
   _em.tex[kind]=new T.CanvasTexture(c);
 }
+/* ---- Daryl Diamond's own emotes, straight off a Sunday-paper comic strip: ink outlines with a pen's
+ * wobble, flat pop-art fills shaded with Ben-Day dots, balloons, bursts and emanata, and hand-lettered
+ * caps in his voice. Laid out on a 128 grid and drawn at 256px (lettering and dots stay crisp on a
+ * retina phone), once per kind on his first use of it, then cached; nobody else ever shows them.
+ * The wobble has its own seeded dice, so drawing them leaves the game's Math.random sequence alone. */
+const EM_WALL_SC=1.35, EM_WALL_FONT='"Impact","HelveticaNeue-CondensedBlack","Futura-CondensedExtraBold","AvenirNextCondensed-Heavy","Arial Black","Helvetica Neue",Helvetica,Arial,sans-serif';
+function emDrawWall(kind){
+  const c=document.createElement('canvas'); c.width=c.height=256; const x=c.getContext('2d'); x.scale(2,2);
+  let sd=11; for(const ch of kind) sd=(sd*31+ch.charCodeAt(0))%2147483647;
+  const rnd=()=>(sd=(sd*16807)%2147483647)/2147483647, jit=a=>(rnd()*2-1)*a;
+  const INK='#16131d', RED='#ea2a2e', YEL='#ffe23c', CYN='#2bb3ea', WHT='#fffdf2', TAU=Math.PI*2;
+  x.lineJoin='round'; x.lineCap='round';
+  // a closed outline through pts: sharp corners for bursts and jags, else a smooth pen line through the midpoints
+  const path=(pts,sharp)=>{ const n=pts.length; x.beginPath();
+    if(sharp) pts.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));
+    else { const mid=i=>{ const a=pts[i%n], b=pts[(i+1)%n]; return [(a[0]+b[0])/2,(a[1]+b[1])/2]; };
+      let m=mid(n-1); x.moveTo(m[0],m[1]); for(let i=0;i<n;i++){ m=mid(i); x.quadraticCurveTo(pts[i][0],pts[i][1],m[0],m[1]); } }
+    x.closePath(); };
+  const oval=(cx,cy,rx,ry,n,w)=>{ const p=[]; for(let i=0;i<n;i++){ const a=i/n*TAU, k=1+jit(w); p.push([cx+Math.cos(a)*rx*k, cy+Math.sin(a)*ry*k]); } return p; };
+  const spikes=(cx,cy,rx,ry,n,ri,w)=>{ const p=[]; for(let i=0;i<n*2;i++){ const a=(i+jit(0.28))/(n*2)*TAU-Math.PI/2, k=(i%2?ri:1)*(1+jit(w)); p.push([cx+Math.cos(a)*rx*k, cy+Math.sin(a)*ry*k]); } return p; };
+  // ink it: a fat outline under a flat fill, the line heavier on the shadow side (a hard offset copy; shadow offsets are in canvas pixels), as a brush would leave it
+  const ink=(col,lw)=>{ x.lineWidth=lw||9; x.strokeStyle=INK; x.shadowColor=INK; x.shadowOffsetX=3; x.shadowOffsetY=5; x.stroke(); x.shadowColor='rgba(0,0,0,0)'; x.fillStyle=col; x.fill(); };
+  // Ben-Day dots on a 45-degree grid inside the current path, sized by f(x,y) from nothing (0) to rmax (1)
+  const dots=(col,step,rmax,f)=>{ x.save(); x.clip(); x.fillStyle=col;
+    for(let j=0;j*step/2<132;j++) for(let i=-1;i*step<132;i++){ const px=i*step+(j&1)*step/2, py=j*step/2;
+      const r=rmax*Math.max(0,Math.min(1,f(px,py))); if(r<0.7) continue;
+      x.beginPath(); x.arc(px,py,r,0,TAU); x.fill(); }
+    x.restore(); };
+  // a short hand-drawn stroke (emanata, speed lines)
+  const line=(ax,ay,bx,by,lw)=>{ x.beginPath(); x.moveTo(ax,ay); x.quadraticCurveTo((ax+bx)/2+jit(1.5),(ay+by)/2+jit(1.5),bx,by); x.lineWidth=lw; x.strokeStyle=INK; x.stroke(); };
+  // hand lettering: heavy caps, leaning forward, a hard ink drop shadow, fat ink outline, flat color. Sized from the glyphs'
+  // own ink box to fill maxW x maxH whatever font the device has (squeezed a little, then shrunk, if it runs wide)
+  const letter=(t,cx,cy,maxW,maxH,col,rot,sh)=>{ x.save(); x.font='900 100px '+EM_WALL_FONT; const m=x.measureText(t);
+    const gh=(m.actualBoundingBoxAscent+m.actualBoundingBoxDescent)||72, a=m.actualBoundingBoxAscent||72, d=m.actualBoundingBoxDescent||0;
+    let k=maxH/gh, sx=Math.min(1.1,maxW/(m.width*k)); if(sx<0.8){ k*=sx/0.8; sx=0.8; }
+    x.font='900 '+(100*k).toFixed(2)+'px '+EM_WALL_FONT; const lw=Math.max(3,gh*k*0.17), y=(a-d)*k/2;
+    x.translate(cx,cy); x.rotate(rot||0); x.transform(1,0,-0.17,1,0,0); x.scale(sx,1); x.textAlign='center'; x.textBaseline='alphabetic';
+    x.lineJoin='round'; x.lineWidth=lw; x.strokeStyle=INK; x.fillStyle=INK;
+    if(sh){ x.strokeText(t,sh,y+sh); x.fillText(t,sh,y+sh); }
+    x.strokeText(t,0,y); x.fillStyle=col; x.fillText(t,0,y); x.restore(); };
+  if(kind==='smug'){        // passing someone: a pop-art explosion, "SELL!"
+    path(spikes(64,64,50,53,13,0.68,0.08),true); x.lineJoin='miter'; x.miterLimit=2.5; ink(RED,8);
+    dots('#a50f1a',7,2.6,(px,py)=>(px+py-110)*0.012);
+    path(spikes(64,65,42,39,13,0.76,0.07),true); x.lineWidth=4; x.strokeStyle=INK; x.stroke(); x.fillStyle=YEL; x.fill();
+    dots('#ff8a1a',6,2.3,(px,py)=>(px+py-120)*0.012);
+    letter('SELL!',63,66,86,31,WHT,-0.08,4);
+  }
+  else if(kind==='det'){    // flat out: a speech balloon with a tail, "BUY!", and a bolt of lightning off its shoulder
+    const bp=oval(61,57,54,38,18,0.04), tl=[[44,90],[54,124],[72,92]];
+    path(tl,true); ink(WHT,8); path(bp); ink(WHT,8); path(tl,true); x.fillStyle=WHT; x.fill();
+    path(bp); dots(CYN,7,2.7,(px,py)=>(py-44)*0.03);
+    letter('BUY!',59,58,80,34,YEL,-0.06,4);
+    x.save(); x.translate(113,18); x.rotate(0.35); x.scale(0.85,0.85); x.beginPath(); x.moveTo(4,-16); x.lineTo(-8,2); x.lineTo(-1,2); x.lineTo(-5,16); x.lineTo(8,-3); x.lineTo(1,-3); x.closePath(); x.lineJoin='miter'; ink(YEL,5); x.restore();
+  }
+  else if(kind==='cur'){    // a thought balloon (scalloped cloud, a trail of bubbles back to his head) holding "?!"
+    for(const [bx,by,br] of [[53,117,4.5],[60,103,6.5]]){ path(oval(bx,by,br,br,8,0.05)); ink(WHT,6); }
+    const cl=[]; for(let i=0;i<9;i++){ const a=i/9*TAU+0.2; cl.push([64+Math.cos(a)*37*(1+jit(0.05)), 47+Math.sin(a)*22*(1+jit(0.05)), 14+jit(2)]); }
+    x.beginPath(); for(const [bx,by,br] of cl){ x.moveTo(bx+br,by); x.arc(bx,by,br,0,TAU); } x.moveTo(101,47); x.ellipse(64,47,37,22,0,0,TAU); ink(WHT,12);
+    dots(CYN,7,2.6,(px,py)=>(py-42)*0.03);
+    letter('?!',64,49,60,36,YEL,0.05,4);
+  }
+  else if(kind==='peek'){   // something sneaking up: a jagged alarm burst, "!!", ringed with surprise lines
+    for(const [a,r0,r1] of [[-2.5,52,62],[-0.65,52,62],[2.55,50,61],[0.6,50,61]]) line(64+Math.cos(a)*r0,64+Math.sin(a)*r0,64+Math.cos(a)*r1,64+Math.sin(a)*r1,5);
+    path(spikes(64,64,52,52,10,0.62,0.12),true); x.lineJoin='miter'; x.miterLimit=5; ink(YEL,8);
+    dots('#ff8a1a',7,2.8,(px,py)=>(Math.hypot(px-64,py-64)-22)*0.05);
+    letter('!!',64,66,44,42,RED,0.08,4);
+  }
+  else if(kind==='hit'){    // spun out or passed: a jagged angry balloon full of grawlix
+    const jag=[]; for(let i=0;i<22;i++){ const a=i/22*TAU, k=i%2?0.86:1.04; jag.push([64+Math.cos(a)*55*k*(1+jit(0.03)), 54+Math.sin(a)*42*k*(1+jit(0.03))]); }
+    const tl=[[48,86],[56,124],[76,86]]; path(tl,true); x.lineJoin='miter'; x.miterLimit=4; ink(WHT,8);
+    path(jag,true); ink(WHT,8); path(tl,true); x.fillStyle=WHT; x.fill();
+    path(jag,true); dots(RED,7,2.5,(px,py)=>(py-50)*0.03);
+    const g='#@$%!', cols=[YEL,RED,YEL,CYN,RED], hs=[25,23,28,23,28], rs=[-0.2,0.15,-0.1,0.2,-0.05];
+    for(let i=0;i<5;i++) letter(g[i],26+i*19,54+(i&1?-3:3),21,hs[i],cols[i],rs[i],0);
+  }
+  else if(kind==='dbl'){    // in over his head: flying sweat drops, worry lines, "GULP!"
+    for(const [a,r0,r1] of [[-2.2,30,42],[-1.7,32,46],[-1.2,30,42]]) line(64+Math.cos(a)*r0,58+Math.sin(a)*r0,64+Math.cos(a)*r1,58+Math.sin(a)*r1,5);
+    for(const [dx,dy,s,rt] of [[26,26,1,-0.5],[104,32,0.85,0.5],[100,13,0.55,0.4]]){ x.save(); x.translate(dx,dy); x.rotate(rt); x.scale(s,s);
+      x.beginPath(); x.moveTo(0,-18); x.bezierCurveTo(5,-8,13,0,13,7); x.arc(0,7,13,0,Math.PI); x.bezierCurveTo(-13,0,-5,-8,0,-18); x.closePath(); ink(CYN,6);
+      x.beginPath(); x.ellipse(-5,6,2.5,4.5,0.3,0,TAU); x.fillStyle=WHT; x.fill(); x.restore(); }
+    letter('GULP!',64,88,112,34,WHT,-0.05,4);
+  }
+  else return null;
+  return c;
+}
+function emWallTex(kind){ const w=_em.wall||(_em.wall={});
+  if(!(kind in w)){ const c=emDrawWall(kind); w[kind]=c&&new T.CanvasTexture(c); }
+  return w[kind]; }
 function emBuild(){
   _em.tex={}; for(const k of ['cur','peek','smug','shades','dbl','hit','note','heart','det','anchor','shaka']) emDraw(k);
   for(let i=0;i<EM_POOL;i++){
@@ -51303,13 +51391,22 @@ function emote(r,L,kind){
   if(!r.you && (ai>=2 || !free)) return;                       // at most two AI bubbles at once
   if(!free){ free=_em.spr[0]; for(const sp of _em.spr) if(sp.userData.em.t>free.userData.em.t) free=sp; }   // the player's own always shows
   L.ecd=L.t; const e=free.userData.em; e.r=r; e.t=0; e.kind=kind; e.ai=!r.you;
-  free.material.map=_em.tex[kind]; free.visible=true; emTop(r);
+  const wt=r.id==='wall'&&emWallTex(kind); e.wall=!!wt;   // Daryl talks in comic-strip balloons
+  free.material.map=wt||_em.tex[kind]; free.visible=true; emTop(r);
 }
 function emoteTick(dt){
   for(const sp of _em.spr){ if(!sp.visible) continue;
     const e=sp.userData.em, r=e.r; e.t+=dt;
     if(e.t>=EM_LIFE || !r || !r.obj.visible || r.finished){ sp.visible=false; e.r=null; continue; }
     const u=e.t/EM_LIFE, o=r.obj, sc=o.scale.y||1, d=Math.sqrt(camera.position.distanceToSquared(o.position));
+    if(e.wall){   // Daryl's balloons pop on with a cartoon squash-and-stretch, and his shouts shake
+      const b=(4.6+d*0.05)*EM_WALL_SC*Math.min(1,e.t/0.08)*(1+0.04*Math.sin(e.t*9)), w=Math.sin(e.t*28)*Math.exp(-e.t*9)*0.35, sy=b*(1-w);
+      sp.scale.set(b*(1+w),sy,1);
+      sp.position.set(o.position.x, o.position.y+r._emTop*sc+1.2+sy*0.5+Math.sin(e.t*5)*0.5+e.t*1.2, o.position.z);
+      sp.material.opacity=1-ldSmooth(0.72,1,u);
+      sp.material.rotation=e.kind==='peek' ? Math.sin(e.t*42)*0.28*(1-u) : (e.kind==='cur'||e.kind==='dbl') ? 0 : Math.sin(e.t*47)*0.08*Math.max(0,1-e.t*2);
+      continue;
+    }
     const pop=e.t<0.18 ? e.t/0.18 : 1;   // pop-in with a little overshoot, then a gentle bob
     const sz=(4.6+d*0.05)*(pop<1 ? Math.sin(pop*Math.PI*0.5)*1.25 : 1+0.06*Math.sin(e.t*9));
     sp.scale.set(sz,sz,1);
