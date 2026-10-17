@@ -27150,6 +27150,28 @@ const TRACKS=[
    ctrl:[[336,6,124],[447,12,-116],[280,30,-329],[40,50,-399],[-200,58,-330],
          [-381,40,-157],[-360,14,39],[-240,6,170],[-188,6,358],[40,8,420],
          [269,6,369]]},
+  /* Stacey — "Please Stand By": a surf trip through a broadcast test card (see TEST CARD
+     KIT). The world is the card itself: the SMPTE bars laid flat as the ground and stood up
+     as walls and towers, the castellation and PLUGE rows as the steps at their feet, a dark
+     CRT field for a sky. The road is the pictogram's black stroke. From the grid it runs
+     straight at a giant set showing the card and dives in through the PLUGE row into a
+     tunnel of snow; out the back it sweeps up past the bar walls, skids through two
+     measured S-bends between colour-bar towers (the skid marks on the badge), climbs to a
+     crest and rolls home through the surf. raw: the ctrl list is the finished road.
+     Her song is surf rock: a twangy major-pentatonic line over I-IV-V-IV, a bass no
+     other course uses. */
+  {name:'Stacey', testcard:true, raw:true, sc:1.145, laps:4, key:4, tempo:172, sky:0x384246,
+   song:{ name:'Please Stand By',
+          mel: [7,null,9,7,   4,null,2,4,   7,9,12,null,   9,null,7,null],
+          melB:[12,null,14,12, 9,null,7,9,  12,14,16,14,   12,null,null,null],
+          bass:[0,5,7,5] },
+   tunnels:[[0.058,0.118]], critters:[0.30], pills:[0.86], jumps:[0.745],
+   pads:[0.03,0.15,0.26,0.37,0.47,0.58,0.69,0.80,0.91],
+   items:[0.025,0.13,0.21,0.32,0.42,0.52,0.62,0.72,0.82,0.94],
+   ctrl:[[450,10,700],[100,10,700],[-250,10,700],[-560,12,690],[-840,16,620],[-1040,22,450],[-1110,30,200],[-1040,36,-50],
+         [-900,34,-300],[-800,32,-406],[-700,30,-450],[-600,28,-406],[-500,26,-300],[-400,24,-194],[-300,24,-150],
+         [-200,24,-194],[-100,26,-300],[0,28,-406],[100,30,-450],[200,32,-406],[300,36,-300],
+         [420,44,-160],[600,58,-70],[820,66,-60],[1020,48,60],[1110,56,280],[1020,34,480],[820,38,620],[640,16,700]]},
 ];
 // Samples per course. 700 everywhere except where a course asks for more (Eve's run is ~26k
 // units long and carries 2,600 to keep the same ~10-unit spacing). Set on EVERY buildTrack.
@@ -27177,6 +27199,11 @@ let skyDome=null;
    offset would fold the short segments back on themselves and make a corner undrivable. */
 (function lengthenTracks(){
   for(const t of TRACKS){
+    // t.raw: the ctrl list is the finished road, drawn to size. No widening and no inserted
+    // corners — a course built around one long straight at a monument and a measured pair of
+    // S-bends needs its points exactly where they were put. `sc` still scales it (x/z only),
+    // so the race length can be tuned the same way as everywhere else.
+    if(t.raw){ const k=t.sc||1; t.ctrl=t.ctrl.map(a=>[a[0]*k, a[1], a[2]*k]); continue; }
     const loop = t.loop!==false;
     const src = t.ctrl, n = src.length;
     const SC = (loop ? 1.15 : 1.06) * (t.sc||1);    // t.sc: a course's own extra scale (race-length pass)
@@ -29767,6 +29794,577 @@ function hanaGrain(on){
   }
   _hanaGrainEl.style.display='block';
 }
+
+/* ============== TEST CARD KIT (Stacey) ============== *
+ * Stacey is a surf trip through a broadcast test card, and the card is the whole world:
+ * the SMPTE bars, the castellation row under them and the PLUGE row at the foot, inside a
+ * dark CRT bezel, with a road-sign roundel in the middle — a car with a board on the roof
+ * skidding on two black S-curves. Everything here is stated in that card's own language:
+ *   flat fields of exact colour with hard edges — no texture, no grain, no gradients on
+ *     anything that stands in the world; form is given by three flat tones (top / lit side /
+ *     shade side, tcFlat), the way a flat-colour print shows a box;
+ *   the card's VALUE structure, top to bottom: a dark slate sky (the bezel), bright bars,
+ *     dark ground at the foot — and from the chase camera the frame falls into the same three
+ *     bands: CRT sky above, bar walls and the bar-striped field across the middle, the road's
+ *     black slab at the bottom;
+ *   black-on-white pictograms for every sign, drawn as road signs are drawn;
+ *   the road as the pictogram's stroke: a black slab with crisp white edge lines.
+ * The castellation row turns up as the kerb (its seven blocks in order) and as the middle
+ * step of every bar wall; the PLUGE row as the bottom step. Broadcast texture lives only
+ * where a screen would have it: scanlines and a rolling hum bar in the sky, snow inside the
+ * set, and a light screen-space bezel (tcScreen). The surf humour is the roundels, the
+ * waves cut in bar colours and the boards standing in the field like fins.
+ * ---------------------------------------------------------------------------------- */
+const TC_BARS=[0xc1cff2,0xc0bb06,0x12a8d1,0x0acf05,0xc219fd,0xef0002,0x210dfd];   // grey yellow cyan green magenta red blue
+const TC_CAST=[0x210dfd,0x170701,0xc219fd,0x170701,0x12a8d1,0x170701,0xc1cff2];   // the short reverse-order row under them
+const TC_PLUGE=[0x113e85,0xe6f7ff,0x550cc5,0x170701];                             // navy, white, violet, black
+const TC_PLUGE_W=[0.177,0.180,0.179,0.464];
+const TC_INK=0x0d0b0b;
+const TC_HOR=0x3b4549, TC_MID=0x2a3940, TC_ZEN=0x16212a;   // the bezel, sampled: lighter at the foot, cold slate at the top
+const TC_T={value:0};
+const TC_CANVAS={};
+let TC_FLOOR=-12;
+const tcLin=h=>new T.Color(h).convertSRGBToLinear();
+// canvases are drawn once and kept; the TEXTURE is made fresh per build, because buildTrack
+// disposes every texture under trackGroup when it tears a course down
+function tcCanvas(key, w, h, draw){
+  let c=TC_CANVAS[key]; if(!c){ c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h); TC_CANVAS[key]=c; }
+  return c; }
+function tcTex(c, o){ o=o||{};
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding;
+  t.wrapS=t.wrapT=o.clamp?T.ClampToEdgeWrapping:T.RepeatWrapping;
+  if(o.nearest){ t.magFilter=t.minFilter=T.NearestFilter; t.generateMipmaps=false; }
+  else t.anisotropy=Math.min(o.aniso||8, renderer.capabilities.getMaxAnisotropy());
+  return t; }
+/* Flat colour with three tones from a fixed light, and nothing else: MeshBasic, so the exact
+   SMPTE values land on the lit faces whatever the rig is doing to the karts. `pulse` lets a
+   family breathe ±7% on a slow wave that travels across the world (the bars' only motion). */
+function tcFlat(name, o){
+  o=o||{};
+  const mat=new T.MeshBasicMaterial(Object.assign({color:0xffffff}, o.mat||{}));
+  mat.onBeforeCompile=sh=>{
+    sh.uniforms.uT=TC_T;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW;')
+      .replace('#include <project_vertex>',`#include <project_vertex>
+        { vec3 tn=normal; vec4 tw=vec4(transformed,1.0);
+          #ifdef USE_INSTANCING
+            tn=mat3(instanceMatrix)*tn; tw=instanceMatrix*tw;
+          #endif
+          vTN=normalize(mat3(modelMatrix)*tn); vTW=(modelMatrix*tw).xyz; }`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;')
+      .replace('#include <color_fragment>',`#include <color_fragment>
+        { vec3 tn=normalize(vTN); if(!gl_FrontFacing) tn=-tn; float k=dot(tn, vec3(0.42,0.62,0.66));
+          diffuseColor.rgb*= tn.y>0.72 ? 1.0 : (k>0.10 ? 0.93 : (k>-0.35 ? 0.80 : 0.70));
+          ${o.pulse?'diffuseColor.rgb*=1.0+0.07*sin(uT*0.9-vTW.x*0.006-vTW.z*0.004);':''} }`);
+  };
+  mat.customProgramCacheKey=()=>'tc-'+name+(o.pulse?'-p':'');
+  return mat;
+}
+// {x,y,z,s,sy,sz,rx,ry,rz|q,c} -> InstancedMesh per chunk of ground; chunks carry their own
+// bounding spheres so whatever is behind the camera is culled (one batch per chunk, not per prop)
+function tcBatch(geo, list, mat, chunk){
+  if(!list.length) return [];
+  const groups=new Map(), out=[];
+  for(const v of list){ const k=chunk?(Math.floor(v.x/chunk)+512)*4096+(Math.floor(v.z/chunk)+512):0;
+    let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(v); }
+  const d=new T.Object3D(), c=new T.Color();
+  for(const L of groups.values()){
+    const g=geo.clone(), m=new T.InstancedMesh(g, mat, L.length);
+    let cx=0,cy=0,cz=0; for(const v of L){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=L.length; cy/=L.length; cz/=L.length;
+    let r=0;
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z);
+      if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
+      const sx=v.s, sy=v.sy!=null?v.sy:v.s, sz=v.sz!=null?v.sz:v.s;
+      d.scale.set(sx,sy,sz); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+      c.copy(tcLin(v.c==null?0xffffff:v.c)); m.setColorAt(i,c);
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.hypot(sx,sy,sz)*0.75+2); });
+    m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+    g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    m.frustumCulled=!!chunk; trackGroup.add(m); out.push(m);
+  }
+  return out; }
+
+/* THE PICTOGRAMS. Road-sign roundels in a 1000-unit frame: a white disc, a thin black ring,
+   a solid black symbol. Stroke weights are a road sign's, not an illustration's — they have
+   to survive being 30 pixels across at 140 units a second. */
+function tcDrawIcon(g, kind, S){
+  const k=S/1000; g.save(); g.scale(k,k);
+  g.fillStyle='#000'; g.beginPath(); g.arc(500,500,499,0,Math.PI*2); g.fill();
+  g.fillStyle='#fff'; g.beginPath(); g.arc(500,500,479,0,Math.PI*2); g.fill();
+  g.fillStyle='#000'; g.strokeStyle='#000'; g.lineCap='round'; g.lineJoin='round';
+  const rr=(x,y,w,h,r)=>{ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); };
+  // the skid: two S-shaped tracks from the wheels, out left, back across, a tail down-left
+  const tracks=(x0,y0,dx)=>{ g.lineWidth=32;
+    for(const x of [x0, x0+dx]){ g.beginPath(); g.moveTo(x,y0);
+      g.bezierCurveTo(x,y0+40, x-40,y0+40, x-95,y0+58);
+      g.bezierCurveTo(x-170,y0+82, x-150,y0+170, x-60,y0+178);
+      g.bezierCurveTo(x+40,y0+186, x+70,y0+230, x+40,y0+280);
+      g.lineTo(x-25,y0+350); g.stroke(); } };
+  // the car from behind: cabin with a rear window, a wide body, wheels under it
+  const car=(cx,cy,driver)=>{
+    g.beginPath(); g.moveTo(cx-130,cy+10); g.lineTo(cx-100,cy-110); g.quadraticCurveTo(cx-95,cy-125,cx-78,cy-125);
+    g.lineTo(cx+78,cy-125); g.quadraticCurveTo(cx+95,cy-125,cx+100,cy-110); g.lineTo(cx+130,cy+10); g.closePath(); g.fill();
+    rr(cx-178,cy-5,356,128,24); g.fill();
+    g.fillRect(cx-150,cy+110,60,50); g.fillRect(cx+90,cy+110,60,50);
+    g.fillStyle='#fff'; g.beginPath(); g.moveTo(cx-100,cy-8); g.lineTo(cx-79,cy-102); g.lineTo(cx+79,cy-102); g.lineTo(cx+100,cy-8); g.closePath(); g.fill();
+    g.fillStyle='#000';
+    if(driver){ // the driver's shaggy head over the seat back
+      const hx=cx-14, hy=cy-44; g.beginPath(); g.moveTo(hx-58,cy-8);
+      for(let a=0;a<=26;a++){ const t=Math.PI*(1-a/26), r=(a%2?46:64)+((a*37)%13); g.lineTo(hx+Math.cos(t)*r, hy-Math.sin(t)*r*0.86); }
+      g.lineTo(hx+58,cy-8); g.closePath(); g.fill();
+      g.fillStyle='#fff'; g.beginPath(); g.ellipse(hx,hy+8,21,15,0,0,Math.PI*2); g.fill(); g.fillStyle='#000';
+      g.beginPath(); g.arc(hx-8,hy+6,4.5,0,Math.PI*2); g.arc(hx+8,hy+6,4.5,0,Math.PI*2); g.fill(); }
+    g.fillStyle='#fff'; g.fillRect(cx-178,cy+56,356,7); g.fillStyle='#000'; };
+  if(kind==='surfcar'||kind==='skid'){
+    const sc=kind==='surfcar', cx=sc?490:500, cy=sc?410:380;
+    if(sc){ // the board, strapped up behind the roof and leaning right, as on the card
+      g.save(); g.translate(cx+120,cy-150); g.rotate(0.62);
+      g.beginPath(); g.moveTo(0,-250); g.bezierCurveTo(84,-160,76,60,40,150); g.lineTo(-40,150); g.bezierCurveTo(-76,60,-84,-160,0,-250); g.closePath(); g.fill();
+      g.fillStyle='#fff'; g.beginPath(); g.moveTo(0,-218); g.bezierCurveTo(60,-150,54,50,24,132); g.lineTo(-24,132); g.bezierCurveTo(-54,50,-60,-150,0,-218); g.closePath(); g.fill();
+      g.strokeStyle='#000'; g.lineWidth=9; g.beginPath(); g.moveTo(-6,-214); g.quadraticCurveTo(16,-60,4,132); g.stroke(); g.restore(); g.fillStyle='#000'; }
+    car(cx,cy,sc);
+    tracks(cx-120,cy+160,240);
+  } else if(kind==='wave'){
+    g.beginPath(); g.moveTo(170,720); g.bezierCurveTo(230,560,300,330,520,270); g.bezierCurveTo(700,222,830,330,812,470);
+    g.bezierCurveTo(800,560,700,600,640,540); g.bezierCurveTo(600,500,630,430,690,440); g.bezierCurveTo(650,380,560,390,520,470);
+    g.bezierCurveTo(470,570,560,700,700,720); g.closePath(); g.fill();
+    g.lineWidth=34; g.beginPath(); g.moveTo(160,790); g.bezierCurveTo(300,760,420,820,560,790); g.bezierCurveTo(680,764,760,812,860,790); g.stroke();
+  } else if(kind==='board'){
+    g.save(); g.translate(500,520); g.rotate(-0.18);
+    g.beginPath(); g.moveTo(0,-400); g.bezierCurveTo(120,-280,118,200,62,360); g.quadraticCurveTo(0,392,-62,360); g.bezierCurveTo(-118,200,-120,-280,0,-400); g.closePath(); g.fill();
+    g.strokeStyle='#fff'; g.lineWidth=14; g.beginPath(); g.moveTo(0,-360); g.quadraticCurveTo(10,0,0,340); g.stroke();
+    g.beginPath(); g.moveTo(-20,250); g.lineTo(20,250); g.lineTo(10,330); g.closePath(); g.fillStyle='#fff'; g.fill(); g.restore();
+  } else if(kind==='palm'){
+    g.lineWidth=46; g.beginPath(); g.moveTo(470,800); g.bezierCurveTo(500,640,560,480,540,330); g.stroke();
+    const fr=(a,len,droop)=>{ g.save(); g.translate(540,322); g.rotate(a);
+      g.beginPath(); g.moveTo(0,-16); g.quadraticCurveTo(len*0.55,-70,len,droop); g.quadraticCurveTo(len*0.5,-24,0,16); g.closePath(); g.fill(); g.restore(); };
+    fr(Math.PI+0.35,250,120); fr(Math.PI-0.15,240,90); fr(Math.PI-0.75,190,60); fr(-0.75,200,60); fr(-0.2,250,95); fr(0.35,240,125);
+    g.beginPath(); g.arc(518,352,26,0,Math.PI*2); g.arc(564,360,24,0,Math.PI*2); g.fill();
+    g.lineWidth=24; g.beginPath(); g.moveTo(300,820); g.quadraticCurveTo(480,770,700,820); g.stroke();
+  } else if(kind==='tv'){
+    rr(240,330,520,380,46); g.fill();
+    g.fillStyle='#fff'; rr(290,375,330,290,30); g.fill(); g.fillStyle='#000';
+    for(let b=0;b<7;b+=2) g.fillRect(305+b*44,392,44,180);
+    g.fillStyle='#fff'; g.beginPath(); g.arc(690,430,24,0,Math.PI*2); g.arc(690,510,24,0,Math.PI*2); g.fill(); g.fillStyle='#000';
+    g.lineWidth=20; g.beginPath(); g.moveTo(470,330); g.lineTo(380,170); g.moveTo(530,330); g.lineTo(650,180); g.stroke();
+    g.fillRect(300,710,60,50); g.fillRect(640,710,60,50);
+  } else if(kind==='surfer'){
+    g.beginPath(); g.ellipse(520,610,250,40,-0.22,0,Math.PI*2); g.fill();
+    g.beginPath(); g.arc(560,250,58,0,Math.PI*2); g.fill();
+    g.lineWidth=58; g.beginPath(); g.moveTo(540,330); g.lineTo(500,450); g.stroke();
+    g.lineWidth=46; g.beginPath(); g.moveTo(500,450); g.lineTo(600,500); g.lineTo(590,590); g.moveTo(500,450); g.lineTo(430,520); g.lineTo(440,610); g.stroke();
+    g.lineWidth=36; g.beginPath(); g.moveTo(530,350); g.lineTo(650,340); g.lineTo(730,290); g.moveTo(525,360); g.lineTo(420,400); g.lineTo(340,380); g.stroke();
+    g.lineWidth=30; g.beginPath(); g.moveTo(170,760); g.bezierCurveTo(330,700,470,790,620,730); g.bezierCurveTo(720,690,790,740,850,720); g.stroke();
+  }
+  g.restore();
+}
+const TC_ICONS=['surfcar','skid','wave','board','palm','tv','surfer'];
+// one atlas, 4 x 2 cells of 256: every sign on the course is one of these
+function tcIconCanvas(){ return tcCanvas('icons',1024,512,(g)=>{
+  g.fillStyle='#fff'; g.fillRect(0,0,1024,512);
+  TC_ICONS.forEach((k,i)=>{ g.save(); g.translate((i%4)*256+2,Math.floor(i/4)*256+2); tcDrawIcon(g,k,252); g.restore(); }); }); }
+
+/* THE CARD, as the reference draws it: seven bars over 62% of the height, the castellation
+   row, the PLUGE row, and the roundel at the centre, overlapping the castellation. One canvas
+   serves twice — laid flat as the ground of the whole course, and stood up as the face of
+   the set the road dives into — so the two always agree. A one-pixel fringe at each bar
+   seam is the only "video" in it: the slight chroma bleed a real monitor shows there. */
+const TC_ROWS=[0.62,0.71];
+function tcCardCanvas(){ return tcCanvas('card',2048,1024,(g,W,H)=>{
+  const hex=c=>'#'+c.toString(16).padStart(6,'0');
+  const y1=Math.round(H*TC_ROWS[0]), y2=Math.round(H*TC_ROWS[1]);
+  for(let b=0;b<7;b++){ const x0=Math.round(W*b/7), x1=Math.round(W*(b+1)/7);
+    g.fillStyle=hex(TC_BARS[b]); g.fillRect(x0,0,x1-x0,y1);
+    g.fillStyle=hex(TC_CAST[b]); g.fillRect(x0,y1,x1-x0,y2-y1); }
+  let x=0; TC_PLUGE.forEach((c,k)=>{ const w=Math.round(W*TC_PLUGE_W[k]); g.fillStyle=hex(c); g.fillRect(x,y2,k===3?W-x:w,H-y2); x+=w; });
+  g.fillStyle='#1d0b07'; g.fillRect(Math.round(W*0.80),y2,Math.round(W*0.05),H-y2);        // the +4% black step
+  for(let b=1;b<7;b++){ const xs=Math.round(W*b/7); g.fillStyle='rgba(150,40,190,0.45)'; g.fillRect(xs-2,0,3,y1); }
+  const R=H*0.246; g.save(); g.translate(W*0.507-R, H*0.506-R); tcDrawIcon(g,'surfcar',R*2); g.restore(); }); }
+
+/* THE SKY: the bezel of a CRT. Dark slate, lighter toward the foot as the card's surround
+   is; scanlines; a hum bar rolling slowly up the dome (one pass in ~29 s, ±9% value, the
+   most a background is allowed to move); and on the horizon a skyline of test cards — the
+   bars, the castellation and the PLUGE row standing at infinity in every direction, hazed
+   back toward the bezel so they sit behind everything solid. One per-pixel pass, no loops. */
+function tcSky(){
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, uniforms:{ uT:TC_T },
+    vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT;
+      float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      vec3 bar(float i){ return i<0.5?${arcG3(TC_BARS[0])}:i<1.5?${arcG3(TC_BARS[1])}:i<2.5?${arcG3(TC_BARS[2])}:i<3.5?${arcG3(TC_BARS[3])}:i<4.5?${arcG3(TC_BARS[4])}:i<5.5?${arcG3(TC_BARS[5])}:${arcG3(TC_BARS[6])}; }
+      vec3 cas(float i){ return i<0.5?${arcG3(TC_CAST[0])}:i<1.5?${arcG3(TC_CAST[1])}:i<2.5?${arcG3(TC_CAST[2])}:i<3.5?${arcG3(TC_CAST[3])}:i<4.5?${arcG3(TC_CAST[4])}:i<5.5?${arcG3(TC_CAST[5])}:${arcG3(TC_CAST[6])}; }
+      void main(){
+        vec3 d=normalize(vP);
+        float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x)+3.14159265;
+        vec3 c=mix(${arcG3(TC_HOR)}, ${arcG3(TC_MID)}, smoothstep(0.0,0.42,el));
+        c=mix(c, ${arcG3(TC_ZEN)}, smoothstep(0.35,1.25,el));
+        // the skyline: a slot every 0.33 rad round the horizon, about two in three holding a card
+        float sl=floor(az/0.3307), fu=fract(az/0.3307);
+        float r1=h21(vec2(sl,1.7)), r2=h21(vec2(sl,4.3)), r3=h21(vec2(sl,9.1));
+        float u=(fu-0.5)/(0.48+0.36*r2)+0.5, hg=0.040+0.070*r3;
+        if(r1>0.30 && u>0.0 && u<1.0 && el>-0.02 && el<hg){
+          float v=max(0.0,el)/hg; vec3 k;
+          if(v>0.38) k=bar(floor(u*7.0));
+          else if(v>0.29) k=cas(floor(u*7.0));
+          else k= u<0.177?${arcG3(TC_PLUGE[0])}: u<0.357?${arcG3(TC_PLUGE[1])}: u<0.536?${arcG3(TC_PLUGE[2])}:${arcG3(TC_PLUGE[3])};
+          c=mix(k, ${arcG3(TC_HOR)}, 0.50+0.12*r2);
+        }
+        c*=0.955+0.045*sin(el*1630.0);
+        float rb=fract(uT*0.034)*1.9-0.35;
+        c*=1.0+0.09*exp(-(el-rb)*(el-rb)*44.0);
+        if(el<-0.02) c=${arcG3(TC_HOR)};
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,24), mat); m.frustumCulled=false; m.renderOrder=-2;
+  return m;
+}
+
+/* THE GROUND: the card laid flat under the whole course, oriented as it is printed (bars to
+   the north, the PLUGE row along the south straight), on a field of bezel slate. Flat, unlit,
+   fogged; the floor sits under the lowest banked shoulder of the deck. */
+function tcFloorLevel(inS){ let lo=1e9;
+  for(const s of SAMP){ const b=Math.sin(s.bank||0); lo=Math.min(lo, s.p.y+b*inS*56, s.p.y-b*inS*37); }
+  return Math.floor(lo-8); }
+function tcGround(){
+  const cx=0, cz=100, W=3000, H=1500;
+  const bz=new T.PlaneGeometry(7000,7000,1,1); bz.rotateX(-Math.PI/2);
+  const bm=new T.Mesh(bz, new T.MeshBasicMaterial({color:tcLin(0x27333a)})); bm.position.set(cx,TC_FLOOR-0.4,cz); trackGroup.add(bm);
+  const cg=new T.PlaneGeometry(W,H,1,1); cg.rotateX(-Math.PI/2);
+  const cm=new T.Mesh(cg, new T.MeshBasicMaterial({map:tcTex(tcCardCanvas(),{clamp:true,aniso:8})}));
+  cm.position.set(cx,TC_FLOOR,cz); trackGroup.add(cm);
+  return {cx,cz,W,H};
+}
+
+/* THE ROAD: the pictogram's black stroke, a white line inset along each edge, and a short
+   pale dash down the middle every ~70 units — the one ticking element the eye reads speed
+   against on a surface otherwise deliberately empty. */
+function tcRoadTex(){
+  const c=tcCanvas('road',128,256,(g,W,H)=>{
+    g.fillStyle='#0c0a0a'; g.fillRect(0,0,W,H);
+    g.fillStyle='#eef2f8'; g.fillRect(4,0,5,H); g.fillRect(W-9,0,5,H);
+    g.fillStyle='#c9ced8'; g.fillRect(62,0,4,96); });
+  const t=tcTex(c); t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy()); return t; }
+
+/* THE DECK: the road is a slab, and the slab stands on the card. Shoulders in bezel slate to
+   35 outside and 54 inside (the infield apron to 48.4 is legal, so it is drawn as deck you
+   can see you may use), riding the physics' own banking plane (y = p.y + sin(bank) * lat,
+   lat horizontal) so a kart on the apron sits ON it; a black plinth wall from each shoulder
+   lip straight down to the floor, with a pale lip line so the stroke has an edge from across
+   the field; and the walls where the physics puts them — kerbs standing ON the shoulder at
+   29.3-32.3 outside (wall 28.2) and 49.3-52.3 inside (48.4), coloured in the castellation
+   row's seven blocks, in order. In a tunnel both shoulders stop at 33 and the kerbs stop;
+   the set's own walls take over. */
+function tcDeck(inS, tunIdx){
+  const inT=i=>tunIdx.some(([a,b])=>i>=a&&i<=b), inT2=i=>tunIdx.some(([a,b])=>i>=a-2&&i<=b+2);
+  const out=(i,side)=>inT(i)?33:(side===inS?54:35);
+  const at=(s,L)=>{ const sb=Math.sin(s.bank||0); return new T.Vector3(s.p.x+s.n.x*L, s.p.y+sb*L, s.p.z+s.n.z*L); };
+  const D=[], DI=[], W=[], WC=[], WI=[], col=new T.Color();
+  for(const side of [1,-1]){
+    const b0=D.length/3;
+    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS], a=s.p.clone().addScaledVector(s.bn,side*HW), o=at(s,side*out(i%STEPS,side));
+      D.push(a.x,a.y+0.04,a.z, o.x,o.y+0.04,o.z); }
+    for(let i=0;i<STEPS;i++){ const a=b0+i*2; DI.push(a,a+1,a+2, a+1,a+3,a+2); }
+    // the plinth: lip (pale, 1.2 tall) then the black wall to the floor
+    const w0=W.length/3;
+    for(let i=0;i<=STEPS;i++){ const s=SAMP[i%STEPS], o=at(s,side*out(i%STEPS,side));
+      W.push(o.x,o.y+0.04,o.z, o.x,o.y-1.2,o.z, o.x,o.y-1.2,o.z, o.x,TC_FLOOR-0.5,o.z);
+      for(const h of [0xc1cff2,0xc1cff2,0x100d0e,0x100d0e]){ col.copy(tcLin(h)); WC.push(col.r,col.g,col.b); } }
+    for(let i=0;i<STEPS;i++){ const a=w0+i*4, b=a+4; WI.push(a,b,a+1, a+1,b,b+1, a+2,b+2,a+3, a+3,b+2,b+3); }
+  }
+  const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(D,3)); dg.setIndex(DI); dg.computeVertexNormals();
+  trackGroup.add(new T.Mesh(dg, new T.MeshBasicMaterial({color:tcLin(0x283238), side:T.DoubleSide})));
+  const wg=new T.BufferGeometry(); wg.setAttribute('position',new T.Float32BufferAttribute(W,3)); wg.setAttribute('color',new T.Float32BufferAttribute(WC,3)); wg.setIndex(WI);
+  trackGroup.add(new T.Mesh(wg, new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide})));
+  // kerbs: laterals are HORIZONTAL, as the physics measures its walls
+  const P=[], C=[], h=3.4;
+  for(const [side,l0,l1] of [[-inS,29.3,32.3],[inS,49.3,52.3]]){
+    for(let i=0;i<STEPS;i++){ if(inT2(i)) continue;
+      const A=SAMP[i], B=SAMP[(i+1)%STEPS], k=((i/3)|0)%7;
+      col.copy(tcLin(TC_CAST[k]));
+      const a0=at(A,side*l0), a1=at(A,side*l1), b0=at(B,side*l0), b1=at(B,side*l1);
+      const ta=Math.max(a0.y,a1.y)+h, tb=Math.max(b0.y,b1.y)+h;
+      const q=(p0,p1,p2,p3,f)=>{ for(const v of [p0,p1,p2, p0,p2,p3]){ P.push(v[0],v[1],v[2]); C.push(col.r*f,col.g*f,col.b*f); } };
+      q([a0.x,a0.y-1,a0.z],[b0.x,b0.y-1,b0.z],[b0.x,tb,b0.z],[a0.x,ta,a0.z],0.86);
+      q([a0.x,ta,a0.z],[b0.x,tb,b0.z],[b1.x,tb,b1.z],[a1.x,ta,a1.z],1.0);
+      q([a1.x,ta,a1.z],[b1.x,tb,b1.z],[b1.x,b1.y-1,b1.z],[a1.x,a1.y-1,a1.z],0.72);
+      if(inT2(i+1)||inT2(i-1)){ const e=inT2(i+1)?[b0,b1,tb]:[a0,a1,ta];
+        q([e[0].x,e[0].y-1,e[0].z],[e[0].x,e[2],e[0].z],[e[1].x,e[2],e[1].z],[e[1].x,e[1].y-1,e[1].z],0.8); } } }
+  const pg=new T.BufferGeometry(); pg.setAttribute('position',new T.Float32BufferAttribute(P,3)); pg.setAttribute('color',new T.Float32BufferAttribute(C,3));
+  trackGroup.add(new T.Mesh(pg, new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide})));
+}
+
+// clearance of a ground point from every leg of the deck: the plinth stands at 35 outside and
+// 54 inside (33 in a tunnel), so a prop is legal where this is >= its own half-extent
+function tcClear(x,z,tun){
+  let m=1e9;
+  for(let i=0;i<STEPS;i+=2){ const s=SAMP[i], dx=x-s.p.x, dz=z-s.p.z, d2=dx*dx+dz*dz; if(d2>160000) continue;
+    const inner=(dx*s.n.x+dz*s.n.z)*innerSign>0, t=tun&&tun.some(([a,b])=>i>=a&&i<=b);
+    const v=Math.sqrt(d2)-(t?37:inner?58:39); if(v<m) m=v; }
+  return m; }
+// a box footprint (centre, yaw, half-sizes) tested round its outline
+function tcFootClear(x,z,ry,hw,hd,tun){
+  const ca=Math.cos(ry), sa=Math.sin(ry); let m=1e9;
+  const nx=Math.max(2,Math.ceil(hw/10)), nz=Math.max(2,Math.ceil(hd/10));
+  for(let a=0;a<=nx;a++) for(let b=0;b<=nz;b++){ if(a>0&&a<nx&&b>0&&b<nz) continue;
+    const lx=-hw+2*hw*a/nx, lz=-hd+2*hd*b/nz;
+    m=Math.min(m, tcClear(x+lx*ca+lz*sa, z-lx*sa+lz*ca, tun)); }
+  return m; }
+
+/* THE START: a gantry whose beam IS the card's top two rows — seven bars over the
+   castellation — on two black posts standing on the floor outside the deck, the roundel on
+   top. Underside 22 over the deck. */
+function tcGate(inS){
+  const s=SAMP[0], ry=Math.atan2(s.t.x,s.t.z), L=[], deck=s.p.y;
+  const Lo=-inS*40, Li=inS*60, span=Math.abs(Li-Lo), mid=(Lo+Li)/2;
+  const at=(lat,y)=>({x:s.p.x+s.n.x*lat, y, z:s.p.z+s.n.z*lat});
+  const bot=deck+22, top=bot+16;
+  for(const lat of [Lo,Li]){ const p=at(lat,0), h=top-TC_FLOOR; L.push({x:p.x,y:TC_FLOOR+h/2,z:p.z,s:5,sy:h,sz:5,ry,c:TC_INK}); }
+  // across the beam: the grid's right is -n, so the run from -n to +n is blue back to grey
+  for(let b=0;b<7;b++){ const lat=mid-span/2+span*(b+0.5)/7;
+    const p=at(lat,bot+4+8); L.push({x:p.x,y:p.y,z:p.z,s:span/7,sy:16-4,sz:3.2,ry,c:TC_BARS[6-b]});
+    const q=at(lat,bot+2); L.push({x:q.x,y:q.y,z:q.z,s:span/7,sy:4,sz:3.6,ry,c:TC_CAST[6-b]}); }
+  tcBatch(new T.BoxGeometry(1,1,1), L, tcFlat('gate'), 0);
+  // the roundel standing on the beam
+  const g=new T.CircleGeometry(1,48), uv=g.attributes.uv;
+  for(let i=0;i<uv.count;i++) uv.setXY(i, (0*256+2+uv.getX(i)*252)/1024, 1-(2+(1-uv.getY(i))*252)/512);
+  const disc=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTex(tcIconCanvas()), side:T.DoubleSide}));
+  const p=at(mid, top+11); disc.position.set(p.x,p.y,p.z); disc.scale.setScalar(11); disc.rotation.y=ry+Math.PI; trackGroup.add(disc);
+}
+
+/* THE SET: the road dives into a television the size of a hall. Its screen is the card
+   (the same canvas the ground is printed from), 500 by 250, with the portal cut through the
+   PLUGE row at the bottom-centre and the roundel sitting over it like a keystone; a dark
+   bezel frame; a body tapering back to the neck; and inside, snow. The tunnel is snow on
+   both walls and the ceiling, broken into screens by dark ribs on an irregular stride, with
+   PLEASE STAND BY hung across the road halfway through. The snow is one small noise sheet
+   whose offset is jumped every other frame (tcTick) — no re-upload, no shader — and its
+   contrast is held to the middle of the range so it shimmers rather than flashes. */
+function tcStandByCanvas(){ return tcCanvas('standby',512,96,(g,W,H)=>{
+  g.fillStyle='#0c0a0a'; g.fillRect(0,0,W,H);
+  g.fillStyle='#f4f6fa'; g.font='bold 54px Arial, Helvetica, sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  g.fillText('PLEASE STAND BY', W/2, H/2+2); }); }
+function tcSnowCanvas(){ return tcCanvas('snow',128,128,(g,W,H)=>{
+  const id=g.createImageData(W,H), D=id.data, R=harbRnd(0x5A0C1E);
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4, line=(y%3===0)?0.72:1.0;
+    const v=(70+R()*120)*line; D[i]=v*0.97; D[i+1]=v; D[i+2]=v*1.04; D[i+3]=255; }
+  g.putImageData(id,0,0); }); }
+function tcTunnel(tunIdx, inS){
+  const [i0,i1]=tunIdx[0], A=SAMP[i0], B=SAMP[i1];
+  const D=new T.Vector3(B.p.x-A.p.x,0,B.p.z-A.p.z), Lc=D.length(); D.normalize();
+  const R=new T.Vector3().crossVectors(D,new T.Vector3(0,1,0)).normalize(), UP=new T.Vector3(0,1,0);
+  const deck=A.p.y, FW=500, FH=250, PW=34, PT=deck+44-TC_FLOOR;      // portal: +-34, floor to 44 over the deck
+  const ry=Math.atan2(D.x,D.z);
+  const face=A.p.clone().addScaledVector(D,-1.5); face.y=TC_FLOOR;
+  const pt=(o,lat,h,fwd)=>o.clone().addScaledVector(R,lat).addScaledVector(UP,h).addScaledVector(D,fwd||0);
+  // the screen: three quads round the portal, UVs straight off the card
+  { const P=[], U=[], I=[];
+    const quad=(l0,l1,h0,h1)=>{ const b=P.length/3;
+      for(const [l,h] of [[l0,h0],[l1,h0],[l1,h1],[l0,h1]]){ const p=pt(face,l,h); P.push(p.x,p.y,p.z); U.push((l+FW/2)/FW, h/FH); }
+      I.push(b,b+2,b+1, b,b+3,b+2); };
+    quad(-FW/2,-PW,0,FH); quad(PW,FW/2,0,FH); quad(-PW,PW,PT,FH);
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('uv',new T.Float32BufferAttribute(U,2)); g.setIndex(I);
+    const card=tcTex(tcCardCanvas(),{clamp:true});
+    trackGroup.add(new T.Mesh(g, new T.MeshBasicMaterial({map:card, side:T.DoubleSide}))); }
+  // the caption on the black of the PLUGE row, right of the portal
+  { const g=new T.PlaneGeometry(150,28); const m=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTex(tcStandByCanvas(),{clamp:true})}));
+    const p=pt(face, 150, 40, -0.6); m.position.copy(p); m.rotation.y=ry+Math.PI; trackGroup.add(m); }
+  // bezel frame, body and back: dark slate, flat-toned
+  const L=[], BZ=0x1e2a31, BODY=0x2b3a42, DEP=Lc+3, BW=150, BH=118;
+  for(const [l,h,w,hh] of [[0,FH+7,FW+28,14],[-(FW/2+7),FH/2,14,FH+28],[FW/2+7,FH/2,14,FH+28]]){
+    const p=pt(face,l,h,7); L.push({x:p.x,y:p.y,z:p.z,s:w,sy:hh,sz:16,ry,c:BZ}); }
+  // the tapering body: two side plates and the roof as one flat-toned shell, front 508 x 256
+  // tapering over the tunnel's length to 150 x 118 at the back
+  const back=face.clone().addScaledVector(D,DEP);
+  { const P=[], fl=-(FW/2+4), fr=FW/2+4, bl=-BW/2, br=BW/2, ft=FH+6;
+    const q=(a,b,c,d)=>{ for(const v of [a,b,c, a,c,d]) P.push(v.x,v.y,v.z); };
+    const F=(l,h)=>pt(face,l,h,8), Bk=(l,h)=>pt(back,l,h,0);
+    q(F(fl,0),Bk(bl,0),Bk(bl,BH),F(fl,ft)); q(F(fr,0),F(fr,ft),Bk(br,BH),Bk(br,0)); q(F(fl,ft),Bk(bl,BH),Bk(br,BH),F(fr,ft));
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.computeVertexNormals();
+    trackGroup.add(new T.Mesh(g, tcFlat('body',{mat:{color:tcLin(BODY), side:T.DoubleSide}}))); }
+  // back plate round the exit portal
+  for(const [l,h,w,hh] of [[-(BW/2+PW)/2,BH/2,BW/2-PW,BH],[(BW/2+PW)/2,BH/2,BW/2-PW,BH],[0,(PT+BH)/2,2*PW,BH-PT]]){
+    const p=pt(back,l,h,0); L.push({x:p.x,y:p.y,z:p.z,s:w,sy:hh,sz:4,ry,c:BZ}); }
+  // the CRT neck
+  { const p=pt(back,0,BH*0.62,18); L.push({x:p.x,y:p.y,z:p.z,s:50,sy:38,sz:34,ry,c:BZ}); }
+  // ribs inside: posts at +-33 and a beam at +46, every 30-44 units
+  const Rn=harbRnd(0x7E57CA);
+  for(let i=i0+2;i<i1-1;i+=3+((Rn()*2)|0)){
+    const s=SAMP[i], y=s.p.y, yy=Math.atan2(s.t.x,s.t.z);
+    for(const sd of [-1,1]){ const x=s.p.x+s.n.x*sd*32.4, z=s.p.z+s.n.z*sd*32.4; L.push({x,y:y+22,z,s:2.4,sy:48,sz:3,ry:yy,c:BZ}); }
+    L.push({x:s.p.x,y:y+46,z:s.p.z,s:67,sy:2.4,sz:3,ry:yy,c:BZ});
+  }
+  tcBatch(new T.BoxGeometry(1,1,1), L, tcFlat('set'), 0);
+  // the snow: both walls and the ceiling, one ribbon each, along the road
+  const snow=tcTex(tcSnowCanvas(),{nearest:true});
+  { const P=[], U=[], I=[];
+    const strip=(f)=>{ const b=P.length/3; let n=0;
+      for(let i=i0;i<=i1;i++,n++){ const s=SAMP[i]; const [p,q]=f(s); P.push(p.x,p.y,p.z, q.x,q.y,q.z); U.push(n*9.6/1.3/128,0, n*9.6/1.3/128,1); }
+      for(let k=0;k<n-1;k++){ const a=b+k*2; I.push(a,a+1,a+2, a+1,a+3,a+2); } };
+    for(const sd of [-1,1]) strip(s=>[new T.Vector3(s.p.x+s.n.x*sd*33.5, s.p.y-1, s.p.z+s.n.z*sd*33.5), new T.Vector3(s.p.x+s.n.x*sd*33.5, s.p.y+47, s.p.z+s.n.z*sd*33.5)]);
+    strip(s=>[new T.Vector3(s.p.x-s.n.x*33.5, s.p.y+47, s.p.z-s.n.z*33.5), new T.Vector3(s.p.x+s.n.x*33.5, s.p.y+47, s.p.z+s.n.z*33.5)]);
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('uv',new T.Float32BufferAttribute(U,2)); g.setIndex(I);
+    snow.repeat.set(1, 0.36);
+    var snowMat=new T.MeshBasicMaterial({map:snow, color:0xffffff, side:T.DoubleSide, fog:false});
+    trackGroup.add(new T.Mesh(g, snowMat)); }
+  // PLEASE STAND BY, hung across the road halfway through (underside 30 over the deck)
+  { const im=Math.round((i0+i1)/2), s=SAMP[im];
+    const m=new T.Mesh(new T.PlaneGeometry(60,11.25), new T.MeshBasicMaterial({map:tcTex(tcStandByCanvas(),{clamp:true}), side:T.DoubleSide}));
+    m.position.set(s.p.x, s.p.y+35.6, s.p.z); m.rotation.y=Math.atan2(s.t.x,s.t.z)+Math.PI; trackGroup.add(m); }
+  return {snow, snowMat};
+}
+
+/* THE FIELD. Placed, not sprinkled: each family has a job.
+   BAR WALLS — the card stood up: seven columns over a castellation step and a PLUGE step,
+     facing the road from outside the deck. They line the long sweeper (the bars sector) and
+     stand as backdrops behind the S-bends, the climb and the surf.
+   TOWERS — single bars, very tall, at the apex of every bend in the skid: the gates the road
+     snakes between. Heights stepped on an irregular cadence.
+   ROUNDELS — black-on-white signs on black poles, facing oncoming traffic: a TV before the
+     set, the slippery-road car before the S-bends, the surf car, the surfer, waves, boards,
+     a palm. And one giant roundel in the infield, the card's badge stood up on its own.
+   WAVES — breakers cut from the bar colours, three layers deep (blue, cyan, grey foam).
+   BOARDS — surfboards stuck upright in the field like fins, in bar colours, black stringer.
+   Everything stands on the floor and is tested against every leg of the deck (tcClear). */
+function tcWaveShapes(){
+  const S=[];
+  const curl=(k)=>{ const s=new T.Shape(), a=1-k*0.16;
+    s.moveTo(-1.0,0); s.bezierCurveTo(-0.70*a,0.25*a,-0.45,0.95*a,0.12,1.02*a);
+    s.bezierCurveTo(0.62,1.08*a,0.95,0.70*a,0.78,0.38*a);
+    s.bezierCurveTo(0.68,0.16*a,0.45,0.20*a,0.44,0.36*a);
+    s.bezierCurveTo(0.40,0.60*a,0.20,0.62*a,0.06,0.42*a);
+    s.bezierCurveTo(-0.08,0.22*a,0.10,0.02,0.40,0); s.lineTo(-1.0,0); return s; };
+  for(let k=0;k<3;k++){ const g=new T.ExtrudeGeometry(curl(k),{depth:0.10,bevelEnabled:false,curveSegments:10}); g.translate(0,0,-0.05+k*0.11); S.push(g); }
+  return S; }
+function tcBoardGeo(){
+  const s=new T.Shape(); s.moveTo(0,1); s.bezierCurveTo(0.17,0.72,0.16,0.10,0.10,0.0); s.quadraticCurveTo(0,-0.05,-0.10,0.0); s.bezierCurveTo(-0.16,0.10,-0.17,0.72,0,1);
+  const g=new T.ExtrudeGeometry(s,{depth:0.035,bevelEnabled:false,curveSegments:8}); g.translate(0,0,-0.0175); return g; }
+function tcScenery(inS, tunIdx){
+  const R=harbRnd(0x7E57CA2D), N=STEPS, box=[], tow=[], waves=[[],[],[]], boards=[], strg=[], poles=[], backs=[], fronts=TC_ICONS.map(()=>[]);
+  const S=u=>SAMP[((Math.round(u*N)%N)+N)%N];
+  const yawTo=(x,z,s)=>Math.atan2(s.p.x-x, s.p.z-z);
+  // push a footprint outward along the sample's normal until it clears every leg of the deck
+  const seat=(u,side,out,hw,hd,yawFn,maxOut)=>{
+    const s=S(u); let o=out;
+    for(;o<(maxOut||out+500);o+=12){ const x=s.p.x+s.n.x*side*o, z=s.p.z+s.n.z*side*o, ry=yawFn(x,z,s);
+      if(tcFootClear(x,z,ry,hw,hd,tunIdx)>2) return {x,z,ry,s}; }
+    return null; };
+  // a bar wall: 7 columns (cw wide, ch tall) on a castellation step and a PLUGE step
+  const wall=(u,side,out,cw,ch,turn)=>{
+    const hw=cw*3.5+2, hd=cw*0.9+24;
+    const P=seat(u,side,out,hw,hd,(x,z,s)=>yawTo(x,z,s)+(turn||0)); if(!P) return;
+    const {x,z,ry}=P, ca=Math.cos(ry), sa=Math.sin(ry);
+    const put=(lx,lz,w,h,d,y0,c)=>box.push({x:x+lx*ca+lz*sa, y:TC_FLOOR+y0+h/2, z:z-lx*sa+lz*ca, s:w, sy:h, sz:d, ry, c});
+    const plH=ch*0.20, caH=ch*0.09;
+    // local +z faces the road, so the viewer's right is local +x: grey on the left, as printed
+    for(let b=0;b<7;b++){ const lx=(b-3)*cw;
+      put(lx, 0, cw, ch, cw*0.9, 0, TC_BARS[b]);                       // the bar, full height behind
+      put(lx, cw*0.45+5, cw, plH+caH, 10, 0, TC_CAST[b]); }             // the castellation step in front of it
+    let px=-3.5*cw; TC_PLUGE.forEach((c,k)=>{ const w=7*cw*TC_PLUGE_W[k]; put(px+w/2, cw*0.45+17, w, plH, 14, 0, c); px+=w; });
+  };
+  // the bars sector: walls stepping round the outside of the long sweeper and behind the set
+  wall(0.165,-inS,70,30,150, 0.10); wall(0.215,-inS,110,34,190,-0.05); wall(0.265,-inS,80,28,135,0.08);
+  wall(0.315,-inS,140,36,215,-0.12); wall(0.36,-inS,90,26,120,0.0);
+  wall(0.10,inS,190,30,170,0.2);  wall(0.97,inS,160,28,150,-0.25);  wall(0.04,-inS,120,26,110,-0.3);
+  // backdrops: behind the S-bends to the north, the climb, the surf
+  wall(0.455,-inS,330,40,240,0); wall(0.585,-inS,300,36,210,0.1); wall(0.70,-inS,150,32,190,-0.1);
+  wall(0.78,-inS,170,34,220,0.15); wall(0.885,-inS,250,30,170,0); wall(0.52,inS,250,30,160,0.3);
+  // the towers of the skid: a single bar at the inside of every bend, two or three where the
+  // bend is long, plus stragglers outside on the exits. Inside of a bend = toward its centre.
+  { let k=0;
+    for(let u=0.39; u<0.69; u+=0.0042){ const s=S(u), s2=S(u+0.012);
+      const turn=s.t.x*s2.t.z-s.t.z*s2.t.x; if(Math.abs(turn)<0.035) continue;
+      const side=Math.sign(turn)*(-1);       // n is (t.z,0,-t.x): the inside of a left/right bend
+      // only one cluster per bend apex: skip ahead after placing
+      const H=[150,230,185,260,140,205,170][k%7], w=24+(k%3)*4;
+      const P=seat(u, side, 70+(k%2)*14, w*0.6, w*0.6, (x,z,s)=>yawTo(x,z,s));
+      if(P){ tow.push({x:P.x, y:TC_FLOOR+H/2, z:P.z, s:w, sy:H, sz:w, ry:P.ry, c:TC_BARS[(k*3)%7]});
+        const Q=seat(u+0.006, side, 106+(k%3)*10, w*0.5, w*0.5, (x,z,s)=>yawTo(x,z,s));
+        if(Q && (k%3)!==2) tow.push({x:Q.x, y:TC_FLOOR+H*0.36, z:Q.z, s:w*0.9, sy:H*0.72, sz:w*0.9, ry:Q.ry, c:TC_BARS[(k*3+2)%7]}); }
+      k++; u+=0.034; } }
+  tcBatch(new T.BoxGeometry(1,1,1), box.concat(tow), tcFlat('bars',{pulse:true}), 520);
+  // roundels: [u, side, out, radius, icon]
+  const SIGNS=[[0.012,-1,52,15,5],[0.035,1,70,13,5],[0.375,-1,50,16,1],[0.395,1,72,13,1],[0.47,-1,50,14,0],[0.56,1,72,14,0],
+               [0.64,-1,48,14,6],[0.725,-1,52,16,3],[0.80,1,74,15,2],[0.835,-1,52,16,6],[0.87,1,72,14,3],[0.905,-1,54,15,2],[0.945,1,74,14,4],[0.25,1,74,16,4]];
+  const g0=new T.CircleGeometry(1,40);
+  const disc=(x,y,z,ry,r,icon)=>{ fronts[icon].push({x,y,z,s:r,ry:ry,c:0xffffff});
+    backs.push({x:x-Math.sin(ry)*0.6,y,z:z-Math.cos(ry)*0.6,s:r*1.02,ry:ry+Math.PI,c:0x5c666c}); };
+  for(const [u,sd,out,r,icon] of SIGNS){
+    const side=sd*inS;   // +1 = infield
+    const P=seat(u-0.006, side, out+r, r, 3, (x,z,s)=>Math.atan2(s.t.x,s.t.z)); if(!P) continue;
+    const s=P.s, deckY=s.p.y, cy=deckY+12+r, h=cy-r*0.3-TC_FLOOR;
+    poles.push({x:P.x, y:TC_FLOOR+h/2, z:P.z, s:1.5, sy:h, sz:1.5, c:TC_INK});
+    const face=Math.atan2(-s.t.x,-s.t.z);   // facing back down the road, at the oncoming karts
+    disc(P.x-s.t.x*1.6, cy, P.z-s.t.z*1.6, face, r, icon);
+  }
+  // the badge, stood up in the infield of the skid: the card's roundel on its own, 140 across
+  { const P=seat(0.53, inS, 260, 74, 6, (x,z,s)=>yawTo(x,z,s), 900); if(P){ const h=150, face=P.ry, ca=Math.cos(face), sa=Math.sin(face);
+      for(const o of [-22,22]) poles.push({x:P.x+o*ca-sa*1.5, y:TC_FLOOR+h/2, z:P.z-o*sa-ca*1.5, s:3.2, sy:h, sz:3.2, c:TC_INK});
+      disc(P.x, TC_FLOOR+h+60, P.z, face, 72, 0); } }
+  tcBatch(new T.CylinderGeometry(1,1,1,8), poles, tcFlat('pole'), 600);
+  fronts.forEach((L,icon)=>{ if(!L.length) return;
+    const g=g0.clone(), uv=g.attributes.uv;
+    for(let i=0;i<uv.count;i++) uv.setXY(i, ((icon%4)*256+2+uv.getX(i)*252)/1024, 1-(Math.floor(icon/4)*256+2+(1-uv.getY(i))*252)/512);
+    tcBatch(g, L, new T.MeshBasicMaterial({map:tcTex(tcIconCanvas())}), 0); });
+  tcBatch(g0, backs, new T.MeshBasicMaterial({color:0xffffff}), 0);
+  // waves: sets of two or three breakers, cut in blue, cyan and the grey of the bars
+  const WS=[[0.79,1,90,120],[0.815,1,150,90],[0.85,-1,70,140],[0.875,-1,150,100],[0.92,1,95,110],[0.955,-1,60,80],[0.66,1,180,130],[0.30,1,120,110],[0.43,1,150,100]];
+  for(const [u,sd,out,sz] of WS){
+    const tw=(R()<0.5?-1:1)*(0.35+R()*0.45);     // never parallel to the road: always some face toward the approach
+    const side=sd*inS, P=seat(u, side, out, sz, sz*0.2, (x,z,s)=>Math.atan2(s.t.x,s.t.z)+Math.PI/2+tw); if(!P) continue;
+    const h=sz*(0.75+R()*0.3);
+    [TC_BARS[6],TC_BARS[2],TC_BARS[0]].forEach((c,k)=>waves[k].push({x:P.x, y:TC_FLOOR, z:P.z, s:sz, sy:h, sz:sz, ry:P.ry, c}));
+  }
+  const WG=tcWaveShapes(); WG.forEach((g,k)=>tcBatch(g, waves[k], tcFlat('wave'+k,{mat:{side:T.DoubleSide}}), 700));
+  // boards stuck in the field, in fanned clusters
+  const BS=[[0.02,1,80,5],[0.82,-1,60,4],[0.895,1,80,6],[0.935,-1,62,3],[0.61,-1,64,4],[0.205,1,80,5],[0.735,1,82,4]];
+  BS.forEach(([u,sd,out,n],ci)=>{ const side=sd*inS;
+    const P=seat(u, side, out, n*8+10, 14, (x,z,s)=>Math.atan2(s.t.x,s.t.z)+Math.PI/2); if(!P) return;
+    const ca=Math.cos(P.ry), sa=Math.sin(P.ry);
+    for(let b=0;b<n;b++){ const lx=(b-(n-1)/2)*15+(R()-0.5)*4, h=52+R()*36, c=TC_BARS[(ci*2+b*3)%7];
+      const x=P.x+lx*ca, z=P.z-lx*sa, lean=(R()-0.5)*0.22, yaw=P.ry+(R()-0.5)*0.5;
+      boards.push({x, y:TC_FLOOR-4, z, s:h*0.95, sy:h, sz:h, rz:lean, ry:yaw, o:'YXZ', c});
+      strg.push({x, y:TC_FLOOR-4+h*0.47, z, s:h*0.012, sy:h*0.9, sz:h*0.045, rz:lean, ry:yaw, o:'YXZ', c:TC_INK}); } });
+  tcBatch(tcBoardGeo(), boards, tcFlat('board',{mat:{side:T.DoubleSide}}), 700);
+  tcBatch(new T.BoxGeometry(1,1,1), strg, tcFlat('strg'), 700);
+}
+// background life, all of it slow: the hum bar climbs the sky and the bars breathe (both off
+// TC_T in their shaders); the snow in the set is jumped every other frame on a private LCG so
+// it never draws on the game's random stream
+function tcTick(P, t){
+  TC_T.value=t;
+  if(P.snow){ P.f=(P.f||0)+1; if(P.f%2===0) P.snow.offset.set(P.rnd(), P.rnd());
+    const k=0.82+0.10*Math.sin(t*0.7)+0.05*Math.sin(t*5.3); P.snowMat.color.setRGB(k,k,k); }
+}
+// A cool, even studio light for the karts: the card is lit by nothing (every surface of the
+// set is flat colour), so the rig is only for the racers and the pickups — a high neutral
+// key, a slate ambient, and a cyan and a magenta rim off the bars either side.
+function applyTcLighting(){
+  hemi.color.setHex(0xe8eef8); hemi.groundColor.setHex(0x3a3440); hemi.intensity=0.80;
+  sun.color.setHex(0xffffff);  sun.intensity=0.85; sun.position.set(60,160,90);
+  rim.color.setHex(0x40c8ff);  rim.intensity=0.40; rim.position.set(-110,50,-70);
+  fill.color.setHex(0xd040ff); fill.intensity=0.22; fill.position.set(110,30,60);
+  flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+}
+/* The bezel, in screen space: rounded dark corners and fine scanlines over the frame, as a
+   composited DOM layer (no extra render pass, nothing per frame). On for this course only;
+   every build switches it off first. */
+let _tcScreenEl=null;
+function tcScreen(on){
+  if(!on){ if(_tcScreenEl) _tcScreenEl.style.display='none'; return; }
+  if(!_tcScreenEl){
+    const el=document.createElement('div');
+    el.style.cssText='position:absolute;inset:0;pointer-events:none;border-radius:3.2vmin;'
+      +'box-shadow:0 0 0 2.4vmin #0d1316, inset 0 0 7vmin 1.2vmin rgba(8,14,18,.55);'
+      +'background:repeating-linear-gradient(0deg, rgba(0,0,0,.11) 0 1px, transparent 1px 3px);';
+    app.appendChild(el); _tcScreenEl=el;
+  }
+  _tcScreenEl.style.display='block';
+}
+// the jump ramp's marking, road-sign style: two black chevrons on the white wedge
+function tcJumpCanvas(){ return tcCanvas('jump',64,64,(g)=>{
+  g.clearRect(0,0,64,64); g.strokeStyle='#0c0a0a'; g.lineWidth=7; g.lineCap='square'; g.lineJoin='miter';
+  for(const y of [34,52]){ g.beginPath(); g.moveTo(12,y); g.lineTo(32,y-18); g.lineTo(52,y); g.stroke(); } }); }
 
 /* ============== NEON VECTOR KIT (Vera) ============== *
  * The third art direction, after cel-shaded tissue and voxels: glowing wireframe, the way
@@ -36176,10 +36774,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].testcard ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].testcard ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -36204,6 +36802,10 @@ function buildTrack(idx){
   // Pixie: the land fades into the blood-plum band the skyline stands on (decoded, as Eve's)
   if(TRACKS[idx].bit8) scene.fog.color.setHex(PIX_HOR).convertSRGBToLinear();
   hanaGrain(!!TRACKS[idx].hana);         // the paper overlay: on for Hana, off for every other build
+  // Stacey: the land fades into the bezel at the foot of the CRT sky; the screen-space bezel
+  // and scanlines are on for her build and switched off by every other
+  if(TRACKS[idx].testcard) scene.fog.color.setHex(TC_HOR);
+  tcScreen(!!TRACKS[idx].testcard);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -36225,6 +36827,8 @@ function buildTrack(idx){
   const hana  =!!TRACKS[idx].hana;       // ...or as a Hokusai woodblock of a coast road
   const eden  =!!TRACKS[idx].eden;       // ...or as a bioluminescent garden at night
   const pix   =!!TRACKS[idx].bit8;       // ...and on Pixie, the voxel dressing in a world of its own
+  const tc    =!!TRACKS[idx].testcard;   // ...or as a broadcast test card with a surf trip on it
+  const tcTun = tc ? (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]) : null;
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   let MK=null;                           // Lily's ground oracle + prop bag, likewise
   let AK=null;                           // Trixie's block field + prop bag, likewise
@@ -36237,6 +36841,7 @@ function buildTrack(idx){
   if(arc) applyArcadeLighting();         // likewise
   if(hana) applyHanaLighting();          // likewise
   if(eden) applyEdenLighting();          // likewise: a moon, and the garden's own glow
+  if(tc) applyTcLighting();              // likewise: a neutral key, bar-coloured rims
   FELT_NOTCH=null;                       // set again, for Aurora only, in the felt branch
   FELT_LAKE=null;                        // likewise
   // Snapshot the rig the moment it is set, so frame()'s cloud-shadow modulation always
@@ -36255,7 +36860,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix;   // Lily lays its own pond; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc;   // Lily lays its own pond; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -36342,6 +36947,14 @@ function buildTrack(idx){
     hanaTerrain(HK);
     trackGroup.add(hanaSea(ccx, ccz));
     TRACK_PULSE.hana={rainZone:[105,235], rainOp:0};
+  } else if(tc){
+    // Stacey: the CRT sky, the card laid flat as the ground, and the road's slab standing on it
+    // (shoulders, plinth walls and castellation kerbs; see TEST CARD KIT)
+    skyDome=tcSky(); trackGroup.add(skyDome);
+    TC_FLOOR=tcFloorLevel(innerSign);
+    tcGround();
+    tcDeck(innerSign, tcTun);
+    TRACK_PULSE.tc={rnd:harbRnd(0x5707C)};
   } else if(eden){
     // Eve: the night sky, the height oracle, the water, and the whole garden's PLAN — every
     // prop decided as positions before the ground is built, because the ground carries the
@@ -36870,6 +37483,8 @@ function buildTrack(idx){
     /* the stream draws itself in ophWaterMat; nothing to paint into rc here */
   } else if(hana){
     /* the beaten earth is hanaRoadTex(), cached; nothing to paint into rc here */
+  } else if(tc){
+    /* the black stroke is tcRoadTex(); nothing to paint into rc here */
   } else if(eden){
     /* the clay path and its light sheet are edenRoadTex(); nothing to paint into rc here */
   } else if(paint){
@@ -37165,6 +37780,9 @@ function buildTrack(idx){
   if(eden){ const et=edenRoadTex(); rt=et.map; edenEmi=et.emi;
     let L=0; for(let i=1;i<STEPS;i++) L+=SAMP[i].p.distanceTo(SAMP[i-1].p);
     rt.repeat.set(1, L/(40*48)); edenEmi.repeat.copy(rt.repeat); EK.len=L; }
+  // Stacey: one tile (two edge lines, one centre dash) every ~70 units, an integer per lap
+  if(tc){ rt=tcRoadTex(); let L=0; for(let i=0;i<STEPS;i++) L+=SAMP[i].p.distanceTo(SAMP[(i+1)%STEPS].p);
+    rt.repeat.set(1, Math.round(L/70)/40); }
   if(hana){ rt=hanaRoadTex(); rt.repeat.set(1, 1.25);
     const [a,b]=HK.tunIdx[0], rc2=[];
     for(let i=0;i<=LAST;i++){ const k=Math.max(0,Math.min(1,(i-a)/10+0.2,(b-i)/10+0.2));
@@ -37177,6 +37795,8 @@ function buildTrack(idx){
     ? (TRACK_PULSE.oph.water=ophWaterMat(OK.geo.userData.lap))
     : hana
     ? new T.MeshBasicMaterial({map:rt, color:0xffffff, vertexColors:true, side:T.DoubleSide})
+    : tc
+    ? new T.MeshBasicMaterial({map:rt, color:0xffffff, side:T.DoubleSide})   // flat: the stroke is not lit
     : eden
     // glossy clay that catches the moon, with its markings in a separate light sheet
     ? new T.MeshPhongMaterial({map:rt, emissiveMap:edenEmi, emissive:0xffffff, color:0xffffff,
@@ -37237,7 +37857,7 @@ function buildTrack(idx){
   }
   // Felicia hems its own deck below with a couched cord, which is a better edge than a
   // one-pixel additive line and is the correct one in fibre. Every other course keeps this.
-  if(!felt && !oph && !macro && !arc && !hana && !eden) for(const side of [HW,-HW]){   // Eve: a glowing kerb (edenKerb)
+  if(!felt && !oph && !macro && !arc && !hana && !eden && !tc) for(const side of [HW,-HW]){   // Stacey: the edge lines are painted   // Eve: a glowing kerb (edenKerb)
      // Hana: the road hems itself in ink
     // Lily: the glazed lip is its edge
     const ep=[];
@@ -37357,7 +37977,7 @@ function buildTrack(idx){
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
-  motes.visible=!hana && !eden;          // additive sparks have no place in a print; Eve has her own fireflies
+  motes.visible=!hana && !eden && !tc;          // additive sparks have no place in a print; Eve has her own fireflies
   TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
@@ -37442,6 +38062,8 @@ function buildTrack(idx){
     const bw=lilyBridge(MK, innerSign, 60); MK.G.rac.push(...bw.rac); MK.G.wLeaf.push(...bw.leaf);
   } else if(arc){
     TRACK_PULSE.arc.bulbs=arcGantry(AK, innerSign);   // the arcade marquee (see arcGantry)
+  } else if(tc){
+    tcGate(innerSign);                    // the card's top two rows as a beam, the roundel on it
   } else if(hana){
     hanaStartBridge(HK, innerSign, 36);  // the timber arch and its cartouche, ahead of the grid
   } else if(eden){
@@ -37740,6 +38362,8 @@ function buildTrack(idx){
     veraEdge(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(arc){
     arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
+  } else if(tc){
+    /* shoulders, plinth and castellation kerbs were laid with the deck (tcDeck) */
   } else if(hana){
     hanaVerge(HK, innerSign);             // fence outside 28.2, shrubs outside 48.4
   } else if(eden){
@@ -37897,6 +38521,8 @@ function buildTrack(idx){
     veraTunnels(tun);                     // Tempest webs: banked hoops at 31 and rails over the top
   } else if(arc){
     TRACK_PULSE.arc.torch=arcTunnel(AK, innerSign);   // castle gate through the hill
+  } else if(tc){
+    Object.assign(TRACK_PULSE.tc, tcTunnel(tcTun, innerSign));   // the set, and the snow inside it
   } else if(hana){
     // the breaker over the first, the timber bridge along the second
     const [w0,w1]=HK.tunIdx[0], [b0,b1]=HK.tunIdx[1];
@@ -37989,7 +38615,8 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc){   // Stacey: the castellation kerb is the wall
+    // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -38131,6 +38758,7 @@ function buildTrack(idx){
       const wedge=new T.Mesh(new T.BoxGeometry(HW*1.5,4.5,12),
         oph ? new T.MeshLambertMaterial({color:ophLin(0x5e4c38)})     // Ophelia: a weathered plank ramp
             : hana ? new T.MeshLambertMaterial({color:hanaLin(0x7a6048)})   // Hana: a timber ramp
+            : tc ? tcFlat('ramp',{mat:{color:tcLin(0xe6f7ff)}})              // Stacey: a white wedge
             : new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
       const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
@@ -38142,6 +38770,8 @@ function buildTrack(idx){
       const mk=mark.material; mk.polygonOffset=true; mk.polygonOffsetFactor=-2; mk.polygonOffsetUnits=-2;
       mark.rotation.set(Math.PI/2-0.42, Math.PI, 0);
       mark.position.set(0, 3.45+Math.cos(0.42)*0.08, 2.08-Math.sin(0.42)*0.08); grp.add(mark);
+      // Stacey: added light vanishes on a white wedge — print black chevrons instead
+      if(tc){ mk.map=tcTex(tcJumpCanvas(),{clamp:true}); mk.blending=T.NormalBlending; }
       trackGroup.add(grp);
       const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana) trackGroup.add(halo);
       jumpPads.push({x:sp.p.x+sp.t.x*3, z:sp.p.z+sp.t.z*3, r:12});
@@ -39095,6 +39725,8 @@ function buildTrack(idx){
     trackGroup.add(beadBatch(orbs));
   } else if(wire){
     Object.assign(TRACK_PULSE.vera, veraScenery(innerSign, ccx, ccz));   // phage, helices, cells, solids, obstacles
+  } else if(tc){
+    tcScenery(innerSign, tcTun);          // bar walls, the skid's towers, roundels, waves, boards
   } else if(hana){
     const P=hanaScenery(HK, innerSign);
     Object.assign(TRACK_PULSE.hana, P);
@@ -39201,6 +39833,8 @@ function buildTrack(idx){
     // Hana: tawara, straw rice bales roped at the ends, stacked by the road
     const BALEG = hana ? new T.CylinderGeometry(1,1,2.3,10).rotateZ(Math.PI/2) : null;
     const BALEM = hana ? [0xd8c07e,0xc9ae6a,0xe0cc92].map(c=>new T.MeshLambertMaterial({color:hanaLin(c)})) : null;
+    // Stacey: three blocks of bar colour, flat-toned like everything else on the card
+    const TCBM = tc ? TC_BARS.map((c,i)=>tcFlat('brk',{mat:{color:tcLin(c)}})) : null;
     for(let k=0;k<NB;k++){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
       const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
@@ -39237,18 +39871,19 @@ function buildTrack(idx){
           : vox ? new T.BoxGeometry(r*1.9,r*1.9,r*1.9)
           : oph ? POSYG
           : hana ? BALEG
-          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : oph ? POSY[(k+c)%4] : hana ? BALEM[(k+c)%3] : m);
+          : tc ? new T.BoxGeometry(r*1.8,r*1.8,r*1.8)
+          : new T.SphereGeometry(r,10,8), pool ? BALL[(k+c)%4] : oph ? POSY[(k+c)%4] : hana ? BALEM[(k+c)%3] : tc ? TCBM[(k*3+c*2)%7] : m);
         // Ophelia: three flat flower heads lying on the water, each with its eye
         blob.position.set((Math.random()*2-1)*1.6,(Math.random()*1.4),(Math.random()*2-1)*1.6);
         if(oph){ blob.scale.set(r*1.05,1,r*1.05); blob.position.y=-0.3+c*0.04; blob.rotation.y=Math.random()*6.28;
           const e=new T.Mesh(POSYE, POSYEM); e.position.y=0.06; blob.add(e); }
         if(felt) blob.scale.setScalar(r*1.25);
         if(hana){ blob.scale.setScalar(r*0.75); blob.position.set((c-1)*r*0.8, c===2?r*1.3:0, (Math.random()-0.5)*0.6); blob.rotation.y=Math.random()*0.3; }
-        if(vox) blob.rotation.y=Math.random()*0.6;
+        if(vox||tc) blob.rotation.y=Math.random()*0.6;
         if(wire) blob.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);
         grp.add(blob); }
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:tc?[226,58,193,118,285,0,245][(k*3)%7]:300+hue});
     }
   }
 
@@ -50359,6 +50994,8 @@ function frame(now){
   if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
   if(TRACK_PULSE.hana) hanaTick(TRACK_PULSE.hana, tsec);
+  // Stacey: the hum bar climbs the sky, the bars breathe, the snow in the set boils
+  if(TRACK_PULSE.tc) tcTick(TRACK_PULSE.tc, tsec);
   // Eve: glow breathes, fronds sway, water ripples, fireflies drift
   if(TRACK_PULSE.eden) edenTick(TRACK_PULSE.eden, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
