@@ -26971,8 +26971,9 @@ const TRACKS=[
   // other circuit, but the entire world is dressed in voxels instead of wet tissue. The
   // fleshy tube is replaced by a stepped cube viaduct, the villi border by red/white blocky
   // curbs, the torus tunnel rings by cube arches, and the scenery by colour-banded towers.
-  // Three giant voxel Salty statues stand trackside as landmarks. voxel:true drives all of it.
-  {name:'Pixie', voxel:true, sc:1.95, wig:0.22, laps:4, key:2, tempo:196, sky:0x101a2e, tunnels:[[0.36,0.46]],
+  // Three giant voxel Salty statues stand trackside as landmarks. voxel:true drives all of it;
+  // bit8:true gives Pixie its own world on top of that shared dressing (8-BIT BLOODSTREAM KIT).
+  {name:'Pixie', voxel:true, bit8:true, sc:1.95, wig:0.22, laps:4, key:2, tempo:196, sky:0x101a2e, tunnels:[[0.36,0.46]],
    critters:[0.62], pills:[0.22],
    ctrl:[[367,6,96],[430,16,-120],[279,32,-349],[30,48,-440],[-230,56,-350],
          [-399,62,-140],[-322,48,34],[-325,34,209],[-129,24,342],[121,16,422],
@@ -27417,6 +27418,739 @@ function saltyVox(){
   return out;
 }
 
+/* ============== 8-BIT BLOODSTREAM, second pass (Pixie) ============== *
+ * The first cut put pastel blocks on a void, and it held up while the lap was ~3,000 units.
+ * At twice the footprint it fell apart into its parts: a flat mauve floor with no grain to
+ * read speed against, a navy sky with nothing in it, fog at 560 so nothing past a few
+ * hundred units existed, kerb cubes and tower bases hanging in mid-air beside an elevated
+ * deck, and three Salty heads floating at road height. The fixes are hierarchy first:
+ *   ONE FOCAL POINT  - the HEART: a heart container, spinning on a stepped plinth in the
+ *                      middle of the infield, big enough to read from every corner of the
+ *                      lap (it is the course's compass) and beating, gently, lub-dub.
+ *   SECONDARY MARKS  - the three Salty monuments, now on columns that reach the floor, and
+ *                      red cells standing on edge like coins, turning slowly, near the road.
+ *   MASS             - stepped mesas walling the outfield, colour-banded towers in districts,
+ *                      white cells resting in clusters, fallen rolls of red cells (rouleaux:
+ *                      red cells really do stack like coins).
+ *   GRAIN            - a Space-Harrier checker floor, low-contrast, so the ground reads as
+ *                      ground at 140 units/s, scattered with low platelet slabs; a voxel deck
+ *                      with shoulders, a brick fascia and red and white parapets standing ON
+ *                      it, carried on stepped piers, so the road is a built slab, not a ribbon.
+ *   SKY              - hard colour bands rising out of a blood-plum horizon, copper bars
+ *                      drifting through it the way C64 raster bars did, a dark blocky
+ *                      skyline of cells against it, and pixel stars. Fog fades the land into
+ *                      exactly the band the skyline stands on.
+ * Everything stands on the floor (PIX_FLOOR_Y, under the lowest banked shoulder) or on the
+ * deck, and everything off the deck is tested against EVERY leg of the corridor (pixClear),
+ * not just the sample it hangs off. The tunnel and the start gate replace the shared ones.
+ * All of it is batched: cubes through pixBatch (chunked by district so whole districts
+ * frustum-cull), voxel figures through pixModel (one merged, face-culled geometry each).
+ * ---------------------------------------------------------------------------------- */
+let PIX_FLOOR_Y=-2;                     // set per build by pixFloorLevel(): under the lowest banked shoulder
+const PIX_HOR=0x44183f;                 // the sky's horizon band (sRGB) - fog takes it decoded
+// The floor cannot sit at the shared ground plane's -2: the start straight runs at y=8 on a
+// 0.36 bank, so the outside shoulder dips under -2 and the parapets came up out of the floor
+// as slivers. It goes a few units under the lowest point of either shoulder instead.
+function pixFloorLevel(inS){ let lo=1e9;
+  for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
+  return Math.floor(lo-4); }
+function pixRnd(seed){ let s=(seed>>>0)||1; return ()=>{ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; }; }
+// is a footprint of radius r at (x,z) clear of every leg of the corridor? 48.4 on the infield
+// side of whichever sample it is beside, 28.2 outside; +2 covers the gap between samples
+function pixClear(x,z,r){
+  for(let i=0;i<STEPS;i++){ const s=SAMP[i], dx=x-s.p.x, dz=z-s.p.z, d2=dx*dx+dz*dz;
+    if(d2>(HW*2.2+r+14)*(HW*2.2+r+14)) continue;
+    const inner=(dx*s.n.x+dz*s.n.z)*innerSign>0;
+    if(Math.sqrt(d2)<(inner?HW*2.2:HW*1.28)+r+2) return false; }
+  return true; }
+// the banked deck's frame at sample i: x across (banked), y up off the deck, z along
+function pixFrame(i){ const s=SAMP[((i%STEPS)+STEPS)%STEPS];
+  const z=s.t.clone().normalize(), x=s.bn.clone().addScaledVector(z,-s.bn.dot(z)).normalize(), y=new T.Vector3().crossVectors(z,x);
+  return {s, x, y, z, q:new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(x,y,z))}; }
+// cubes {x,y,z,s,sy,sz,rx,ry,rz,o|q,c} -> InstancedMesh per district. chunk (units) splits the
+// list into squares of ground with their own bounding spheres so off-screen districts cull.
+function pixBatch(list, mat, chunk, geo, jit){
+  const J=jit==null?1:jit, out=[], groups=new Map();
+  for(const v of list){ const k=chunk?(Math.floor(v.x/chunk)+512)*4096+(Math.floor(v.z/chunk)+512):0;
+    let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(v); }
+  const d=new T.Object3D(), c=new T.Color(), hsl={h:0,s:0,l:0};
+  for(const L of groups.values()){
+    const g=(geo||VOX_GEO).clone(), m=new T.InstancedMesh(g, mat, L.length);
+    let cx=0,cy=0,cz=0; for(const v of L){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=L.length; cy/=L.length; cz/=L.length;
+    let r=0;
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z);
+      if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
+      const sx=v.s, sy=v.sy!=null?v.sy:v.s, sz=v.sz!=null?v.sz:v.s;
+      d.scale.set(sx,sy,sz); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+      c.set(v.c);
+      if(J){ c.getHSL(hsl); const j=voxHash(Math.round(v.x),Math.round(v.y),Math.round(v.z));
+        c.setHSL((hsl.h+(j-0.5)*0.04*J+1)%1, Math.max(0,Math.min(1,hsl.s+(j-0.5)*0.16*J)),
+                 Math.max(0.03,Math.min(0.95,hsl.l+(j-0.5)*0.20*J))); }
+      m.setColorAt(i,c);
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.hypot(sx,sy,sz)*0.5+1); });
+    m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+    g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    m.frustumCulled=!!chunk; trackGroup.add(m); out.push(m);
+  }
+  return out; }
+// a voxel figure {x,y,z,c} (integer cells) as ONE merged geometry: only faces with no
+// neighbour are emitted, colours ride the vertices with voxBatch's positional shimmer, so
+// a figure of a few thousand cells is a few thousand triangles and one draw however placed
+const PIX_FACES=[[1,0,0,[[1,0,0],[1,1,0],[1,1,1],[1,0,1]]], [-1,0,0,[[0,0,0],[0,0,1],[0,1,1],[0,1,0]]],
+                 [0,1,0,[[0,1,0],[0,1,1],[1,1,1],[1,1,0]]], [0,-1,0,[[0,0,0],[1,0,0],[1,0,1],[0,0,1]]],
+                 [0,0,1,[[0,0,1],[1,0,1],[1,1,1],[0,1,1]]], [0,0,-1,[[0,0,0],[0,1,0],[1,1,0],[1,0,0]]]];
+function pixModel(vox, jit){
+  const J=jit==null?1:jit, M=new Map(), key=(x,y,z)=>x+'|'+y+'|'+z;
+  for(const v of vox) M.set(key(v.x,v.y,v.z),v);
+  const P=[],N=[],C=[],I=[], c=new T.Color(), hsl={h:0,s:0,l:0};
+  for(const v of M.values()){
+    c.set(v.c); if(J){ c.getHSL(hsl); const j=voxHash(v.x*7+3,v.y*7+5,v.z*7+1);
+      c.setHSL((hsl.h+(j-0.5)*0.03*J+1)%1, hsl.s, Math.max(0.03,Math.min(0.95,hsl.l+(j-0.5)*0.12*J))); }
+    for(const [nx,ny,nz,q] of PIX_FACES){ if(M.has(key(v.x+nx,v.y+ny,v.z+nz))) continue;
+      const b=P.length/3;
+      for(const [a,bq,cq] of q){ P.push(v.x+a-0.5, v.y+bq-0.5, v.z+cq-0.5); N.push(nx,ny,nz); C.push(c.r,c.g,c.b); }
+      I.push(b,b+1,b+2, b,b+2,b+3); } }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('normal',new T.Float32BufferAttribute(N,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(C,3)); g.setIndex(I); g.computeBoundingSphere();
+  return g; }
+// Lambert, not Phong: every face of a voxel already carries its own normal, so per-vertex
+// light IS flat shading here, and it costs a fraction of a per-pixel lobe nobody would see
+function pixMat(o){ return new T.MeshLambertMaterial(o||{}); }
+// THE HEART CONTAINER: the 13x11 sprite every console drew, extruded - thicker through the
+// middle than at the rim so it has a body edge-on - with the dark rim and the white shine
+function pixHeartVox(){
+  const B=['..XXX...XXX..','.XWWXX.XXXXX.','XWPXXXXXXXXXX','XPXXXXXXXXXXX','XXXXXXXXXXXXX',
+           '.XXXXXXXXXXX.','..XXXXXXXXX..','...XXXXXXX...','....XXXXX....','.....XXX.....','......X......'];
+  const at=(r,c)=>r>=0&&r<B.length&&c>=0&&c<13&&B[r][c]!=='.';
+  const out=[];
+  for(let r=0;r<B.length;r++) for(let c=0;c<13;c++){ if(!at(r,c)) continue;
+    const ch=B[r][c], rim=!at(r-1,c)||!at(r+1,c)||!at(r,c-1)||!at(r,c+1);
+    const col=ch==='W'?0xfff0f2:ch==='P'?0xff9aae:rim?0x9c0c2a:0xe8203c, d=rim?1:2;
+    for(let z=-d;z<=d;z++) out.push({x:c-6, y:B.length-1-r, z, c:col}); }
+  return out; }
+// a red cell: a disc, thick at the rim and thin through the pale centre (central pallor)
+function pixCellDiscVox(R){
+  const out=[];
+  for(let x=-R;x<=R;x++) for(let y=-R;y<=R;y++){ const r=Math.hypot(x,y); if(r>R+0.3) continue;
+    const rim=r>R*0.6, edge=r>R-0.9;
+    const c=edge?0xa8142c:rim?0xe02442:0xf08a9a;
+    if(rim){ for(let z=-1;z<=1;z++) out.push({x,y,z,c}); } else out.push({x,y,z:0,c}); }
+  return out; }
+// a white cell: a lumpy sphere, pale lavender, with a few violet lobes of nucleus showing
+function pixWhiteVox(seed){
+  const R=pixRnd(seed), out=[], bumps=[];
+  for(let k=0;k<6;k++){ const a=R()*6.283, b=Math.acos(R()*2-1); bumps.push([Math.sin(b)*Math.cos(a),Math.cos(b),Math.sin(b)*Math.sin(a),0.5+R()*0.8]); }
+  for(let x=-5;x<=5;x++) for(let y=-5;y<=5;y++) for(let z=-5;z<=5;z++){ const r=Math.hypot(x,y,z); if(r<0.01) continue;
+    let rr=3.5; for(const [bx,by,bz,h] of bumps){ const d=(x*bx+y*by+z*bz)/r; if(d>0.8) rr+=h*(d-0.8)/0.2; }
+    if(r>rr) continue;
+    const nuc=bumps.some(([bx,by,bz])=>(x*bx+y*by+z*bz)/r>0.93);
+    out.push({x,y,z,c:nuc?0x8a64c8:((x+y+z)&1)?0xe4dcf4:0xd6cdee}); }
+  return out; }
+// 5x7 pixel font, just the letters the course spells
+const PIX_FONT={S:['.####','#....','#....','.###.','....#','....#','####.'],T:['#####','..#..','..#..','..#..','..#..','..#..','..#..'],
+  A:['.###.','#...#','#...#','#####','#...#','#...#','#...#'],R:['####.','#...#','#...#','####.','#.#..','#..#.','#...#']};
+
+/* THE SKY, as a camera-centred group (it rides on skyDome, so it can never cross the far
+   plane): hard colour bands rising from a blood-plum horizon (a 1-texel-wide strip on the
+   dome, NearestFilter, so the bands stay hard - Trixie dithers a sunset; this is a vessel
+   at night); a cylinder of copper bars low in the sky, sliding up and down on a long period
+   the way C64 raster bars did; a blocky skyline of cell-humps standing dark against the
+   horizon band in two layers; and square pixel stars, a few of which breathe. All of it is
+   textures and flat colour - no per-pixel sky shader - because the dome covers half of
+   every frame and on a phone that half is the cost. */
+function pixSky(){
+  const G=new T.Group(), R=pixRnd(0x5C1E), TAU=Math.PI*2;
+  // bands: v runs pole to pole on the sphere, so elevation e sits at v=0.5+e/PI
+  { const N=512, c=document.createElement('canvas'); c.width=2; c.height=N; const g=c.getContext('2d');
+    const B=[[-1.6,'#44183f'],[0.022,'#361844'],[0.055,'#2a1844'],[0.095,'#20173f'],[0.150,'#181637'],[0.240,'#11152e'],[0.380,'#0b1024']];
+    for(let y=0;y<N;y++){ const e=(0.5-(y+0.5)/N)*Math.PI; let col=B[0][1]; for(const [e0,cc] of B) if(e>=e0) col=cc; g.fillStyle=col; g.fillRect(0,y,2,1); }
+    const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.magFilter=T.NearestFilter; t.minFilter=T.NearestFilter; t.generateMipmaps=false;
+    const m=new T.Mesh(new T.SphereGeometry(1150,24,48), new T.MeshBasicMaterial({map:t, side:T.BackSide, depthWrite:false, fog:false}));
+    m.renderOrder=-3; G.add(m); }
+  // copper bars: one open cylinder, two broad bars on black, added over the bands. Broad
+  // and soft-edged in steps, so they read as raster bars and not as two more neon lines
+  let bars;
+  { const N=64, c=document.createElement('canvas'); c.width=2; c.height=N; const g=c.getContext('2d');
+    g.fillStyle='#000'; g.fillRect(0,0,2,N);
+    const F=[1,0.86,0.70,0.52,0.34,0.18];
+    for(const [y0,col] of [[18,[54,18,50]],[44,[36,26,64]]])
+      for(let k=-5;k<=5;k++){ const f=F[Math.abs(k)];
+        g.fillStyle=`rgb(${col.map(v=>Math.round(v*f)).join(',')})`; g.fillRect(0,y0+k,2,1); }
+    const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.magFilter=T.NearestFilter; t.minFilter=T.NearestFilter; t.generateMipmaps=false;
+    t.wrapT=T.RepeatWrapping;
+    const r=1100, h=r*Math.tan(0.26)-r*Math.tan(0.03);
+    bars=new T.Mesh(new T.CylinderGeometry(r,r,h,48,1,true), new T.MeshBasicMaterial({map:t, side:T.BackSide, transparent:true,
+      blending:T.AdditiveBlending, depthWrite:false, fog:false}));
+    bars.position.y=r*Math.tan(0.03)+h/2; bars.renderOrder=-1; G.add(bars); }
+  // the skyline: two rings of quantised humps, one column per 1.5 degrees, flat-topped. It
+  // writes depth, so the bars (drawn later, additively) pass behind it, not over it
+  { const P=[], C=[], col=new T.Color(), STEP=0.0092;
+    for(const [r,lo,amp,wid,hex] of [[1080,0.035,0.075,0.30,0x22102e],[1050,0.018,0.050,0.22,0x0e0618]]){
+      const H=[]; for(let k=0;k<18;k++) H.push([(k+0.25+0.5*R())/18*TAU, wid*(0.6+0.8*R()), lo+amp*R()]);
+      col.setHex(hex).convertSRGBToLinear();
+      const N=240, yb=r*Math.tan(-0.006);
+      for(let k=0;k<N;k++){ const a0=k/N*TAU, a1=(k+1)/N*TAU, am=(a0+a1)/2; let h=0;
+        for(const [c0,w,hh] of H){ let d=am-c0; d-=TAU*Math.round(d/TAU); d/=w; if(d*d<1) h=Math.max(h, hh*Math.sqrt(1-d*d)); }
+        h=Math.floor(h/STEP)*STEP; if(h<=0) continue;
+        const yt=r*Math.tan(h), x0=Math.cos(a0)*r, z0=Math.sin(a0)*r, x1=Math.cos(a1)*r, z1=Math.sin(a1)*r;
+        for(const v of [[x0,yb,z0],[x1,yb,z1],[x1,yt,z1], [x0,yb,z0],[x1,yt,z1],[x0,yt,z0]]){ P.push(...v); C.push(col.r,col.g,col.b); } } }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+    const m=new T.Mesh(g, new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide, fog:false}));
+    m.renderOrder=-2; G.add(m); }
+  // pixel stars, upper sky only, two colours in one draw; they breathe together, slowly
+  let stars;
+  { const P=[], C=[], col=new T.Color();
+    for(const [n,hex] of [[220,0xa8c8e8],[46,0xffd0e0]]){ col.setHex(hex);
+      for(let k=0;k<n;k++){ const a=R()*TAU, e=0.22+Math.pow(R(),0.7)*1.2, r=1000;
+        P.push(Math.cos(a)*Math.cos(e)*r, Math.sin(e)*r, Math.sin(a)*Math.cos(e)*r); C.push(col.r,col.g,col.b); } }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+    const m=new T.Points(g, new T.PointsMaterial({vertexColors:true, size:2.5, sizeAttenuation:false, transparent:true, opacity:0.8, depthWrite:false, fog:false}));
+    m.renderOrder=-1; G.add(m); stars=m.material; }
+  G.userData.pix={bars:bars.material.map, star:stars};
+  return G; }
+// The floor: a low-contrast checker with a little pixel grit in it. NearestFilter up close
+// for crisp squares, mipmapped + anisotropic far off so the checker greys out instead of
+// crawling into moire at the horizon.
+function pixFloorTex(){
+  const c=document.createElement('canvas'); c.width=c.height=256; const g=c.getContext('2d'), R=pixRnd(0x9B17);
+  for(let y=0;y<8;y++) for(let x=0;x<8;x++){
+    g.fillStyle=(x+y)&1?'#2e1a3a':'#352040'; g.fillRect(x*32,y*32,32,32);
+    if(R()<0.42){ const s=R()<0.5?4:8; g.fillStyle=R()<0.6?'#3e2648':'#26152f';
+      g.fillRect(x*32+4+((R()*(24-s))|0), y*32+4+((R()*(24-s))|0), s, s); } }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter;
+  t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  return t; }
+// the deck shoulder: the road's own 8px blocks at the road's own scale, two navies darker, so
+// the shoulder reads as more deck rather than as a second surface; and the rumble strip
+function pixDeckTex(){
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  for(let y=0;y<64;y+=8) for(let x=0;x<64;x+=8){ g.fillStyle=((x>>3)+(y>>3))&1?'#16223f':'#111b37'; g.fillRect(x,y,8,8); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter;
+  return t; }
+function pixFasciaTex(){
+  const c=document.createElement('canvas'); c.width=64; c.height=16; const g=c.getContext('2d');
+  for(let y=0;y<16;y+=8) for(let x=0;x<64;x+=16){ const o=(y>>3)&1?8:0;
+    g.fillStyle='#22305e'; g.fillRect(((x+o)%64),y,16,8); g.fillStyle='#141c3c'; g.fillRect(((x+o)%64),y+7,16,1); g.fillRect(((x+o)%64)+15,y,1,8); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter; return t; }
+
+// THE DECK. Shoulders out to 35 outside and 54 inside: the infield apron to 48.4 is a legal
+// shortcut, so it is drawn as deck you can see you are allowed onto, instead of a pane of pink
+// glass hanging in the air at its edge. The road's checker two navies darker, a brick fascia
+// off each shoulder's lip, and the walls where the physics puts them, as red and white
+// parapets standing ON the shoulder: 29.3-32.3 outside (the wall is 28.2), 49.3-52.3 inside
+// (48.4). The road keeps its own cyan rail as its edge - a rumble strip beside it as well
+// made the edge a double line and put red and white on both sides of every frame. In the
+// tunnel the arches stand where the parapets would be, so they stop there.
+function pixDeck(inS, tunIdx){
+  const LAST=STEPS, inT=i=>tunIdx.some(([a,b])=>i>=a-2&&i<=b+2);
+  const D={p:[],u:[],i:[]}, F={p:[],u:[],i:[]};
+  const strip=(B,side,l0,l1,uv)=>{ const b0=B.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], a=s.p.clone().addScaledVector(s.bn,side*l0), o=s.p.clone().addScaledVector(s.bn,side*l1);
+      B.p.push(a.x,a.y+0.05,a.z, o.x,o.y+0.05,o.z); const [u0,u1,v]=uv(i); B.u.push(u0,v, u1,v); }
+    for(let i=0;i<LAST;i++){ const a=b0+i*2; B.i.push(a,a+1,a+2, a+1,a+3,a+2); } };
+  for(const side of [1,-1]){ const OUT=side===inS?54:35;
+    strip(D, side, HW, OUT, i=>[HW/44, OUT/44, i*0.2143]);
+    const f0=F.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], o=s.p.clone().addScaledVector(s.bn,side*OUT);
+      F.p.push(o.x,o.y+0.05,o.z, o.x,o.y-6.5,o.z); F.u.push(i*0.45,1, i*0.45,0); }
+    for(let i=0;i<LAST;i++){ const f=f0+i*2; F.i.push(f,f+2,f+1, f+1,f+2,f+3); } }
+  const mk=(B,mat)=>{ const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(B.p,3));
+    g.setAttribute('uv',new T.Float32BufferAttribute(B.u,2)); g.setIndex(B.i); g.computeVertexNormals(); trackGroup.add(new T.Mesh(g,mat)); };
+  mk(D, new T.MeshLambertMaterial({map:pixDeckTex(), color:0xffffff, side:T.DoubleSide}));
+  mk(F, new T.MeshLambertMaterial({map:pixFasciaTex(), color:0xffffff, side:T.DoubleSide}));
+  // the parapets: vertical walls (a wall does not lean with the bank) extruded along the lap
+  // as one double-sided ribbon - the face toward the road and the top; nothing sees the
+  // back - sunk a unit into the shoulder, coloured in 3-sample runs so the blocks read 28
+  // long while the geometry follows the curve sample by sample
+  // laterals here are HORIZONTAL, as the physics measures its walls: along the banked bn a
+  // point at 29.3 is only 27.4 out on a 0.36 bank, inside the wall
+  const P=[], C=[], col=new T.Color(), pt=(s,L)=>s.p.clone().addScaledVector(s.bn,L/Math.cos(s.bank||0));
+  for(const [side,l0,l1,h,t] of [[-inS,29.3,32.3,3.6,0],[inS,49.3,52.3,3.6,1]]){
+    for(let i=0;i<STEPS;i++){ if(inT(i)) continue;
+      const A=SAMP[i], B=SAMP[(i+1)%STEPS];
+      col.setHex((((i/3)|0)+t)%2?0xb0122c:0xcfc2cc);
+      const a0=pt(A,side*l0), a1=pt(A,side*l1), b0=pt(B,side*l0), b1=pt(B,side*l1);
+      const ta=Math.max(a0.y,a1.y)+h, tb=Math.max(b0.y,b1.y)+h;
+      const q=(p0,p1,p2,p3)=>{ for(const v of [p0,p1,p2, p0,p2,p3]){ P.push(v[0],v[1],v[2]); C.push(col.r,col.g,col.b); } };
+      q([a0.x,a0.y-1,a0.z],[b0.x,b0.y-1,b0.z],[b0.x,tb,b0.z],[a0.x,ta,a0.z]);       // the face toward the road
+      q([a0.x,ta,a0.z],[b0.x,tb,b0.z],[b1.x,tb,b1.z],[a1.x,ta,a1.z]);               // top
+      if(inT(i+1)||inT(i-1)){ const e=inT(i+1)?[b0,b1,tb]:[a0,a1,ta];                 // close the run at a tunnel mouth
+        q([e[0].x,e[0].y-1,e[0].z],[e[0].x,e[2],e[0].z],[e[1].x,e[2],e[1].z],[e[1].x,e[1].y-1,e[1].z]); } } }
+  const pg=new T.BufferGeometry(); pg.setAttribute('position',new T.Float32BufferAttribute(P,3));
+  pg.setAttribute('color',new T.Float32BufferAttribute(C,3)); pg.computeVertexNormals();
+  trackGroup.add(new T.Mesh(pg, pixMat({vertexColors:true, side:T.DoubleSide})));
+}
+
+// THE VIADUCT: stepped piers under the deck on an irregular stride, each with a banked cap
+// spanning both shoulders so the slab visibly rests on something
+function pixPiers(){
+  const L=[], R=pixRnd(0x51E8);
+  for(let i=2;i<STEPS;i+=5+((R()*5)|0)){
+    const A=pixFrame(i), s=A.s, top=s.p.y-0.6, drop=top-PIX_FLOOR_Y; if(drop<3) continue;
+    const ry=Math.atan2(s.t.x,s.t.z);
+    const c=A.s.p.clone().addScaledVector(A.y,-2.7);
+    L.push({x:c.x,y:c.y,z:c.z, s:72, sy:3.6, sz:5.5, q:A.q, c:0x2a3a6b});
+    const n=Math.max(1,Math.round((drop-3)/7));
+    for(let k=0;k<n;k++){ const h=(drop-3)/n, w=9+k*1.9;
+      L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w*0.8, ry, c:k%2?0x39508f:0x2a3a6b}); }
+  }
+  pixBatch(L, pixMat(), 1400);
+}
+
+// TUNNEL: purple cube arches on an irregular stride, with heavier gold-keyed portals at the
+// mouths. The profile is a tombstone, not a half-ellipse: legs stand straight up from the
+// shoulders at 31 (inner face 28.8, outside the 28.2 tunnel wall) to 20 over the deck, and
+// only then does the crown turn in - an ellipse struck from the road's centre would cross
+// the wall a few units up, exactly where a kart's body is.
+function pixTunnel(tunIdx){
+  const arch=[], LAT=31, LEG=20, CR=13;
+  for(const [i0,i1] of tunIdx){ let n=0;
+    for(let i=i0;i<=i1;i+=3+(n%3), n++){
+      const s=SAMP[i%STEPS], mouth=i<i0+3||i>i1-4, ry=Math.atan2(s.t.x,s.t.z), tb=Math.tan(s.bank||0);
+      // a LEVEL arch over a banked deck, as a real portal is: both legs plumb, each standing
+      // on the deck at 31 out (horizontal), the low side's leg longer, and the crown struck
+      // level from the higher leg's head - a frame leaning with the bank swung its legs in
+      // across the wall on the low side
+      const yA=s.p.y+tb*LAT, yB=s.p.y-tb*LAT, top=Math.max(yA,yB)+LEG, cell=[];
+      for(const [side,y0] of [[1,yA],[-1,yB]]) for(let y=y0+2.2;y<top;y+=4.4) cell.push([side*LAT,y]);
+      for(let a=0;a<=18;a++){ const th=Math.PI*(a/18); cell.push([Math.cos(th)*LAT, top+Math.sin(th)*CR]); }
+      cell.forEach(([off,y],k)=>{ const key=Math.abs(off)<3&&y>top+8;
+        arch.push({x:s.p.x+s.n.x*off, y, z:s.p.z+s.n.z*off, s:4.4, sy:4.4, sz:mouth?7:4.4, ry,
+          c:mouth?(key?0xffd24a:0x5a2a9a):(k%2?0x7b46b8:0x9d68e0)}); }); } }
+  if(arch.length) pixBatch(arch, pixMat(), 0);
+}
+
+// THE START: a block gantry, posts outside both walls and standing on the floor, with
+// START spelt in yellow pixels on the face the grid looks at; underside 22 over the deck
+function pixGate(inS){
+  const A=pixFrame(0), s=A.s, L=[], ry=Math.atan2(s.t.x,s.t.z), tilt=Math.abs(Math.sin(s.bank||0));
+  const Lo=-inS*36, Li=inS*56, bot=s.p.y+22+tilt*56, BH=13;
+  const at=(lat,y)=>({x:s.p.x+s.n.x*lat, y, z:s.p.z+s.n.z*lat});
+  for(const lat of [Lo,Li]){ const p=at(lat,0), h=bot+BH-PIX_FLOOR_Y;
+    L.push({x:p.x, y:PIX_FLOOR_Y+h/2, z:p.z, s:6, sy:h, sz:6, ry, c:0x2a3a6b});
+    L.push({x:p.x, y:PIX_FLOOR_Y+3, z:p.z, s:10, sy:6, sz:10, ry, c:0x39508f}); }
+  const mid=(Lo+Li)/2, span=Math.abs(Li-Lo)+6, c0=at(mid,bot+BH/2);
+  L.push({x:c0.x, y:c0.y, z:c0.z, s:span, sy:BH, sz:4, ry, c:0x1b2a5a});
+  // chequer under the beam
+  for(let k=0;k<Math.floor(span/3);k++){ const lat=Math.min(Lo,Li)-3+1.5+k*3, p=at(lat,bot+1.2);
+    L.push({x:p.x, y:p.y, z:p.z, s:3, sy:2.4, sz:4.6, ry, c:k%2?0xf2f2f2:0x14182e}); }
+  // START, centred over the road, on the beam's approach face
+  const word='START', px=1.6, W=word.length*6-1;
+  for(let w=0;w<word.length;w++){ const G=PIX_FONT[word[w]];
+    for(let r=0;r<7;r++) for(let cc=0;cc<5;cc++){ if(G[r][cc]!=='#') continue;
+      const lat=-((w*6+cc)-(W-1)/2)*px*Math.sign(1), p=at(lat, bot+BH/2+(3-r)*px);
+      L.push({x:p.x-s.t.x*2.4, y:p.y, z:p.z-s.t.z*2.4, s:px, sy:px, sz:1.2, ry, c:0xffd24a}); } }
+  pixBatch(L, pixMat({emissive:0x10183a}), 0, null, 0.5);
+}
+
+// Everything off the deck. Returns the moving parts for pixTick.
+function pixScenery(inS, ccx, ccz){
+  const R=pixRnd(0x8B17), P={};
+  const towers=[], mesas=[], lows=[], plinth=[];
+  // the floor, under everything, centred on the course
+  { const fl=new T.Mesh(new T.PlaneGeometry(7600,7600,1,1).rotateX(-Math.PI/2),
+      new T.MeshLambertMaterial({map:pixFloorTex(), color:0xffffff}));
+    fl.material.map.repeat.set(7600/320,7600/320); fl.position.set(ccx,PIX_FLOOR_Y,ccz); trackGroup.add(fl); }
+  const place=(r, minOut, maxOut, side, tries)=>{   // a clear footprint beside a random sample
+    for(let t=0;t<(tries||40);t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
+      const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*20, z=s.p.z+s.n.z*sd*out+(R()*2-1)*20;
+      if(pixClear(x,z,r)) return {x,z,s,sd}; }
+    return null; };
+  // HEART on its plinth, a little off the infield's centroid so it is never exactly behind
+  // the near statue from the start straight
+  { let hx=ccx-40, hz=ccz+30; const VS=9.5;
+    for(let t=0;t<30&&!pixClear(hx,hz,72);t++){ hx=ccx+(R()*2-1)*240; hz=ccz+(R()*2-1)*240; }
+    const tiers=[[96,10,0x2a3a6b],[72,10,0x39508f],[48,10,0x4a62a8],[16,4,0xffd24a]]; let y=PIX_FLOOR_Y;
+    for(const [w,h,c] of tiers){ plinth.push({x:hx, y:y+h/2, z:hz, s:w, sy:h, c}); y+=h; }
+    const hm=new T.Mesh(pixModel(pixHeartVox(), 0.5), pixMat({vertexColors:true, emissive:0x3a0610}));
+    hm.geometry.translate(0,0.5,0);          // tip of the sprite on the origin
+    hm.position.set(hx, y, hz); hm.scale.setScalar(VS); trackGroup.add(hm);
+    P.heart={m:hm, s:VS, e:hm.material.emissive, e0:new T.Color(0x3a0610), e1:new T.Color(0x7a1424)}; }
+  // THREE SALTY MONUMENTS on stepped columns that reach the floor (see saltyVox)
+  // (three meshes on one geometry, not one instanced draw: a batch spanning the course is
+  // never off screen, and two of the three usually are)
+  { const sg=pixModel(saltyVox(), 0.8), sm=pixMat({vertexColors:true});
+    for(const [u,scale,side] of [[0.08,2.6,1],[0.45,2.2,-1],[0.78,2.4,1]]){
+      const s=SAMP[Math.floor(u*STEPS)%STEPS]; let out=HW*3.6, bx=0, bz=0;
+      for(;out<HW*9;out+=6){ bx=s.p.x+s.n.x*side*out; bz=s.p.z+s.n.z*side*out; if(pixClear(bx,bz,7*scale+4)) break; }
+      const by=s.p.y+16, ry=Math.atan2(s.p.x-bx, s.p.z-bz);
+      const m=new T.Mesh(sg, sm); m.position.set(bx,by,bz); m.rotation.y=ry; m.scale.setScalar(scale); trackGroup.add(m);
+      const top=by-5*scale, h=top-PIX_FLOOR_Y;
+      plinth.push({x:bx, y:PIX_FLOOR_Y+h/2, z:bz, s:7*scale, sy:h, ry, c:0x2a3a6b});
+      plinth.push({x:bx, y:top-2, z:bz, s:9*scale, sy:4, ry, c:0x4a62a8});
+      plinth.push({x:bx, y:PIX_FLOOR_Y+4, z:bz, s:11*scale, sy:8, ry, c:0x39508f}); } }
+  // RED CELLS: some standing on edge near the road, turning like coins; others fallen in
+  // rolls (rouleaux), face to face, out in the districts
+  { const dg=pixModel(pixCellDiscVox(5), 0.6), dm=pixMat({vertexColors:true});
+    const spin=[], roll=[];
+    for(let k=0, n=0;n<16 && k<300;k++){ const sc=3.8+R()*3.0, r=5.5*sc;
+      const q=place(r, 6+R()*20, 60+R()*70, null, 1); if(!q) continue;
+      spin.push({x:q.x, y:PIX_FLOOR_Y+5.5*sc, z:q.z, s:sc, ph:R()*6.283, w:(0.22+R()*0.2)*(R()<0.5?-1:1)}); n++; }
+    for(let k=0, n=0;n<4 && k<200;k++){ const sc=2.6+R()*1.6, r=10.5*sc;
+      const q=place(r*1.08, 30, 300, null, 1); if(!q) continue; n++;
+      const yaw=R()*6.283, cnt=4+((R()*3)|0), dx=Math.sin(yaw), dz=Math.cos(yaw);
+      for(let j=0;j<cnt;j++){ const o=(j-(cnt-1)/2)*3.1*sc;
+        roll.push({x:q.x+dx*o, y:PIX_FLOOR_Y+5.2*sc, z:q.z+dz*o, s:sc, ry:yaw+(R()-0.5)*0.10, rx:(R()-0.5)*0.14}); } }
+    const im=new T.InstancedMesh(dg, dm, spin.length); im.frustumCulled=false; trackGroup.add(im);
+    P.coins={m:im, list:spin, d:new T.Object3D()};
+    if(roll.length){ const rm=new T.InstancedMesh(dg.clone(), dm, roll.length), d=new T.Object3D();
+      roll.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(v.rx,v.ry,0,'YXZ'); d.scale.setScalar(v.s); d.updateMatrix(); rm.setMatrixAt(i,d.matrix); });
+      rm.instanceMatrix.needsUpdate=true; rm.frustumCulled=false; trackGroup.add(rm); } }
+  // WHITE CELLS resting in loose clusters
+  { const wg=pixModel(pixWhiteVox(0x77), 0.5), wm=pixMat({vertexColors:true}), L=[], d=new T.Object3D();
+    for(let k=0, n=0;n<7 && k<200;k++){ const q=place(40, 20, 420, null, 1); if(!q) continue; n++;
+      const cnt=1+((R()*3)|0);
+      for(let j=0;j<cnt;j++){ const sc=3.2+R()*3.0, a=R()*6.283, o=j?12+R()*14:0, x=q.x+Math.cos(a)*o*sc*0.4, z=q.z+Math.sin(a)*o*sc*0.4;
+        if(!pixClear(x,z,5.2*sc)) continue;
+        L.push({x, y:PIX_FLOOR_Y+2.9*sc, z, s:sc, ry:R()*6.283}); } }
+    const m=new T.InstancedMesh(wg, wm, L.length);
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,v.ry,0); d.scale.setScalar(v.s); d.updateMatrix(); m.setMatrixAt(i,d.matrix); });
+    m.instanceMatrix.needsUpdate=true; m.frustumCulled=false; trackGroup.add(m); }
+  // TOWERS, in districts: colour-banded, tapering, every one standing on the floor. Most
+  // districts sit close in, where the chase camera's middle distance is: the pastel accents
+  // against the navy were the first cut's best idea and they belong where they are seen
+  { const PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
+    for(let k=0, n=0;n<34 && k<500;k++){ const q=place(30, 6, n%3?150:380, null, 1); if(!q) continue; n++;
+      const cnt=2+((R()*5)|0);
+      for(let j=0;j<cnt;j++){ const w=8+R()*11, x=q.x+(R()*2-1)*46, z=q.z+(R()*2-1)*46;
+        if(!pixClear(x,z,w*0.75)) continue;
+        const tall=4+((R()*R()*13)|0), c=PAL[(n+j)%PAL.length];
+        for(let y=0;y<tall;y++) towers.push({x, y:PIX_FLOOR_Y+w*0.425+y*w*0.85, z, s:w*(1-y*0.06), sy:w*0.85, c}); } } }
+  // MESAS walling the outfield, and a few low ones out in the infield: stepped, dark, lit tops
+  { const MP=[0x241a44,0x2c1f52,0x1e1638], TOP=[0x4a3a7a,0x553f88,0x3e3170];
+    for(let k=0, n=0;n<34 && k<500;k++){ const inf=n<8, w0=90+R()*80, dz=0.6+((k*7)%5)*0.1, rad=Math.hypot(w0,w0*dz)/2;
+      const q=place(rad, inf?60:30, inf?420:330, inf?inS:-inS, 1); if(!q) continue; n++;
+      const tiers=2+((R()*3)|0), yaw=R()*1.57, th=14+R()*12; let y=PIX_FLOOR_Y;
+      for(let t=0;t<tiers;t++){ const w=w0*(1-t*0.22), h=th*(t?0.8:1);
+        mesas.push({x:q.x, y:y+h/2, z:q.z, s:w, sy:h, sz:w*dz, ry:yaw, c:t===tiers-1?TOP[n%3]:MP[(n+t)%3]}); y+=h; } } }
+  // GRAIN near the road: low platelet slabs on the floor, where the deck runs low enough
+  // for the chase camera to see them slide by
+  { const PL=[0xc8902a,0xc8406a,0x1e8a86,0x6a44a8,0x3a6ab8];
+    for(let k=0;k<900 && lows.length<320;k++){ const s=SAMP[(R()*STEPS)|0]; if(s.p.y-PIX_FLOOR_Y>56) continue;
+      const sd=R()<0.5?-1:1, lim=sd*inS>0?HW*2.2+6:HW*1.28+8, out=lim+6+R()*150;
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*12, z=s.p.z+s.n.z*sd*out+(R()*2-1)*12, w=5+R()*8;
+      if(!pixClear(x,z,w*0.75)) continue;
+      const h=1.2+R()*2.2, ry=R()*1.57, c=PL[(k*7)%PL.length], sz=w*(0.55+R()*0.5);
+      lows.push({x, y:PIX_FLOOR_Y+h/2, z, s:w, sy:h, sz, ry, c});
+      if(R()<0.45) lows.push({x, y:PIX_FLOOR_Y+h+h*0.4, z, s:w*0.55, sy:h*0.8, sz:sz*0.55, ry, c}); } }
+  const mt=pixMat();
+  pixBatch(towers, mt, 1400);
+  pixBatch(mesas, pixMat(), 1400, null, 0.5);
+  pixBatch(lows, pixMat(), 1400, null, 0.7);
+  pixBatch(plinth, pixMat(), 0, null, 0.5);
+  return P; }
+// heart: lub-dub at ~52 bpm, a few percent, and the glow follows it; the coins turn
+function pixTick(P, tsec){
+  if(P.bars) P.bars.offset.y=0.05*Math.sin(tsec*0.061)+0.025*Math.sin(tsec*0.023+1.3);
+  if(P.star) P.star.opacity=0.68+0.2*Math.sin(tsec*0.37);
+  if(P.heart){ const H=P.heart, ph=(tsec*0.87)%1;
+    const b=Math.exp(-Math.pow((ph-0.05)/0.045,2))+0.55*Math.exp(-Math.pow((ph-0.22)/0.05,2));
+    H.m.scale.setScalar(H.s*(1+0.03*b)); H.m.rotation.y=tsec*0.21;
+    H.e.copy(H.e0).lerp(H.e1, b*0.8); }
+  if(P.coins){ const C=P.coins, d=C.d;
+    C.list.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0, v.ph+tsec*v.w, 0); d.scale.setScalar(v.s); d.updateMatrix(); C.m.setMatrixAt(i,d.matrix); });
+    C.m.instanceMatrix.needsUpdate=true; }
+}
+
+/* ============== VECTOR VEIN, second pass (Vera) ============== *
+ * The first cut was right about its language - unlit lines on near-black - and starved of
+ * everything else once the lap doubled: fog at 560 ended the world a few hundred units out,
+ * so there was no horizon at all, the grid underneath covered less than the course, the
+ * floating solids were few and lost, the shoulder pylons stood INSIDE the 28.2 wall, the
+ * infield limit was a filled pink membrane (the one surface on a course with none), and
+ * the start was the shared lit gantry. Second pass, still nothing but lines:
+ *   HORIZON   - the skyline is a HEARTBEAT: an ECG trace runs right round the horizon with
+ *               a monitor's write-head sweeping it once every 24 s, bright where it has just
+ *               drawn and fading behind, over a Battlezone range of faceted peaks. A ringed
+ *               planet turns low in one quarter of the sky; dot stars above. All camera-
+ *               centred (they ride skyDome), so the horizon is at infinity, as on a cabinet.
+ *   CENTRE    - a bacteriophage standing on its six legs in the middle of the infield, head
+ *               slowly turning: the one hot-magenta shape, readable from anywhere on the lap.
+ *   SECTORS   - two DNA helices turning in the outfield (north and south), red cells drawn as
+ *               lathes standing on edge near the road, Battlezone obstacles in districts.
+ *   SPACE     - the tumbling solids, many more and actually tumbling now (one shader batch),
+ *               each on an Elite-scanner stalk to the grid, which is what places a thing
+ *               floating in a void: its height and its spot on the ground, both readable.
+ *   STRUCTURE - the lattice drops all the way to the grid; light masts stand on the grid
+ *               outside both walls on an irregular stride; the infield limit is a dashed line;
+ *               the tunnels are Tempest webs; the start is a vector gate that spells START.
+ * Clearance uses pixClear (8-BIT BLOODSTREAM KIT): every leg of the corridor, not one sample.
+ * ---------------------------------------------------------------------------------- */
+const VERA_G=-40;                       // the grid plane everything stands on
+const VERA_C={mag:0xff2fb9, cyan:0x19d2ff, vio:0x9d5cff, blue:0x1f6fd0};
+// segment list helpers (flat [x,y,z, x,y,z, ...] pairs, as neonBatch takes them)
+function veraSeg(o, a, b){ o.push(a[0],a[1],a[2], b[0],b[1],b[2]); }
+function veraPoly(o, pts, closed){ for(let i=0;i<pts.length-(closed?0:1);i++) veraSeg(o, pts[i], pts[(i+1)%pts.length]); }
+// one batch of lines that move in the vertex shader: every segment carries its centre, an
+// axis and a turn rate, so a field of solids tumbles - each on its own axis - in one draw.
+// Fog comes from the shared chunks, so the field fades into the same black as the grid.
+function veraSpinBatch(list){
+  const P=[],C=[],A=[],K=[];
+  const col=new T.Color();
+  for(const it of list){ col.setHex(it.c).convertLinearToSRGB();   // match what LineBasicMaterial's encode puts on screen
+    for(let i=0;i<it.seg.length;i+=3){ P.push(it.seg[i],it.seg[i+1],it.seg[i+2]); C.push(it.x,it.y,it.z);
+      A.push(it.ax[0],it.ax[1],it.ax[2],it.w); K.push(col.r,col.g,col.b); } }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aC',new T.Float32BufferAttribute(C,3));
+  g.setAttribute('aAx',new T.Float32BufferAttribute(A,4)); g.setAttribute('aCol',new T.Float32BufferAttribute(K,3));
+  const mat=new T.ShaderMaterial({ fog:true, transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+    uniforms:T.UniformsUtils.merge([T.UniformsLib.fog, {uT:{value:0}, uOp:{value:0.66}}]),
+    vertexShader:`attribute vec3 aC; attribute vec4 aAx; attribute vec3 aCol; uniform float uT; varying vec3 vCol;
+      #include <fog_pars_vertex>
+      vec3 rotA(vec3 v, vec3 k, float a){ float c=cos(a), s=sin(a); return v*c+cross(k,v)*s+k*dot(k,v)*(1.0-c); }
+      void main(){ vCol=aCol; vec3 p=aC+rotA(position, aAx.xyz, uT*aAx.w+aC.x*0.013);
+        vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`uniform float uOp; varying vec3 vCol;
+      #include <fog_pars_fragment>
+      void main(){ gl_FragColor=vec4(vCol*uOp,1.0);
+        #include <fog_fragment>
+      }`});
+  const m=new T.LineSegments(g,mat); m.frustumCulled=false; return m; }
+// a geometry's edges in LOCAL space (scaled), for veraSpinBatch
+function veraEdges(geo, sx, sy, sz){ const o=[]; wireAppend(o, geo, new T.Matrix4().makeScale(sx, sy==null?sx:sy, sz==null?sx:sz)); return o; }
+// a red cell as a lathe of its own cross-section (the Evans-Fung profile: thin at the
+// centre, thickest about four fifths of the way out), unit radius
+function veraCellSeg(){
+  const o=[], prof=[]; for(let k=0;k<=16;k++){ const t=k/16; prof.push([t, Math.sqrt(Math.max(0,1-t*t))*(0.1035+1.0015*t*t-0.5615*t*t*t*t)]); }
+  for(let m=0;m<12;m++){ const a=m/12*Math.PI*2, c=Math.cos(a), sn=Math.sin(a);
+    veraPoly(o, prof.map(([r,h])=>[c*r,sn*r,h]).concat(prof.slice(0,16).reverse().map(([r,h])=>[c*r,sn*r,-h])), false); }
+  for(const k of [8,13]){ const [r,h]=prof[k]; for(const hz of [h,-h]){ const ring=[]; for(let q=0;q<28;q++){ const a=q/28*Math.PI*2; ring.push([Math.cos(a)*r,Math.sin(a)*r,hz]); } veraPoly(o,ring,true); } }
+  { const ring=[]; for(let q=0;q<32;q++){ const a=q/32*Math.PI*2; ring.push([Math.cos(a),Math.sin(a),0]); } veraPoly(o,ring,true); }
+  return o; }
+// stroke font on a 4x6 grid, just the letters the course spells
+// (strokes are split where they meet, so every letter is one joined figure)
+const VERA_FONT={S:[[4,6,0,6],[0,6,0,3],[0,3,4,3],[4,3,4,0],[4,0,0,0]], T:[[0,6,2,6],[2,6,4,6],[2,6,2,0]],
+  A:[[0,0,1,3],[1,3,2,6],[2,6,3,3],[3,3,4,0],[1,3,3,3]], R:[[0,0,0,3],[0,3,0,6],[0,6,4,6],[4,6,4,3],[4,3,1.5,3],[1.5,3,0,3],[1.5,3,4,0]]};
+
+/* THE HORIZON, camera-centred (skyDome). The ECG ring carries its azimuth in aU and the
+   write-head position in uHead; brightness is a floor plus an exponential afterglow behind
+   the head, so it reads as phosphor being redrawn, not as a light running round. */
+function veraSky(){
+  const G=new T.Group(), R=pixRnd(0xEC6), TAU=Math.PI*2;
+  const el=(r,e)=>r*Math.tan(e);
+  // the trace: nine beats round the ring, each P, QRS, T with its own amplitude
+  { const r=1100, N=2880, beats=9, P=[], U=[];
+    const amp=[]; for(let b=0;b<beats;b++) amp.push(0.75+R()*0.5);
+    const wave=(u)=>{ const b=Math.floor(u*beats), x=u*beats-b, A=amp[b%beats];
+      const g=(c,w)=>Math.exp(-((x-c)/w)*((x-c)/w));
+      return 0.010+A*(0.006*g(0.30,0.035) - 0.004*g(0.395,0.010) + 0.075*g(0.42,0.011) - 0.012*g(0.445,0.010) + 0.012*g(0.60,0.05)); };
+    for(const dy of [0,1.8]){ let prev=null;
+      for(let k=0;k<=N;k++){ const u=k/N, a=u*TAU, e=wave(u%1), p=[Math.cos(a)*r, el(r,e)+dy, Math.sin(a)*r];
+        if(prev){ P.push(...prev, ...p); U.push((k-1)/N, u); } prev=p; } }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aU',new T.Float32BufferAttribute(U,1));
+    const c=new T.Color(VERA_C.cyan).convertLinearToSRGB();
+    const mat=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
+      uniforms:{uHead:{value:0}, uCol:{value:c}},
+      vertexShader:`attribute float aU; varying float vU; void main(){ vU=aU; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader:`uniform float uHead; uniform vec3 uCol; varying float vU;
+        void main(){ float d=fract(uHead-vU); float k=0.34+0.95*exp(-d*9.0)+0.6*exp(-d*90.0); gl_FragColor=vec4(uCol*k,1.0); }`});
+    const m=new T.LineSegments(g,mat); m.frustumCulled=false; m.renderOrder=-1; G.add(m); G.userData.ecg=mat; }
+  // the range behind it: faceted Battlezone peaks, ridge line plus a facet line to each foot
+  { const r=1150, o=[], N=46, pk=[];
+    for(let k=0;k<N;k++){ const a=(k+R()*0.6)/N*TAU, h=(R()<0.25?0.05:0.022)+R()*0.035; pk.push([a,h]); }
+    for(let k=0;k<N;k++){ const [a,h]=pk[k], [a2]=pk[(k+1)%N], am=(a+ (a2<a?a2+TAU:a2))/2, hv=0.004+R()*0.008;
+      const P0=[Math.cos(a)*r, el(r,h), Math.sin(a)*r], V=[Math.cos(am)*r, el(r,hv), Math.sin(am)*r];
+      const P1=[Math.cos(a2)*r, el(r,pk[(k+1)%N][1]), Math.sin(a2)*r];
+      veraSeg(o,P0,V); veraSeg(o,V,P1);
+      const f=[Math.cos(a+0.012)*r*0.995, el(r,0.004), Math.sin(a+0.012)*r*0.995]; veraSeg(o,P0,f); }
+    const m=neonBatch(o, 0x4a32b0, 0.55); m.material.fog=false; m.renderOrder=-1; G.add(m); }
+  // a ringed planet low in the north-east quarter, turning very slowly
+  { const pl=new T.Group(), o=[], rr=[], a=0.9, e=0.17, d=1050, R0=62;
+    for(let m=0;m<8;m++){ const ph=m/8*Math.PI, pts=[]; for(let k=0;k<=24;k++){ const t=k/24*Math.PI; pts.push([Math.cos(ph)*Math.sin(t)*R0, Math.cos(t)*R0, Math.sin(ph)*Math.sin(t)*R0]); } veraPoly(o,pts,false); }
+    for(const la of [-0.6,-0.25,0.15,0.5]){ const pts=[]; for(let k=0;k<24;k++){ const t=k/24*TAU; pts.push([Math.cos(t)*Math.cos(la)*R0, Math.sin(la)*R0, Math.sin(t)*Math.cos(la)*R0]); } veraPoly(o,pts,true); }
+    for(const k2 of [1.55,1.85]){ const pts=[]; for(let k=0;k<48;k++){ const t=k/48*TAU; pts.push([Math.cos(t)*R0*k2, 0, Math.sin(t)*R0*k2]); } veraPoly(rr,pts,true); }
+    const body=neonBatch(o, VERA_C.mag, 0.42), ring=neonBatch(rr, VERA_C.cyan, 0.5);
+    body.material.fog=false; ring.material.fog=false; body.renderOrder=ring.renderOrder=-1;
+    ring.rotation.set(0.38,0,0.22); pl.add(body); pl.add(ring);
+    pl.position.set(Math.cos(a)*Math.cos(e)*d, Math.sin(e)*d, Math.sin(a)*Math.cos(e)*d); pl.rotation.z=0.3;
+    G.add(pl); G.userData.planet=body; }
+  // dot stars
+  { const P=[]; for(let k=0;k<380;k++){ const a=R()*TAU, e=0.07+Math.pow(R(),0.8)*1.3, r=1000;
+      P.push(Math.cos(a)*Math.cos(e)*r, Math.sin(e)*r, Math.sin(a)*Math.cos(e)*r); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
+    const m=new T.Points(g, new T.PointsMaterial({color:0xc8e8ff, size:1.6, sizeAttenuation:false, transparent:true, opacity:0.7,
+      blending:T.AdditiveBlending, depthWrite:false, fog:false}));
+    m.renderOrder=-1; G.add(m); G.userData.stars=m.material; }
+  return G; }
+
+// UNDERSTRUCTURE: the grid, wide enough for the doubled lap, a brighter line every fifth;
+// the lattice drops from both deck edges all the way down to it on an irregular stride
+function veraUnder(ccx, ccz){
+  const R=pixRnd(0x1A77), seg=[];
+  for(let i=0;i<STEPS;){ const s=SAMP[i], j=(i+5+((R()*5)|0)), n=SAMP[j%STEPS];
+    const L=s.p.clone().addScaledVector(s.bn,HW), Rr=s.p.clone().addScaledVector(s.bn,-HW);
+    const nL=n.p.clone().addScaledVector(n.bn,HW), nR=n.p.clone().addScaledVector(n.bn,-HW);
+    const mid=(s.p.y+VERA_G)/2;
+    seg.push(L.x,L.y-2,L.z, L.x,VERA_G,L.z,  Rr.x,Rr.y-2,Rr.z, Rr.x,VERA_G,Rr.z);       // from just under the deck edge
+    seg.push(L.x,mid,L.z, nL.x,nL.y-2,nL.z,  Rr.x,mid,Rr.z, nR.x,nR.y-2,nR.z);         // braces up to the next station
+    seg.push(L.x,L.y-2,L.z, Rr.x,Rr.y-2,Rr.z,  L.x,mid,L.z, Rr.x,mid,Rr.z);      // tie-bars under the deck and halfway down
+    i=j; if(i>=STEPS) break; }
+  trackGroup.add(neonBatch(seg, VERA_C.blue, 0.5));
+  const minor=[], major=[], GW=2700, ST=60, x0=Math.round(ccx/ST)*ST, z0=Math.round(ccz/ST)*ST;
+  for(let k=-GW/ST;k<=GW/ST;k++){ const o=(k%5===0)?major:minor, a=k*ST;
+    o.push(x0-GW,VERA_G,z0+a, x0+GW,VERA_G,z0+a,  x0+a,VERA_G,z0-GW, x0+a,VERA_G,z0+GW); }
+  trackGroup.add(neonBatch(minor, 0x1a64b0, 0.6));
+  trackGroup.add(neonBatch(major, 0x3a90e0, 0.65));
+}
+// EDGE: light masts on the grid outside both walls (32 out, 52 in), irregular stride and
+// height, each a tapering braced tower with a ring at the top; and the infield limit as a
+// dashed magenta line at 48.4, where the shortcut ends
+function veraEdge(inS, tunIdx){
+  const R=pixRnd(0xAA57), seg=[], dash=[], inT=i=>tunIdx.some(([a,b])=>i>=a-3&&i<=b+3);
+  for(const side of [1,-1]){ const lat=side===inS?55:33.5;
+    for(let i=(side>0?3:7);i<STEPS;i+=8+((R()*7)|0)){ if(inT(i)) continue;
+      const s=SAMP[i], b=s.p.clone().addScaledVector(s.n, side*lat), top=s.p.y+10+R()*9, h=top-VERA_G;
+      if(!pixClear(b.x,b.z,4.3)) continue;
+      const f=[s.n.x,s.n.z], t=[s.t.x,s.t.z], corner=(w,y)=>[[-1,-1],[1,-1],[1,1],[-1,1]].map(([u,v])=>[b.x+(f[0]*u+t[0]*v)*w, y, b.z+(f[1]*u+t[1]*v)*w]);
+      const lv=Math.max(2,Math.round(h/16)); let prev=corner(3,VERA_G);
+      for(let k=1;k<=lv;k++){ const y=VERA_G+h*k/lv, c=corner(3-2*k/lv,y);
+        for(let q=0;q<4;q++){ veraSeg(seg,prev[q],c[q]); if((q+k)%2===0) veraSeg(seg,prev[q],c[(q+1)%4]); }
+        if(k===lv||k%2===0) veraPoly(seg,c,true);
+        prev=c; }
+      wireRing(seg, b.x, top+1.5, b.z, 2.6, 8, null);
+      for(const p of prev){ const dx=p[0]-b.x, dz=p[2]-b.z, d=Math.hypot(dx,dz)||1; veraSeg(seg,p,[b.x+dx/d*2.6, top+1.5, b.z+dz/d*2.6]); }
+      veraSeg(seg,prev[0],prev[2]); veraSeg(seg,prev[1],prev[3]);
+      veraSeg(seg,[b.x,top,b.z],[b.x,top+5,b.z]); } }
+  for(let i=0;i<STEPS;i+=2){ if(tunIdx.some(([a,b])=>i>=a&&i<=b)) continue;
+    const s=SAMP[i], n=SAMP[(i+1)%STEPS], L=inS*49.2;     // horizontal, as the physics measures it
+    const a=s.p.clone().addScaledVector(s.bn,L/Math.cos(s.bank||0)), c=n.p.clone().addScaledVector(n.bn,L/Math.cos(n.bank||0));
+    dash.push(a.x,a.y+1.2,a.z, c.x,c.y+1.2,c.z); }
+  trackGroup.add(neonBatch(seg, VERA_C.cyan, 0.62));
+  trackGroup.add(neonBatch(dash, VERA_C.mag, 0.7));
+}
+// TUNNELS as Tempest webs. Each hoop is a LEVEL gate, not a ring in the banked frame: a
+// ring leaning with a 0.36 bank swings its high side in across the 28.2 tunnel wall a few
+// units up. So: plumb sides at 31 out (horizontal) standing on the grid, an elliptical crown
+// from 20 over the higher side, alternating colour as before, and rails joining gate to
+// gate across the crown, which is what turns a row of gates into a tube you are inside.
+function veraTunnels(tun){
+  const seg=[], segB=[], rail=[], LAT=31, LEG=20, CR=16, NC=12;
+  for(const sg of tun){ const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS); let prev=null;
+    for(let i=i0;i<=i1;i+=3){ const s=SAMP[i%STEPS], tb=Math.tan(s.bank||0);
+      const at=(lat,y)=>[s.p.x+s.n.x*lat, y, s.p.z+s.n.z*lat];
+      const top=s.p.y+Math.abs(tb)*LAT+LEG, crown=[];
+      for(let k=0;k<=NC;k++){ const th=Math.PI*k/NC; crown.push(at(Math.cos(th)*LAT, top+Math.sin(th)*CR)); }
+      const o=((i/3|0)%2 ? segB : seg);
+      veraPoly(o, crown, false);
+      veraSeg(o, at(LAT,VERA_G), crown[0]); veraSeg(o, at(-LAT,VERA_G), crown[NC]);
+      if(prev) for(let k=1;k<NC;k++) veraSeg(rail, prev[k], crown[k]);
+      prev=crown; } }
+  if(seg.length)  trackGroup.add(neonBatch(seg,  VERA_C.mag, 0.9));
+  if(segB.length) trackGroup.add(neonBatch(segB, VERA_C.cyan, 0.9));
+  if(rail.length) trackGroup.add(neonBatch(rail, 0x6a3cc8, 0.55));
+}
+// THE START: two braced posts on the grid outside both walls, a beam whose underside is 22
+// over the deck, a row of chequers under it, and START in stroke letters on the face the
+// grid looks at
+function veraGate(inS){
+  const s=SAMP[0], o=[], ch=[], tilt=Math.abs(Math.sin(s.bank||0)), bot=s.p.y+25+tilt*56, top=bot+12;
+  const at=(lat,y,f)=>[s.p.x+s.n.x*lat+s.t.x*(f||0), y, s.p.z+s.n.z*lat+s.t.z*(f||0)];
+  const Lo=-inS*36, Li=inS*56;
+  for(const lat of [Lo,Li]){ const c=(w,y)=>[[-1,-1],[1,-1],[1,1],[-1,1]].map(([u,v])=>at(lat+u*w,y,v*w));
+    let prev=c(3.5,VERA_G); const lv=Math.round((top-VERA_G)/14);
+    for(let k=1;k<=lv;k++){ const y=VERA_G+(top-VERA_G)*k/lv, cc=c(3.5,y); for(let q=0;q<4;q++){ veraSeg(o,prev[q],cc[q]); if((q+k)%2) veraSeg(o,prev[q],cc[(q+1)%4]); } veraPoly(o,cc,true); prev=cc; } }
+  for(const f of [-2,2]){ veraSeg(o, at(Lo,bot,f), at(Li,bot,f)); veraSeg(o, at(Lo,top,f), at(Li,top,f));
+    for(const lat of [Lo,Li]) veraSeg(o, at(lat,bot,f), at(lat,top,f)); }      // the beam frame is tied into each post
+  for(let k=0, lat=Math.min(Lo,Li);lat<Math.max(Lo,Li)-0.1;lat+=4,k++){ const a=at(lat,bot,-2), b=at(lat+4,bot,-2), a2=at(lat,bot-3,-2), b2=at(lat+4,bot-3,-2);
+    veraPoly(ch,[a,b,b2,a2],true); if(k%2) { veraSeg(ch,a,b2); veraSeg(ch,b,a2); } }
+  const word='START', sc=1.4, W=word.length*5.5-1.5, txt=[];
+  for(let w=0;w<word.length;w++) for(const [x0,y0,x1,y1] of VERA_FONT[word[w]]){
+    const lx=wx=>-((w*5.5+wx)-W/2)*sc;
+    veraSeg(txt, at(lx(x0), bot+1.2+y0*sc, -2.3), at(lx(x1), bot+1.2+y1*sc, -2.3)); }
+  trackGroup.add(neonBatch(o, VERA_C.cyan, 0.85));
+  trackGroup.add(neonBatch(ch, VERA_C.mag, 0.8));
+  trackGroup.add(neonBatch(txt, 0xeaffff, 0.95));
+}
+// Everything off the deck. Returns the moving parts for veraTick.
+function veraScenery(inS, ccx, ccz){
+  const R=pixRnd(0x7E7A), P={}, spin=[], stalk=[], obs=[], obsF=[];
+  const place=(r, minOut, maxOut, side)=>{ for(let t=0;t<40;t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
+      const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*24, z=s.p.z+s.n.z*sd*out+(R()*2-1)*24;
+      if(pixClear(x,z,r)) return {x,z,s,sd}; } return null; };
+  // THE PHAGE, a little off the centroid: 400 tall, legs spanning 290. It ignores the fog -
+  // it is the one beacon on the course, never nearer than ~600, and at the far side of the
+  // lap it would otherwise be gone - but at a lower opacity, so it never out-shouts the road
+  { const S=1.5; let hx=ccx+60, hz=ccz-40; for(let t=0;t<30&&!pixClear(hx,hz,150);t++){ hx=ccx+(R()*2-1)*260; hz=ccz+(R()*2-1)*260; }
+    const o=[], G0=VERA_G, base=G0+46*S, coll=G0+146*S, Rh=46*S, hexR=(r,y,ph)=>{ const p=[]; for(let k=0;k<6;k++){ const a=k/6*Math.PI*2+(ph||0); p.push([hx+Math.cos(a)*r, y, hz+Math.sin(a)*r]); } return p; };
+    const bp=hexR(18*S,base); veraPoly(o,bp,true); veraPoly(o,hexR(12*S,base+4*S),true);
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, c=Math.cos(a), sn=Math.sin(a);
+      const knee=[hx+c*62*S, G0+74*S, hz+sn*62*S], foot=[hx+c*96*S, G0, hz+sn*96*S];
+      for(const dy of [0,2.2]){ veraSeg(o,[bp[k][0],bp[k][1]+dy,bp[k][2]],[knee[0],knee[1]+dy,knee[2]]); veraSeg(o,[knee[0],knee[1]+dy,knee[2]],[foot[0],foot[1]+dy,foot[2]]); }
+      veraSeg(o,[foot[0]-c*8,G0,foot[2]-sn*8],[foot[0]+c*8,G0,foot[2]+sn*8]);
+      veraSeg(o, bp[k], [hx+c*24*S, G0, hz+sn*24*S]); }                               // tail pins down to the grid
+    for(let y=base+4*S;y<=coll;y+=8*S) veraPoly(o,hexR(9*S,y),true);                // the sheath, striated
+    const ib=hexR(12*S,base+4*S), cb=hexR(16*S,coll);
+    for(let k=0;k<6;k++) veraSeg(o,bp[k],ib[k]);                                        // the baseplate's two decks, joined
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2, lo=[hx+Math.cos(a)*9*S,base+4*S,hz+Math.sin(a)*9*S], hi=[hx+Math.cos(a)*9*S,coll,hz+Math.sin(a)*9*S];
+      veraSeg(o,lo,hi); veraSeg(o,lo,ib[k]); veraSeg(o,hi,cb[k]); }                   // seated in the baseplate and the collar
+    veraPoly(o,cb,true); const ct=hexR(16*S,coll+4*S); veraPoly(o,ct,true); for(let k=0;k<6;k++) veraSeg(o,cb[k],ct[k]);
+    for(const p of ct) veraSeg(o,p,[hx,coll+4*S,hz]);                               // the collar's top, which the head sits on
+    const body=neonBatch(o, VERA_C.vio, 0.5); body.material.fog=false; trackGroup.add(body);
+    // a vertex of the capsid points down onto the collar, as a real phage's tail joins its head
+    const hd=[], ig=new T.IcosahedronGeometry(Rh,1).rotateX(Math.atan(1.6180339887)); wireAppend(hd, ig, new T.Matrix4().makeScale(1,1.3,1)); ig.dispose();
+    const head=neonBatch(hd, VERA_C.mag, 0.62); head.material.fog=false; head.position.set(hx, coll+4*S+Rh*1.3, hz); trackGroup.add(head);
+    P.phage=head; }
+  // TWO HELICES in the outfield, north and south; each stands on a ringed plinth and turns
+  P.helix=[];
+  for(const [u,H] of [[0.38,330],[0.80,250]]){ const s=SAMP[Math.floor(u*STEPS)]; let q=null;
+    for(let out=HW*1.28+60;out<520&&!q;out+=12){ const x=s.p.x-s.n.x*inS*out, z=s.p.z-s.n.z*inS*out; if(pixClear(x,z,52)) q={x,z}; }
+    if(!q) continue;
+    const o=[], rung=[], r=26, pitch=118, steps=Math.round(H/pitch*40);
+    const pt=(k,ph)=>{ const t=k/40*Math.PI*2+ph; return [Math.cos(t)*r, 26+k*pitch/40, Math.sin(t)*r]; };
+    for(let k=0;k<steps;k++){ veraSeg(o,pt(k,0),pt(k+1,0)); veraSeg(rung,pt(k,Math.PI),pt(k+1,Math.PI)); if(k%3===0) veraSeg(rung,pt(k,0),pt(k,Math.PI)); }
+    const base=[]; for(const rr of [40,30]){ const p=[]; for(let k=0;k<24;k++){ const a=k/24*Math.PI*2; p.push([Math.cos(a)*rr,0,Math.sin(a)*rr]); } veraPoly(base,p,true); }
+    for(let k=0;k<6;k++){ const a=k/6*Math.PI*2; veraSeg(base,[Math.cos(a)*40,0,Math.sin(a)*40],[Math.cos(a)*r,26,Math.sin(a)*r]); }
+    { const ring=[]; for(let k=0;k<32;k++){ const a=k/32*Math.PI*2; ring.push([Math.cos(a)*r,26,Math.sin(a)*r]); } veraPoly(o,ring,true); }   // the turntable the strands rise from
+    const g=new T.Group(); g.position.set(q.x, VERA_G, q.z);
+    const A=neonBatch(o, VERA_C.cyan, 0.85), B=neonBatch(rung, VERA_C.mag, 0.7), C=neonBatch(base, VERA_C.vio, 0.7);
+    g.add(A); g.add(B); trackGroup.add(g);
+    C.position.set(q.x, VERA_G, q.z); trackGroup.add(C);
+    P.helix.push({g, w:0.11*(u<0.5?1:-1)}); }
+  // RED CELLS on edge near the road, turning about the vertical (in the spin batch)
+  { const cs=veraCellSeg();
+    for(let k=0,n=0;n<7&&k<200;k++){ const Rr=26+R()*22, q=place(Rr+2, 6, 120); if(!q) continue; n++;
+      spin.push({x:q.x, y:VERA_G+Rr, z:q.z, seg:cs.map(v=>v*Rr), ax:[0,1,0], w:(0.12+R()*0.12)*(R()<0.5?-1:1), c:k%2?0xff3f7a:0xff2fb9}); } }
+  // TUMBLING SOLIDS on scanner stalks
+  { const shapes=[new T.IcosahedronGeometry(1,0), new T.OctahedronGeometry(1,0), new T.BoxGeometry(1.6,1.6,1.6), new T.TetrahedronGeometry(1.2,0), new T.DodecahedronGeometry(1,0)];
+    const loc=shapes.map(g=>veraEdges(g,1));
+    for(let k=0,n=0;n<72&&k<800;k++){ const r=8+R()*20, q=place(r+4, 40, 560); if(!q) continue; n++;
+      const y=VERA_G+40+r+R()*150, ax=new T.Vector3(R()-0.5,R()-0.5,R()-0.5).normalize();
+      spin.push({x:q.x, y, z:q.z, seg:loc[n%loc.length].map(v=>v*r), ax:[ax.x,ax.y,ax.z], w:(0.10+R()*0.25)*(R()<0.5?-1:1), c:n%2?VERA_C.vio:VERA_C.cyan});
+      stalk.push(q.x,y-r*0.9,q.z, q.x,VERA_G,q.z,  q.x-4,VERA_G,q.z, q.x+4,VERA_G,q.z,  q.x,VERA_G,q.z-4, q.x,VERA_G,q.z+4); }
+    for(const g of shapes) g.dispose(); }
+  // BATTLEZONE OBSTACLES in districts: pyramids, blocks and tall slabs standing on the grid
+  { const pyr=new T.ConeGeometry(1,1,4,1), box=new T.BoxGeometry(1,1,1), mt=new T.Matrix4(), qq=new T.Quaternion(), e=new T.Euler();
+    for(let k=0,n=0;n<34&&k<500;k++){ const q=place(60, 20, 480); if(!q) continue; n++;
+      const cnt=3+((R()*5)|0);
+      for(let j=0;j<cnt;j++){ const kind=R(), w=14+R()*34, x=q.x+(R()*2-1)*70, z=q.z+(R()*2-1)*70;
+        const h=kind<0.45?w*(0.8+R()*0.5):kind<0.8?w*(0.6+R()*0.6):w*(2.2+R()*2.4);
+        if(!pixClear(x,z,w*0.75)) continue;
+        e.set(0,R()*1.57,0); qq.setFromEuler(e);
+        mt.compose(new T.Vector3(x,VERA_G+h/2,z), qq, new T.Vector3(kind<0.45?w*0.72:w, h, kind<0.45?w*0.72:w*(0.5+R()*0.6)));
+        wireAppend(kind<0.8&&kind>=0.45?obsF:obs, kind<0.45?pyr:box, mt); } }
+    pyr.dispose(); box.dispose(); }
+  trackGroup.add(neonBatch(obs, 0x2ab8d8, 0.6));
+  trackGroup.add(neonBatch(obsF, 0x6a4ae0, 0.6));
+  trackGroup.add(neonBatch(stalk, 0x3a4aa0, 0.45));
+  const sb=veraSpinBatch(spin); trackGroup.add(sb); P.spin=sb.material;
+  return P; }
+function veraTick(P, tsec){
+  if(P.spin) P.spin.uniforms.uT.value=tsec;
+  if(P.ecg) P.ecg.uniforms.uHead.value=(tsec/24)%1;
+  if(P.planet) P.planet.rotation.y=tsec*0.04;
+  if(P.stars) P.stars.opacity=0.62+0.12*Math.sin(tsec*0.31)+0.06*Math.sin(tsec*1.13);
+  if(P.phage) P.phage.rotation.y=tsec*0.07;
+  if(P.helix) for(const h of P.helix) h.g.rotation.y=tsec*h.w;
+}
+
 /* ============== ARCADE KIT (Trixie) ============== *
  * Trixie is Pixie's circuit taken the whole way: not voxel PROPS standing on a void, but a
  * voxel WORLD — a 16-bit platformer overworld at sunset that the course runs through.
@@ -27511,7 +28245,7 @@ function arcTex(key, w, h, draw){
   const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
   const g=cv.getContext('2d'); draw(g,w,h);
   const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding;
-  t.magFilter=T.NearestFilter; t.minFilter=T.LinearMipmapLinearFilter;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter;
   t.wrapS=t.wrapT=T.RepeatWrapping;
   t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
   return ARC_TEX[key]=t;
@@ -35442,10 +36176,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -35467,6 +36201,8 @@ function buildTrack(idx){
   // Eve: the indigo band at the foot of her night sky. The dome writes sRGB straight out and
   // fog is mixed in linear before the output encode, so the fog takes the DECODED colour.
   if(TRACKS[idx].eden) scene.fog.color.copy(edenLin(EDEN.hor));
+  // Pixie: the land fades into the blood-plum band the skyline stands on (decoded, as Eve's)
+  if(TRACKS[idx].bit8) scene.fog.color.setHex(PIX_HOR).convertSRGBToLinear();
   hanaGrain(!!TRACKS[idx].hana);         // the paper overlay: on for Hana, off for every other build
 
   const loop = TRACKS[idx].loop!==false;
@@ -35488,6 +36224,7 @@ function buildTrack(idx){
   const arc   =!!TRACKS[idx].arcade;     // ...and on Trixie, a whole 16-bit world of blocks
   const hana  =!!TRACKS[idx].hana;       // ...or as a Hokusai woodblock of a coast road
   const eden  =!!TRACKS[idx].eden;       // ...or as a bioluminescent garden at night
+  const pix   =!!TRACKS[idx].bit8;       // ...and on Pixie, the voxel dressing in a world of its own
   let OK=null;                           // Ophelia's field + prop bag, built in the understructure
   let MK=null;                           // Lily's ground oracle + prop bag, likewise
   let AK=null;                           // Trixie's block field + prop bag, likewise
@@ -35518,7 +36255,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden;   // Lily lays its own pond
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix;   // Lily lays its own pond; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -36042,29 +36779,11 @@ function buildTrack(idx){
       if(dawn){ cg.userData.dawnKeep=true; TRACK_PULSE.feltCloudsSway=true; }
     }
   } else if(wire){
-    // Hanging wireframe lattice: cross-braced rungs dropping from the roadbed, plus a
-    // horizon grid far below. Reads as structure without a single filled surface.
-    const seg=[];
-    for(let i=0;i<STEPS;i+=8){
-      const s=SAMP[i], n=SAMP[(i+8)%STEPS];
-      const L=s.p.clone().addScaledVector(s.n,HW), R=s.p.clone().addScaledVector(s.n,-HW);
-      const drop=Math.min(46, s.p.y+12);
-      // vertical drop lines at both edges
-      seg.push(L.x,L.y,L.z, L.x,L.y-drop,L.z,  R.x,R.y,R.z, R.x,R.y-drop,R.z);
-      // cross-brace to the next station, forming an X down the flank
-      const nL=n.p.clone().addScaledVector(n.n,HW), nR=n.p.clone().addScaledVector(n.n,-HW);
-      seg.push(L.x,L.y-drop,L.z, nL.x,nL.y,nL.z,  R.x,R.y-drop,R.z, nR.x,nR.y,nR.z);
-      // tie-bar across the underside
-      seg.push(L.x,L.y-drop,L.z, R.x,R.y-drop,R.z);
-    }
-    trackGroup.add(neonBatch(seg, 0x1f6fd0, 0.55));
-    // ground grid, so the void below reads as depth rather than nothing
-    const grid=[], G=900, STEP=60;
-    for(let a=-G;a<=G;a+=STEP){
-      grid.push(-G,-40,a, G,-40,a);
-      grid.push(a,-40,-G, a,-40,G);
-    }
-    trackGroup.add(neonBatch(grid, 0x0e3a6a, 0.5));
+    // Vera: the horizon (a heartbeat over a vector range, camera-centred), the grid, and a
+    // lattice of light dropping from the deck to it (see VECTOR VEIN KIT)
+    skyDome=veraSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.vera={ecg:skyDome.userData.ecg, planet:skyDome.userData.planet, stars:skyDome.userData.stars};
+    veraUnder(ccx, ccz);
   } else if(arc){
     // Trixie: the sky, the land the road is carried on, and the lake (see ARCADE KIT)
     skyDome=arcSky(); trackGroup.add(skyDome);
@@ -36088,6 +36807,12 @@ function buildTrack(idx){
       fg.setIndex(fi); fg.computeVertexNormals();
       fmat.side=T.DoubleSide; trackGroup.add(new T.Mesh(fg, fmat));
     }
+  } else if(pix){
+    // Pixie: the banded sky, and a viaduct of stepped piers and banked caps (see pixPiers)
+    PIX_FLOOR_Y=pixFloorLevel(innerSign);
+    skyDome=pixSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.pix=Object.assign({}, skyDome.userData.pix);
+    pixPiers();
   } else if(vox){
     // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
     // course reads as something BUILT. Wider as it descends, which makes the elevation
@@ -36624,10 +37349,11 @@ function buildTrack(idx){
   // and additive sparks over a hot magenta sky are white specks with nothing behind them.
   // Warm them to loose fibre and drop them to where they only show against dark ground.
   // Trixie: no map at all, so each mote is a hard square pixel — fireflies in the dusk
-  const motes=new T.Points(mg,new T.PointsMaterial({map:arc?null:TEX_SPARK,
+  // Pixie: hard square pixels too, plasma-pink, drifting up out of the bloodstream
+  const motes=new T.Points(mg,new T.PointsMaterial({map:(arc||pix)?null:TEX_SPARK,
     // Marina: humid air over warm water — pale aqua, not pink sparks
     // Ophelia: thistledown and pollen in the sun over the water
-    color:arc?0xffe27a:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:arc?1.6:oph?3.0:paint?4.6:felt?4.2:3.2,
+    color:arc?0xffe27a:pix?0xff8ab4:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:(arc||pix)?1.6:oph?3.0:paint?4.6:felt?4.2:3.2,
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
@@ -36720,6 +37446,10 @@ function buildTrack(idx){
     hanaStartBridge(HK, innerSign, 36);  // the timber arch and its cartouche, ahead of the grid
   } else if(eden){
     /* the root arch and ringed medallion were planned with the garden (edenGate) */
+  } else if(pix){
+    pixGate(innerSign);                   // a block gantry spelling START, posts on the floor
+  } else if(wire){
+    veraGate(innerSign);                  // a vector gate spelling START; nothing lit on this course
   } else {
   // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
   // it parallels the road at 14 up instead of cutting across it level; each post stands from
@@ -37006,27 +37736,17 @@ function buildTrack(idx){
     trackGroup.add(feltBatch(FELT_PUFF, tufts));
     trackGroup.add(feltBatch(FELT_PUFF0, kerb));
   } else if(wire){
-    // Light pylons marching down both shoulders — a tapering wire post topped with a ring,
-    // which is what gives the vector course a readable edge at speed.
-    const seg=[];
-    for(let i=0;i<STEPS;i+=14){
-      const s=SAMP[i];
-      for(const side of [-1,1]){
-        const b=s.p.clone().addScaledVector(s.n, side*(HW+4));
-        const h=9;
-        // four uprights leaning into a point, so it reads as a 3D post not a flat line
-        for(const [dx,dz] of [[-1.6,-1.6],[1.6,-1.6],[1.6,1.6],[-1.6,1.6]])
-          seg.push(b.x+dx,b.y,b.z+dz, b.x,b.y+h,b.z);
-        wireRing(seg, b.x, b.y+h, b.z, 2.6, 8, null);
-      }
-    }
-    trackGroup.add(neonBatch(seg, 0x19d2ff, 0.85));
+    // light masts on the grid outside both walls, and the infield limit as a dashed line
+    veraEdge(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(arc){
     arcVerge(AK, innerSign);              // kerb outside 28.2, hedge outside 48.4
   } else if(hana){
     hanaVerge(HK, innerSign);             // fence outside 28.2, shrubs outside 48.4
   } else if(eden){
     edenKerb();                           // glowing cord on each edge; the verge is in the plan
+  } else if(pix){
+    // shoulders, rumble strip, fascia and an outside parapet that stands ON the deck
+    pixDeck(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
@@ -37174,21 +37894,7 @@ function buildTrack(idx){
     if(legs.length){ const lb=feltBatch(new T.BoxGeometry(1,1,1), legs);
       if(dawn) lb.userData.dawnKeep=true; trackGroup.add(lb); }
   } else if(wire){
-    // Hoops of pure line, banked to the road and alternating colour so the tunnel
-    // stretches strobe past as you drive them.
-    const seg=[], m=new T.Matrix4(), q=new T.Quaternion(), up=new T.Vector3(0,1,0);
-    const segB=[];
-    for(const sg of tun){
-      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
-      for(let i=i0;i<=i1;i+=3){
-        const s=SAMP[i%STEPS];
-        q.setFromUnitVectors(up, s.t);                 // ring plane perpendicular to travel
-        m.compose(s.p.clone().add(new T.Vector3(0,1,0)), q, new T.Vector3(1,1,1));
-        wireRing(((i/3|0)%2 ? segB : seg), 0,0,0, HW+5, 16, m);
-      }
-    }
-    if(seg.length)  trackGroup.add(neonBatch(seg,  0xff2fb9, 0.9));
-    if(segB.length) trackGroup.add(neonBatch(segB, 0x19d2ff, 0.9));
+    veraTunnels(tun);                     // Tempest webs: banked hoops at 31 and rails over the top
   } else if(arc){
     TRACK_PULSE.arc.torch=arcTunnel(AK, innerSign);   // castle gate through the hill
   } else if(hana){
@@ -37198,6 +37904,8 @@ function buildTrack(idx){
     hanaTrestle(HK, innerSign, b0, b1);
   } else if(eden){
     /* root arches, the hollow log and the bell arbor were planned with the garden */
+  } else if(pix){
+    pixTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     const arch=[];
     for(const seg of tun){
@@ -37281,7 +37989,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -38386,27 +39094,7 @@ function buildTrack(idx){
     }
     trackGroup.add(beadBatch(orbs));
   } else if(wire){
-    // Slowly-tumbling platonic solids in wireframe — the classic vector-arcade backdrop.
-    // Split across two colour batches so the field reads as depth rather than a flat mesh.
-    const near=[], far=[], m=new T.Matrix4(), q=new T.Quaternion(),
-          e=new T.Euler(), one=new T.Vector3(1,1,1);
-    const shapes=[new T.IcosahedronGeometry(1,0), new T.OctahedronGeometry(1,0),
-                  new T.BoxGeometry(1.6,1.6,1.6), new T.TetrahedronGeometry(1.2,0)];
-    for(let k=0;k<90;k++){
-      const s=SAMP[(Math.random()*STEPS|0)];
-      const side=(Math.random()<0.5?-1:1), out=HW*(2.8+Math.random()*6);
-      const r=7+Math.random()*20;
-      e.set(Math.random()*6.28, Math.random()*6.28, Math.random()*6.28);
-      q.setFromEuler(e);
-      m.compose(new T.Vector3(
-        s.p.x+s.n.x*side*out+(Math.random()*2-1)*40,
-        s.p.y-6+Math.random()*70,
-        s.p.z+s.n.z*side*out+(Math.random()*2-1)*40), q, one.clone().multiplyScalar(r));
-      wireAppend(k%2?near:far, shapes[k%shapes.length], m);
-    }
-    for(const g2 of shapes) g2.dispose();
-    trackGroup.add(neonBatch(near, 0x9d5cff, 0.75));
-    trackGroup.add(neonBatch(far,  0x19d2ff, 0.45));
+    Object.assign(TRACK_PULSE.vera, veraScenery(innerSign, ccx, ccz));   // phage, helices, cells, solids, obstacles
   } else if(hana){
     const P=hanaScenery(HK, innerSign);
     Object.assign(TRACK_PULSE.hana, P);
@@ -38429,6 +39117,8 @@ function buildTrack(idx){
     const sc=arcScenery(AK, innerSign);
     TRACK_PULSE.arc.egg=sc.eggMat; TRACK_PULSE.arc.birds=sc.birds;
     TRACK_PULSE.arc.q=arcFlush(AK);       // every block above, as three instanced draws
+  } else if(pix){
+    Object.assign(TRACK_PULSE.pix, pixScenery(innerSign, ccx, ccz));   // heart, monuments, cells, districts
   } else if(vox){
     // colour-banded blocky towers, tapering as they rise, for parallax depth
     const towers=[], PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
@@ -49663,6 +50353,10 @@ function frame(now){
   // in the willow arcade, swifts. All slow; see ophTick.
   if(TRACK_PULSE.oph) ophTick(TRACK_PULSE.oph, tsec);
   if(TRACK_PULSE.arc) arcTick(TRACK_PULSE.arc, tsec);
+  // Pixie: the heart beats and turns, red cells turn like coins, copper bars drift
+  if(TRACK_PULSE.pix) pixTick(TRACK_PULSE.pix, tsec);
+  // Vera: the ECG write-head sweeps the horizon, solids tumble, the phage and helices turn
+  if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
   if(TRACK_PULSE.hana) hanaTick(TRACK_PULSE.hana, tsec);
   // Eve: glow breathes, fronds sway, water ripples, fireflies drift
