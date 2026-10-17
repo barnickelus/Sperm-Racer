@@ -1955,10 +1955,10 @@ const MUSIC_STYLES={
 // lands he plays the classic Cantina Gold grid station, so every MUSIC_STYLES lookup for 'juan'
 // (radio dial, victory fanfare, srNet) resolves. A real `juan:` entry in the table above wins.
 if(!MUSIC_STYLES.juan) MUSIC_STYLES.juan=Object.assign({}, MUSIC_STYLES.latinClassic);
-// PLACEHOLDER: Leif Laserbeard's own record is being produced separately and replaces this. Until it lands he plays
-// the classic Club Mix grid station (a copy, under his own id), so every MUSIC_STYLES lookup for 'viking' (radio
-// dial, victory fanfare, srNet) resolves instead of falling back to Guido's produced record. A real `viking:`
-// entry in the table above wins.
+// PLACEHOLDER (drop this line at merge): Leif Laserbeard's own record is produced on its own branch, which brings the
+// real MUSIC_STYLES.viking (plus vikingClassic and ALT_MAP.viking). Until it lands he plays a copy of the classic Club
+// Mix grid station under his own id, so every MUSIC_STYLES lookup for 'viking' (radio dial, victory fanfare, srNet)
+// resolves instead of falling back to Guido's produced record. A real `viking:` entry in the table above wins anyway.
 if(!MUSIC_STYLES.viking) MUSIC_STYLES.viking=Object.assign({}, MUSIC_STYLES.guidoClub);
 function noteFreq(s){ return 110*Math.pow(2,(s+musicRoot)/12); }
 // ---- richer synth voice: the old playNote was one raw oscillator straight into a
@@ -45863,7 +45863,7 @@ function falconStrikeFly(m){
  * Canvas textures are painted once. */
 const VK_SKIN=0xefb48e, VK_HAIR=0xc98f38, VK_BEARD=0xefcb62, VK_BROW=0xa8701e, VK_LEATHER=0x6b3f22,
       VK_BRASS=0xd4a03a, VK_BRASS_SH=0x8a5f1c, VK_BRASS_HI=0xffe08a, VK_FUR=0x8a6a4a, VK_FUR_HI=0xc4a27a,
-      VK_TEAL=0x3ff0e0, VK_AMBER=0xffb02e, VK_NOSE=0xf0a07c, VK_INK=0x2f3f6e;
+      VK_TEAL=0x3ff0e0, VK_AMBER=0xffb02e, VK_NOSE=0xf0a07c;
 const vkLin=h=>new T.Color(h).convertSRGBToLinear();   // a concept-palette swatch as a material colour
 // the war-paint stripes: face-plane (x,y) of the inner and outer ends on his left cheek (mirrored on the right)
 const VK_PAINT=[[1.98,3.2,2.94,3.04],[1.94,2.88,2.82,2.64]];
@@ -45886,7 +45886,7 @@ function vikingTextures(){
     face:mk(512,256,(x,w,h)=>{ x.fillStyle='#fff'; x.fillRect(0,0,w,h);
       const uvOf=(fx,fy)=>{ const p=faceAnchor(fx,fy).p, th=Math.acos(Math.max(-1,Math.min(1,(p.y-HEAD_CY)/HEAD_RY)));
         let ph=Math.atan2(p.z/HEAD_RZ,-p.x/HEAD_RX); if(ph<0) ph+=Math.PI*2; return [ph/(Math.PI*2)*w, th/Math.PI*h]; };
-      x.fillStyle=over(0x2a2f45,VK_SKIN);
+      x.fillStyle=over(0x1a2e4a,VK_SKIN);   // slate, its red held back: the skin's toon ramp lights the red channel alone
       for(const s of [-1,1]) for(const [x0,y0,x1,y1] of VK_PAINT){ const L=Math.hypot(x1-x0,y1-y0), nx=-(y1-y0)/L, ny=(x1-x0)/L, top=[], bot=[];
         for(let i=0;i<=10;i++){ const t=i/10, cx=x0+(x1-x0)*t, cy=y0+(y1-y0)*t, hw=0.17*(1-0.66*t);
           top.push(uvOf(s*(cx+nx*hw), cy+ny*hw)); bot.push(uvOf(s*(cx-nx*hw), cy-ny*hw)); }
@@ -45977,7 +45977,7 @@ function vikingTextures(){
     // weaving over and under each other round the tail between fine border lines
     tail:mk(512,64,(x,w,h)=>{ x.fillStyle='#fff'; x.fillRect(0,0,w,h);
       for(let i=0;i<160;i++){ x.fillStyle='rgba(255,236,220,.35)'; x.fillRect(R()*w,R()*h,4+R()*10,1.4); }
-      const a=0.226*w, b=0.262*w, m=(a+b)/2, A=(b-a)*0.3, ink=over(VK_INK,VK_SKIN), teal=over(VK_TEAL,VK_SKIN);
+      const a=0.226*w, b=0.262*w, m=(a+b)/2, A=(b-a)*0.3, ink=over(0x457bb3,VK_SKIN), teal=over(0x22e8e0,VK_SKIN);   // navy and teal with the red held back (the toon ramp adds it)
       x.fillStyle=ink; x.fillRect(a,0,b-a,h);
       const wave=(k,y)=>m+A*Math.sin((y/h)*Math.PI*2*3+k*Math.PI);
       const cord=(k,y0,y1)=>{ x.beginPath(); for(let y=y0;y<=y1;y+=1) y===y0?x.moveTo(wave(k,y),y):x.lineTo(wave(k,y),y); x.stroke(); };
@@ -46040,8 +46040,9 @@ function dressViking(g, K){
   const SKIN=new T.Color(VK_SKIN), SKE=new T.Color(0x4a2616), C=vkLin;   // the skin is the raw swatch, as every racer's is
   const WHITE=[0.995,0.5], BRASS_UV=[0.5,0.08];   // a pure-white texel of TX.beard / of TX.lth, for the flat-coloured parts
 
-  // --- skin: warm peach, the war paint painted into the face
-  head.material.color.copy(SKIN); head.material.emissive.copy(SKE); head.material.map=TX.face; head.material.shininess=12;
+  // --- skin: warm peach, the war paint painted into the face. Toon already (celShade leaves it), with the face as its
+  // emissive map too: the skin's warm emissive would otherwise lift the dark paint to mauve
+  head.material=toon({color:SKIN, emissive:SKE, map:TX.face, emissiveMap:TX.face}, GRAD);
   if(g.userData.glow) g.userData.glow.material.color.multiplyScalar(0.45);   // the lantern and the studs carry the glow
 
   // --- eyes: the concept's set - smaller, a touch lower, under heavy stern lids, crossed a hair toward the nose
@@ -46218,29 +46219,31 @@ function dressViking(g, K){
   // --- the gear medallions: two small ones with amber cores at the strap ends (one mesh), and the big
   // teal-cored one where the straps cross, which spins (tickViking)
   { const gearAt=(lo,la,k)=>{ const p=SLP(lo,la,k), n=SLN(p); return new T.Matrix4().compose(p, new T.Quaternion().setFromUnitVectors(V(0,0,1),n), V(1,1,1)); };
-    const pair=[]; for(const sg of [1,-1]) pair.push(...vkGearParts(0.5,9,gearAt(sg*110,40,1.04)));
-    g.add(bodyPart(new T.Mesh(vkMerge(pair), P({vertexColors:true, emissive:VK_AMBER, emissiveMap:TX.glow, emissiveIntensity:0.9, shininess:110, specular:0xfff0c0}))));
+    const pair=[]; for(const sg of [1,-1]) pair.push(...vkGearParts(0.5,9,gearAt(sg*110,40,1.04),null,vkLin(0x6a3006)));
+    // the glows are linear swatches over dark cores, so they come out as the concept's saturated amber and teal
+    // instead of washing to white under the light
+    g.add(bodyPart(new T.Mesh(vkMerge(pair), P({vertexColors:true, emissive:vkLin(VK_AMBER), emissiveMap:TX.glow, emissiveIntensity:0.9, shininess:110, specular:0xfff0c0}))));
     const hub=bodyPart(new T.Group()); hub.applyMatrix4(gearAt(0,30,1.07)); g.add(hub);
-    const gm=P({vertexColors:true, emissive:VK_TEAL, emissiveMap:TX.glow, emissiveIntensity:1.0, shininess:110, specular:0xfff0c0});
-    const big=new T.Mesh(vkMerge(vkGearParts(0.86,11,new T.Matrix4())), gm); hub.add(big);
-    const gl=glowSprite(VK_TEAL,2.6); gl.position.set(0,0,0.35); gl.material.opacity=0.55; hub.add(gl);
+    const gm=P({vertexColors:true, emissive:vkLin(VK_TEAL), emissiveMap:TX.glow, emissiveIntensity:1.0, shininess:110, specular:0xfff0c0});
+    const big=new T.Mesh(vkMerge(vkGearParts(0.86,11,new T.Matrix4(),null,vkLin(0x0b5550))), gm); hub.add(big);
+    const gl=glowSprite(VK_TEAL,2.6); gl.material.color.copy(vkLin(VK_TEAL)); gl.position.set(0,0,0.35); gl.material.opacity=0.55; hub.add(gl);
     g.userData.vkGear={o:big, m:gm, a:0, glow:gl}; }
   // --- the lantern vial strapped high on his back: amber glass in a brass cage, capped, on two leather loops
   { const v0=V(0.56,4.76,-6.36), v1=V(2.06,3.56,-6.02), mid=v0.clone().lerp(v1,0.5), ax=v1.clone().sub(v0), len=ax.length();
     const Lm=new T.Matrix4().compose(mid, new T.Quaternion().setFromUnitVectors(V(0,1,0), ax.clone().normalize()), V(1,1,1)), A=x=>new T.Matrix4().multiplyMatrices(Lm,x);
-    const parts=[[new T.CylinderGeometry(0.52,0.52,len*0.86,18,1,true), A(M(0,0,0)), C(0xffd890), [0.75,0.5]]];
+    const parts=[[new T.CylinderGeometry(0.52,0.52,len*0.86,18,1,true), A(M(0,0,0)), C(0xb8601a), [0.75,0.5]]];   // a burnt-amber body, so the glow, not the light, colours the glass
     for(const e of [-1,1]){ parts.push([new T.SphereGeometry(0.6,14,10,0,Math.PI*2,0,Math.PI*0.55), A(M(0,e*len*0.43,0,e<0?Math.PI:0,0,0,1,0.7,1)), C(VK_BRASS), [0.25,0.5]]);
       parts.push([new T.TorusGeometry(0.55,0.07,6,20), A(M(0,e*len*0.3,0,Math.PI/2)), C(VK_BRASS_SH), [0.25,0.5]]); }
     for(let k=0;k<4;k++){ const a=k/4*Math.PI*2; parts.push([new T.CylinderGeometry(0.05,0.05,len*0.84,5), A(M(Math.cos(a)*0.55,0,Math.sin(a)*0.55)), C(VK_BRASS), [0.25,0.5]]); }
-    for(const e of [-0.22,0.22]) parts.push([new T.TorusGeometry(0.58,0.1,6,18), A(M(0,e*len,0,Math.PI/2,0,0,1,1,1.6)), C(VK_LEATHER), [0.25,0.5]]);
-    const lm=P({vertexColors:true, emissive:VK_AMBER, emissiveMap:TX.glass, emissiveIntensity:1.0, shininess:120, specular:0xfff0c0});
+    for(const e of [-0.22,0.22]) parts.push([new T.TorusGeometry(0.57,0.075,6,18), A(M(0,e*len,0,Math.PI/2,0,0,1,1,1.25)), C(VK_LEATHER), [0.25,0.5]]);
+    const lm=P({vertexColors:true, emissive:vkLin(0xffa424), emissiveMap:TX.glass, emissiveIntensity:1.0, shininess:120, specular:0xfff0c0});
     g.add(bodyPart(new T.Mesh(vkMerge(parts), lm)));
-    const glow=glowSprite(VK_AMBER,3.6); glow.position.copy(mid).add(V(0.05,0.55,-0.3)); g.add(bodyPart(glow));
+    const glow=glowSprite(VK_AMBER,3.6); glow.material.color.copy(vkLin(0xffa02a)); glow.position.copy(mid).add(V(0.05,0.55,-0.3)); g.add(bodyPart(glow));
     g.userData.vkLamp={m:lm, glow}; }
 
   // --- the tail: skin, the interlace tattoo band painted in; the gear-studded bracer rides ring VK_BR of the
   // tail tube (tickViking re-seats it on the wiggling spine every frame)
-  tailMesh.material.map=TX.tail; tailMesh.material.color.copy(SKIN); tailMesh.material.emissive.copy(SKE);
+  tailMesh.material=toon({color:SKIN, emissive:SKE, map:TX.tail, emissiveMap:TX.tail, side:T.DoubleSide}, GRAD);
   { const prof=[[0.0,-0.5],[0.98,-0.5],[1.06,-0.42],[1.08,0.38],[1.0,0.48],[0.0,0.48]].map(p=>new T.Vector2(p[0],p[1])), parts=[];
     parts.push([new T.LatheGeometry(prof,26), null, C(VK_LEATHER), (u,v)=>[u*3, 0.27+0.7*v]]);
     for(let k=0;k<10;k++){ const a=k/10*Math.PI*2; for(const y of [-0.3,0.28]) parts.push([new T.SphereGeometry(0.09,6,4), M(Math.sin(a)*1.08,y,Math.cos(a)*1.08), C(VK_BRASS_HI), BRASS_UV]); }
@@ -46309,40 +46312,49 @@ function dressViking(g, K){
   return true;
 }
 // ---- Leif's clockwork: the beat, the Goggle Drop and the finish
-const VK_BPM=150, VK_GOG_UP=70*Math.PI/180, VK_GOG_DN=6*Math.PI/180, VK_CD=6, VK_LX=1.08, VK_LR=0.98;   // the hinge up / over the eyes, the cooldown, a lens's offset and radius
-// the finish, in seconds from the line: the rare grin until [0], the WOO until [1], the full Goggle Drop until [2],
-// then the stoic dance. The victory orbit swings round onto his face about 1.6 s in, and the race wraps ~4.5 s in
-const VK_FIN=[0.9,1.5,3.8];
+const VK_BPM=150, VK_GOG_UP=64*Math.PI/180, VK_GOG_DN=6*Math.PI/180, VK_CD=6, VK_LX=1.08, VK_LR=0.98;   // the hinge up / over the eyes, the cooldown, a lens's offset and radius
+// the finish, in seconds from the line: the rare grin until [0], the WOO until [1], then the full Goggle Drop (2.25 s;
+// later if a drop played in the 6 s before the line) and the stoic dance; no drop starts after [2]. The victory orbit
+// swings round onto his face about 1.6 s in, and the race wraps ~4.5 s in
+const VK_FIN=[0.9,1.5,4.2];
 const VK_SH=[3.0,2.5,-1.4];      // the arm's shoulder on his left flank (model space, in the neck); the right one mirrors it
 const VK_BR=11;                   // the tail ring the bracer rides (of TSEG 30): the concept puts it halfway down its tail
 let _vkBq=60/VK_BPM;              // the length of a beat (s) on the clock vkBeat last read
+let _vkSec=null, _vkSecBar=-1;    // while his own record plays: the section under the speakers, and the last bar noted
+const _vkSecQ=[];                 // the loaded bars' sections, each against its downbeat on our clock
 // the beat, as a running count of beats: the produced station's own bar clock while one is playing (its scheduler
 // runs ahead of the speakers, so its audio clock is mapped onto ours, output latency included, as tickGuido
-// does); with the music off or a classic grid station on, a steady 150 bpm
+// does); with the music off or a classic grid station on, a steady 150 bpm. When the station is his own record
+// (oarsAtOneFifty), the section of each loaded bar is noted too and takes over on that bar's downbeat; with any
+// other station, or without the record at all, _vkSec stays null and nothing else changes
 function vkBeat(now){
-  const h=(musicOn && actx && curStyle && curStyle.engine) ? producedStations[curStyle.engine] : null;
+  const eng=(musicOn && actx && curStyle) ? curStyle.engine : null, h=eng ? producedStations[eng] : null;
   if(h && h.running && h.ctx===actx && h.stepDur>0){
     const ts=actx.getOutputTimestamp ? actx.getOutputTimestamp() : null;
     const off=(ts && ts.performanceTime>0) ? ts.performanceTime/1000-ts.contextTime : now-actx.currentTime+Math.min(0.2, actx.outputLatency||actx.baseLatency||0);
-    _vkBq=4*h.stepDur; return (now-off-h.barT)/_vkBq+4*h.bar;
+    _vkBq=4*h.stepDur;
+    if(eng==='oarsAtOneFifty'){
+      if(h.bar!==_vkSecBar){ if(h.bar<_vkSecBar) _vkSecQ.length=0; _vkSecBar=h.bar; _vkSecQ.push({at:h.barT+off, sec:h.sectionId}); if(_vkSecQ.length>4) _vkSecQ.shift(); }
+      _vkSec=null; for(const e of _vkSecQ) if(e.at<=now) _vkSec=e.sec;
+    } else if(_vkSecBar!==-1){ _vkSec=null; _vkSecBar=-1; _vkSecQ.length=0; }
+    return (now-off-h.barT)/_vkBq+4*h.bar;
   }
+  if(_vkSecBar!==-1){ _vkSec=null; _vkSecBar=-1; _vkSecQ.length=0; }
   _vkBq=60/VK_BPM; return now/_vkBq;
 }
 // the hand's poses (Super Freak's format): per finger [knuckle, middle, end, splay], then the thumb's direction,
-// the way its pad faces and its end joint. reach: open and ready; grip: curled round the goggle rim; push: one
-// finger out to push the bridge back up; fist: folded away
+// the way its pad faces and its end joint. reach: open and ready; grip: curled round the goggle rim; fist: folded away
 const VK_HAND={
   reach:{f:[[0.25,0.2,0.1,-0.1],[0.2,0.18,0.1,0],[0.25,0.2,0.1,0.06],[0.3,0.25,0.12,0.14]], th:[-0.7,0.6,0.35, 0.3,-0.2,0.93, 0.15]},
   grip:{f:[[1.05,1.2,0.7,-0.04],[1.1,1.25,0.75,0],[1.15,1.25,0.75,0.03],[1.2,1.25,0.75,0.07]], th:[0.5,0.62,0.6, -0.2,-0.3,-0.93, 0.6]},
-  push:{f:[[0.05,0.06,0.04,0.02],[1.48,1.62,0.85,0],[1.48,1.62,0.85,0.03],[1.4,1.6,0.85,0.07]], th:[0.72,0.55,0.45, -0.2,-0.3,-0.93, 0.45]},
   fist:{f:[[1.42,1.62,0.85,-0.04],[1.48,1.62,0.85,0],[1.48,1.62,0.85,0.03],[1.4,1.6,0.85,0.07]], th:[0.72,0.5,0.48, -0.2,-0.3,-0.93, 0.5]}};
 const _vkV=new T.Vector3(), _vkW=new T.Vector3(), _vkP=new T.Vector3(), _vkY=new T.Vector3(), _vkZ=new T.Vector3(), _vkX=new T.Vector3(),
-      _vkQ=new T.Quaternion(), _vkE=new T.Euler(), _vkM=new T.Matrix4(), _vkN=new T.Matrix4(), _vkA=new T.Vector3(), _vkB=new T.Vector3(), _vkU=new T.Vector3(0,1,0);
+      _vkQ=new T.Quaternion(), _vkE=new T.Euler(), _vkM=new T.Matrix4(), _vkN=new T.Matrix4(), _vkA=new T.Vector3(), _vkU=new T.Vector3(0,1,0), _vkC=new T.Color();
 const vkEase=x=>x<=0?0:x>=1?1:x*x*(3-2*x);
 // a gesture's script at t seconds in: the goggle drop (0 up .. 1 over the eyes), the arm (0 folded .. 1 out), where
-// the hand is (tuck / grip on the rim / low at his side / pushing the bridge), its pose, the lens strobe, the nod.
+// the hand is (gripping the rim, or tucked away), its pose, the lens strobe, the nod.
 // 'quick' is the overtake: down, two flashes on the next two beats toward the rival, a slow nod, back up.
-// 'full' is the finish: down, the lenses strobe on every beat, then the hand comes back and pushes them up.
+// 'full' is the finish: down, the lenses strobe on every beat, then the hand lifts them back up by the rim.
 function vkScript(G, t, beat){
   const out=G.out||(G.out={drop:0, arm:0, at:'tuck', pose:'reach', strobe:0, nod:0, wink:0, done:false});
   out.strobe=0; out.nod=0; out.wink=0;
@@ -46375,18 +46387,27 @@ function tickViking(o, r, now){
   const dt=Math.min(0.05, Math.max(0, now-S.t)); S.t=now;
   const R=r||{}, L=R._lk, spin=R.spinT>0, boost=R.boostT>0, spd=Math.abs(R.spd||0);
   const beat=vkBeat(now), bf=beat-Math.floor(beat), kick=Math.exp(-bf*7);
-  // ---- the finish (ph: seconds since the line): the rare grin, a WOO, the full Goggle Drop, then the stoic dance,
-  // which carries on through the victory orbit
+  // his own record's drops (steam, tone) hit the lenses, studs and lantern as hard as a boost; its half-time rowing
+  // breakdown (oars) slows the head-bob to one nod a bar. Both stay off with any other music
+  const hard=boost || _vkSec==='steam' || _vkSec==='tone', row=_vkSec==='oars';
+  // ---- the finish (ph: seconds since the line): the rare grin, a WOO, the full Goggle Drop (once the 6 s cooldown
+  // allows it), then the stoic dance, which carries on through the victory orbit
   const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you ? 9 : -1);
-  const prog=ph<0 ? null : ph<VK_FIN[0] ? 'grin' : ph<VK_FIN[1] ? 'woo' : ph<VK_FIN[2] ? 'drop' : 'dance';
-  // ---- the overtake: the look system's smug moment (he just passed someone) starts a quick drop toward them
+  if(ph<0){ S.fin=false; S.wait=false; }
+  const playing=!!(S.G && S.G.kind==='full');
+  const prog=ph<0 ? null : ph<VK_FIN[0] ? 'grin' : ph<VK_FIN[1] ? 'woo' : playing ? 'drop' : (S.fin || ph>=VK_FIN[2]) ? 'dance' : 'drop';
+  // ---- the overtake: the look system's smug moment (he just passed someone) starts a quick drop toward them. Not in
+  // the player's last few seconds before the line, so the cooldown never holds back the finish's full drop
   const smug=!!(L && L.g && L.g.k==='smug');
-  if(smug && !S.pSm && !S.G && !prog && !spin && now-S.last>=VK_CD){
+  const left=(R.you && state==='race' && R.total>0.15 && raceTime>3) ? ((trackLoop ? lapsOf()-R.total : 1-R.total)*raceTime/R.total) : 99;
+  if(smug && !S.pSm && !S.G && !prog && !spin && now-S.last>=VK_CD && left>7){
     const q=_vkBq, b1=0.42+(Math.ceil(beat+0.42/q)-(beat+0.42/q))*q;    // the first beat once the goggles are down, then the next
     S.G={kind:'quick', t0:now, b1, b2:b1+q}; S.last=now; S.side=L.g.side||1; S.snap=true; }
   S.pSm=smug;
-  if(!prog) S.fin=false;
-  if(prog==='drop' && !spin && !S.fin && (!S.G || S.G.kind!=='full')){ S.G={kind:'full', t0:now-(ph-VK_FIN[1])}; S.last=now; S.side=1; S.snap=true; }
+  if(prog==='drop' && !playing && !spin){
+    if(now-S.last>=VK_CD){   // on time it runs from the line's clock; held back by the cooldown it starts from the top
+      S.G={kind:'full', t0:S.wait ? now : now-(ph-VK_FIN[1])}; S.last=now; S.side=1; S.snap=true; }
+    else S.wait=true; }
   if(S.G && S.G.kind==='full' && prog!=='drop') S.G=null;
   if(spin && S.G) S.G=null;                                     // never mid-spin: a hit snaps the goggles back up
   let sc=S.G ? vkScript(S.G, now-S.G.t0, beat) : null;
@@ -46394,12 +46415,13 @@ function tickViking(o, r, now){
   // ---- the goggles: the hinge and the lenses (a rest glow, the kick on a boost, the strobe)
   const Gg=ud.vkGog, drop=sc?sc.drop:0, st=sc?sc.strobe:0;
   Gg.piv.rotation.x=-(VK_GOG_UP+(VK_GOG_DN-VK_GOG_UP)*drop);
-  Gg.m.emissiveIntensity=0.75+(boost?1.5*kick:0.12*kick)+2.6*st;
-  for(const f of Gg.flash){ f.visible=st>0.03; if(f.visible){ f.scale.setScalar(0.5+4.6*st); f.material.opacity=Math.min(1,st*1.3); f.material.rotation=beat*0.6; } }
+  Gg.m.emissiveIntensity=0.75+(hard?1.5*kick:0.12*kick)+2.6*st;
+  for(const f of Gg.flash){ f.visible=st>0.03; if(f.visible){ f.scale.setScalar(0.6+6.2*st); f.material.opacity=Math.min(1,st*1.4); f.material.rotation=beat*0.6;
+    f.material.color.setHex(VK_TEAL).lerp(_vkC.setHex(0xffffff), 0.55*st); } }   // white-hot on the hit, teal as it dies
   // ---- studs, lantern, gear: they pulse on the beat (hard on the kick while boosting)
-  const Sd=ud.vkStuds, pul=boost?0.55+0.9*kick:0.7+0.3*kick+0.6*st;
-  Sd.m.color.setHex(VK_TEAL).multiplyScalar(pul); Sd.h.opacity=Math.min(1,0.5+0.45*kick*(boost?1.4:0.7)+0.5*st);
-  const Lp=ud.vkLamp, fl=0.55+0.45*kick+0.06*Math.sin(now*31)+0.04*Math.sin(now*17.3)+(boost?0.9*kick:0);
+  const Sd=ud.vkStuds, pul=hard?0.55+0.9*kick:0.7+0.3*kick+0.6*st;
+  Sd.m.color.setHex(VK_TEAL).multiplyScalar(pul); Sd.h.opacity=Math.min(1,0.5+0.45*kick*(hard?1.4:0.7)+0.5*st);
+  const Lp=ud.vkLamp, fl=0.8+0.4*kick+0.06*Math.sin(now*31)+0.04*Math.sin(now*17.3)+(hard?0.9*kick:0);
   Lp.m.emissiveIntensity=fl; Lp.glow.scale.setScalar(3.4+2.0*fl); Lp.glow.material.opacity=Math.min(1,0.36+0.38*fl);
   const Gr=ud.vkGear; Gr.a+=dt*(boost?7.5:1.1+0.012*spd); Gr.o.rotation.z=Gr.a; Gr.m.emissiveIntensity=0.85+(boost?1.2*kick:0.3*kick);
   Gr.glow.material.opacity=0.42+(boost?0.5*kick:0.18*kick); Gr.glow.scale.setScalar(2.4+(boost?1.4*kick:0.4*kick));
@@ -46437,14 +46459,20 @@ function tickViking(o, r, now){
   if(ey && eyeA!=null){ if(!S.eyOn){ S.eyA=ey[0].scale.y; S.eyB=ey[1].scale.y; S.eyOn=true; }   // the programme owns the lids outright
     const k=Math.min(1,dt*20); S.eyA+=(eyeA-S.eyA)*k; S.eyB+=(eyeB-S.eyB)*k; ey[0].scale.y=S.eyA; ey[1].scale.y=S.eyB; }
   else S.eyOn=false;
-  if(ud.pupils) for(const q of ud.pupils) q.rotation.z=0;            // no spinning star eyes: he stays stoic
+  // the pupils follow their lids: they squash with the eye and go when it shuts (a blink, the wink, the dance), instead
+  // of floating over a closed lid; and no spinning star eyes, he stays stoic
+  const pu=ud.pupils;
+  if(ey && pu){ if(!S.pupY) S.pupY=[pu[0].position.y, pu[1].position.y];
+    for(let i=0;i<2;i++){ const sy=ey[i].scale.y, q=pu[i]; q.rotation.z=0; q.visible=sy>0.32; q.scale.y=Math.min(1,sy/0.86);
+      q.position.y=ey[i].position.y+(S.pupY[i]-ey[i].position.y)*Math.min(1,sy); } }
   // ---- the head: the metronome bob on every beat while he cruises (bigger on the grid and in the dance), the
   // gesture's slow nod and the dance's tilt, applied over the look (after poseNeck) about the same pivot
   const nk=ud.neck;
   if(nk && L){
     const P=L.P||{}, grid=state==='count' || spd<6, cruise=(R.drift===1||spin) ? 0 : 1;
-    const amp=(P.bob||0.11)*(prog==='dance'?1.5:grid?1:0.55)*cruise*(sc&&!prog?0.4:1);
-    const bob=amp*Math.pow(Math.max(0,Math.sin(Math.PI*Math.min(1,bf*1.6))),1.4);
+    const amp=(P.bob||0.11)*(prog==='dance'?1.5:grid?1:0.55)*cruise*(sc&&!prog?0.4:1)*(row?1.4:1);
+    const nf=row ? beat/4-Math.floor(beat/4) : bf;                       // the oars: one slow nod a bar
+    const bob=amp*Math.pow(Math.max(0,Math.sin(Math.PI*Math.min(1,nf*(row?1.25:1.6)))),row?1.1:1.4);
     const nod=sc?sc.nod:0, tilt=prog==='dance' ? 0.15*Math.sin(Math.PI*0.5*beat) : 0;
     if(bob||nod||tilt){ _vkQ.setFromEuler(_vkE.set(bob+nod, 0, tilt, 'YXZ')); nk.quaternion.premultiply(_vkQ);
       nk.position.copy(NECK_PIV).sub(_vkV.copy(NECK_PIV).applyQuaternion(nk.quaternion)); } }
@@ -46455,17 +46483,16 @@ function tickViking(o, r, now){
   if(!a.visible){ S.snap=true; return; }
   const side=S.side||1, s=0.3+0.7*Math.min(1,e);
   k.root.position.set(VK_SH[0]*side, VK_SH[1], VK_SH[2]); k.root.scale.set(side*s, s, s); k.root.updateMatrix();
-  // the targets in the arm's root frame: the near lens's outer rim (or the bridge, to push it up) carried through
-  // the goggles' hinge; the wrist sits back from the grip along the fingers and off the palm
+  // the target in the arm's root frame: the near lens's outer rim carried through the goggles' hinge (the wrist sits
+  // back from the grip along the fingers and off the palm), or tucked down by the shoulder
   Gg.piv.updateMatrix(); Gg.gm.updateMatrix(); _vkM.multiplyMatrices(Gg.piv.matrix, Gg.gm.matrix); _vkN.copy(k.root.matrix).invert().multiply(_vkM);
   const at=sc?sc.at:'tuck', W=_vkW, Y=_vkY, Z=_vkZ;
-  if(at==='grip' || at==='push'){ const push=at==='push';
-    W.set(side*(push?0.25:VK_LX+VK_LR*1.04+0.2), push?0.34:0.12, push?0.42:-0.05).applyMatrix4(_vkN);
-    Y.set(push?-side*0.35:0, 1, push?0.2:0.15).transformDirection(_vkN);
-    Z.set(push?0:-side, 0, push?-1:0).transformDirection(_vkN);
+  if(at==='grip'){
+    W.set(side*(VK_LX+VK_LR*1.04+0.2), 0.12, -0.05).applyMatrix4(_vkN);
+    Y.set(0, 1, 0.15).transformDirection(_vkN);
+    Z.set(-side, 0, 0).transformDirection(_vkN);
     W.addScaledVector(Y,-1.25).addScaledVector(Z,-0.42);
-  } else if(at==='low'){ W.set(2.4,-0.6,2.6); Y.set(0.3,1,0.6).normalize(); Z.set(-1,0,0.2).normalize(); }
-  else { W.set(0.7,-0.9,0.3); Y.set(0,-1,0.3).normalize(); Z.set(-1,0,0); }
+  } else { W.set(0.7,-0.9,0.3); Y.set(0,-1,0.3).normalize(); Z.set(-1,0,0); }
   const ks=S.snap ? 1 : Math.min(1,dt*20); S.snap=false;
   S.Ws.lerp(W,ks); S.Ys.lerp(Y,ks).normalize(); S.Zs.lerp(Z,ks).normalize();
   W.copy(S.Ws).lerp(_vkA.set(0.7,-0.9,0.3), 1-Math.min(1,e));
@@ -46488,7 +46515,7 @@ function vkShipParts(){
   if(_vkShip) return _vkShip;
   const V=(x,y,z)=>new T.Vector3(x,y,z), C=vkLin, M=(x,y,z,rx,ry,rz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)), V(1,1,1));
   const parts=[], B=C(VK_BRASS), IRON=C(0x2a2622), WOOD=C(0x7a5232), TEAL=C(0x2a9a96), RED=C(0xb3222c);
-  parts.push([new T.BoxGeometry(1.36,0.08,3.6), M(0,0.04,0), WOOD]);                          // the deck, just under the gunwale
+  parts.push([new T.CylinderGeometry(1,1,0.08,24), new T.Matrix4().compose(V(0,0.04,0), new T.Quaternion(), V(0.68,1,2.1)), WOOD]);   // the deck: an ellipse inside the tapering hull
   for(const e of [1,-1]){                                                                      // the curled prow and stern posts: brass scrolls, no figurehead
     const pts=[V(0,0.66,e*2.28),V(0,1.25,e*2.52),V(0,1.82,e*2.36),V(0,2.02,e*1.98),V(0,1.78,e*1.74),V(0,1.56,e*1.9)].map(p=>e<0?p.multiply(V(1,0.78,1)).add(V(0,0.14,0)):p);
     parts.push([taperTube(new T.CatmullRomCurve3(pts),24,6,t=>0.2*(1-t)+0.07), null, B]); }
