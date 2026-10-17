@@ -497,6 +497,7 @@
   .sheet-top .go{margin:0;padding:10px 22px;min-height:44px;font-size:12px;border-radius:22px;}
   .sheet-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
   .tile{margin:0!important;min-height:54px;padding:8px 10px;font-size:11px;letter-spacing:.07em;border-radius:14px;line-height:1.25;}
+  #fsbtn{grid-column:1/-1;}   /* the seventh tile takes a row of its own, so two or three across both stay even */
   .tile:disabled{opacity:.45;}
 
   @media (orientation:landscape) and (min-width:560px){
@@ -833,6 +834,7 @@
         <button class="go alt tile" id="tiltbtn">Tilt steering: OFF</button>
         <button class="go alt tile" id="sliderbtn">Side throttle: OFF</button>
         <button class="go alt tile on" id="musicbtn">Music: ON</button>
+        <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="fsbtn">Fullscreen</button>
       </div>
@@ -1138,6 +1140,11 @@ const ALT_MAP={guido:['guidoClub','guidoAlt','guidoParty'], chad:['chadClassic',
   dragoTony:['dragoTonyClassic'],   // Tony Dragone can still dial back to Dragone FM
   punk:['punkClassic']};            // Sid Spitfire can still dial back to Spike FM, his old home station
 const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
+// Soundtrack setting: 'course' starts a race on its course's own record when it has one (see
+// courseStyleId), 'racer' always starts on the racer's station. onCourseSong is the live
+// tuning: set as each race starts, then moved by the dial.
+let soundtrack='course', onCourseSong=false;
+try{ if(localStorage.getItem('sr_soundtrack')==='racer') soundtrack='racer'; }catch(_){}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
@@ -1695,6 +1702,17 @@ const MUSIC_STYLES={
               stab:{inst:'bell', wave:'sine', note:19, steps:[6,14], dur:0.5, vol:0.15},
               mel: [0,4,7,4, 2,5,9,5, 4,7,12,7, 5,9,12,9],
               melB:[7,9,11,12,14,16,17,19, 17,16,14,12,11,9,7,null] },
+  /* FELICITY's own record — "The Shuttle" (see SONG_ENGINE): loom-driven folktronica grown from her
+     course sketch, written in A-flat, her key, so it plays untransposed. course:true makes it a
+     course record: first on Felicity's dial, labelled with the course (see courseStyleId). The
+     grid fields are for the shared code that reads every style; they are the sketch itself, so
+     the victory fanfare climbs out of the shuttle figure. */
+  courseFelicity:{ engine:'theShuttle', course:true, station:'THE SHUTTLE',
+              inst:'strings', melWave:'sawtooth', bassWave:'sine', bassInst:'pluck',
+              drums:{kick:[0,8],snare:[4,12]}, bass:[0,10,9,10],
+              hihat:2, beatGroup:4, tempoMul:0.6,
+              mel: [7,4,7,4,   9,7,4,2,   0,2,4,7,   4,null,2,null],
+              melB:[12,9,12,9, 14,12,9,7, 9,12,14,16, 14,null,12,null] },
   /* Ravi Chandra's HOME station is now produced: "Hero Shot" (see SONG_ENGINE), a filmi dance
      number crossed with bhangra that opens in slow motion. The grid fields are only for the
      shared code that reads every style (the victory fanfare climbs the shehnai hook). */
@@ -2261,7 +2279,29 @@ function altsFor(id){
   const tk=TRACKS[selTrack] && TRACKS[selTrack].music;
   return (tk && MUSIC_STYLES[tk]) ? base.concat(tk) : base;
 }
+/* COURSE RECORDS. A course can also carry a whole produced song of its own: its TRACKS entry
+   names a `courseStyle`, a MUSIC_STYLES entry with course:true whose `engine` is the record.
+   It is written in the course's key and plays untransposed. It sits FIRST on that course's
+   dial, ahead of the racer's home station and alts, and a race on it starts there unless the
+   soundtrack setting asks for racer songs. The racer's own position on their dial (altIndex)
+   is left alone while the course record plays, so the next course without one still starts
+   wherever they last tuned. */
+function courseStyleId(){
+  const tk=TRACKS[selTrack], id=tk&&tk.courseStyle, st=id&&MUSIC_STYLES[id];
+  return (st && st.course && st.engine && SONG_ENGINE.songs[st.engine]) ? id : null;
+}
+// the station as the radio shows it: a course record is labelled with its course
+function stationLabel(st){
+  if(!st || !st.station) return null;
+  return st.course ? ((TRACKS[selTrack]||{}).name||'').toUpperCase()+' · '+st.station : st.station;
+}
+// this race's dial in tuning order, [course record?, home, alts...]: its length and where it is
+function dialOf(id){
+  const cs=courseStyleId(), n=altsFor(id).length+1+(cs?1:0), a=altIndex[id]||0;
+  return {cs, n, i:cs ? (onCourseSong?0:1+a) : a};
+}
 function effectiveStyleId(id){
+  const cs=onCourseSong && courseStyleId(); if(cs) return cs;
   const alts=altsFor(id), idx=altIndex[id]||0;
   return (alts.length && idx>0 && alts[idx-1]) ? alts[idx-1] : id;
 }
@@ -2296,6 +2336,8 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
      Genre lives almost entirely in the rhythm section and the timbre, which is exactly
      what stays with the character, so one melody genuinely re-genres without being
      rewritten. Courses with no `song` are untouched and keep the character's own tune.
+     A course's own record (course:true, see courseStyleId) IS the composition, so the
+     sketch is not laid over it.
 
      The clone matters: curStyle used to be the shared MUSIC_STYLES object and the seq
      assembly below WROTE BACK into it. Harmless while seq was a pure function of the
@@ -2305,7 +2347,7 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
     const base=MUSIC_STYLES[styleId]||MUSIC_STYLES.guido;
     const song=TRACKS[selTrack] && TRACKS[selTrack].song;
     curStyle=Object.assign({}, base);
-    if(song){
+    if(song && !base.course){
       curStyle.mel  = song.mel;
       curStyle.melB = song.melB;
       // A tanpura drone is not a bass line, it is the tonal floor the raga stands on;
@@ -2350,7 +2392,10 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
    16-step sketch over it would give the course neither its tune nor this record. So the
    course keeps what it can own without breaking the song: its KEY (the station is
    transposed into the course's key, folded to within a fourth so the bass stays deep), and
-   srNet.music reports the course song as deferred rather than pretending it is playing.
+   srNet.music reports the course sketch as deferred rather than pretending it is playing.
+   A course that wants its tune heard properly gets a produced record of its own instead
+   (course:true styles, see courseStyleId): that one is written in the course's key, so it
+   plays untransposed, and srNet.music reports it as the course song it is.
 
    Musical time survives interruptions: a mute toggle or a trip round the dial mid-race
    resumes on the next bar instead of replaying the intro; a new race starts from the top. */
@@ -2363,7 +2408,7 @@ function startProducedStation(tk){
   if(!h || h.ctx!==actx){                           // level 0.38 = about -20 LUFS, level with the grid stations
     h=SONG_ENGINE.produceStation(actx, masterGain, song, {lite:isTouch, level:0.38}); h.ctx=actx; producedStations[id]=h; }
   const k=((musicRoot%12)+12)%12;
-  h.setKey(k>6?k-12:k);
+  h.setKey(curStyle.course ? 0 : (k>6?k-12:k));    // a course record is already in its course's key
   const fresh=state!=='race' || performance.now()-tStart<2000;
   if(fresh) producedResume={};
   h.start({bar:fresh?0:(producedResume[id]||0)});
@@ -25713,6 +25758,527 @@ SONG_ENGINE.songs.tamboraAFondo=(function(){
       } },
   };
 })();
+/* "THE SHUTTLE" — Felicity's own record, and the first course record (see courseStyleId): an
+   original loom-driven folktronica instrumental in A-flat at 126 bpm, written for this engine and
+   grown from her course sketch (TRACKS, "The Shuttle": the rocking E-flat/C figure, the climb out
+   of A-flat, the modal I-bVII-vi-bVII that never cadences). No borrowed tune, no voice. It is the
+   weavers' valley at the last of the light, and the loom is the band:
+     the loom      the beater beating the weft home on 1 and 3 (a felted thump), the treadles
+                   changing on 2 and 4 (left foot, right foot: the backbeat), the shuttle thrown
+                   across the shed after each (a swish that travels across the stereo field) and
+                   landing in its box with a clack on the last sixteenth before the beat; the heddles
+                   jingle on the off-beats and the take-up roller's ratchet ticks the sixteenths
+     the warp      a hammered dulcimer playing a twelve-step cell in sixteenths, a lower thread
+                   walking A-flat, B-flat, C and back under an upper one on E-flat and F: over,
+                   under. Twelve against the sixteen-step bar, it crosses the bar line and comes
+                   round every three bars. A second dulcimer plays the same cell and moves a
+                   sixteenth ahead every few bars, so the two phase against each other — every odd
+                   step the threads interlock, every even one they run side by side
+     the weft      pizzicato strings on a five-note cell of the chord in eighths (later sixteenths),
+                   five against eight, round every five bars
+     the singers   a cello sings the shuttle tune; a fiddle answers, takes the slow tune of the
+                   middle part and doubles the cello an octave up; soft golden pads under it all
+   FORM (bars of 1.905 s at 126, 96 bars = 3:03):
+     0 Threading the Warp (8) 0:00  the loom from the first beat, with the bass; the warp goes on
+                                    one thread at a time, the pads come up, the cello's pickup
+     8 The Shuttle (16)       0:15  the cello sings the tune; then the pizzicato and the fiddle's
+                                    answers join, and the last phrase climbs
+    24 Crossing Threads (16)  0:46  vi-IV-I-bVII in two-bar chords: the fiddle sings the tune slowed
+                                    to quarter notes (the shuttle in slow motion) while the cello
+                                    keeps the fast shuttle figure underneath; the second dulcimer
+                                    comes in and starts to phase; then the fiddle quickens
+    40 The Weave (16)         1:16  the tune in octaves, cello and fiddle, the pizzicato in
+                                    sixteenths, the beater doubling, the phase still turning
+    56 Dusk (12)              1:47  the loom stops and the light goes: the two dulcimers alone,
+                                    phasing, under a D-flat pad; the cello sings the tune at half
+                                    speed; the treadles come back, the ratchet, the shuttle flying
+                                    faster, and the beater counts the loom back in on the dominant
+    68 Lamplight (8)          2:08  the slow tune again, fiddle and cello in octaves, building; the
+                                    last two bars are bVI-bVII of the key a tone up
+    76 Last of the Light (16) 2:23  the climax, up a tone in B-flat for the final stretch: the whole
+                                    band, the tune in octaves, then a high fiddle descant over it
+    92 Finished Cloth (4)     2:53  the tune's first phrase once more, three strokes of the beater,
+                                    the dulcimer's tremolo on the last chord, the shuttle's last pass
+   It loops to The Shuttle (the threading plays once). Every bar draws from an RNG keyed to its
+   absolute bar number: the beater's ghost strokes, the treadles' creaks, the heddles' sixteenths,
+   the dulcimer's touch, the pizzicato's ghosts and octave leaps and the bass's approach notes
+   change bar by bar, and the phase of the two dulcimers never sits still for long. */
+SONG_ENGINE.songs.theShuttle=(function(){
+  const SHED=0.5;
+  function voices(ctx,bus,noise,live,lite){
+    const C=bus.ch;
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    function O(w,f,t,end,to,det){ const o=ctx.createOscillator();
+      if(typeof w==='string') o.type=w; else o.setPeriodicWave(w);
+      o.frequency.setValueAtTime(f,t); if(det) o.detune.setValueAtTime(det,t);
+      o.connect(to); o.start(t); o.stop(end); live.push([o,end]); return o; }
+    function N(t,dur,to){ const s=ctx.createBufferSource(), d=Math.min(2.3,dur); s.buffer=noise; s.connect(to);
+      s.start(t,Math.random()*(noise.duration-d-0.1),d+0.02); live.push([s,t+d+0.03]); return s; }
+    const AD=(g,t,a,pk,d)=>{ g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,pk),t+a);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+a+d); };
+    const pw=(amps)=>{ const re=new Float32Array(amps.length+1), im=new Float32Array(amps.length+1);
+      amps.forEach((a,i)=>{ im[i+1]=a; }); return ctx.createPeriodicWave(re,im); };
+    /* The shed: a timber weaving shed, wood a few metres away on every side — a quick spray of
+       early reflections and a short warm tail. It stands where the dub spring tank would be, so each
+       channel's spring send is its shed send (and the tape echo still feeds it). */
+    const shedIR=(sec)=>{ const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), R=SONG_ENGINE.rngOf(4417);
+      const ER=[[0.006,0.7],[0.011,0.52],[0.019,0.5],[0.027,0.4],[0.038,0.34],[0.051,0.28],[0.064,0.22],[0.081,0.17],[0.102,0.12]];
+      for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
+        for(const [tt,a] of ER){ const i=Math.floor((tt*(ch?1.08:0.93)+R()*0.0015)*sr); if(i+2<len){ d[i]+=(R()<0.5?-1:1)*a; d[i+1]+=(R()<0.5?-1:1)*a*0.4; } }
+        let y=0;
+        for(let i=0;i<len;i++){ const tt=i/sr, fc=1300+5200*Math.exp(-tt*4.5), al=1-Math.exp(-2*Math.PI*fc/sr);
+          y+=al*((R()*2-1)-y); d[i]+=y*0.34*Math.exp(-tt/0.27)*(1-Math.exp(-tt/0.01)); }
+        let e=0; for(let i=0;i<len;i++) e+=d[i]*d[i];
+        const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k; }
+      return buf; };
+    const sHP=F('highpass',170,0.7), conv=ctx.createConvolver(), sLP=F('lowpass',6800,0.6), sRet=G(SHED);
+    conv.normalize=false; conv.buffer=shedIR(lite?1.1:1.8);
+    try{ bus.springIn.disconnect(); }catch(e){}
+    bus.springIn.connect(sHP); sHP.connect(conv); conv.connect(sLP); sLP.connect(sRet); sRet.connect(bus.mix);
+
+    // a string struck near its end (|sin(k pi x)|/k, x = 0.11): the hammered dulcimer's bright, ringing course
+    const DUL=pw(Array.from({length:14},(_,i)=>{ const k=i+1; return Math.abs(Math.sin(k*Math.PI*0.11))/Math.pow(k,0.85); }));
+    // each course's second string: a short delay swaying a few cents against the first, once per dulcimer
+    // (so a note costs one oscillator, and the pair still beats)
+    const course=(name)=>{ const ch=C[name]; if(lite) return ch.in;
+      const inp=G(1), dl=ctx.createDelay(0.05), lfo=ctx.createOscillator(), dep=G(0.0011), wet=G(0.85);
+      dl.delayTime.value=0.0065; lfo.frequency.value=name==='dul'?0.37:0.43; lfo.connect(dep); dep.connect(dl.delayTime); lfo.start();
+      inp.connect(ch.in); inp.connect(dl); dl.connect(wet); wet.connect(ch.in); bus.lfos.push(lfo); return inp; };
+    const DIN={dul:course('dul'), dul2:course('dul2')};
+
+    /* The bowed parts play PHRASES: one event carries a bar's line ([step, note, length, articulation]
+       each) and one bow of oscillators sings it, the pitch, the filter and the envelope automated note
+       by note. '>' accent, '~' slur (a quick portamento), 'gl' a cellist's slide. A new phrase that
+       carries on a held note (tie) starts with a bow change instead of a fresh attack. */
+    const BOW={
+      vc:{dets:[-4,5], atk:0.07,  pk:0.16, cut:[2.4,7.5,4.6], cutMax:5600, q:0.75, vib:15, vibR:5.2, vibIn:0.24, gl:0.13,  port:0.05,  nf:1700},
+      vn:{dets:[-5,6], atk:0.055, pk:0.12, cut:[2.6,8.5,5.2], cutMax:8800, q:0.75, vib:21, vibR:5.8, vibIn:0.2,  gl:0.11,  port:0.045, nf:3300}};
+    function bow(kind,t,p,sd,hz){ const S=BOW[kind], v=p.v||1, ns=p.ns; if(!ns||!ns.length) return;
+      const s0=ns[0][0], at=(s)=>t+(s-s0)*sd, L=ns[ns.length-1], end=at(L[0]+L[2])+(p.ring?0.7:0.4);
+      const ch=C[kind], lp=F('lowpass',2000,S.q), g=G(0), P=g.gain, Q=lp.frequency, f0=hz(ns[0][1]);
+      const oscs=(lite?[0]:S.dets).map(d=>O('sawtooth',f0,t,end,lp,d));
+      const vg=G(0), lfo=ctx.createOscillator(); lfo.frequency.value=S.vibR*(0.94+Math.random()*0.12);
+      lfo.connect(vg); lfo.start(t); lfo.stop(end); live.push([lfo,end]);
+      for(const o of oscs) vg.connect(o.detune);
+      vg.gain.setValueAtTime(0,t);
+      if(!lite){ const bg=G(0.05), bp=F('bandpass',S.nf,0.8); N(t,end-t,bp); bp.connect(bg); bg.connect(g); }   // rosin on the string, riding the bow
+      lp.connect(g); g.connect(ch.in);
+      P.setValueAtTime(0,t); Q.setValueAtTime(f0*S.cut[0],t);
+      let prevF=f0, gapBefore=!p.tie;
+      ns.forEach(([s,n,l,art],i)=>{
+        const a=at(s), dur=Math.max(0.05,l*sd), f=hz(n), nx=ns[i+1], last=!nx, nxA=nx?at(nx[0]):a+dur+0.3;
+        const room=Math.max(0.03,nxA-a);
+        const slur=i>0 && (art==='~'||art==='gl') && Math.abs(at(ns[i-1][0]+ns[i-1][2])-a)<0.02;
+        const acc=art==='>'?1.18:1, pk=S.pk*v*acc*(lite?1.15:1), atk=Math.min(S.atk,room*0.4), set=Math.min(0.09,room*0.35);
+        for(const o of oscs){ const q=o.frequency;
+          if(slur){ q.setValueAtTime(prevF,a); q.exponentialRampToValueAtTime(f,a+Math.min(art==='gl'?S.gl:S.port,room*0.5)); }
+          else q.setValueAtTime(f,a); }
+        const cut=Math.min(S.cutMax,f*S.cut[1]*(0.8+0.2*v*acc)), rest=Math.min(S.cutMax,f*S.cut[2]);
+        if(!slur){ const tie=i===0&&p.tie;
+          P.setValueAtTime(gapBefore?0:pk*0.4,a); P.linearRampToValueAtTime(pk*(tie?0.95:1.1),a+atk); P.linearRampToValueAtTime(pk,a+atk+set);
+          Q.setValueAtTime(Math.max(220,f*S.cut[0]),a); Q.exponentialRampToValueAtTime(cut,a+atk); Q.exponentialRampToValueAtTime(rest,a+Math.min(room*0.9,atk+0.32)); }
+        else { P.linearRampToValueAtTime(pk,a+0.03); Q.exponentialRampToValueAtTime(rest,a+0.03); }
+        // a long note swells through the bow and takes its vibrato
+        const swell=dur>0.55, hold=swell?pk*1.14:pk;
+        if(swell) P.linearRampToValueAtTime(hold,a+dur*0.72);
+        vg.gain.setValueAtTime(0,a); if(dur>0.28) vg.gain.linearRampToValueAtTime(S.vib,a+Math.min(dur*0.8,S.vibIn+0.2));
+        if(last){ P.setValueAtTime(hold,a+dur); P.linearRampToValueAtTime(0,a+dur+(p.ring?0.6:0.12)); }
+        else { const nArt=nx[3], nSlur=(nArt==='~'||nArt==='gl') && Math.abs(a+dur-nxA)<0.02;
+          gapBefore=nxA-(a+dur)>0.015;
+          if(gapBefore){ P.setValueAtTime(hold,a+dur-0.015); P.linearRampToValueAtTime(0,a+dur+0.01); }
+          else if(!nSlur){ P.setValueAtTime(hold,nxA-Math.min(0.03,room*0.3)); P.linearRampToValueAtTime(pk*0.4,nxA); } }   // the bow change
+        prevF=f; }); }
+
+    return {
+      vc(t,p,sd,hz){ bow('vc',t,p,sd,hz); },
+      vn(t,p,sd,hz){ bow('vn',t,p,sd,hz); },
+      /* the beater (batten) beating the weft into the cloth: a felted thump with a woody knock on its
+         face; sub: an electronic floor under it for the climax */
+      beat(t,p){ const v=p.v||1, to=C.beat.in;
+        const g=G(0), o=O('sine',108,t,t+0.46,g); o.frequency.exponentialRampToValueAtTime(58,t+0.05); o.frequency.exponentialRampToValueAtTime(47,t+0.32);
+        AD(g,t,0.002,0.95*v,0.38); g.connect(to);
+        const kg=G(0), bp=F('bandpass',330,1.2); N(t,0.05,bp); bp.connect(kg); AD(kg,t,0.001,0.6*v,0.045); kg.connect(to);
+        if(!lite){ const tg=G(0), w=O('triangle',196,t,t+0.08,tg); w.frequency.exponentialRampToValueAtTime(150,t+0.06); AD(tg,t,0.001,0.26*v,0.05); tg.connect(to); }
+        if(p.sub){ const sg=G(0), so=O('sine',64,t,t+0.62,sg); so.frequency.exponentialRampToValueAtTime(41,t+0.42); AD(sg,t,0.004,0.75*p.sub*v,0.52); sg.connect(to); } },
+      /* a treadle going down: the wooden clunk, the slap of the lamm on its stop (the crack that carries
+         the backbeat) and now and then a creak of the cord. r: the right foot (they alternate) */
+      trd(t,p){ const v=p.v||1, ch=C.trd, to=p.r?ch.R:ch.L;
+        const g=G(0), o=O('triangle',236,t,t+0.12,g); o.frequency.exponentialRampToValueAtTime(166,t+0.05); AD(g,t,0.001,0.5*v,0.075); g.connect(to);
+        const ng=G(0), bp=F('bandpass',1050,1.1); N(t,0.06,bp); bp.connect(ng); AD(ng,t,0.0008,0.8*v,0.05); ng.connect(to);
+        const sg=G(0), hp=F('highpass',2300,0.7); N(t,0.08,hp); hp.connect(sg); AD(sg,t,0.0006,0.46*v,0.06); sg.connect(to);
+        if(!lite && p.creak){ const cg=G(0), cb=F('bandpass',1400,9); N(t+0.02,0.16,cb); cb.frequency.setValueAtTime(1250,t+0.02); cb.frequency.linearRampToValueAtTime(1900,t+0.16);
+          cb.connect(cg); AD(cg,t+0.02,0.03,0.16*p.creak*v,0.1); cg.connect(to); } },
+      /* the shuttle thrown through the shed: a swish whose pitch rises and falls as it flies, travelling
+         across the stereo field (dir 1: left to right), and the clack of it landing in the far box */
+      shut(t,p,sd){ const v=p.v||1, l=(p.l||2)*sd, dir=p.dir||1, ch=C.shut;
+        const g=G(0), bp=F('bandpass',2300,1.1), pn=ctx.createStereoPanner?ctx.createStereoPanner():null;
+        N(t,l+0.03,bp); bp.frequency.setValueAtTime(2100,t); bp.frequency.exponentialRampToValueAtTime(5400,t+l*0.6); bp.frequency.exponentialRampToValueAtTime(3500,t+l);
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.34*v,t+l*0.7); g.gain.exponentialRampToValueAtTime(0.0001,t+l+0.015);
+        bp.connect(g);
+        if(pn){ pn.pan.setValueAtTime(-0.8*dir,t); pn.pan.linearRampToValueAtTime(0.8*dir,t+l); g.connect(pn); pn.connect(ch.in); } else g.connect(dir>0?ch.R:ch.L);
+        const ct=t+l, to=dir>0?ch.R:ch.L, cg=G(0), cb=F('bandpass',2900,2.6); N(ct,0.02,cb); cb.connect(cg); AD(cg,ct,0.0005,0.75*v,0.016); cg.connect(to);
+        const og=G(0); O('triangle',1230+Math.random()*60,ct,ct+0.05,og); AD(og,ct,0.0005,0.3*v,0.022); og.connect(to); },
+      // the heddles jingling as the shed changes (o: a longer, looser shake)
+      hed(t,p){ const v=p.v||1, g=G(0), hp=F('highpass',6600,0.8), d=p.o?0.13:0.05;
+        N(t,d+0.02,hp); hp.connect(g); AD(g,t,0.0015,0.3*v,d);
+        if(!lite && v>0.45){ const mg=G(0), bp=F('bandpass',8300,4); for(const r of [1,1.37]) O('square',2610*r,t,t+d+0.03,bp); bp.connect(mg); AD(mg,t,0.001,0.05*v,d*0.8); mg.connect(g); }
+        g.connect(C.hed.in); },
+      // the take-up roller's ratchet: one pawl click
+      tick(t,p){ const v=p.v||1, g=G(0), bp=F('bandpass',p.f||4300,2.6); N(t,0.016,bp); bp.connect(g); AD(g,t,0.0004,0.55*v,0.012); g.connect(C.tick.in); },
+      // the breast beam taking the cloth: a deep wooden boom, a whump and a long airy hush (the section downbeat)
+      beam(t,p){ const v=p.v||1;
+        const g=G(0), o=O('sine',80,t,t+1.2,g); o.frequency.exponentialRampToValueAtTime(40,t+0.9); AD(g,t,0.004,0.7*v,1.0); g.connect(C.beat.in);
+        const wg=G(0), lp=F('lowpass',420,0.7); N(t,0.4,lp); lp.connect(wg); AD(wg,t,0.003,0.5*v,0.32); wg.connect(C.fx.in);
+        const ag=G(0), hp=F('highpass',3300,0.6); N(t,1.6,hp); hp.connect(ag); AD(ag,t,0.008,0.15*v,1.5); ag.connect(C.fx.in); },
+      // a rising hush over l steps (the loom winding up)
+      rise(t,p,sd){ const v=p.v||1, l=Math.min(2.2,(p.l||16)*sd), g=G(0), bp=F('bandpass',500,1.3);
+        N(t,l,bp); bp.frequency.setValueAtTime(450,t); bp.frequency.exponentialRampToValueAtTime(7200,t+l);
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.3*v,t+l*0.95); g.gain.linearRampToValueAtTime(0,t+l+0.02);
+        bp.connect(g); g.connect(C.fx.in); },
+      // the bass: round and low, a sine with a soft triangle and a little edge on top that reads on small speakers
+      bass(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,(p.l||2)*sd*0.9), end=t+dur+0.12;
+        const lp=F('lowpass',Math.min(1800,f*8),0.9), g=G(0), P=g.gain;
+        O('sine',f,t,end,g); const tg=G(lite?0.55:0.42); O('triangle',f,t,end,tg); tg.connect(lp);
+        lp.frequency.setValueAtTime(Math.min(1800,f*8),t); lp.frequency.exponentialRampToValueAtTime(Math.max(150,f*2.6),t+0.14);
+        lp.connect(g);
+        const pk=0.6*v, dk=Math.min(0.15,dur*0.7);
+        P.setValueAtTime(0.0001,t); P.exponentialRampToValueAtTime(pk,t+0.006); P.exponentialRampToValueAtTime(pk*0.7,t+dk);
+        P.setValueAtTime(pk*0.7,t+dur); P.exponentialRampToValueAtTime(0.0001,t+dur+0.08); g.connect(C.bass.in); },
+      // the hammered dulcimer: a course of two strings a few cents apart (they beat), bright at the hammer, ringing
+      dul(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), d=(p.d||0.6)*(lite?0.8:1), end=t+d+0.02, to=p.two?DIN.dul2:DIN.dul;
+        const lp=F('lowpass',Math.min(11000,f*12),0.5), g=G(0), P=g.gain;
+        O(DUL,f,t,end,lp,(Math.random()-0.5)*3);
+        lp.frequency.setValueAtTime(Math.min(11000,f*12),t); lp.frequency.exponentialRampToValueAtTime(Math.max(1400,f*4.2),t+0.2);
+        const pk=0.2*v*(lite?1.25:1);
+        P.setValueAtTime(0.0001,t); P.exponentialRampToValueAtTime(pk,t+0.0015); P.exponentialRampToValueAtTime(pk*0.35,t+0.08); P.exponentialRampToValueAtTime(0.0001,t+d);
+        lp.connect(g); g.connect(to);
+        if(!lite && v>0.8){ const hg=G(0), bp=F('bandpass',4200,1.4); N(t,0.012,bp); bp.connect(hg); AD(hg,t,0.0005,0.05*v,0.01); hg.connect(to); } },
+      // pizzicato: the section plucking, a body thump under a quick bright snap
+      piz(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), d=p.d||0.3, end=t+d+0.03;
+        const lp=F('lowpass',Math.min(6500,f*10),0.8), g=G(0);
+        O('sawtooth',f,t,end,lp,(Math.random()-0.5)*10);
+        if(!lite){ const tg=G(0.7); O('triangle',f,t,end,tg,(Math.random()-0.5)*12); tg.connect(lp); }
+        lp.frequency.setValueAtTime(Math.min(6500,f*10),t); lp.frequency.exponentialRampToValueAtTime(Math.max(260,f*1.7),t+0.06);
+        AD(g,t,0.0018,0.2*v*(lite?1.35:1),d); lp.connect(g); g.connect(C.piz.in); },
+      // the golden pad: one chord, two detuned banks spread left and right; glow: a quiet octave of sine on top
+      pad(t,p,sd,hz){ const v=p.v||1, dur=Math.max(0.3,(p.l||16)*sd), rel=p.rel||0.6, end=t+dur+rel+0.05, ns=p.ns, cut=p.cut||1700, atk=Math.min(p.atk||0.5,dur*0.6);
+        const ch=C.pad, sides=[[-7,ch.L,0],[7,ch.R,1]], pk=0.09*v/Math.sqrt(ns.length/2);
+        for(const [d,to,k] of sides){ const lp=F('lowpass',cut*0.55,0.5), g=G(0), P=g.gain;
+          ns.forEach((n,i)=>{ if(i%2===k) O('sawtooth',hz(n),t,end,lp,d+(Math.random()-0.5)*4); });
+          lp.frequency.setValueAtTime(cut*0.55,t); lp.frequency.linearRampToValueAtTime(cut,t+atk*1.4);
+          P.setValueAtTime(0,t); P.linearRampToValueAtTime(pk,t+atk); P.setValueAtTime(pk,t+dur); P.linearRampToValueAtTime(0,t+dur+rel);
+          lp.connect(g); g.connect(to); }
+        if(!lite && p.glow){ const sg=G(0), P=sg.gain, gl=pk*p.glow*1.6; for(const n of ns.slice(-2)) O('sine',hz(n+12),t,end,sg);
+          P.setValueAtTime(0,t); P.linearRampToValueAtTime(gl,t+atk*1.5); P.setValueAtTime(gl,t+dur); P.linearRampToValueAtTime(0,t+dur+rel); sg.connect(ch.in); } },
+    };
+  }
+
+  // ---- harmony: semitones over A-flat (the station is keyed so n=0 sounds as A-flat 3) ----
+  // pad voicings are led by hand: I to bVII keeps the E-flat and A-flat, vi keeps the A-flat on top
+  const CH={
+    Ab:{pad:[0,4,7,14],  bass:-24, piz:-12, third:4},     // A-flat add9
+    Gb:{pad:[-2,2,7,12], bass:-26, piz:-14, third:4},     // G-flat 6/9 (no fifth: the tune leans on C, its sharp eleventh)
+    Fm:{pad:[-3,0,7,12], bass:-27, piz:-15, third:3},     // F minor 7
+    Db:{pad:[-7,-3,0,7], bass:-19, piz:-7,  third:4},     // D-flat add9
+    Es:{pad:[-5,0,2,7],  bass:-17, piz:-5,  third:5},     // E-flat sus4
+    Eb:{pad:[-5,-1,2,7], bass:-17, piz:-5,  third:4}};    // E-flat with its G: the record's one note outside the mode, at dusk
+  const MIXO=[0,2,4,5,7,9,10];                             // A-flat mixolydian
+  const inMix=(x)=>MIXO.includes(((x%12)+12)%12);
+  // the warp: a lower thread walking A-flat, B-flat, C, B-flat, A-flat, F on the even places, an upper
+  // one on E-flat, E-flat, F, E-flat, C, C on the odd places — over, under
+  const WARP=[12,19,14,19,16,21,14,19,12,16,9,16];
+  const THREAD=[0,8,4,2,6,10,5,1,9,3,7,11];               // the order the intro threads them
+  const PIZ=[0,1,2,1,3];                                   // root, fifth, octave, fifth, the third above: five against eight
+
+  // ---- the tunes: [step, note over A-flat 3, length, articulation] ----
+  // The Shuttle (A): the sketch's rocking E-flat/C figure, its climb, and two answers
+  const TUNE_A=[
+    [[0,7,2,'>'],[2,4,2],[4,7,2],[6,4,2],[8,9,2,'>'],[10,7,2],[12,4,2],[14,2,2]],          // Ab: over and back
+    [[0,0,2],[2,2,2,'~'],[4,4,2,'~'],[6,7,2],[8,4,4,'>'],[12,2,4,'~']],                    // Gb: the climb, the C held over G-flat
+    [[0,7,2,'>'],[2,4,2],[4,7,2],[6,4,2],[8,9,2,'>'],[10,12,2],[12,9,2],[14,7,2]],         // Fm: again, up to the A-flat
+    [[0,7,4,'>'],[4,4,4,'~'],[8,2,8]],                                                       // Gb: E-flat, C, B-flat held
+    [[0,7,2,'>'],[2,4,2],[4,7,2],[6,4,2],[8,9,2,'>'],[10,7,2],[12,9,2],[14,12,2]],         // Ab: the shuttle turning upward
+    [[0,14,4,'>'],[4,12,2,'~'],[6,9,2],[8,7,4],[12,9,2],[14,7,2]],                          // Gb: the high B-flat
+    [[0,4,3,'>'],[3,7,1],[4,4,2],[6,2,2],[8,0,4,'~'],[12,-3,2],[14,0,2]],                   // Fm
+    [[0,2,6,'>'],[6,4,2,'~'],[8,2,4],[12,0,4]]];                                             // Gb: and home on the next downbeat
+  // its last phrase the second time: the shuttle climbing all the way up
+  const TUNE_A2=[
+    [[0,7,2,'>'],[2,4,2],[4,7,2],[6,4,2],[8,9,2,'>'],[10,12,2],[12,14,2],[14,16,2]],
+    [[0,19,4,'>'],[4,16,2,'~'],[6,14,2],[8,12,4],[12,14,2],[14,12,2]],
+    [[0,9,3,'>'],[3,12,1],[4,9,2],[6,7,2],[8,4,4,'~'],[12,7,2],[14,4,2]],
+    [[0,2,8,'>'],[8,7,4,'~'],[12,4,4]]];
+  // the fiddle's answers while the cello holds (The Shuttle, second time)
+  const ANS_A=[null,[[8,19,4],[12,14,4,'~']],null,[[6,12,2],[8,14,8,'~']],null,[[10,19,2],[12,16,4,'~']],null,[[4,12,4],[8,9,4,'~'],[12,7,4]]];
+  // Crossing Threads (B): the shuttle slowed to quarter notes, over Fm Fm Db Db Ab Ab Gb Gb
+  const TUNE_B=[
+    [[0,12,4,'>'],[4,9,4],[8,12,4],[12,9,4]],
+    [[0,14,4,'>'],[4,12,4],[8,9,4,'~'],[12,7,4]],
+    [[0,9,4,'>'],[4,12,4,'~'],[8,14,4],[12,16,4]],
+    [[0,14,8,'>'],[8,12,8,'~']],
+    [[0,12,4,'>'],[4,7,4],[8,12,4],[12,7,4]],
+    [[0,16,4,'>'],[4,14,4],[8,12,4,'~'],[12,9,4]],
+    [[0,14,6,'>'],[6,12,2,'~'],[8,7,8]],
+    [[0,19,6,'>'],[6,14,2,'~'],[8,12,4],[12,14,4]]];
+  // ...and quickening the second time, the shuttle back in eighths
+  const TUNE_B2=[
+    [[0,12,2,'>'],[2,9,2],[4,12,2],[6,9,2],[8,14,4,'~'],[12,12,4]],
+    [[0,9,2,'>'],[2,7,2],[4,9,2],[6,12,2],[8,14,8,'~']],
+    [[0,16,2,'>'],[2,14,2],[4,16,2],[6,14,2],[8,19,4,'~'],[12,16,4]],
+    [[0,14,6,'>'],[6,12,2,'~'],[8,9,8]],
+    [[0,19,4,'>'],[4,16,2,'~'],[6,14,2],[8,12,2],[10,14,2],[12,16,4]],
+    [[0,19,2,'>'],[2,21,2],[4,19,2],[6,16,2],[8,14,4,'~'],[12,12,4]],
+    [[0,12,4,'>'],[4,14,4,'~'],[8,19,8]],
+    [[0,21,4,'>'],[4,19,4,'~'],[8,16,4],[12,14,4]]];
+  // the cello under the slow tune: the fast shuttle figure low down, then a held chord tone
+  const VC_B=[[-5,-8],[-5,-8],[-3,-7],[-3,-7],[-5,-8],[-5,-8],[-7,-10],[-7,-10]].map(([a,b],i)=>[[0,a,2,'>'],[2,b,2],[4,a,2],[6,b,2],[8,i%2?b:a,8,'~']]);
+  // ...and long guide tones under the quick one
+  const VC_B2=[4,0,0,-3,-5,-5,-2,2].map(x=>[[0,x,16]]);
+  // Dusk: the tune at half speed on the cello (over Db Db Gb Gb), then the fiddle's long notes into the dominant
+  const AUG=[
+    [[0,7,4,'>'],[4,4,4],[8,7,4],[12,4,4]],
+    [[0,9,4,'>'],[4,7,4],[8,4,4,'~'],[12,2,4]],
+    [[0,0,4,'>'],[4,2,4,'~'],[8,4,4,'~'],[12,7,4]],
+    [[0,4,8,'>'],[8,2,8,'~']]];
+  const VN_DUSK=[[[0,12,8,'>'],[8,9,8,'~']],[[0,7,16]],[[0,12,16,'>']],[[0,14,8],[8,11,8,'~']]];
+  // Lamplight: the slow tune over Fm Fm Db Db Gb Gb Ab Ab, its last bar climbing into the lift
+  const TUNE_L=TUNE_B.slice(0,4).concat([
+    [[0,14,4,'>'],[4,7,4],[8,14,4],[12,7,4]],
+    [[0,19,4,'>'],[4,14,4],[8,12,4,'~'],[12,7,4]],
+    [[0,12,4,'>'],[4,14,4,'~'],[8,16,8]],
+    [[0,16,4,'>'],[4,14,4],[8,16,2],[10,19,2],[12,21,4,'~']]]);
+  // Last of the Light: the fiddle's descant over the tune (the slow shuttle, up high)
+  const DESC=[
+    [[0,24,4,'>'],[4,21,4],[8,24,4],[12,21,4]],
+    [[0,26,4,'>'],[4,24,4],[8,21,4,'~'],[12,19,4]],
+    [[0,21,4,'>'],[4,24,4,'~'],[8,26,4],[12,28,4]],
+    [[0,26,8,'>'],[8,24,8,'~']]];
+
+  const FORM=[
+    {id:'warp',  name:'Threading the Warp', bars:8,  prog:'A'},
+    {id:'shut',  name:'The Shuttle',        bars:16, prog:'A'},
+    {id:'cross', name:'Crossing Threads',   bars:16, prog:'B'},
+    {id:'weave', name:'The Weave',          bars:16, prog:'A'},
+    {id:'dusk',  name:'Dusk',               bars:12, prog:'D'},
+    {id:'lamp',  name:'Lamplight',          bars:8,  prog:'L'},
+    {id:'last',  name:'Last of the Light',  bars:16, prog:'A', tr:2},
+    {id:'cloth', name:'Finished Cloth',     bars:4,  prog:'E', tr:2}];
+  const PROG={A:['Ab','Gb','Fm','Gb'], B:['Fm','Fm','Db','Db','Ab','Ab','Gb','Gb'],
+    D:['Db','Db','Db','Db','Db','Db','Gb','Gb','Fm','Fm','Es','Eb'], L:['Fm','Fm','Db','Db','Gb','Gb','Ab','Ab'], E:['Ab','Gb','Ab','Ab']};
+  let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
+  const TOTAL=acc, LOOP=FORM[1].start;
+  function locate(n){ let pos=n, pass=0;
+    if(n>=TOTAL){ const L=TOTAL-LOOP; pass=1+Math.floor((n-TOTAL)/L); pos=LOOP+(n-TOTAL)%L; }
+    const sec=FORM.find(s=>pos>=s.start&&pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
+  const chordOf=(sec,b)=>{ const P=PROG[sec.prog]; return P[((b%P.length)+P.length)%P.length]; };
+  const ENERGY={warp:0.88, shut:0.93, cross:0.96, weave:1.0, dusk:0.9, lamp:0.98, last:1.1, cloth:1.08};
+
+  function plan(n,R,env){
+    const lite=!!(env&&env.lite);
+    const {pos,pass,sec,b}=locate(n), id=sec.id, ev=[], tr=sec.tr||0;
+    const E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
+    const hum=(x)=>x*(0.92+R()*0.16);
+    const c=chordOf(sec,b), K=CH[c], last=b===sec.bars-1;
+    const nL=locate(n+1), nc=chordOf(nL.sec,nL.b), ntr=nL.sec.tr||0;
+    const T=(x)=>x+tr;
+    const newChord=b===0 || chordOf(sec,b-1)!==c;
+    let run=1; while(b+run<sec.bars && chordOf(sec,b+run)===c) run++;
+    let tempo=1;
+
+    // ---- the loom
+    // the shuttle crosses on 2 and 4, L to R then back (it has to come back from wherever it landed);
+    // in a fill it flies on every beat, or on every eighth
+    const THROWS={std:[[5,1],[13,-1]], beat:[[1,1],[5,-1],[9,1],[13,-1]], eighth:[[1,1],[3,-1],[5,1],[7,-1],[9,1],[11,-1],[13,1],[15,-1]]};
+    const loom=(o)=>{ o=o||{}; const v=o.v||1;
+      if(o.beat!==false){ E(0,'beat',{v:hum(v),sub:o.sub||0}); E(8,'beat',{v:hum(0.9*v),sub:(o.sub||0)*0.8});
+        if(o.busy){ E(3,'beat',{v:hum(0.3*v)}); if(R()<0.5) E(11,'beat',{v:hum(0.28*v)}); if(R()<0.3) E(14,'beat',{v:hum(0.38*v)}); }
+        else if(R()<0.3) E(10,'beat',{v:hum(0.28*v)}); }
+      if(o.trd!==false){ E(4,'trd',{v:hum(0.9*v),creak:R()<0.3?1:0}); E(12,'trd',{v:hum(0.86*v),r:1,creak:R()<0.3?1:0});
+        if(o.fill){ E(14,'trd',{v:hum(0.6*v)}); E(15,'trd',{v:hum(0.75*v),r:1}); } }
+      if(o.shut!==false) for(const [s,dir] of THROWS[o.fill||'std']) if(!(lite && o.fill==='eighth' && s%4===3)) E(s,'shut',{v:hum((o.fill&&s%4!==1?0.72:0.85)*v),l:2,dir});
+      if(o.hed!==false) for(const s of [2,6,10,14]) E(s,'hed',{v:hum((s===6||s===14?0.8:0.62)*v),o:s===14&&R()<0.25?1:0});
+      if(o.hed16 && !lite) for(const s of [1,3,5,7,9,11,13,15]) if(R()<0.6) E(s,'hed',{v:hum(0.26*v)});
+      if(o.tick){ for(let s=0;s<16;s+=o.tick) if(!lite||s%2===0) E(s,'tick',{v:hum((s%4===0?0.7:s%2===0?0.5:0.34)*v)}); } };
+
+    // ---- the bass: the root low, its fifth and octave, and a scale step into the next chord
+    const bassLine=(kind,o)=>{ o=o||{}; const v=o.v||1, r=CH[c].bass, nr=CH[nc].bass+ntr-tr, f5=r+7, up=r+12;
+      let ap;
+      if(ntr!==tr) ap=nr-1;                                           // into the lift: a leading tone
+      else if(nr===r) ap=R()<0.5?f5:up;
+      else { const cands=[]; let y=nr-1; while(!inMix(y)) y--; cands.push(y); y=nr+1; while(!inMix(y)) y++; cands.push(y);
+        const ok=cands.filter(x=>x!==r && x>=-28); ap=ok.length?ok.sort((p,q)=>Math.abs(p-r)-Math.abs(q-r))[R()<0.7?0:ok.length-1]:f5; }
+      const PAT={
+        groove:[[0,r,5,1],[6,r,1.5,0.7],[8,r,3,0.9],[12,f5,2,0.75],[14,ap,2,0.8]],
+        broad1:[[0,r,8,1],[8,up,4,0.8],[12,f5,4,0.75]],
+        broad2:[[0,r,6,1],[6,r,1.5,0.7],[8,f5,4,0.85],[12,up,2,0.7],[14,ap,2,0.8]],
+        drive:[[0,r,2,1],[2,r,1.5,0.6],[4,up,1.5,0.75],[6,r,2,0.7],[8,r,2,0.95],[10,f5,1.5,0.7],[12,up,1.5,0.75],[14,ap,2,0.8]],
+        hold:[[0,r,16,1]]}[kind];
+      for(const [s,x,l,vv] of PAT) E(s,'bass',{n:T(x),l,v:hum(vv*v)}); };
+
+    // ---- the warp and the weft. They are laid after the singers (see the end of the plan): where a thread
+    // would sit a minor second (or ninth) off a note the cello or the fiddle is holding, the dulcimer
+    // leaves that sixteenth out and the pizzicato plays the sung note instead
+    const later=[];
+    const held=()=>{ const out=[]; for(const e of ev) if(e.v==='vc'||e.v==='vn') for(const [s,x,l] of e.p.ns) if(l>=2) out.push([s,s+l,x]); return out; };
+    const rub=(y,s,len,H)=>{ for(const [a,z,x] of H) if(a<s+len && z>s && Math.abs(x-y)%12===1) return x; return null; };
+    const dulc=(o)=>{ o=o||{}; later.push(()=>{ const v=o.v||1, two=!!o.two, off=o.off||0, mask=o.mask, oct=o.oct||0, H=held();
+      for(let s=0;s<(o.stop||16);s++){ const i=((b*16+s+off)%12+12)%12;
+        if(mask && !mask.includes(i)) continue;
+        const lo=i%2===0, x=(c==='Eb' && WARP[i]%12===0) ? WARP[i]-1 : WARP[i];   // over the E-flat with its G, A-flat steps down
+        const y=T(x+oct); if(rub(y,s,3,H)!=null) continue;
+        E(s,'dul',{n:y, v:hum(v*(lo?0.95:0.72)*(s%4===0?1.08:1)), two, d:o.d}); } }); };
+    const pizz=(o)=>{ o=o||{}; later.push(()=>{ const v=o.v||1, st=o.step||2, r=K.piz, tones=[r,r+7,r+12,r+12+K.third], H=held();
+      for(let s=0;s<16;s+=st){ const k=Math.floor((b*16+s)/st)%PIZ.length;
+        if(s>0 && R()<0.07) continue;
+        let x=tones[PIZ[k]]; if(o.hi && R()<0.12 && [0,2,4,7,9].includes(((x%12)+12)%12)) x+=12;
+        let y=T(x); const m=rub(y,s,2,H); if(m!=null) y=m+Math.round((y-m)/12)*12;
+        E(s,'piz',{n:y, v:hum(v*(s%8===0?1:s%4===0?0.85:0.7)), d:st===1?0.2:0.3}); } }); };
+    const pad=(o)=>{ o=o||{}; if(!newChord && !o.force) return;
+      E(0,'pad',{ns:K.pad.map(T), l:(o.l||run*16), v:o.v||1, cut:o.cut||1700, atk:o.atk||0.4, rel:o.rel||0.5, glow:o.glow||0}); };
+    // ---- the singers
+    const sing=(kind,arr,o)=>{ o=o||{}; if(!arr||!arr.length) return; const oc=o.oct||0;
+      let ns=arr.map(([s,x,l,a])=>[s,T(x+oc),l,a||'']);
+      if(o.orn) ns=ns.map((q,i)=>(i>0 && q[3]==='>' && q[2]>=3 && R()<o.orn) ? [q[0],q[1],q[2],'gl'] : q);   // a slide into a long accent now and then
+      E(ns[0][0],kind,{ns, v:o.v||1, tie:o.tie?1:0, ring:o.ring?1:0}); };
+
+    // the dulcimers' echo sits further back at dusk; the light (a master low-pass) goes down with it
+    A(-0.2,{a:'echo',ch:'dul',v:id==='dusk'?0.26:0.12}); A(-0.2,{a:'echo',ch:'dul2',v:id==='dusk'?0.26:0.12});
+
+    if(id==='warp'){
+      // the loom runs from the first beat, with the bass; the warp goes on a thread at a time
+      const cnt=[2,3,5,6,8,10,12,12][b];
+      loom({v:0.9, hed16:b>=4, tick:b>=4?2:0, fill:last?'beat':0});
+      bassLine('groove',{v:0.9});
+      dulc({mask:THREAD.slice(0,cnt), v:0.88});
+      if(b>=4) pad({v:0.75, cut:1300, atk:1.0, force:b===4, l:16});
+      if(b===0) E(0,'beam',{v:0.65});
+      if(last){ E(0,'rise',{v:0.45,l:16}); sing('vc',[[12,2,2,'>'],[14,4,2,'~']],{v:0.85}); }
+    }
+    else if(id==='shut'){
+      const second=b>=8, bb=b%8;
+      loom({v:1, tick:2, hed16:second, fill:last?'beat':0});
+      bassLine('groove');
+      dulc({v:0.82});
+      pad({v:0.85, cut:1600, l:16, force:true});
+      if(!second) sing('vc',TUNE_A[bb],{v:1, orn:0.25});
+      else { sing('vc',bb<4?TUNE_A[bb]:TUNE_A2[bb-4],{v:1, orn:0.35});
+        if(ANS_A[bb]) sing('vn',ANS_A[bb],{v:0.75});
+        pizz({v:0.8}); }
+      if(b===0) E(0,'beam',{v:0.8});
+    }
+    else if(id==='cross'){
+      const second=b>=8, bb=b%8;
+      loom({v:1, tick:2, hed16:true, fill:last?'beat':0});
+      bassLine(newChord?'broad1':'broad2');
+      dulc({v:0.8}); dulc({v:0.72, two:true, off:Math.floor(b/2)});
+      pad({v:0.9, cut:1800});
+      if(!second){ sing('vn',TUNE_B[bb],{v:0.95}); sing('vc',VC_B[bb],{v:0.8}); }
+      else { sing('vn',TUNE_B2[bb],{v:1}); sing('vc',VC_B2[bb],{v:0.72}); }
+      pizz({v:0.72});
+      if(b===0||b===8) E(0,'beam',{v:b?0.7:0.85});
+    }
+    else if(id==='weave'){
+      const bb=b%8, climb=b>=12;
+      loom({v:1.02, busy:true, tick:1, hed16:true, fill:last?'beat':0});
+      bassLine('drive');
+      dulc({v:0.8}); dulc({v:0.72, two:true, off:8+Math.floor(b/4)});
+      pad({v:0.9, cut:2000, l:16, force:true});
+      if(!climb){ sing('vc',TUNE_A[b%8],{v:1, orn:0.3}); sing('vn',TUNE_A[b%8],{v:0.85, oct:12}); }
+      else { sing('vc',TUNE_A2[b-12],{v:0.95, oct:-12}); sing('vn',TUNE_A2[b-12],{v:0.95}); }
+      pizz({v:0.7, step:1, hi:true});
+      if(b===0||b===8) E(0,'beam',{v:b?0.75:0.95});
+      if(last) E(0,'rise',{v:0.4,l:16});
+    }
+    else if(id==='dusk'){
+      // the loom stops: one last stroke, then the dulcimers alone, phasing under the D-flat
+      if(b===0){ E(0,'beat',{v:0.85}); E(0,'beam',{v:0.7}); A(0,{a:'lp',from:20000,f:4200,l:16}); }
+      else if(b<8) A(0,{a:'lp',f:4200,tc:0.05});
+      if(b===8) A(0,{a:'lp',from:4200,f:20000,l:32});
+      const dv=b<4?0.8:b<8?0.68:0.75;
+      dulc({v:dv}); dulc({v:dv*0.92, two:true, off:6+Math.floor(b/2)});
+      pad({v:b<8?1:0.9, cut:b<8?1400:1700, atk:b===0?1.2:0.5, glow:0.25});
+      if(b>=4 && b<8) sing('vc',AUG[b-4],{v:0.95, orn:0.4});
+      if(b>=8){ sing('vn',VN_DUSK[b-8],{v:0.8});
+        loom({v:0.7+0.08*(b-8), beat:b===11, shut:b>=10, hed:b>=9, tick:b>=10?1:2, fill:b===11?'eighth':b===10?'beat':0});
+        bassLine('hold',{v:0.85}); }
+      if(b===10) E(0,'rise',{v:0.5,l:32});
+      if(b===11){ for(const s of [4,12]) E(s,'beat',{v:0.8}); E(14,'beat',{v:0.5}); }
+    }
+    else if(id==='lamp'){
+      loom({v:1, busy:b>=4, tick:1, hed16:true, fill:last?'eighth':b===3?'beat':0});
+      bassLine(b>=4?'drive':(newChord?'broad1':'broad2'));
+      dulc({v:0.8, stop:last?12:16}); dulc({v:0.72, two:true, off:1, stop:last?12:16});
+      pad({v:0.95, cut:1700+130*b, glow:0.25});
+      sing('vn',TUNE_L[b],{v:1}); sing('vc',TUNE_L[b],{v:0.85, oct:-12});
+      pizz({v:0.75, step:b>=4?1:2, hi:b>=4});
+      if(b===0) E(0,'beam',{v:0.85});
+      if(last) E(0,'rise',{v:0.6,l:16});
+    }
+    else if(id==='last'){
+      const desc=b>=8&&b<12, climb=b>=12;
+      loom({v:1.05, busy:true, sub:0.9, tick:1, hed16:true, fill:last?'beat':b===7?'beat':0});
+      bassLine('drive',{v:1.05});
+      dulc({v:0.82}); dulc({v:0.5, two:true, oct:12});
+      pad({v:1, cut:2600, l:16, force:true, glow:0.35});
+      if(!climb){ sing('vc',TUNE_A[b%8],{v:1.05, orn:0.3});
+        if(desc) sing('vn',DESC[b-8],{v:0.95}); else sing('vn',TUNE_A[b%8],{v:0.9, oct:12}); }
+      else { sing('vc',TUNE_A2[b-12],{v:1, oct:-12}); sing('vn',TUNE_A2[b-12],{v:1}); }
+      pizz({v:0.8, step:1, hi:true});
+      if(b===0||b===8) E(0,'beam',{v:1});
+      if(last) E(0,'rise',{v:0.5,l:16});
+    }
+    else if(id==='cloth'){
+      if(b<2){
+        loom({v:1.05, busy:true, sub:0.9, tick:1, hed16:true});
+        bassLine('drive',{v:1.05});
+        dulc({v:0.82}); dulc({v:0.5, two:true, oct:12});
+        pad({v:1, cut:2600, l:16, force:true, glow:0.35});
+        sing('vc',TUNE_A[b],{v:1.05}); sing('vn',TUNE_A[b],{v:0.9, oct:12});
+        pizz({v:0.8, step:1});
+        if(b===0) E(0,'beam',{v:0.9});
+      } else if(b===2){
+        // three strokes of the beater to beat the last weft home, and the chord
+        tempo=0.94;
+        for(const [s,v] of [[0,1],[4,0.95],[8,1.1]]){ E(s,'beat',{v,sub:0.9}); E(s,'hed',{v:0.6,o:1}); }
+        E(0,'beam',{v:1}); E(8,'beam',{v:0.7}); E(4,'trd',{v:0.9}); E(8,'trd',{v:0.95,r:1});
+        E(0,'bass',{n:T(-24),l:14,v:1});
+        E(0,'pad',{ns:CH.Ab.pad.map(T), l:32, v:1, cut:2400, atk:0.15, rel:0.9, glow:0.4});
+        sing('vc',[[0,0,16,'>']],{v:1}); sing('vn',[[0,12,16,'>']],{v:0.9});
+        // the dulcimer's tremolo on the chord, dying away
+        for(let s=0;s<16;s++){ E(s,'dul',{n:T([12,16,19,24][s%4]),v:1-s*0.045,d:0.6}); if(!lite) E(s+0.5,'dul',{n:T([19,24,16,12][s%4]),v:0.6-s*0.03,d:0.5,two:true}); }
+      } else {
+        tempo=0.86;
+        sing('vc',[[0,0,12]],{v:0.9, tie:true, ring:true}); sing('vn',[[0,12,12]],{v:0.8, tie:true, ring:true});
+        for(const [s,x] of [[0,12],[2,16],[4,19],[6,24]]) E(s,'dul',{n:T(x),v:0.8,d:1.4});
+        E(12,'shut',{v:0.8,l:2,dir:1}); E(15,'tick',{v:0.6});
+      }
+    }
+    for(const f of later) f();
+    return {ev, label:sec.name, sec:id, pos, pass, energy:ENERGY[id], tempo};
+  }
+  return {
+    title:'The Shuttle', bpm:126, key:-1, swing:0, echoSteps:3, voices,
+    // the bowed parts speak slowly, so they set off a hair early; the pads breathe in behind the beat
+    lag:{vc:-0.012, vn:-0.01, pad:0.01},
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan,
+    mix:{ makeup:0.6, lowMid:-1.5, air:4, echoFb:0.3, echoRet:0.5, springRet:0,
+      channels:{
+        beat:{level:1.4,  pan:0,     echo:0,    spring:0.06, chain:[['hp',28],['peak',64,2,1],['peak',330,1,1.2],['lp',6500]]},
+        trd: {level:3.0, pan:0, spread:0.5, echo:0.02, spring:0.2, chain:[['hp',120],['peak',1000,2,1]]},
+        shut:{level:2.0, pan:0, spread:0.7, echo:0.05, spring:0.22, chain:[['hp',900]]},
+        hed: {level:2.2,  pan:0.2,   echo:0,    spring:0.12, chain:[['hp',4000]]},
+        tick:{level:4.0, pan:-0.25, echo:0,    spring:0.08, chain:[['hp',2500]]},
+        fx:  {level:1.6,  pan:0,     echo:0.08, spring:0.3,  chain:[['hp',40]]},
+        bass:{level:0.27, pan:0,     echo:0,    spring:0,    chain:[['hp',28],['drive',1.3],['peak',110,1.5,1],['lp',2200]]},
+        dul: {level:1.3,  pan:-0.48, echo:0.12, spring:0.3,  chain:[['hp',260],['peak',2600,2,1],['hshelf',8000,-2]]},
+        dul2:{level:1.3,  pan:0.48,  echo:0.12, spring:0.3,  chain:[['hp',260],['peak',2600,2,1],['hshelf',8000,-2]]},
+        piz: {level:2.0,  pan:-0.12, echo:0.04, spring:0.28, chain:[['hp',90],['peak',460,3,1.1],['peak',1800,1.5,1]]},
+        vc:  {level:1.0,  pan:-0.06, echo:0.05, spring:0.36, chain:[['hp',90],['peak',260,2.5,1.1],['peak',560,2,1.3],['peak',1250,2,1.4],['peak',2400,-2,1],['lp',5500,0.7]]},
+        vn:  {level:1.5, pan:0.12,  echo:0.1,  spring:0.38, chain:[['hp',220],['peak',280,2,1.2],['peak',470,1.5,1.4],['peak',1100,-1.5,1.4],['peak',3000,3,0.9],['lp',9000,0.7]]},
+        pad: {level:1.1,  pan:0, spread:0.5, echo:0.05, spring:0.5, chain:[['hp',140],['peak',350,-2,1],['hshelf',5000,-3]]},
+      } },
+  };
+})();
 /* ==== /SONG ENGINE ==== */
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
@@ -27058,8 +27624,11 @@ const TRACKS=[
      and song, in the same valley an hour later, dressed by a master (see FELICITY kit). The
      felt flag keeps the shared valley (terrain heights, embankment, placement rules, fog);
      loom:true swaps in the fibre materials, the low appliqué sun, the woven deck, the
-     tunnels as looms and the landmarks. Felicia herself is untouched. */
-  {name:'Felicity', sc:2.12, wig:0.22, laps:4, felt:true, loom:true, key:-1, tempo:164, sky:0x3a1440,
+     tunnels as looms and the landmarks. Felicia herself is untouched.
+     Her own record is "The Shuttle" (courseStyle, see MUSIC_STYLES.courseFelicity): the sketch
+     below grown into loom-driven folktronica in A-flat; the sketch still re-genres the grid
+     stations here, as it does on Felicia. */
+  {name:'Felicity', sc:2.12, wig:0.22, laps:4, felt:true, loom:true, key:-1, tempo:164, sky:0x3a1440, courseStyle:'courseFelicity',
    song:{ name:'The Shuttle',
           mel: [7,4,7,4,   9,7,4,2,   0,2,4,7,   4,null,2,null],
           melB:[12,9,12,9, 14,12,9,7, 9,12,14,16, 14,null,12,null],
@@ -52294,7 +52863,7 @@ function syncHUD(){
   $('whipbtn').classList.toggle('ready', whipReady);
   // seek knobs only enabled for characters that actually have more than one station —
   // the screen itself (station/clock/speed) always shows regardless
-  { const hasAlts=!!(chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length);
+  { const hasAlts=!!(chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length) || !!courseStyleId();   // a course record makes two stations
     $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
   if(trackLoop){
     $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(lapsOf(),me.lap+1); $('lapsuf').textContent='/'+lapsOf();
@@ -52309,9 +52878,9 @@ function syncHUD(){
   // ~148mph boosted) instead of showing the raw sim units.
   $('radioSpeed').textContent=Math.round(sp*0.7);
   $('radioPanel').classList.toggle('boosting', me.boostT>0);
-  const alts=altsFor(chosenType&&chosenType.id);
-  $('radioStation').textContent=(curStyle&&curStyle.station)||'— NO SIGNAL —';
-  drawDial(chosenType?(altIndex[chosenType.id]||0):0, 1+alts.length);
+  const dial=dialOf(chosenType&&chosenType.id);
+  $('radioStation').textContent=stationLabel(curStyle)||'— NO SIGNAL —';
+  drawDial(dial.i, dial.n);
 
   const slot=$('item');
   if(me._roll>0){                                   // roulette: cycle icons fast, then settle
@@ -53675,6 +54244,9 @@ countdown = function(){
   initAudio();
   buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
+  // every race starts on its course's record, if it has one (unless a station is somehow still playing, in
+  // which case startMusic below keeps it, and the tuning has to keep describing it)
+  if(!musicTimer) onCourseSong=soundtrack==='course' && !!courseStyleId();
   $('start').classList.add('hidden'); $('select').classList.add('hidden'); $('finish').classList.add('hidden');
   $('cd').classList.remove('hidden');
   const cd=$('count'); cd.textContent='3';
@@ -54249,21 +54821,28 @@ setupFullscreen();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   b.onclick=()=>{ musicOn=!musicOn; b.textContent='Music: '+(musicOn?'ON':'OFF'); b.classList.toggle('on',musicOn);
     if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
+// which station a race starts on: its course's own record where it has one, or always the racer's
+(function setupSoundtrack(){ const b=$('sndbtn'); if(!b)return;
+  const paint=()=>{ b.textContent='Soundtrack: '+(soundtrack==='course'?'Course songs':'Racer songs'); b.classList.toggle('on',soundtrack==='course'); };
+  b.onclick=()=>{ soundtrack=soundtrack==='course'?'racer':'course';
+    try{ localStorage.setItem('sr_soundtrack',soundtrack); }catch(_){}
+    paint(); };
+  paint(); })();
 // in-race "car radio" seek knobs — tap either one to step to the prev/next station,
 // dashboard-style: a quick tuning static burst + glow, then a frequency-readout toast.
 // Two physical knobs instead of one forward-only toggle, so it's actually adjustable
 // both directions right on the unit rather than needing several taps to "wrap around".
 function seekStation(dir){
-  const id=chosenType&&chosenType.id; const alts=altsFor(id); if(!alts.length)return;
-  const n=alts.length+1;
-  altIndex[id]=(((altIndex[id]||0)+dir)%n+n)%n;   // wraps both directions: home <-> alt1 <-> alt2 <-> ...
+  const id=chosenType&&chosenType.id; const d=dialOf(id), n=d.n; if(n<2)return;
+  const i=((d.i+dir)%n+n)%n;   // wraps both directions: (course record <->) home <-> alt1 <-> alt2 <-> ...
+  if(d.cs){ onCourseSong=i===0; if(i>0) altIndex[id]=i-1; } else altIndex[id]=i;
   noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
   const b=$(dir>0?'radioNext':'radioPrev');
   b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
   if(musicTimer){ stopMusic(); startMusic(); }   // startMusic() no-ops while musicTimer is already set, so
                                                    // force a clean stop/restart to actually pick up the new station
   const st=MUSIC_STYLES[effectiveStyleId(id)];
-  showToast(st.station||'Station tuned','t-gold');
+  showToast(stationLabel(st)||'Station tuned','t-gold');
 }
 (function setupRadio(){
   const p=$('radioPrev'), n=$('radioNext'); if(!p||!n)return;
@@ -54640,11 +55219,16 @@ window.srNet={
   // What is actually playing: which tune, and whose arrangement of it. Read-only, and the
   // only practical way to check a course song is re-genring rather than overwriting.
   get music(){ if(!curStyle) return {playing:false};
+    // the course's own record, when this course has one, and whether it is what is tuned
+    const cs=courseStyleId(), cst=cs&&MUSIC_STYLES[cs],
+      course=cs?{style:cs, station:stationLabel(cst), song:SONG_ENGINE.songs[cst.engine].title, tuned:!!curStyle.course}:null;
     if(curStyle.engine){ const h=producedStations[curStyle.engine];
-      return {playing:!!(h&&h.running), station:curStyle.station||null, song:curStyle.songName,
-        engine:curStyle.engine, courseSong:curStyle.courseSong?curStyle.courseSong+' ('+((SONG_ENGINE.songs[curStyle.engine]||{}).courseNote||'deferred: produced station keeps its own riddim, in the course key')+')':null,
+      return {playing:!!(h&&h.running), station:stationLabel(curStyle), song:curStyle.songName,
+        engine:curStyle.engine, soundtrack, course,
+        courseSong:curStyle.course ? curStyle.songName+" (the course's own record, in the course key, untransposed)"
+          : curStyle.courseSong?curStyle.courseSong+' ('+((SONG_ENGINE.songs[curStyle.engine]||{}).courseNote||'deferred: produced station keeps its own riddim, in the course key')+')':null,
         now:h?h.info():null}; }
-    return {playing:!!musicTimer, station:curStyle.station||null,
+    return {playing:!!musicTimer, station:curStyle.station||null, soundtrack, course,
       song:curStyle.songName||'(character tune)',
       arrangement:{inst:curStyle.inst, melWave:curStyle.melWave, bassInst:curStyle.bassInst||null,
         drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
