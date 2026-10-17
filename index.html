@@ -29830,6 +29830,11 @@ const tcLin=h=>new T.Color(h).convertSRGBToLinear();
 function tcCanvas(key, w, h, draw){
   let c=TC_CANVAS[key]; if(!c){ c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h); TC_CANVAS[key]=c; }
   return c; }
+// one texture per canvas per build, shared by every material that prints it: the card is the
+// ground AND the set's face, the atlas is every roundel — on a phone each extra upload of a
+// 2048 sheet is ~11 MB of video memory for nothing. Reset at the top of every Stacey build.
+let TC_TEXB={};
+function tcTexB(key, c, o){ return TC_TEXB[key]||(TC_TEXB[key]=tcTex(c,o)); }
 function tcTex(c, o){ o=o||{};
   const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding;
   t.wrapS=t.wrapT=o.clamp?T.ClampToEdgeWrapping:T.RepeatWrapping;
@@ -30031,7 +30036,7 @@ function tcGround(){
   const bz=new T.PlaneGeometry(7000,7000,1,1); bz.rotateX(-Math.PI/2);
   const bm=new T.Mesh(bz, new T.MeshBasicMaterial({color:tcLin(0x27333a)})); bm.position.set(cx,TC_FLOOR-0.4,cz); trackGroup.add(bm);
   const cg=new T.PlaneGeometry(W,H,1,1); cg.rotateX(-Math.PI/2);
-  const cm=new T.Mesh(cg, new T.MeshBasicMaterial({map:tcTex(tcCardCanvas(),{clamp:true,aniso:8})}));
+  const cm=new T.Mesh(cg, new T.MeshBasicMaterial({map:tcTexB('card',tcCardCanvas(),{clamp:true})}));
   cm.position.set(cx,TC_FLOOR,cz); trackGroup.add(cm);
   return {cx,cz,W,H};
 }
@@ -30128,7 +30133,7 @@ function tcGate(inS){
   // the roundel standing on the beam
   const g=new T.CircleGeometry(1,48), uv=g.attributes.uv;
   for(let i=0;i<uv.count;i++) uv.setXY(i, (0*256+2+uv.getX(i)*252)/1024, 1-(2+(1-uv.getY(i))*252)/512);
-  const disc=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTex(tcIconCanvas()), side:T.DoubleSide}));
+  const disc=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTexB('icons',tcIconCanvas()), side:T.DoubleSide}));
   const p=at(mid, top+11); disc.position.set(p.x,p.y,p.z); disc.scale.setScalar(11); disc.rotation.y=ry+Math.PI; trackGroup.add(disc);
 }
 
@@ -30175,10 +30180,10 @@ function tcTunnel(tunIdx, inS){
       I.push(b,b+2,b+1, b,b+3,b+2); };
     quad(-FW/2,-PW,0,FH); quad(PW,FW/2,0,FH); quad(-PW,PW,PT,FH);
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('uv',new T.Float32BufferAttribute(U,2)); g.setIndex(I);
-    const card=tcTex(tcCardCanvas(),{clamp:true});
+    const card=tcTexB('card',tcCardCanvas(),{clamp:true});
     trackGroup.add(new T.Mesh(g, new T.MeshBasicMaterial({map:card, side:T.DoubleSide}))); }
   // the caption on the black of the PLUGE row, right of the portal
-  { const g=new T.PlaneGeometry(150,28); const m=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTex(tcStandByCanvas(),{clamp:true})}));
+  { const g=new T.PlaneGeometry(150,28); const m=new T.Mesh(g, new T.MeshBasicMaterial({map:tcTexB('standby',tcStandByCanvas(),{clamp:true})}));
     const p=pt(face, 150, 40, -0.6); m.position.copy(p); m.rotation.y=ry+Math.PI; trackGroup.add(m); }
   // bezel frame, body and back: dark slate, flat-toned
   const L=[], BZ=0x1e2a31, BODY=0x2b3a42, DEP=Lc+3, BW=150, BH=118;
@@ -30218,7 +30223,7 @@ function tcTunnel(tunIdx, inS){
     trackGroup.add(new T.Mesh(g, snowMat)); }
   // PLEASE STAND BY, hung across the road halfway through (underside 30 over the deck)
   { const im=Math.round((i0+i1)/2), s=SAMP[im];
-    const m=new T.Mesh(new T.PlaneGeometry(60,11.25), new T.MeshBasicMaterial({map:tcTex(tcStandByCanvas(),{clamp:true}), side:T.DoubleSide}));
+    const m=new T.Mesh(new T.PlaneGeometry(60,11.25), new T.MeshBasicMaterial({map:tcTexB('standby',tcStandByCanvas(),{clamp:true}), side:T.DoubleSide}));
     m.position.set(s.p.x, s.p.y+35.6, s.p.z); m.rotation.y=Math.atan2(s.t.x,s.t.z)+Math.PI; trackGroup.add(m); }
   return {snowMat};
 }
@@ -30314,7 +30319,7 @@ function tcScenery(inS, tunIdx){
   fronts.forEach((L,icon)=>{ if(!L.length) return;
     const g=g0.clone(), uv=g.attributes.uv;
     for(let i=0;i<uv.count;i++) uv.setXY(i, ((icon%4)*256+2+uv.getX(i)*252)/1024, 1-(Math.floor(icon/4)*256+2+(1-uv.getY(i))*252)/512);
-    tcBatch(g, L, new T.MeshBasicMaterial({map:tcTex(tcIconCanvas())}), 0); });
+    tcBatch(g, L, new T.MeshBasicMaterial({map:tcTexB('icons',tcIconCanvas())}), 0); });
   tcBatch(g0, backs, new T.MeshBasicMaterial({color:0xffffff}), 0);
   // waves: sets of two or three breakers, cut in blue, cyan and the grey of the bars
   const WS=[[0.79,1,90,120],[0.815,1,150,90],[0.85,-1,70,140],[0.875,-1,150,100],[0.92,1,95,110],[0.955,-1,60,80],[0.66,1,180,130],[0.30,1,120,110],[0.43,1,150,100]];
@@ -36959,6 +36964,7 @@ function buildTrack(idx){
   } else if(tc){
     // Stacey: the CRT sky, the card laid flat as the ground, and the road's slab standing on it
     // (shoulders, plinth walls and castellation kerbs; see TEST CARD KIT)
+    TC_TEXB={};
     skyDome=tcSky(); trackGroup.add(skyDome);
     TC_FLOOR=tcFloorLevel(innerSign);
     tcGround();
