@@ -25854,7 +25854,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
     const BOW={
       vc:{dets:[-4,5], atk:0.07,  pk:0.16, cut:[2.4,7.5,4.6], cutMax:5600, q:0.75, vib:15, vibR:5.2, vibIn:0.24, gl:0.13,  port:0.05,  nf:1700},
       vn:{dets:[-5,6], atk:0.055, pk:0.12, cut:[2.6,8.5,5.2], cutMax:8800, q:0.75, vib:21, vibR:5.8, vibIn:0.2,  gl:0.11,  port:0.045, nf:3300}};
-    function bow(kind,t,p,sd,hz){ const S=BOW[kind], v=p.v||1, ns=p.ns; if(!ns||!ns.length) return;
+    function bow(kind,t,p,sd,hz){ const S=BOW[kind==='vn2'?'vn':kind], v=p.v||1, ns=p.ns; if(!ns||!ns.length) return;
       const s0=ns[0][0], at=(s)=>t+(s-s0)*sd, L=ns[ns.length-1], end=at(L[0]+L[2])+(p.ring?0.7:0.4);
       const ch=C[kind], lp=F('lowpass',2000,S.q), g=G(0), P=g.gain, Q=lp.frequency, f0=hz(ns[0][1]);
       const oscs=(lite?[0]:S.dets).map(d=>O('sawtooth',f0,t,end,lp,d));
@@ -25870,7 +25870,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
         const a=at(s), dur=Math.max(0.05,l*sd), f=hz(n), nx=ns[i+1], last=!nx, nxA=nx?at(nx[0]):a+dur+0.3;
         const room=Math.max(0.03,nxA-a);
         const slur=i>0 && (art==='~'||art==='gl') && Math.abs(at(ns[i-1][0]+ns[i-1][2])-a)<0.02;
-        const acc=art==='>'?1.18:1, pk=S.pk*v*acc*(lite?1.15:1), atk=Math.min(S.atk,room*0.4), set=Math.min(0.09,room*0.35);
+        const acc=art==='>'?1.18:1, pk=S.pk*v*acc*(lite?1.35:1), atk=Math.min(S.atk,room*0.4), set=Math.min(0.09,room*0.35);
         for(const o of oscs){ const q=o.frequency;
           if(slur){ q.setValueAtTime(prevF,a); q.exponentialRampToValueAtTime(f,a+Math.min(art==='gl'?S.gl:S.port,room*0.5)); }
           else q.setValueAtTime(f,a); }
@@ -25893,12 +25893,13 @@ SONG_ENGINE.songs.theShuttle=(function(){
     return {
       vc(t,p,sd,hz){ bow('vc',t,p,sd,hz); },
       vn(t,p,sd,hz){ bow('vn',t,p,sd,hz); },
+      vn2(t,p,sd,hz){ bow('vn2',t,p,sd,hz); },
       /* the beater (batten) beating the weft into the cloth: a felted thump with a woody knock on its
          face; sub: an electronic floor under it for the climax */
       beat(t,p){ const v=p.v||1, to=C.beat.in;
-        const g=G(0), o=O('sine',108,t,t+0.46,g); o.frequency.exponentialRampToValueAtTime(58,t+0.05); o.frequency.exponentialRampToValueAtTime(47,t+0.32);
-        AD(g,t,0.002,0.95*v,0.38); g.connect(to);
-        const kg=G(0), bp=F('bandpass',330,1.2); N(t,0.05,bp); bp.connect(kg); AD(kg,t,0.001,0.6*v,0.045); kg.connect(to);
+        const g=G(0), o=O('sine',112,t,t+0.4,g); o.frequency.exponentialRampToValueAtTime(62,t+0.05); o.frequency.exponentialRampToValueAtTime(52,t+0.28);
+        AD(g,t,0.002,0.95*v,0.3); g.connect(to);
+        const kg=G(0), bp=F('bandpass',330,1.2); N(t,0.05,bp); bp.connect(kg); AD(kg,t,0.001,0.75*v,0.05); kg.connect(to);
         if(!lite){ const tg=G(0), w=O('triangle',196,t,t+0.08,tg); w.frequency.exponentialRampToValueAtTime(150,t+0.06); AD(tg,t,0.001,0.26*v,0.05); tg.connect(to); }
         if(p.sub){ const sg=G(0), so=O('sine',64,t,t+0.62,sg); so.frequency.exponentialRampToValueAtTime(41,t+0.42); AD(sg,t,0.004,0.75*p.sub*v,0.52); sg.connect(to); } },
       /* a treadle going down: the wooden clunk, the slap of the lamm on its stop (the crack that carries
@@ -25936,11 +25937,12 @@ SONG_ENGINE.songs.theShuttle=(function(){
         N(t,l,bp); bp.frequency.setValueAtTime(450,t); bp.frequency.exponentialRampToValueAtTime(7200,t+l);
         g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.3*v,t+l*0.95); g.gain.linearRampToValueAtTime(0,t+l+0.02);
         bp.connect(g); g.connect(C.fx.in); },
-      // the bass: round and low, a sine with a soft triangle and a little edge on top that reads on small speakers
+      /* the bass: a felted synth bass, round underneath (a sine) with a soft-filtered saw over it, so its
+         second to fourth harmonics carry the line on small speakers instead of all of it sitting below 60 Hz */
       bass(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.08,(p.l||2)*sd*0.9), end=t+dur+0.12;
-        const lp=F('lowpass',Math.min(1800,f*8),0.9), g=G(0), P=g.gain;
-        O('sine',f,t,end,g); const tg=G(lite?0.55:0.42); O('triangle',f,t,end,tg); tg.connect(lp);
-        lp.frequency.setValueAtTime(Math.min(1800,f*8),t); lp.frequency.exponentialRampToValueAtTime(Math.max(150,f*2.6),t+0.14);
+        const lp=F('lowpass',Math.min(2000,f*9),1.1), g=G(0), P=g.gain;
+        const sg=G(0.5); O('sine',f,t,end,sg); sg.connect(g); const wg=G(0.5); O('sawtooth',f,t,end,wg,3); wg.connect(lp);
+        lp.frequency.setValueAtTime(Math.min(2000,f*9),t); lp.frequency.exponentialRampToValueAtTime(Math.max(180,f*3.6),t+0.16);
         lp.connect(g);
         const pk=0.6*v, dk=Math.min(0.15,dur*0.7);
         P.setValueAtTime(0.0001,t); P.exponentialRampToValueAtTime(pk,t+0.006); P.exponentialRampToValueAtTime(pk*0.7,t+dk);
@@ -25960,7 +25962,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
         O('sawtooth',f,t,end,lp,(Math.random()-0.5)*10);
         if(!lite){ const tg=G(0.7); O('triangle',f,t,end,tg,(Math.random()-0.5)*12); tg.connect(lp); }
         lp.frequency.setValueAtTime(Math.min(6500,f*10),t); lp.frequency.exponentialRampToValueAtTime(Math.max(260,f*1.7),t+0.06);
-        AD(g,t,0.0018,0.2*v*(lite?1.35:1),d); lp.connect(g); g.connect(C.piz.in); },
+        AD(g,t,0.0018,0.2*v*(lite?1.6:1),d); lp.connect(g); g.connect(C.piz.in); },
       // the golden pad: one chord, two detuned banks spread left and right; glow: a quiet octave of sine on top
       pad(t,p,sd,hz){ const v=p.v||1, dur=Math.max(0.3,(p.l||16)*sd), rel=p.rel||0.6, end=t+dur+rel+0.05, ns=p.ns, cut=p.cut||1700, atk=Math.min(p.atk||0.5,dur*0.6);
         const ch=C.pad, sides=[[-7,ch.L,0],[7,ch.R,1]], pk=0.09*v/Math.sqrt(ns.length/2);
@@ -25989,7 +25991,9 @@ SONG_ENGINE.songs.theShuttle=(function(){
   // one on E-flat, E-flat, F, E-flat, C, C on the odd places — over, under
   const WARP=[12,19,14,19,16,21,14,19,12,16,9,16];
   const THREAD=[0,8,4,2,6,10,5,1,9,3,7,11];               // the order the intro threads them
-  const PIZ=[0,1,2,1,3];                                   // root, fifth, octave, fifth, the third above: five against eight
+  const PIZ=[0,1,2,1,3];
+  const PENT=[0,2,4,7,9];
+  const pentDown=(x,k)=>{ let y=x; for(let i=0;i<k;i++){ y--; while(!PENT.includes(((y%12)+12)%12)) y--; } return y; };                                   // root, fifth, octave, fifth, the third above: five against eight
 
   // ---- the tunes: [step, note over A-flat 3, length, articulation] ----
   // The Shuttle (A): the sketch's rocking E-flat/C figure, its climb, and two answers
@@ -26071,7 +26075,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
     if(n>=TOTAL){ const L=TOTAL-LOOP; pass=1+Math.floor((n-TOTAL)/L); pos=LOOP+(n-TOTAL)%L; }
     const sec=FORM.find(s=>pos>=s.start&&pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
   const chordOf=(sec,b)=>{ const P=PROG[sec.prog]; return P[((b%P.length)+P.length)%P.length]; };
-  const ENERGY={warp:0.88, shut:0.93, cross:0.96, weave:1.0, dusk:0.9, lamp:0.98, last:1.1, cloth:1.08};
+  const ENERGY={warp:0.88, shut:0.93, cross:0.96, weave:0.98, dusk:0.9, lamp:0.98, last:1.1, cloth:1.08};
 
   function plan(n,R,env){
     const lite=!!(env&&env.lite);
@@ -26091,6 +26095,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
     const THROWS={std:[[5,1],[13,-1]], beat:[[1,1],[5,-1],[9,1],[13,-1]], eighth:[[1,1],[3,-1],[5,1],[7,-1],[9,1],[11,-1],[13,1],[15,-1]]};
     const loom=(o)=>{ o=o||{}; const v=o.v||1;
       if(o.beat!==false){ E(0,'beat',{v:hum(v),sub:o.sub||0}); E(8,'beat',{v:hum(0.9*v),sub:(o.sub||0)*0.8});
+        if(o.four){ E(4,'beat',{v:hum(0.72*v),sub:(o.sub||0)*0.6}); E(12,'beat',{v:hum(0.7*v),sub:(o.sub||0)*0.6}); }
         if(o.busy){ E(3,'beat',{v:hum(0.3*v)}); if(R()<0.5) E(11,'beat',{v:hum(0.28*v)}); if(R()<0.3) E(14,'beat',{v:hum(0.38*v)}); }
         else if(R()<0.3) E(10,'beat',{v:hum(0.28*v)}); }
       if(o.trd!==false){ E(4,'trd',{v:hum(0.9*v),creak:R()<0.3?1:0}); E(12,'trd',{v:hum(0.86*v),r:1,creak:R()<0.3?1:0});
@@ -26119,7 +26124,7 @@ SONG_ENGINE.songs.theShuttle=(function(){
     // would sit a minor second (or ninth) off a note the cello or the fiddle is holding, the dulcimer
     // leaves that sixteenth out and the pizzicato plays the sung note instead
     const later=[];
-    const held=()=>{ const out=[]; for(const e of ev) if(e.v==='vc'||e.v==='vn') for(const [s,x,l] of e.p.ns) if(l>=2) out.push([s,s+l,x]); return out; };
+    const held=()=>{ const out=[]; for(const e of ev) if(e.v==='vc'||e.v==='vn'||e.v==='vn2') for(const [s,x,l] of e.p.ns) if(l>=2) out.push([s,s+l,x]); return out; };
     const rub=(y,s,len,H)=>{ for(const [a,z,x] of H) if(a<s+len && z>s && Math.abs(x-y)%12===1) return x; return null; };
     const dulc=(o)=>{ o=o||{}; later.push(()=>{ const v=o.v||1, two=!!o.two, off=o.off||0, mask=o.mask, oct=o.oct||0, H=held();
       for(let s=0;s<(o.stop||16);s++){ const i=((b*16+s+off)%12+12)%12;
@@ -26133,6 +26138,11 @@ SONG_ENGINE.songs.theShuttle=(function(){
         let x=tones[PIZ[k]]; if(o.hi && R()<0.12 && [0,2,4,7,9].includes(((x%12)+12)%12)) x+=12;
         let y=T(x); const m=rub(y,s,2,H); if(m!=null) y=m+Math.round((y-m)/12)*12;
         E(s,'piz',{n:y, v:hum(v*(s%8===0?1:s%4===0?0.85:0.7)), d:st===1?0.2:0.3}); } }); };
+    // the second fiddle's line: two steps of the pentatonic under the tune (thirds and fourths), or three, or one,
+    // whichever does not sit a semitone under a note of the chord
+    const harm=(arr,up)=>arr.map(([s,x,l,a])=>{ const y0=x+(up||0);
+      for(const k of [2,3,1]){ const y=pentDown(y0,k); if(!K.pad.some(q=>Math.abs(q-y)%12===1)) return [s,y,l,a]; } return [s,pentDown(y0,2),l,a]; });
+    const pump=(d,beats)=>{ for(const s of beats){ A(s,{a:'lvl',ch:'pad',v:1-d,tc:0.004}); A(s+0.7,{a:'lvl',ch:'pad',v:1,tc:0.07}); } };
     const pad=(o)=>{ o=o||{}; if(!newChord && !o.force) return;
       E(0,'pad',{ns:K.pad.map(T), l:(o.l||run*16), v:o.v||1, cut:o.cut||1700, atk:o.atk||0.4, rel:o.rel||0.5, glow:o.glow||0}); };
     // ---- the singers
@@ -26185,7 +26195,8 @@ SONG_ENGINE.songs.theShuttle=(function(){
       pad({v:0.9, cut:2000, l:16, force:true});
       if(!climb){ sing('vc',TUNE_A[b%8],{v:1, orn:0.3}); sing('vn',TUNE_A[b%8],{v:0.85, oct:12}); }
       else { sing('vc',TUNE_A2[b-12],{v:0.95, oct:-12}); sing('vn',TUNE_A2[b-12],{v:0.95}); }
-      pizz({v:0.7, step:1, hi:true});
+      pizz({v:0.7, step:b>=8?1:2, hi:b>=8});
+      pump(0.25,[0,8]);
       if(b===0||b===8) E(0,'beam',{v:b?0.75:0.95});
       if(last) E(0,'rise',{v:0.4,l:16});
     }
@@ -26216,24 +26227,28 @@ SONG_ENGINE.songs.theShuttle=(function(){
     }
     else if(id==='last'){
       const desc=b>=8&&b<12, climb=b>=12;
-      loom({v:1.05, busy:true, sub:0.9, tick:1, hed16:true, fill:last?'beat':b===7?'beat':0});
+      loom({v:1.05, busy:true, four:true, sub:0.9, tick:1, hed16:true, fill:last?'beat':b===7?'beat':0});
       bassLine('drive',{v:1.05});
       dulc({v:0.82}); dulc({v:0.5, two:true, oct:12});
       pad({v:1, cut:2600, l:16, force:true, glow:0.35});
+      pump(0.32,[0,4,8,12]);
       if(!climb){ sing('vc',TUNE_A[b%8],{v:1.05, orn:0.3});
-        if(desc) sing('vn',DESC[b-8],{v:0.95}); else sing('vn',TUNE_A[b%8],{v:0.9, oct:12}); }
-      else { sing('vc',TUNE_A2[b-12],{v:1, oct:-12}); sing('vn',TUNE_A2[b-12],{v:1}); }
+        if(desc){ sing('vn',DESC[b-8],{v:0.95}); sing('vn2',TUNE_A[b%8],{v:0.7, oct:12}); }
+        else { sing('vn',TUNE_A[b%8],{v:0.9, oct:12}); sing('vn2',harm(TUNE_A[b%8],12),{v:0.72}); } }
+      else { sing('vc',TUNE_A2[b-12],{v:1, oct:-12}); sing('vn',TUNE_A2[b-12],{v:1});
+        sing('vn2',harm(TUNE_A2[b-12]),{v:0.72}); }
       pizz({v:0.8, step:1, hi:true});
       if(b===0||b===8) E(0,'beam',{v:1});
       if(last) E(0,'rise',{v:0.5,l:16});
     }
     else if(id==='cloth'){
       if(b<2){
-        loom({v:1.05, busy:true, sub:0.9, tick:1, hed16:true});
+        loom({v:1.05, busy:true, four:true, sub:0.9, tick:1, hed16:true});
+        pump(0.32,[0,4,8,12]);
         bassLine('drive',{v:1.05});
         dulc({v:0.82}); dulc({v:0.5, two:true, oct:12});
         pad({v:1, cut:2600, l:16, force:true, glow:0.35});
-        sing('vc',TUNE_A[b],{v:1.05}); sing('vn',TUNE_A[b],{v:0.9, oct:12});
+        sing('vc',TUNE_A[b],{v:1.05}); sing('vn',TUNE_A[b],{v:0.9, oct:12}); sing('vn2',harm(TUNE_A[b],12),{v:0.72});
         pizz({v:0.8, step:1});
         if(b===0) E(0,'beam',{v:0.9});
       } else if(b===2){
@@ -26259,22 +26274,23 @@ SONG_ENGINE.songs.theShuttle=(function(){
   return {
     title:'The Shuttle', bpm:126, key:-1, swing:0, echoSteps:3, voices,
     // the bowed parts speak slowly, so they set off a hair early; the pads breathe in behind the beat
-    lag:{vc:-0.012, vn:-0.01, pad:0.01},
+    lag:{vc:-0.012, vn:-0.01, vn2:-0.01, pad:0.01},
     form:FORM, bars:TOTAL, loopFrom:LOOP, plan,
     mix:{ makeup:0.6, lowMid:-1.5, air:4, echoFb:0.3, echoRet:0.5, springRet:0,
       channels:{
         beat:{level:1.4,  pan:0,     echo:0,    spring:0.06, chain:[['hp',28],['peak',64,2,1],['peak',330,1,1.2],['lp',6500]]},
-        trd: {level:3.0, pan:0, spread:0.5, echo:0.02, spring:0.2, chain:[['hp',120],['peak',1000,2,1]]},
+        trd: {level:4.0, pan:0, spread:0.5, echo:0.02, spring:0.2, chain:[['hp',120],['peak',1000,2,1]]},
         shut:{level:2.0, pan:0, spread:0.7, echo:0.05, spring:0.22, chain:[['hp',900]]},
         hed: {level:2.2,  pan:0.2,   echo:0,    spring:0.12, chain:[['hp',4000]]},
         tick:{level:4.0, pan:-0.25, echo:0,    spring:0.08, chain:[['hp',2500]]},
         fx:  {level:1.6,  pan:0,     echo:0.08, spring:0.3,  chain:[['hp',40]]},
-        bass:{level:0.27, pan:0,     echo:0,    spring:0,    chain:[['hp',28],['drive',1.3],['peak',110,1.5,1],['lp',2200]]},
+        bass:{level:0.4, pan:0,     echo:0,    spring:0,    chain:[['hp',28],['drive',1.3],['peak',110,1.5,1],['lp',2200]]},
         dul: {level:1.3,  pan:-0.48, echo:0.12, spring:0.3,  chain:[['hp',260],['peak',2600,2,1],['hshelf',8000,-2]]},
         dul2:{level:1.3,  pan:0.48,  echo:0.12, spring:0.3,  chain:[['hp',260],['peak',2600,2,1],['hshelf',8000,-2]]},
         piz: {level:2.0,  pan:-0.12, echo:0.04, spring:0.28, chain:[['hp',90],['peak',460,3,1.1],['peak',1800,1.5,1]]},
-        vc:  {level:1.0,  pan:-0.06, echo:0.05, spring:0.36, chain:[['hp',90],['peak',260,2.5,1.1],['peak',560,2,1.3],['peak',1250,2,1.4],['peak',2400,-2,1],['lp',5500,0.7]]},
+        vc:  {level:0.9,  pan:-0.06, echo:0.05, spring:0.36, chain:[['hp',90],['peak',260,2.5,1.1],['peak',560,2,1.3],['peak',1250,2,1.4],['peak',2400,-2,1],['lp',5500,0.7]]},
         vn:  {level:1.5, pan:0.12,  echo:0.1,  spring:0.38, chain:[['hp',220],['peak',280,2,1.2],['peak',470,1.5,1.4],['peak',1100,-1.5,1.4],['peak',3000,3,0.9],['lp',9000,0.7]]},
+        vn2: {level:1.2, pan:-0.3,  echo:0.1,  spring:0.42, chain:[['hp',220],['peak',280,2,1.2],['peak',470,1.5,1.4],['peak',1100,-1.5,1.4],['peak',3000,2,0.9],['lp',8000,0.7]]},
         pad: {level:1.1,  pan:0, spread:0.5, echo:0.05, spring:0.5, chain:[['hp',140],['peak',350,-2,1],['hshelf',5000,-3]]},
       } },
   };
