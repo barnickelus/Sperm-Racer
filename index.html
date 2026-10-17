@@ -30334,9 +30334,11 @@ function tcTunnel(tunIdx, inS){
         } else {
           // outside: ink, with the white contour lines of the drawn wave
           c=${G(TC_INK)};
-          float b=a+0.02*sin(s*0.03+uT*0.2);
-          float e=min(min(abs(b-0.30),abs(b-0.52)),min(abs(b-0.70),abs(b-0.84)));
-          c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.007, 0.007+fa, e));
+          // each line swells and thins along the wave on its own phase, the way a brush line does
+          float e=1.0;
+          for(int k=0;k<4;k++){ float fk=float(k), at=0.24+0.17*fk+0.035*sin(s*(0.016+0.006*fk)+fk*1.7+uT*0.15);
+            e=min(e, abs(a-at)/(0.55+0.45*sin(s*0.023+fk*2.3))); }
+          c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.008, 0.008+fa, e));
           c=mix(c, ${G(TC_WHITE)}, smoothstep(0.93,0.95,a));
         }
         gl_FragColor=vec4(c,1.0);
@@ -30356,7 +30358,10 @@ function tcTunnel(tunIdx, inS){
     for(let k=0;k<12;k++){ const lat=-inS*(46+R()*50), back=8+R()*70, sz=8+R()*10;   // on the sea side, boiling
       const x=S.p.x+S.n.x*lat+tx*back, z=S.p.z+S.n.z*lat+tz*back, gy=Math.max(F.SEA, F.groundAt(x,z));
       if(tcClear(x,z,tunIdx)<sz) continue;
-      foam.push({x, y:gy+sz*0.35, z, s:sz, sy:sz*0.7, sz:sz, ry:R()*6, c:TC_WHITE}); } }
+      foam.push({x, y:gy+sz*0.35, z, s:sz, sy:sz*0.7, sz:sz, ry:R()*6, c:TC_WHITE}); }
+    // the crest feathering white the whole length, so the wave reads as breaking from any side
+    for(let i=i0+2;i<i1;i+=2+((R()*3)|0)){ const S2=SAMP[i], s=(i-i0)/n, a=0.44+0.12*R(), [L0,H0]=outerAt(i,s,a), sz=7+R()*7;
+      foam.push({x:S2.p.x+S2.n.x*L0*sg, y:S2.p.y+H0+sz*0.3, z:S2.p.z+S2.n.z*L0*sg, s:sz, sy:sz*0.75, sz:sz*1.2, ry:R()*6, c:TC_WHITE}); } }
   tcBatch(new T.IcosahedronGeometry(1,1), foam, tcFlat('foam',{flat:false}), 0, tcHull('foam'));
   // the shoulder: a long low face on the sea side beyond the exit, falling to the water
   { const SH=[], SA=[], SI=[], M=16, K=6;
