@@ -58208,7 +58208,10 @@ async function netQuick(){
   const enter=async(host,room,open)=>{ const ok=await netStart(host,room,open); if(!live()){ if(ok) netLeave(true); return null; } return ok; };
   try{
     for(let attempt=0; attempt<2; attempt++){
-      let res=null; try{ res=await fetch(netOpenBase()+'/open', {cache:'no-store'}); }catch(e){}
+      // a registry that neither answers nor refuses (captive portal, blackholed DNS, a sleeping
+      // worker) used to leave this on "Finding racers…" for good: the probe gets 8 s, then the
+      // usual "could not reach the relay" path below. Back still cancels the search at any time.
+      let res=null; try{ res=await fetch(netOpenBase()+'/open', {cache:'no-store', signal:netOpenSignal(8000)}); }catch(e){}
       if(!live()) return;
       if(res && res.status===404){                 // a relay deployed before the registry existed
         const code=netRoomCode(); NET.finding=false; $m('mpcode').textContent=code;
@@ -58234,6 +58237,8 @@ async function netQuick(){
     if(ok===false) plain($m('mpstatus').textContent);
   } finally { if(live()){ NET.finding=false; netRenderLobby(); } }
 }
+// an AbortSignal that fires after ms (AbortSignal.timeout where the browser has it, iOS 16+)
+function netOpenSignal(ms){ try{ if(AbortSignal.timeout) return AbortSignal.timeout(ms); const c=new AbortController(); setTimeout(()=>c.abort(),ms); return c.signal; }catch(e){ return undefined; } }
 function netQuickIn(){ NET.finding=false; document.getElementById('mpshare').style.display='block'; netRenderLobby(); }
 // the host's side of the registry: list the room now and every 5 s while the lobby lasts
 function netOpenHosting(){
