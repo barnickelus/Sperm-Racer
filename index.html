@@ -21969,6 +21969,7 @@ SONG_ENGINE.songs.underTheWave=(function(){
       // the sawari: the first string buzzing against the neck, all upper partials
       buzz:  pw(Array.from({length:40},(_,i)=>{ const k=i+1; return k<5?0.04/k:(k%3?1:0.7)/Math.pow(k,0.55); })),
       fue:   pw([1,0.42,0.24,0.11,0.06,0.035,0.02]),
+      sub:   pw([1,0.1,0.09,0.03,0.035,0.012,0.018]),           // lite's bass: the sine and a triangle's edge in one oscillator
     };
     /* A festival stage by the sea: the boards, the stalls and the sea wall each send one clear
        return, then a short open-air tail whose top dies first. It takes the spring tank's
@@ -22051,12 +22052,12 @@ SONG_ENGINE.songs.underTheWave=(function(){
       kane(t,p,sd){ const H=p.hits, s0=H[0][0], f=1900*(1+(Math.random()-0.5)*0.004), to=C.kane.in;
         const T=H.map(h=>t+(h[0]-s0)*sd+(h[0]>s0?(Math.random()-0.5)*0.004:0)), lh=H[H.length-1], end=T[T.length-1]+(lh[2]?(lh[3]||0.4):0.045)+0.06;
         const g=G(0), car=O('sine',f,t,end,g), mg=G(0), P=g.gain, I=mg.gain, M=f*2.76; O('sine',M,t,end,mg); mg.connect(car.frequency); g.connect(to);
-        const cg=G(0), hp=F('highpass',4500,0.7); N(t,end-t,hp); hp.connect(cg); cg.connect(to);
-        P.setValueAtTime(0.0001,t); cg.gain.setValueAtTime(0.0001,t);
+        let cg=null; if(!lite){ cg=G(0); const hp=F('highpass',4500,0.7); N(t,end-t,hp); hp.connect(cg); cg.connect(to); cg.gain.setValueAtTime(0.0001,t); }   // the horn tip's click
+        P.setValueAtTime(0.0001,t);
         H.forEach(([s,v,open,d],i)=>{ const ts=T[i], nx=i+1<T.length?T[i+1]-0.002:1e9, e=Math.min(ts+(open?(d||0.4):0.045),nx);
           I.setValueAtTime(M*(open?1.2:0.7),ts); I.exponentialRampToValueAtTime(M*(open?0.3:0.5),e);
           P.setValueAtTime(0.0001,ts); P.exponentialRampToValueAtTime(0.2*v,ts+0.0008); P.exponentialRampToValueAtTime(0.0001,e);
-          cg.gain.setValueAtTime(0.0001,ts); cg.gain.exponentialRampToValueAtTime((open?0.3:0.45)*v,ts+0.0004); cg.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.0084,nx)); });
+          if(cg){ cg.gain.setValueAtTime(0.0001,ts); cg.gain.exponentialRampToValueAtTime((open?0.3:0.45)*v,ts+0.0004); cg.gain.exponentialRampToValueAtTime(0.0001,Math.min(ts+0.0084,nx)); } });
         sends(g,p,C.kane); },
       chappa(t,p){ const v=p.v||1, d=p.d||(lite?0.9:1.4), g=G(0), hp=F('highpass',3200,0.7), to=C.metal.in;
         N(t,Math.min(2,d+0.05),hp); hp.connect(g);
@@ -22126,14 +22127,13 @@ SONG_ENGINE.songs.underTheWave=(function(){
       kick(t,p){ const v=p.v||1, g=G(0), o=O('sine',150,t,t+0.5,g); o.frequency.exponentialRampToValueAtTime(58,t+0.035); o.frequency.exponentialRampToValueAtTime(46,t+0.3);
         AD(g,t,0.002,0.95*v,0.38); g.connect(C.kick.in);
         const kg=G(0); O('triangle',190,t,t+0.06,kg).frequency.exponentialRampToValueAtTime(120,t+0.04); AD(kg,t,0.001,0.3*v,0.04); kg.connect(C.kick.in);   // the knock a small speaker can play
-        const cg=G(0), hp=F('highpass',2500,0.7); N(t,0.01,hp); hp.connect(cg); AD(cg,t,0.0005,0.14*v,0.008); cg.connect(C.kick.in); },
+        if(!lite){ const cg=G(0), hp=F('highpass',2500,0.7); N(t,0.01,hp); hp.connect(cg); AD(cg,t,0.0005,0.14*v,0.008); cg.connect(C.kick.in); } },
       // the sub: a sine with a triangle's edge, driven a little in the drops (grit)
       bass(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), dur=Math.max(0.06,(p.l||2)*sd*0.92), end=t+dur+0.12;
-        const g=G(0); O('sine',f,t,end,g);
+        const g=G(0); O(lite?W.sub:'sine',f,t,end,g);
         if(!lite){ const sh=ctx.createWaveShaper(); sh.curve=GRIT; const tg=G(0.5+(p.grit||0)*0.9), lp=F('lowpass',Math.min(2000,f*9),0.8);
           O('triangle',f,t,end,tg,4); tg.connect(sh); sh.connect(lp); lp.connect(g);
           lp.frequency.setValueAtTime(Math.min(2000,f*9),t); lp.frequency.exponentialRampToValueAtTime(Math.max(160,f*3.5),t+0.18); }
-        else { const tg=G(0.3); O('triangle',f,t,end,tg); tg.connect(g); }
         g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.85*v,t+0.005); g.gain.setTargetAtTime(0.62*v,t+0.01,0.09); g.gain.setTargetAtTime(0,t+dur,0.035);
         g.connect(C.bass.in); },
       boom(t,p){ const v=p.v||1, g=G(0), o=O('sine',62,t,t+2.2,g); o.frequency.exponentialRampToValueAtTime(30,t+1.6); AD(g,t,0.006,0.85*v,2); g.connect(C.boom.in); },
@@ -22146,12 +22146,11 @@ SONG_ENGINE.songs.underTheWave=(function(){
   const GRIT=(()=>{ const n=1024, c=new Float32Array(n); for(let i=0;i<n;i++){ const x=i/(n-1)*2-1; c[i]=Math.tanh(2.6*x)/Math.tanh(2.6); } return c; })();
 
   // ---- harmony: semitones over F# (n=0 is F#3). Every chord is voiced inside the yo scale.
-  const CH={I:{r:0,t:[0,7]}, IV:{r:5,t:[5,9,0]}, vi:{r:9,t:[9,0,7]}, V:{r:7,t:[7,0,2]}, ii:{r:2,t:[2,5,9]}};
-  const VO={I:[0,7,12], IV:[5,12,17], vi:[9,14,19], V:[7,14,19], ii:[2,9,14]};       // three strings (niagari: F# C# F# open)
-  const BUP={I:7, IV:7, vi:10, V:7, ii:7};                                            // the bass's answer above the root
+  const CH={I:{r:0,t:[0,7]}, IV:{r:5,t:[5,9,0]}, vi:{r:9,t:[9,0,7]}, V:{r:7,t:[7,0,2]}};   // root, chord tones (pitch classes)
+  const VO={I:[0,7,12], IV:[5,12,17], vi:[9,14,19], V:[7,14,19]};                     // three strings (niagari: F# C# F# open)
+  const BUP={I:7, IV:7, vi:10, V:7};                                                  // the bass's answer above the root
   const bassOf=(c)=>{ const r=CH[c].r; return (r>=11?r-12:r)-24; };                   // F#1 .. D#2
   const isCT=(x,c)=>CH[c].t.includes(pc(x));
-  const ct=(x,c)=>{ for(let d=0;d<7;d++){ if(isCT(x-d,c)&&inY(x-d)) return x-d; if(isCT(x+d,c)&&inY(x+d)) return x+d; } return x; };
   // ---- the hook: the sketch's rowing figure, a pull and two strokes of recovery. [step, note, length]
   const H1a=[[0,21,4],[4,24,2],[6,21,2],[8,19,4],[12,17,2],[14,19,2]];          // D# F# D# | C# B C#   (I | IV)
   const H1b=[[0,21,4],[4,19,2],[6,17,2],[8,14,8]];                              // D# C# B | G#         (vi | V)
