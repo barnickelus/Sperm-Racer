@@ -57660,25 +57660,34 @@ function setupTrackPick(){
     wrap.appendChild(b); cards[i]=b;
   });
   const mid=()=>wrap.scrollLeft+wrap.clientWidth/2;
-  const nearest=()=>{ const m=mid(); let bi=0, bd=1e9;
+  // with no layout (the home screen hidden) every card measures 0, and the first TRACKS entry would "win"
+  const nearest=()=>{ if(!wrap.clientWidth) return selTrack; const m=mid(); let bi=0, bd=1e9;
     cards.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-m); if(d<bd){bd=d;bi=i;} }); return bi; };
-  const mark=i=>{ cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(posOf(i)+1).padStart(2,'0')+' / '+TRACKS.length; };
+  let lastMark=selTrack;   // the card the player last saw centred
+  const mark=i=>{ lastMark=i; cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(posOf(i)+1).padStart(2,'0')+' / '+TRACKS.length; };
   function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
     const left=c.offsetLeft+c.offsetWidth/2-wrap.clientWidth/2;
     if(smooth&&wrap.scrollTo) wrap.scrollTo({left,behavior:'smooth'}); else wrap.scrollLeft=left; }
-  function commit(i){
+  function commit(i,noPreview){
     mark(i);
     if(i===selTrack) { paintSummary(); return; }
     selTrack=i;
     try{ localStorage.setItem('sr_track',String(i)); }catch(_){}
-    buildTrack(i); buildRacers();   // live-preview the chosen circuit behind the menu
+    if(!noPreview){ buildTrack(i); buildRacers(); }   // live-preview the chosen circuit behind the menu
     paintSummary();
   }
   let raf=0, settle=0;
   wrap.addEventListener('scroll',()=>{
-    cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>mark(nearest()));
-    clearTimeout(settle); settle=setTimeout(()=>commit(nearest()),160);
+    cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ if(wrap.clientWidth) mark(nearest()); });
+    clearTimeout(settle);
+    // never commit from a hidden strip: a flick then a quick tap on RACE used to land here after the home
+    // screen had gone, measure nothing, and quietly switch the race to the first course in TRACKS (Ophelia)
+    settle=setTimeout(()=>{ settle=0; if(wrap.clientWidth && !$('start').classList.contains('hidden')) commit(nearest()); },160);
   },{passive:true});
+  // ...and a tap that leaves the home screen inside those 160 ms (RACE, racer, Quick Race, Circuit Cup) locks in the
+  // card the player was looking at, before that button's own handler runs. RACE builds the course itself, so no preview.
+  $('start').addEventListener('click',e=>{ if(!settle) return; clearTimeout(settle); settle=0;
+    if(lastMark!==selTrack) commit(lastMark, !!(e.target.closest&&e.target.closest('#startbtn'))); },true);
   wrap.addEventListener('wheel',e=>{ if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){ wrap.scrollLeft+=e.deltaY; e.preventDefault(); } },{passive:false});
   $('courseprev').onclick=()=>toCard(ord[Math.max(0,posOf(nearest())-1)],true);
   $('coursenext').onclick=()=>toCard(ord[Math.min(ord.length-1,posOf(nearest())+1)],true);
