@@ -32735,6 +32735,13 @@ const TC_GLSL=`
   float tcLine(float q, float w){ float fq=fwidth(q), e=abs(fract(q)-0.5);
     float l=1.0-smoothstep(0.5*w-fq*0.7, 0.5*w+fq*0.7, e);
     return mix(l, clamp(w,0.0,1.0), smoothstep(0.28,0.62,fq)); }`;
+// The page's own random stream (Math.random, which three also spends on every object's UUID)
+// must stand where the test-card kit left it after a Stacey build: the live preview's lineup is
+// shuffled from it straight after, and a racer that paints its coat from it caches that coat for
+// the next course. So everything the bold pass added builds inside tcQuiet, which lends
+// Math.random a private stream for the duration (UUIDs stay unique; nothing here needs the page's).
+const TC_QRND=harbRnd(0x51A7E3);
+function tcQuiet(fn){ const mr=Math.random; Math.random=TC_QRND; try{ return fn(); } finally{ Math.random=mr; } }
 // the sunset's bands by height, arched over the sun and melting at their edges: shared by the
 // sky and by the sea, which reflects them (raw sRGB, as the domes write)
 const TC_BANDS=`
@@ -33415,7 +33422,7 @@ function tcTunnel(tunIdx, inS){
   // the claws: the lip's foam reaching out over the beach and curling back, in hands of two and
   // three along the barrel (only inside the tunnel range, where the beach-side wall is 28.2 and
   // the lip is at 35-44; every claw grows outward from it and none curls back past its root)
-  { const claws=[], RC=harbRnd(0xC1A3), X=new T.Vector3(), Y=new T.Vector3(0,1,0), Z=new T.Vector3(), M4=new T.Matrix4();
+  tcQuiet(()=>{ const claws=[], RC=harbRnd(0xC1A3), X=new T.Vector3(), Y=new T.Vector3(0,1,0), Z=new T.Vector3(), M4=new T.Matrix4();
     for(let i=i0+3;i<=i1-3;i+=2+((RC()*2)|0)){ const S2=SAMP[i], s=(i-i0)/n, [L0,H0]=outerAt(i,s,0.985), side=Math.sign(L0*sg);
       for(let f=0;f<3;f++){ if(RC()<0.25) continue;
         const sz=24+RC()*16, tw=(RC()-0.5)*0.5, back=(f-1)*7+(RC()-0.5)*3;
@@ -33423,7 +33430,7 @@ function tcTunnel(tunIdx, inS){
         Z.crossVectors(X,Y);
         claws.push({x:S2.p.x+S2.n.x*L0*sg+S2.t.x*back, y:S2.p.y+H0-1, z:S2.p.z+S2.n.z*L0*sg+S2.t.z*back, s:sz,
           q:new T.Quaternion().setFromRotationMatrix(M4.makeBasis(X,Y,Z)), c:TC_WHITE}); } }
-    tcBatch(tcClawGeo(), claws, tcFlat('claw',{flat:false}), 0, tcHull('claw')); }
+    tcBatch(tcClawGeo(), claws, tcFlat('claw',{flat:false}), 0, tcHull('claw')); });
   // the shoulder: a long low face on the sea side beyond the exit, falling to the water
   { const SH=[], SA=[], SI=[], M=16, K=6;
     for(let j=0;j<=M;j++){ const u=j/M, i=Math.min(STEPS-1,i1+Math.round(u*44)), S=SAMP[i];
@@ -33654,6 +33661,8 @@ function tcScenery(inS, tunIdx){
   tcStatic(cyl, castC); tcStatic(new T.BoxGeometry(1,1,1), castS.concat(castI));
   { const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute([0,1.3,0, 0.9,1.15,0, 0,1.0,0],3)); fg.computeVertexNormals();
     tcStatic(fg, flags); }
+  // (all of it built quiet, see tcQuiet; the static flush is handed flat geometry, so it makes no copies)
+  tcQuiet(()=>{
   // THE STAIR: the card's seven bars as a spiral stair, two turns of them round an ink mast,
   // climbing into the sky. Placed for the grid: the sunburst stands ahead and left, the wave dead
   // ahead, and this ahead and right, across the lagoon, the dream's landmark for the run to the
@@ -33681,7 +33690,7 @@ function tcScenery(inS, tunIdx){
         for(let i=0;i<M;i++) for(let j=0;j<6;j++){ const j2=(j+1)%6, a=ring[i][j], b=ring[i][j2], c2=ring[i+1][j2], d2=ring[i+1][j]; RP.push(...a,...b,...c2, ...a,...c2,...d2); }
         const rg=new T.BufferGeometry(); rg.setAttribute('position',new T.Float32BufferAttribute(RP,3)); rg.computeVertexNormals();
         tcStatic(rg, [{x:0, y:0, z:0, s:1, c:TC_INK}]); } } }
-  tcStatic(cyl, stairC); tcStatic(new T.BoxGeometry(1,1,1), stairB);
+  tcStatic(cyl.toNonIndexed(), stairC); tcStatic(new T.BoxGeometry(1,1,1).toNonIndexed(), stairB);
   // THE PIER: from the beach beside the line straight out over the sea at the sun, the line the
   // grid looks down: ink piles in pairs from the sand and the sea bed up through a white deck to
   // carry a white rail, and every other pair rises on as a lamp post with a white globe — a beat
@@ -33702,7 +33711,7 @@ function tcScenery(inS, tunIdx){
         Q.push({x, y:deckY, z, s:15, sy:1.4, sz:18.2, ry, c:TC_WHITE});
         for(const sd of [-1,1]) Q.push({x:x+nx*sd*7.6, y:deckY-0.7, z:z+nz*sd*7.6, s:1.0, sy:2.8, sz:18.2, ry, c:TC_INK},
                                        {x:x+nx*sd*6.5, y:deckY+5.0, z:z+nz*sd*6.5, s:1.1, sy:1.1, sz:18.2, ry, c:TC_WHITE}); }
-      tcStatic(hutBody, P); tcStatic(new T.BoxGeometry(1,1,1), Q); tcStatic(new T.IcosahedronGeometry(1,1), G); } }
+      tcStatic(hutBody.toNonIndexed(), P); tcStatic(new T.BoxGeometry(1,1,1).toNonIndexed(), Q); tcStatic(new T.IcosahedronGeometry(1,1), G); } }
   // (no umbrella, pole or towel stands within 16 of the pier)
   if(pierSeg.length){ const [ax,az,bx,bz]=pierSeg, ex=bx-ax, ez=bz-az, l2=ex*ex+ez*ez;
     const near=r=>{ const t=Math.max(0,Math.min(1,((r.x-ax)*ex+(r.z-az)*ez)/l2)); return Math.hypot(ax+ex*t-r.x, az+ez*t-r.z)<16; };
@@ -33757,6 +33766,7 @@ function tcScenery(inS, tunIdx){
     if(SP.length){ const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(SP,3)); g.computeBoundingSphere();
       const sm=new T.MeshBasicMaterial({color:tcLin(TC_INK), side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
       sm.customProgramCacheKey=()=>'tc-shadow'; trackGroup.add(new T.Mesh(g, sm)); } }
+  });
   tcFlushStatic();
   // GULLS: three loose flocks wheeling over the beaches
   // (one batch for all three flocks; tcTick moves them round their centres)
