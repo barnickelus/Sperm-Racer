@@ -36968,30 +36968,35 @@ const IRIS_SKYC={SAGE:0x8BAF83, MINT:0xA9C798, CREAM:0xD4D2A6, BLUSH:0xF4D2C0, S
 // teal-grey, slate, navy, rust) — sampled off the reference
 const IRIS_LAND=[[0xBE181F,3],[0xF8410E,1.6],[0xF8900C,2.6],[0xFCB412,2],[0xA09D1B,2],[0x628859,1.5],
                  [0x2A4E27,0.6],[0x455D51,1.2],[0x243B47,0.9],[0x383E57,1.0],[0xB33627,3]];
+// rock beds: the same coils in the sandstone end of the palette — brick, rust, vermilion,
+// orange, marigold, a pale cream bed, and only the odd thin olive or slate one — so an arch or
+// a butte reads as banded sandstone, where the full-chroma sheet made every arch a candy hoop
+const IRIS_ROCK=[[0xBE181F,3],[0xB33627,3.2],[0xF8410E,1.0],[0xF8900C,2.4],[0xFCB412,1.3],[0xEADCB6,0.4],
+                 [0xA09D1B,0.45],[0x455D51,0.45],[0x243B47,0.3]];
 const IRIS_PIPE=0xEADCB6;
 const IRIS_SUN=new T.Vector3(0.0,0.062,-1).normalize();   // low, at the end of the opening straight
 const IRIS_PERIOD=216, IRIS_DS=0.29, IRIS_DC=0.957;      // one band sheet = 216 units of strata
-let IRIS_BANDS=null, IRIS_DOME=null;
+let IRIS_BANDS=null, IRIS_DOME=null;            // IRIS_BANDS: the rock sheet's coil table (u0,u1)
 const irisLin=h=>new T.Color(h).convertSRGBToLinear();
 
 // the band sheet: ~36 coils of irregular width, each shaded round (dark seams, full colour
 // at the crown), a cream piping line on about a third of the seams, and the nozzle's grain
 // running WITH the coil (texture v)
-function irisStrataTex(){
+function irisStrataTex(PAL, seed, w0, wr, pipeP){
   const W=1024, H=64, c=document.createElement('canvas'); c.width=W; c.height=H;
-  const g=c.getContext('2d'), R=harbRnd(0x1215);
-  const tot=IRIS_LAND.reduce((a,b)=>a+b[1],0);
+  const g=c.getContext('2d'), R=harbRnd(seed);
+  const tot=PAL.reduce((a,b)=>a+b[1],0);
   const pick=prev=>{ for(let n=0;n<40;n++){ let r=R()*tot, k=0;
-      for(;k<IRIS_LAND.length-1;k++){ r-=IRIS_LAND[k][1]; if(r<0) break; }
-      if(k!==prev) return k; } return (prev+3)%IRIS_LAND.length; };
+      for(;k<PAL.length-1;k++){ r-=PAL[k][1]; if(r<0) break; }
+      if(k!==prev) return k; } return (prev+3)%PAL.length; };
   const bands=[]; let x=0, prev=-1;
-  while(x<W){ let w=Math.round(15+R()*30); if(W-x<w+15) w=W-x;
-    const k=pick(prev); prev=k; bands.push({x0:x, x1:x+w, k, pipe:R()<0.32}); x+=w; }
+  while(x<W){ let w=Math.round(w0+R()*wr); if(W-x<w+w0) w=W-x;
+    const k=pick(prev); prev=k; bands.push({x0:x, x1:x+w, k, pipe:R()<pipeP}); x+=w; }
   if(bands.length>2 && bands[0].k===bands[bands.length-1].k){
-    const L=bands[bands.length-1]; L.k=(L.k+4)%IRIS_LAND.length;
-    if(L.k===bands[bands.length-2].k) L.k=(L.k+1)%IRIS_LAND.length; }
+    const L=bands[bands.length-1]; L.k=(L.k+4)%PAL.length;
+    if(L.k===bands[bands.length-2].k) L.k=(L.k+1)%PAL.length; }
   const col=new T.Color();
-  for(const b of bands){ col.setHex(IRIS_LAND[b.k][0]); const w=b.x1-b.x0;
+  for(const b of bands){ col.setHex(PAL[b.k][0]); const w=b.x1-b.x0;
     for(let i=0;i<w;i++){ const t=(i+0.5)/w;
       // a piped coil in section: round crown, a dark crease where it meets its neighbour
       const sh=0.66+0.38*Math.pow(Math.sin(Math.PI*t),0.55)+0.05*(0.5-t);
@@ -37002,8 +37007,7 @@ function irisStrataTex(){
   g.globalAlpha=0.10;
   for(let i=0;i<1100;i++){ g.fillStyle=R()<0.5?'#000':'#fff'; g.fillRect(R()*W|0, R()*H, 1, 4+R()*20); }
   g.globalAlpha=1;
-  IRIS_BANDS=bands.map(b=>({u0:b.x0/W, u1:b.x1/W}));
-  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  const t=new T.CanvasTexture(c); t.userData={bands:bands.map(b=>({u0:b.x0/W, u1:b.x1/W}))}; t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
   t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
   return t;
 }
@@ -37245,8 +37249,12 @@ function irisArch(B, F, a){
     let tx=pb.x-pa.x, ty=pb.y-pa.y; const tl=Math.hypot(tx,ty)||1; tx/=tl; ty/=tl;
     const nx=-ty, ny=tx;                                   // in-plane normal: away from the opening
     const fq=Math.pow(p.f, a.q||1.4);
-    const t=a.tF+(a.tT-a.tF)*fq, dpt=a.dF+(a.dT-a.dF)*fq;
-    const tOut=t+hx*(1-0.45*p.f);                          // buttress at the legs, slab over the crown
+    const kL=(k<sp.length/2?(a.kA||1):(a.kB||1)), legK=1+(kL-1)*(1-p.f);
+    const t=(a.tF+(a.tT-a.tF)*fq)*legK, dpt=(a.dF+(a.dT-a.dF)*fq)*(0.5+0.5*legK);
+    let tOut=t+hx*(1-0.45*p.f);                            // buttress at the legs, slab over the crown
+    // `slab`: the rock over the opening carried up to a level top, so the arch is a window in
+    // a fin (the outer face pushed out along its normal until it reaches that level, capped)
+    if(a.slab){ const want=(Hh+a.tT+a.slab-p.y)/Math.max(ny,0.22); tOut=Math.min(t+hx+a.slab*1.3, Math.max(tOut,want)); }
     const lean=(a.lean||0)*Math.pow(Math.max(0,p.y)/Hh,1.5);
     const lump=1+0.34*(arcVN(k*0.19+seed*5.3, seed*2.9)-0.5);   // slow swelling along the span
     for(let j=0;j<K;j++){ const ph=j/K*Math.PI*2, c=Math.cos(ph), sn=Math.sin(ph);
@@ -37330,6 +37338,43 @@ function irisClear(F, x, z, r, margin){
     if(Math.abs(lat)-r < lim+margin) return false; }
   return true;
 }
+/* THE CORRIDOR TEST, exact: a point is in the corridor if it stands in some sample's slice
+   (within half a step along) inside that side's wall; there it must be under the surface
+   (buried) or at least `clr` over it — and at least 80 over it along the two jump arcs, where
+   a kart flies ~64 over the launch (Iris's ramps resolve to samples ~320 and ~432; the arcs
+   cover the flight from each, as built by the jump-ramp section from her pills/extraRamp). */
+const IRIS_JUMPS=[[314,368],[428,472]];
+function irisCorrHit(F, x, y, z, clr){
+  if(!F.SB){ F.SB=new Map(); F.SJ.forEach((s,i)=>{ const k=Math.floor(s.x/40)+','+Math.floor(s.z/40); if(!F.SB.has(k)) F.SB.set(k,[]); F.SB.get(k).push(i); }); }
+  const cx=Math.floor(x/40), cz=Math.floor(z/40), inS=F.inS;
+  for(let a=-2;a<=2;a++) for(let b=-2;b<=2;b++){ const l=F.SB.get((cx+a)+','+(cz+b)); if(!l) continue;
+    for(const i of l){ const s=F.SJ[i], dx=x-s.x, dz=z-s.z;
+      if(Math.abs(dx*s.tx+dz*s.tz)>5.5) continue;
+      const lat=dx*s.nx+dz*s.nz, inner=lat*inS>0, lim=(inner&&!s.tun)?HW*2.2:HW*1.28;
+      if(Math.abs(lat)>=lim) continue;
+      const h=y-(s.y+s.sb*lat), need=IRIS_JUMPS.some(([p,q])=>i>=p&&i<=q)?80:clr;
+      if(h>-0.5 && h<need) return inner?1:-1; } }
+  return 0;
+}
+// every triangle of a trial builder (corners, centroid, edge midpoints) against the corridor
+function irisTestB(F, T2, clr){
+  const hit={inner:0, outer:0};
+  for(const b of T2.buckets.values()){ const P=b.P, I=b.I;
+    for(let t=0;t<I.length;t+=3){ const a=I[t]*3, c=I[t+1]*3, d=I[t+2]*3;
+      const pts=[[P[a],P[a+1],P[a+2]],[P[c],P[c+1],P[c+2]],[P[d],P[d+1],P[d+2]],
+        [(P[a]+P[c]+P[d])/3,(P[a+1]+P[c+1]+P[d+1])/3,(P[a+2]+P[c+2]+P[d+2])/3],
+        [(P[a]+P[c])/2,(P[a+1]+P[c+1])/2,(P[a+2]+P[c+2])/2],[(P[c]+P[d])/2,(P[c+1]+P[d+1])/2,(P[c+2]+P[d+2])/2],[(P[a]+P[d])/2,(P[a+1]+P[d+1])/2,(P[a+2]+P[d+2])/2]];
+      for(const q of pts){ const h=irisCorrHit(F,q[0],q[1],q[2],clr); if(h>0) hit.inner++; else if(h<0) hit.outer++; } } }
+  return hit;
+}
+function irisMerge(B, T2){
+  for(const [k,b] of T2.buckets){ let d=B.buckets.get(k); if(!d){ d={P:[],U:[],C:[],I:[]}; B.buckets.set(k,d); }
+    const o=d.P.length/3; for(const v of b.P) d.P.push(v); for(const v of b.U) d.U.push(v); for(const v of b.C) d.C.push(v);
+    for(const v of b.I) d.I.push(v+o); }
+}
+// build a feature on trial; keep it only if it clears the corridor
+function irisPlace(B, F, fn, clr){ const T2=irisRockB(); fn(T2); const h=irisTestB(F,T2,clr||24);
+  if(h.inner||h.outer) return h; irisMerge(B,T2); return null; }
 // a point at lateral `lat` off sample i (horizontal, as the physics measures)
 function irisAt(i, lat){ const s=SAMP[((i%STEPS)+STEPS)%STEPS]; return {x:s.p.x+s.n.x*lat, z:s.p.z+s.n.z*lat}; }
 /* An arch that SPANS the road: foot A beyond the infield wall at sample iA, foot B beyond
@@ -37337,10 +37382,16 @@ function irisAt(i, lat){ const s=SAMP[((i%STEPS)+STEPS)%STEPS]; return {x:s.p.x+
    iA and iB turns it across the road at its own angle). `clr` is the crown's underside
    above the road at the middle sample. */
 function irisSpan(B, F, iA, iB, o){
-  const inS=F.inS, gIn=o.gIn||6, gOut=o.gOut||6;
-  const A=irisAt(iA, inS*(HW*2.2+o.tF+gIn)), Bp=irisAt(iB, -inS*(HW*1.28+o.tF+gOut));
-  const sm=SAMP[Math.round((iA+iB)/2)%STEPS];
-  irisArch(B, F, Object.assign({A, B:Bp, top:sm.p.y+o.clr+o.tT*1.3}, o));
+  // built on trial: a leg that grazes a wall steps out, a crown that dips into the corridor
+  // rises, until the whole arch clears (or, after eight tries, it is not built at all)
+  const inS=F.inS, q=Object.assign({gIn:6, gOut:6}, o);
+  for(let t=0;t<8;t++){
+    const A=irisAt(iA, inS*(HW*2.2+q.tF+q.gIn)), Bp=irisAt(iB, -inS*(HW*1.28+q.tF+q.gOut));
+    const sm=SAMP[Math.round((iA+iB)/2)%STEPS];
+    const h=irisPlace(B, F, T2=>irisArch(T2, F, Object.assign({}, q, {A, B:Bp, top:sm.p.y+q.clr+q.tT*1.3})));
+    if(!h) return true;
+    if(h.inner) q.gIn+=4; if(h.outer) q.gOut+=4; q.clr+=3; }
+  return false;
 }
 /* THE GUARDRAIL as two piped cream ropes lying on the shoulder at each side's own wall
    (48.4 infield, 28.2 outside, and 28.2 both sides in the slot) — where the edge of the
@@ -37348,12 +37399,21 @@ function irisSpan(B, F, iA, iB, o){
 function irisRopes(F, inS, tunIdx){
   const inTun=i=>tunIdx.some(([a,b])=>i>=a&&i<=b);
   const mat=new T.MeshLambertMaterial({color:irisLin(IRIS_PIPE)});
-  for(const side of [-1,1]){ const pts=[];
-    for(let i=0;i<STEPS;i+=5){ const s=SAMP[i], inner=side*inS>0;
-      const lim=(inner&&!inTun(i))?HW*2.2:HW*1.28, out=lim+1.6;
-      const x=s.p.x+s.n.x*side*out, z=s.p.z+s.n.z*side*out;
-      pts.push(new T.Vector3(x, F.groundAt(x,z)+0.8, z)); }                // lying on the land itself
-    trackGroup.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,true), pts.length*2, 1.15, 5, true), mat));
+  for(const side of [-1,1]){
+    const inner=side*inS>0, lim=i=>(inner&&!inTun(i))?HW*2.2:HW*1.28;
+    // runs of constant wall distance; the infield one breaks at each tunnel mouth, so the rope
+    // never cuts a chord across the corridor where the wall steps in
+    let st=0; if(inner){ for(let i=0;i<STEPS;i++) if(lim(i)!==lim((i+STEPS-1)%STEPS)){ st=i; break; } }
+    const runs=[]; let cur=[];
+    for(let k=0;k<=STEPS;k++){ const i=(st+k)%STEPS;
+      if(k && lim(i)!==lim((i+STEPS-1)%STEPS)){ runs.push(cur); cur=[]; }
+      if(k<STEPS || !inner) cur.push(i); }
+    runs.push(cur);
+    for(const run of runs){ if(run.length<4) continue; const pts=[];
+      for(let k=0;k<run.length;k+=3){ const i=run[k], s=SAMP[i], out=lim(i)+2.8, x=s.p.x+s.n.x*side*out, z=s.p.z+s.n.z*side*out;
+        pts.push(new T.Vector3(x, F.groundAt(x,z)+0.8, z)); }
+      const closed=!inner || runs.length===1;
+      trackGroup.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,closed), pts.length*2, 1.15, 5, closed), mat)); }
   }
 }
 /* THE SUMMIT SLOT. The old throat of nested rings becomes a slot cut through banded rock:
@@ -37369,14 +37429,14 @@ function irisSlot(B, F, inS, tunIdx){
       // the walls are beds of rock: K coils stacked, each a ribbon down the slot with its own
       // set-back and swell, ledges where one steps in from the next, thickening and thinning
       // along the run as real beds do; a cap rolling back and a back face into the shoulder
-      const inner=side*inS>0, i0=inner?ta+2:ta-8, i1=inner?tb-2:tb+8, K=11, h0=5.6;
+      const inner=side*inS>0, i0=inner?ta+4:ta-8, i1=inner?tb-4:tb+8, K=11, h0=5.6;
       const bk=irisBucket(B, SAMP[(ta+tb)>>1].p.x, SAMP[(ta+tb)>>1].p.z), base=bk.P.length/3;
       const PR=[[0,0],[0.5,-1.5],[1,0]];                    // a coil's section: in toward the road at its waist
       const V=K*3+2; let cols=0;
       for(let i=i0;i<=i1;i+=2){ cols++;
         const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0);
         const endk=Math.min(1,(i-i0)/10,(i1-i)/10), ek=endk*endk*(3-2*endk);
-        const L0=32+4.5*arcVN(i*0.08+side*7.1,3.3)+(1-ek)*16;
+        const L0=32+4.5*arcVN(i*0.08+side*7.1,3.3)+(1-ek)*(inner?24:16);
         const shY=s.p.y+sb*side*L0-0.8, yEdge=s.p.y+sb*side*HW*1.28;   // the shoulder at the wall; the corridor's edge
         const Ht=(26+32*arcVN(i*0.05+side*3.7,1.9))*(0.12+0.88*ek);
         let topL=0, topY=0, yb=-5;
@@ -37405,13 +37465,15 @@ function irisSlot(B, F, inS, tunIdx){
         bk.I.push(a,a+1,b, b,a+1,b+1); }                        // rock is double-sided
     }
     // the spans: feet sunk in the walls (lateral 44), crowns at their own heights
-    const sp=(iA,iB,o)=>{ const A=irisAt(iA, inS*o.f), Bp=irisAt(iB, -inS*o.f), sm=SAMP[Math.round((iA+iB)/2)%STEPS];
-      irisArch(B, F, Object.assign({A, B:Bp, top:sm.p.y+o.clr+o.tT*1.3}, o)); };
-    sp(ta+1, ta+3, {f:45, tF:13, tT:10, dF:18, dT:14, hx:12, p:0.55, q:1.0, clr:31, lean:4, seed:11});
-    sp(ta+7, ta+8, {f:43, tF:8, tT:4.5, dF:7, dT:5, hx:2, p:0.85, q:1.4, clr:36, lean:-6, asym:0.15, seed:12});
-    sp(ta+33, ta+36, {f:46, tF:10, tT:8.5, dF:16, dT:12, hx:8, p:0.45, q:0.9, clr:82, lean:3, seed:13});
-    sp(tb-11, tb-9, {f:44, tF:9, tT:6, dF:10, dT:7, hx:5, p:0.95, q:1.3, clr:33, lean:7, asym:-0.12, seed:14});
-    sp(tb-3, tb-1, {f:45, tF:12, tT:9, dF:16, dT:12, hx:12, p:0.62, q:1.0, clr:32, lean:-5, seed:15});
+    const sp=(iA,iB,o)=>{ const q=Object.assign({},o);
+      for(let t=0;t<8;t++){ const A=irisAt(iA, inS*q.f), Bp=irisAt(iB, -inS*q.f), sm=SAMP[Math.round((iA+iB)/2)%STEPS];
+        const h=irisPlace(B, F, T2=>irisArch(T2, F, Object.assign({}, q, {A, B:Bp, top:sm.p.y+q.clr+q.tT*1.3})));
+        if(!h) return; q.f+=3; q.clr+=3; } };
+    sp(ta+1, ta+3, {f:45, tF:13, tT:10, dF:18, dT:14, hx:12, p:0.55, q:1.0, clr:31, lean:4, slab:14, seed:11});
+    sp(ta+4, ta+5, {f:43, tF:8, tT:4.5, dF:7, dT:5, hx:2, p:0.85, q:1.4, clr:36, lean:-6, asym:0.15, seed:12});
+    sp(ta+33, ta+36, {f:46, tF:10, tT:8.5, dF:16, dT:12, hx:8, p:0.45, q:0.9, clr:82, lean:3, slab:6, seed:13});
+    sp(tb-8, tb-7, {f:44, tF:9, tT:6, dF:10, dT:7, hx:5, p:0.95, q:1.3, clr:33, lean:7, asym:-0.12, seed:14});
+    sp(tb-3, tb-1, {f:45, tF:12, tT:9, dF:16, dT:12, hx:12, p:0.62, q:1.0, clr:32, lean:-5, slab:12, seed:15});
   }
 }
 /* THE DESERT. Natural arches at their own irregular stations (spanning, set off the road,
@@ -37421,19 +37483,23 @@ function irisSlot(B, F, inS, tunIdx){
 function irisScenery(F, B, inS, ccx, ccz){
   const IN=inS, OUT=-inS, R=harbRnd(0x1A15);
   // 1. arches
-  irisSpan(B,F, 46,52, {tF:12, tT:6.5, dF:16, dT:11, hx:10, p:0.9, q:1.2, lean:9, asym:0.12, clr:54, gIn:6, gOut:7, seed:1});
-  irisArch(B,F, {A:irisAt(75,OUT*152), B:irisAt(86,OUT*116), H:40, tF:8, tT:7, dF:14, dT:12, hx:12, p:0.75, q:1.2, lean:-6, seed:2});
+  irisSpan(B,F, 46,52, {tF:12, tT:6.5, dF:16, dT:11, hx:10, p:0.9, q:1.2, lean:9, asym:0.12, clr:54, gIn:6, gOut:7, slab:7, seed:1});
+  const arch=o=>irisPlace(B,F,T2=>irisArch(T2,F,o));
+  arch({A:irisAt(75,OUT*152), B:irisAt(86,OUT*116), H:40, tF:8, tT:7, dF:14, dT:12, hx:12, p:0.75, q:1.2, lean:-6, slab:10, seed:2});
   { // the double arch: one opening over the road, a lower one beside it, sharing a foot
-    const A=irisAt(118, IN*(HW*2.2+9+5)), M=irisAt(124, OUT*(HW*1.28+11+6)), C=irisAt(132, OUT*(HW*1.28+11+6+82));
-    const sm=SAMP[121], top=sm.p.y+40+6*1.3;
-    irisArch(B,F, {A, B:M, top, tF:9, tT:6, dF:12, dT:9, hx:7, p:1.05, q:1.3, lean:4, seed:3});
-    const y0=Math.min(F.footAt(M.x,M.z,11), F.footAt(C.x,C.z,11));
-    irisArch(B,F, {A:M, B:C, H:(top-y0)*0.58, tF:11, tT:8, dF:13, dT:10, hx:10, p:0.8, q:1.1, lean:5, asym:-0.1, seed:4}); }
-  irisSpan(B,F, 173,179, {tF:12, tT:12, dF:22, dT:18, hx:6, p:0.38, q:0.8, clr:34, lean:2, gIn:6, gOut:6, seed:5});   // the natural bridge
-  irisArch(B,F, {A:irisAt(254,IN*150), B:irisAt(268,IN*196), H:58, tF:8, tT:3.6, dF:7, dT:4, hx:3, p:1.15, q:1.4, lean:16, seed:6});
-  irisSpan(B,F, 522,527, {tF:8, tT:3.8, dF:8, dT:5, hx:4, p:1.2, q:1.5, lean:-10, asym:-0.2, clr:60, gIn:5, gOut:6, seed:7});
-  irisArch(B,F, {A:irisAt(592,OUT*96), B:irisAt(600,OUT*142), H:28, tF:7, tT:6, dF:12, dT:10, hx:9, p:0.7, q:1.1, lean:3, seed:8});
-  irisSpan(B,F, 661,667, {tF:11, tT:8, dF:16, dT:12, hx:10, p:0.85, q:1.1, lean:7, clr:38, gIn:6, gOut:6, seed:9});
+    let gI=5, gO=6, cl=40;
+    for(let t=0;t<8;t++){
+      const A=irisAt(118, IN*(HW*2.2+9+gI)), M=irisAt(124, OUT*(HW*1.28+11+gO)), C=irisAt(132, OUT*(HW*1.28+11+gO+82));
+      const sm=SAMP[121], top=sm.p.y+cl+6*1.3;
+      const h=irisPlace(B,F,T2=>{ irisArch(T2,F, {A, B:M, top, tF:9, tT:6, dF:12, dT:9, hx:7, p:1.05, q:1.3, lean:4, slab:6, seed:3});
+        const y0=Math.min(F.footAt(M.x,M.z,11), F.footAt(C.x,C.z,11));
+        irisArch(T2,F, {A:M, B:C, H:(top-y0)*0.58, tF:11, tT:8, dF:13, dT:10, hx:10, p:0.8, q:1.1, lean:5, asym:-0.1, slab:10, seed:4}); });
+      if(!h) break; if(h.inner) gI+=4; if(h.outer) gO+=4; cl+=3; } }
+  irisSpan(B,F, 173,179, {tF:12, tT:12, dF:22, dT:18, hx:6, p:0.38, q:0.8, clr:34, lean:2, gIn:6, gOut:6, slab:10, seed:5});   // the natural bridge
+  arch({A:irisAt(254,IN*150), B:irisAt(268,IN*196), H:58, tF:8, tT:3.6, dF:7, dT:4, hx:3, p:1.15, q:1.4, lean:16, seed:6});
+  irisSpan(B,F, 522,527, {tF:8, tT:3.8, dF:8, dT:5, hx:4, p:1.2, q:1.5, lean:-10, asym:-0.2, clr:60, gIn:5, gOut:6, kA:1.7, kB:0.8, seed:7});
+  arch({A:irisAt(592,OUT*96), B:irisAt(600,OUT*142), H:28, tF:7, tT:6, dF:12, dT:10, hx:9, p:0.7, q:1.1, lean:3, slab:8, seed:8});
+  irisSpan(B,F, 661,667, {tF:11, tT:8, dF:16, dT:12, hx:10, p:0.85, q:1.1, lean:7, clr:38, gIn:6, gOut:6, slab:14, seed:9});
   // 2. hoodoos and spires, in clusters along both flanks
   const CL=[[22,OUT,72,3],[64,IN,96,4],[101,OUT,62,2],[143,IN,124,5],[158,OUT,88,3],[205,OUT,74,4],[228,IN,104,3],
             [290,IN,92,3],[302,OUT,78,2],[395,OUT,84,4],[455,OUT,72,3],[505,IN,112,3],[548,OUT,66,4],[575,IN,92,2],
@@ -37449,7 +37515,7 @@ function irisScenery(F, B, inS, ccx, ccz){
                       : (1+0.20*Math.sin(q*1.25+ph)-0.18*t)+0.55*Math.exp(-q/1.2);
         L.push({h, r}); }
       if(!spire) L.push({h:3.6, r:1.12+R()*0.26});                   // the caprock
-      irisStack(B,F,{x,z,ex,ez,rot:R()*6.28,M:7,prof:[0.9,1,0.9],fr:[0,0.5,1],layers:L,seed:i*0.37+k*1.9,rough:0.3,wob:0.05,tread:false,dome:spire?2.5:1.6});
+      const rot=R()*6.28; irisPlace(B,F,T2=>irisStack(T2,F,{x,z,ex,ez,rot,M:7,prof:[0.9,1,0.9],fr:[0,0.5,1],layers:L,seed:i*0.37+k*1.9,rough:0.3,wob:0.05,tread:false,dome:spire?2.5:1.6}));
     }
   }
   // 3. the Monument: mesa, two buttes and a spire in the middle of the loop
@@ -44253,8 +44319,10 @@ function buildTrack(idx){
       const x=(A2*(b.z-c.z)+B2*(c.z-a.z)+C2*(a.z-b.z))/d, z=(A2*(c.x-b.x)+B2*(a.x-c.x)+C2*(b.x-a.x))/d;
       const R=Math.hypot(b.x-x,b.z-z);
       IRIS_DOME={x, z, r0:R*0.5, r1:R+240, h:24, off:31}; }
-    const tex=irisStrataTex();
-    IK={tex, tunIdx, land:irisMat(tex), rock:irisMat(tex), B:irisRockB()};
+    // two band sheets: the land's full chroma, and the rock's sandstone beds (wider, calmer)
+    const tex=irisStrataTex(IRIS_LAND, 0x1215, 15, 30, 0.32), rtex=irisStrataTex(IRIS_ROCK, 0x2B07, 22, 34, 0.22);
+    IRIS_BANDS=rtex.userData.bands;
+    IK={tunIdx, land:irisMat(tex), rock:irisMat(rtex), B:irisRockB()};
     IK.rock.side=T.DoubleSide;
     IK.F=irisField(innerSign, tunIdx);
     irisTerrain(IK.F, IK.land);
