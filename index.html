@@ -36941,6 +36941,541 @@ function coilBatch(geo, list){
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
   return m;
 }
+/* ============== PAINTED-DESERT KIT (Iris, "the Extrusion" re-dressed) ============== *
+ * Same piped-coil language, read as American Southwest geology: the land is laid in long
+ * parallel coil bands (dipping strata), and every rock on it — arches, mesas, buttes,
+ * hoodoos, the summit slot, the giant tower — is cut from the SAME strata, so a band on a
+ * butte carries on in the ground at its foot. Three decisions do most of the work:
+ *
+ *  1. ONE STRATA FUNCTION (irisU). World position -> texture u across a 1-D band sheet.
+ *     The bands are planes dipping ~17 degrees, so they run as ~20-unit stripes on flat
+ *     ground and stack ~6 units thick on a cliff, and a domain warp keeps them sinuous.
+ *     Round the carousel they bend into concentric rings (an eroded uplift, like the real
+ *     dome in Canyonlands), so the banked ring sits in ripples.
+ *  2. THE OPTICAL BLEND IS THE MIPMAP. The bands are a mipmapped texture, not shader math,
+ *     so as they fall below a pixel the hardware averages them into the warm mixed colour
+ *     the owner liked, with no shimmer at speed, and the fog then hazes that toward blush.
+ *  3. NOTHING IS A RING ORDER. Arches are swept along irregular spines with their own span,
+ *     height, thickness, depth and lean, coloured by the strata they stand in.
+ *
+ * Every placement is checked against the drivable corridor (48.4 infield, 28.2 outside and
+ * in the tunnel) and the two jump arcs; rock that crosses the corridor does so only well
+ * above the chase camera. The dome writes raw sRGB, so the fog takes the decoded haze.
+ * ---------------------------------------------------------------------------------- */
+const IRIS_SKYC={SAGE:0x8BAF83, MINT:0xA9C798, CREAM:0xD4D2A6, BLUSH:0xF4D2C0, SUN:0xFDEA4F,
+                 HAZE:0xEFD3BE, GOLD:0xF6DE9C};
+// land bands, weighted warm (brick, vermilion, orange, marigold, olive, sage, deep green,
+// teal-grey, slate, navy, rust) — sampled off the reference
+const IRIS_LAND=[[0xBE181F,3],[0xF8410E,1.6],[0xF8900C,2.6],[0xFCB412,2],[0xA09D1B,2],[0x628859,1.5],
+                 [0x2A4E27,0.6],[0x455D51,1.2],[0x243B47,0.9],[0x383E57,1.0],[0xB33627,3]];
+const IRIS_PIPE=0xEADCB6;
+const IRIS_SUN=new T.Vector3(0.0,0.062,-1).normalize();   // low, at the end of the opening straight
+const IRIS_PERIOD=216, IRIS_DS=0.29, IRIS_DC=0.957;      // one band sheet = 216 units of strata
+let IRIS_BANDS=null, IRIS_DOME=null;
+const irisLin=h=>new T.Color(h).convertSRGBToLinear();
+
+// the band sheet: ~36 coils of irregular width, each shaded round (dark seams, full colour
+// at the crown), a cream piping line on about a third of the seams, and the nozzle's grain
+// running WITH the coil (texture v)
+function irisStrataTex(){
+  const W=1024, H=64, c=document.createElement('canvas'); c.width=W; c.height=H;
+  const g=c.getContext('2d'), R=harbRnd(0x1215);
+  const tot=IRIS_LAND.reduce((a,b)=>a+b[1],0);
+  const pick=prev=>{ for(let n=0;n<40;n++){ let r=R()*tot, k=0;
+      for(;k<IRIS_LAND.length-1;k++){ r-=IRIS_LAND[k][1]; if(r<0) break; }
+      if(k!==prev) return k; } return (prev+3)%IRIS_LAND.length; };
+  const bands=[]; let x=0, prev=-1;
+  while(x<W){ let w=Math.round(15+R()*30); if(W-x<w+15) w=W-x;
+    const k=pick(prev); prev=k; bands.push({x0:x, x1:x+w, k, pipe:R()<0.32}); x+=w; }
+  if(bands.length>2 && bands[0].k===bands[bands.length-1].k){
+    const L=bands[bands.length-1]; L.k=(L.k+4)%IRIS_LAND.length;
+    if(L.k===bands[bands.length-2].k) L.k=(L.k+1)%IRIS_LAND.length; }
+  const col=new T.Color();
+  for(const b of bands){ col.setHex(IRIS_LAND[b.k][0]); const w=b.x1-b.x0;
+    for(let i=0;i<w;i++){ const t=(i+0.5)/w;
+      // a piped coil in section: round crown, a dark crease where it meets its neighbour
+      const sh=0.66+0.38*Math.pow(Math.sin(Math.PI*t),0.55)+0.05*(0.5-t);
+      g.fillStyle=`rgb(${Math.min(255,col.r*255*sh)|0},${Math.min(255,col.g*255*sh)|0},${Math.min(255,col.b*255*sh)|0})`;
+      g.fillRect(b.x0+i,0,1,H); }
+    if(b.pipe){ g.fillStyle='#EADCB6'; g.fillRect(b.x1-2,0,2,H); }
+  }
+  g.globalAlpha=0.10;
+  for(let i=0;i<1100;i++){ g.fillStyle=R()<0.5?'#000':'#fff'; g.fillRect(R()*W|0, R()*H, 1, 4+R()*20); }
+  g.globalAlpha=1;
+  IRIS_BANDS=bands.map(b=>({u0:b.x0/W, u1:b.x1/W}));
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+function irisBand(u){ const f=u-Math.floor(u), B=IRIS_BANDS; let lo=0, hi=B.length-1;
+  while(lo<hi){ const m=(lo+hi+1)>>1; if(B[m].u0<=f) lo=m; else hi=m-1; } return B[lo]; }
+function irisWarp(x,z){ return 46*(arcFbm(x/520+3.7,z/520+1.3)-0.5)+14*(arcVN(x/190+8.1,z/190+4.4)-0.5); }
+// THE STRATA: world point -> band-sheet u
+function irisU(x,y,z){
+  const w=irisWarp(x,z);
+  let s=x*IRIS_DS+y*IRIS_DC+w;
+  const D=IRIS_DOME;
+  if(D){ const r=Math.hypot(x-D.x,z-D.z), k=1-arcSS(D.r0,D.r1,r);
+    if(k>0) s=s*(1-k)+(r*0.32+y*IRIS_DC+w*0.5+D.off)*k; }
+  return s/IRIS_PERIOD;
+}
+// one matte material for land and rock: the band sheet as both colour and a little
+// self-colour, so a face turned from the low sun stays a colour instead of going brown
+function irisMat(tex){
+  const m=new T.MeshLambertMaterial({map:tex, emissiveMap:tex, color:0xffffff, vertexColors:true});
+  m.emissive.setRGB(0.21,0.20,0.19);
+  return m;
+}
+
+/* THE SKY, dry-brushed: sage at the top through mint and cream to a blush horizon, long
+   cream clouds with blush edges, and the hot white-gold sun sitting low at the end of the
+   straight with its warmth spread wide along the horizon. Round the whole horizon, two
+   ranges of banded table-lands and buttes in haze (seamless: the profile is noise sampled
+   on a circle). Below the horizon it is the fog's own colour, so the land meets it clean.
+   The sun breathes ~3% and the clouds drift a degree a minute — nothing else moves. */
+function irisSky(){
+  const G=h=>{ const c=new T.Color(h); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
+  const S=IRIS_SKYC;
+  const hz=(h,k)=>{ const a=new T.Color(h), b=new T.Color(S.HAZE); a.lerp(b,k); return G(a.getHex()); };
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{ uT:{value:0}, uSun:{value:IRIS_SUN.clone()} },
+    vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      varying vec3 vP; uniform float uT; uniform vec3 uSun;
+      float h31(vec3 p){ p=fract(p*0.3183099+vec3(0.71,0.113,0.419)); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+      float vn3(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+        return mix(mix(mix(h31(i),h31(i+vec3(1.0,0.0,0.0)),f.x), mix(h31(i+vec3(0.0,1.0,0.0)),h31(i+vec3(1.0,1.0,0.0)),f.x),f.y),
+                   mix(mix(h31(i+vec3(0.0,0.0,1.0)),h31(i+vec3(1.0,0.0,1.0)),f.x), mix(h31(i+vec3(0.0,1.0,1.0)),h31(i+vec3(1.0,1.0,1.0)),f.x),f.y), f.z); }
+      float fb3(vec3 p){ return vn3(p)*0.55+vn3(p*2.07+3.1)*0.3+vn3(p*4.13+7.7)*0.15; }
+      // banded table-land colours, hazed toward the horizon (k: 0 far range, 1 near range)
+      vec3 bandC(float b, float k){
+        float m=mod(b,7.0);
+        vec3 f = m<1.0? ${hz(0xB33627,0.66)} : m<2.0? ${hz(0xF8900C,0.66)} : m<3.0? ${hz(0x455D51,0.66)} : m<4.0? ${hz(0xBE181F,0.66)}
+               : m<5.0? ${hz(0xFCB412,0.66)} : m<6.0? ${hz(0x383E57,0.66)} : ${hz(0xA09D1B,0.66)};
+        vec3 n = m<1.0? ${hz(0xB33627,0.50)} : m<2.0? ${hz(0xF8900C,0.50)} : m<3.0? ${hz(0x455D51,0.50)} : m<4.0? ${hz(0xBE181F,0.50)}
+               : m<5.0? ${hz(0xFCB412,0.50)} : m<6.0? ${hz(0x383E57,0.50)} : ${hz(0xA09D1B,0.50)};
+        return mix(f,n,k); }
+      void main(){
+        vec3 d=normalize(vP); float el=d.y, e=max(el,0.0);
+        vec3 c=mix(${G(S.HAZE)}, ${G(S.BLUSH)}, smoothstep(0.0,0.05,e));
+        c=mix(c, ${G(S.CREAM)}, smoothstep(0.04,0.17,e));
+        c=mix(c, ${G(S.MINT)}, smoothstep(0.15,0.38,e));
+        c=mix(c, ${G(S.SAGE)}, smoothstep(0.36,0.85,e));
+        // dry brush: strokes run level, so the noise is stretched round the horizon
+        float aa=fwidth(el)*1.2+1e-5;                            // (outside the branches below)
+        float st=vn3(vec3(d.x*3.0, d.y*46.0, d.z*3.0))*0.65+vn3(vec3(d.x*6.2, d.y*95.0, d.z*6.2))*0.35;
+        c*=0.955+0.09*st;
+        // the low sun: warmth spread wide along the horizon, a glow, then the disc
+        float br=1.0+0.022*sin(uT*0.37)+0.012*sin(uT*0.91+1.3);
+        vec2 hd=normalize(d.xz+vec2(1e-5)), hs=normalize(uSun.xz);
+        float dh=acos(clamp(dot(hd,hs),-1.0,1.0)), th=acos(clamp(dot(d,uSun),-1.0,1.0));
+        c=mix(c, ${G(S.GOLD)}, 0.62*exp(-dh*dh*3.2)*exp(-e*8.0)*br);
+        // clouds: long cream strokes with blush edges, low in the sky, drifting
+        if(e>0.03 && e<0.47){                                     // (the noise only where clouds can be)
+          vec3 q=vec3(d.x*1.7+uT*0.0011, d.y*21.0, d.z*1.7-uT*0.0007);
+          float cl=fb3(q)+0.22*(st-0.5);
+          float env=smoothstep(0.035,0.09,e)*(1.0-smoothstep(0.24,0.46,e));
+          float cm=smoothstep(0.56,0.66,cl)*env;
+          vec3 cc=mix(${G(S.BLUSH)}, ${G(0xEFE8D0)}, smoothstep(0.60,0.74,cl));
+          cc=mix(cc, ${G(0xFBF0D2)}, 0.55*exp(-dh*dh*6.0));      // lit edges toward the sun
+          c=mix(c, cc, cm*0.92); }
+        c=mix(c, ${G(S.SUN)}, 0.70*exp(-th*th*38.0)*br);
+        c=mix(c, ${G(0xFFF3C0)}, 0.85*exp(-th*th*260.0)*br);
+        c=mix(c, ${G(0xFFFBEA)}, 1.0-smoothstep(0.030*br, 0.038*br, th));
+        // two ranges of banded table-lands round the horizon
+        if(el<0.085 && el>-0.135){                                // (the ranges only near the horizon)
+        vec3 cs=vec3(hd.x, hd.y, 0.0);
+        float n1=vn3(cs*3.3+vec3(1.7,2.9,0.5)), n2=vn3(cs*8.0+vec3(4.1,0.3,2.2)), n3=vn3(cs*21.0+vec3(8.3,5.1,1.9));
+        float far=0.010+smoothstep(0.48,0.56,n1)*(0.026+0.018*smoothstep(0.50,0.60,n2))+smoothstep(0.72,0.78,n3)*0.034;
+        float m1=vn3(cs*5.1+vec3(9.2,1.4,3.3)), m2=vn3(cs*13.0+vec3(2.6,7.7,4.4)), m3=vn3(cs*31.0+vec3(5.5,3.3,6.6));
+        float near=0.003+smoothstep(0.54,0.61,m1)*(0.015+0.012*smoothstep(0.45,0.55,m2))+smoothstep(0.77,0.82,m3)*0.024;
+        float inF=1.0-smoothstep(far-aa, far+aa, el), inN=1.0-smoothstep(near-aa, near+aa, el);
+        float bw=el/0.0072+1.2*n2;
+        float dn=smoothstep(-0.13,-0.10,el);
+        c=mix(c, bandC(floor(bw), 0.0)*(0.92+0.08*sin(fract(bw)*3.14159)), inF*dn);
+        float bn=el/0.0060+2.0*m2+3.0;
+        c=mix(c, bandC(floor(bn), 1.0)*(0.90+0.10*sin(fract(bn)*3.14159)), inN*dn); }
+        c=mix(${G(S.HAZE)}, c, smoothstep(-0.13,-0.10,el));
+        gl_FragColor=vec4(c,1.0);
+      }`});
+  mat.extensions={derivatives:true};
+  const m=new T.Mesh(new T.SphereGeometry(1150,40,20), mat); m.frustumCulled=false; m.renderOrder=-2;
+  return m;
+}
+
+/* THE FIELD: a height grid over the whole loop, every vertex classified against the
+   centreline (as Stacey's and Rosalie's are). Inside the drivable corridor the land is held
+   under the banked road plane; out to a flat shoulder it IS that plane (so the road lies on
+   the land, with the bands running to its piping); then it eases to the desert's own lie
+   over a run that lengthens with the drop, so a road at 90 stands on a banded ridge. The
+   desert itself: low swells, a domed rise under the carousel, and the plain at the rim. */
+const IRIS_PLAIN=3;
+function irisField(inS, tunIdx){
+  const CS=20, N=STEPS;
+  const inTun=j=>tunIdx.some(([a,b])=>j>=a&&j<=b);
+  const SJ=[]; for(let j=0;j<N;j++){ const s=SAMP[j]; SJ.push({x:s.p.x,y:s.p.y,z:s.p.z,nx:s.n.x,nz:s.n.z,tx:s.t.x,tz:s.t.z,sb:Math.sin(s.bank||0),tun:inTun(j)}); }
+  let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const s of SJ){ x0=Math.min(x0,s.x); x1=Math.max(x1,s.x); z0=Math.min(z0,s.z); z1=Math.max(z1,s.z); }
+  const MG=660; x0=Math.floor((x0-MG)/CS)*CS; z0=Math.floor((z0-MG)/CS)*CS; x1+=MG; z1+=MG;
+  const NX=Math.ceil((x1-x0)/CS)+1, NZ=Math.ceil((z1-z0)/CS)+1;
+  const D=IRIS_DOME;
+  const base=(x,z)=>{
+    let h=IRIS_PLAIN+16*Math.max(0,arcFbm(x/460+2.1,z/460+6.3)-0.40)+5*(arcFbm(x/120+1.1,z/120+9.2)-0.5)
+         +5*Math.sin(x/150+2.4*arcFbm(x/700+5.5,z/700+0.7));
+    if(D){ const r=Math.hypot(x-D.x,z-D.z); h+=D.h*(1-arcSS(0,D.r1,r)); }
+    return h; };
+  // the summit slot is cut through a table-land: the land round the tunnel (and a little past
+  // each mouth) stands ~46 over the road, with banded cliffs down to the desert at its edge
+  const TS=[]; for(const [a,b] of tunIdx) for(let j=a-5;j<=b+5;j+=2) TS.push(SJ[((j%N)+N)%N]);
+  const H=new Float32Array(NX*NZ);
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){
+    const x=x0+ix*CS, z=z0+iz*CS;
+    let nd=1e18, nj=0, hi=1e9, dT=1e18, tY=0;
+    for(const s of TS){ const dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2<dT){ dT=d2; tY=s.y; } }
+    dT=Math.sqrt(dT);
+    for(let j=0;j<N;j++){ const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
+      if(d2<nd){ nd=d2; nj=j; }
+      // clamp only against the slices this vertex actually stands beside: without the along
+      // test a climbing road dragged the land ahead of each sample down to that sample's height
+      if(d2<12100 && Math.abs(dx*s.tx+dz*s.tz)<CS*1.2){ const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
+        if(Math.abs(lat)<lim+CS*0.8){ const lc=Math.max(-lim,Math.min(lim,lat));
+          hi=Math.min(hi, s.y+s.sb*lc-0.8); } } }
+    const s=SJ[nj], d=Math.sqrt(nd), lat=(x-s.x)*s.nx+(z-s.z)*s.nz, inner=lat*inS>0;
+    const limC=(inner&&!s.tun)?HW*2.2:HW*1.28;
+    const lim2=limC+(s.tun?30:CS*1.7);
+    const e=Math.max(0,d-lim2), edgeY=s.y+s.sb*Math.max(-lim2,Math.min(lim2,lat))-0.8;
+    const wP=TS.length ? 1-arcSS(150+40*arcVN(x/140+2.2,z/140+7.1), 230, dT) : 0;
+    const b0=base(x,z), b=b0+Math.max(0,(tY+46+14*(arcFbm(x/110+4.4,z/110+1.9)-0.5))-b0)*wP;
+    const dh=b-edgeY, F=Math.min(280, 40+Math.abs(dh)*1.6)*(1-wP)+34*wP;
+    let h=edgeY+dh*arcSS(0,F,e);
+    if(h>hi) h=hi;
+    const rim=Math.min(ix,iz,NX-1-ix,NZ-1-iz)*CS;
+    h=IRIS_PLAIN+(h-IRIS_PLAIN)*arcSS(0,200,rim);
+    H[iz*NX+ix]=h;
+  }
+  const hAt=(ix,iz)=>H[Math.max(0,Math.min(NZ-1,iz))*NX+Math.max(0,Math.min(NX-1,ix))];
+  const groundAt=(x,z)=>{ const gx=(x-x0)/CS, gz=(z-z0)/CS;
+    if(gx<0||gz<0||gx>NX-1||gz>NZ-1) return IRIS_PLAIN;
+    const ix=Math.floor(gx), iz=Math.floor(gz), fx=gx-ix, fz=gz-iz;
+    const a=hAt(ix,iz), b=hAt(ix+1,iz), c=hAt(ix,iz+1), dd=hAt(ix+1,iz+1);
+    return (fx+fz<=1) ? a+(b-a)*fx+(c-a)*fz : dd+(c-dd)*(1-fx)+(b-dd)*(1-fz); };
+  const footAt=(x,z,r)=>Math.min(groundAt(x,z),groundAt(x-r,z-r),groundAt(x+r,z-r),groundAt(x-r,z+r),groundAt(x+r,z+r),
+                                 groundAt(x-r*1.4,z),groundAt(x+r*1.4,z),groundAt(x,z-r*1.4),groundAt(x,z+r*1.4));
+  // a smoothed copy for the strata's height term: contours of the faceted grid zig-zag at
+  // every diagonal, contours of a smooth surface do not
+  const HS=new Float32Array(NX*NZ), TMP=new Float32Array(NX*NZ), RB=3;
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){ let a=0,n=0; for(let k=-RB;k<=RB;k++){ const jx=ix+k; if(jx<0||jx>=NX) continue; a+=H[iz*NX+jx]; n++; } TMP[iz*NX+ix]=a/n; }
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){ let a=0,n=0; for(let k=-RB;k<=RB;k++){ const jz=iz+k; if(jz<0||jz>=NZ) continue; a+=TMP[jz*NX+ix]; n++; } HS[iz*NX+ix]=a/n; }
+  return {CS,x0,z0,NX,NZ,H,HS,groundAt,footAt,inS,tunIdx,SJ};
+}
+// the land, tiled for culling, and an outer sheet from the grid's rim out past the far plane
+// (its inner edge shares the rim's vertices, so the bands run on across the seam)
+function irisTerrain(F, mat){
+  const {NX,NZ,CS,x0,z0,H,HS}=F, P=new Float32Array(NX*NZ*3), UV=new Float32Array(NX*NZ*2), C=new Float32Array(NX*NZ*3).fill(1);
+  for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){ const k=iz*NX+ix, x=x0+ix*CS, z=z0+iz*CS;
+    P[k*3]=x; P[k*3+1]=H[k]; P[k*3+2]=z; UV[k*2]=irisU(x,HS[k]*0.62,z); UV[k*2+1]=z/90; }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(P,3));
+  g.setAttribute('uv',new T.BufferAttribute(UV,2)); g.setAttribute('color',new T.BufferAttribute(C,3));
+  const I=[]; for(let iz=0;iz<NZ-1;iz++) for(let ix=0;ix<NX-1;ix++){ const a=iz*NX+ix; I.push(a,a+NX,a+1, a+1,a+NX,a+NX+1); }
+  g.setIndex(I); g.computeVertexNormals();
+  const TL=4;
+  for(let tz=0;tz<TL;tz++) for(let tx=0;tx<TL;tx++){ const J=[];
+    const ix0=Math.floor(tx*(NX-1)/TL), ix1=Math.floor((tx+1)*(NX-1)/TL), iz0=Math.floor(tz*(NZ-1)/TL), iz1=Math.floor((tz+1)*(NZ-1)/TL);
+    let lo=1e9, hi=-1e9;
+    for(let iz=iz0;iz<iz1;iz++) for(let ix=ix0;ix<ix1;ix++){ const a=iz*NX+ix, b=a+1, c=a+NX, d=c+1;
+      J.push(a,c,b, b,c,d); lo=Math.min(lo,H[a],H[d]); hi=Math.max(hi,H[a],H[d]); }
+    const tg=new T.BufferGeometry(); tg.setAttribute('position',g.attributes.position); tg.setAttribute('normal',g.attributes.normal);
+    tg.setAttribute('uv',g.attributes.uv); tg.setAttribute('color',g.attributes.color); tg.setIndex(J);
+    const cx=x0+(ix0+ix1)/2*CS, cz=z0+(iz0+iz1)/2*CS, hx=(ix1-ix0)/2*CS, hz=(iz1-iz0)/2*CS;
+    tg.boundingSphere=new T.Sphere(new T.Vector3(cx,(lo+hi)/2,cz), Math.hypot(hx,hz,(hi-lo)/2)+4);
+    const m=new T.Mesh(tg, mat); m.userData.iris='land'; trackGroup.add(m); }
+  // the outer sheet
+  const ring=[]; for(let ix=0;ix<NX-1;ix++) ring.push(ix);                         // south edge, west->east
+  for(let iz=0;iz<NZ-1;iz++) ring.push(iz*NX+NX-1);                                 // east edge
+  for(let ix=NX-1;ix>0;ix--) ring.push((NZ-1)*NX+ix);                               // north edge
+  for(let iz=NZ-1;iz>0;iz--) ring.push(iz*NX);                                      // west edge
+  const cx=x0+(NX-1)*CS/2, cz=z0+(NZ-1)*CS/2, OP=[], OU=[], OC=[], OI=[];
+  ring.forEach((k,j)=>{ const x=P[k*3], z=P[k*3+2], dx=x-cx, dz=z-cz, L=Math.hypot(dx,dz)||1, X=cx+dx/L*(L+2600), Z=cz+dz/L*(L+2600);
+    OP.push(x,IRIS_PLAIN,z, X,IRIS_PLAIN,Z); OU.push(irisU(x,IRIS_PLAIN,z),z/90, irisU(X,IRIS_PLAIN,Z),Z/90); OC.push(1,1,1,1,1,1); });
+  const nR=ring.length; for(let j=0;j<nR;j++){ const a=j*2, b=((j+1)%nR)*2; OI.push(a,b,a+1, b,b+1,a+1); }   // CCW from above
+  const og=new T.BufferGeometry(); og.setAttribute('position',new T.Float32BufferAttribute(OP,3));
+  og.setAttribute('uv',new T.Float32BufferAttribute(OU,2)); og.setAttribute('color',new T.Float32BufferAttribute(OC,3));
+  og.setIndex(OI); og.computeVertexNormals();
+  // the sheet is flat: its normals must all be straight up whatever the winding came out as
+  { const nn=og.attributes.normal; for(let k=0;k<nn.count;k++) nn.setXYZ(k,0,1,0); }
+  const om=new T.Mesh(og, mat); om.userData.iris='land'; om.frustumCulled=false; trackGroup.add(om);
+  g.dispose();
+}
+
+/* ROCK. Everything stands in one builder and is flushed as a handful of merged meshes,
+   bucketed by position so the far side of the loop culls. u from the strata function, so
+   a rock is banded by the geology it stands in, not by a ring order. */
+function irisRockB(){ return {buckets:new Map()}; }
+function irisBucket(B, x, z){ const k=(Math.floor((x+3000)/900))+'_'+(Math.floor((z+3000)/900));
+  let b=B.buckets.get(k); if(!b){ b={P:[],U:[],C:[],I:[]}; B.buckets.set(k,b); } return b; }
+function irisFlush(B, mat){
+  for(const b of B.buckets.values()){ if(!b.I.length) continue;
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(b.P,3));
+    g.setAttribute('uv',new T.Float32BufferAttribute(b.U,2)); g.setAttribute('color',new T.Float32BufferAttribute(b.C,3));
+    g.setIndex(b.I); g.computeVertexNormals(); g.computeBoundingSphere();
+    const m=new T.Mesh(g, mat); m.userData.iris='rock'; trackGroup.add(m); }
+}
+/* A NATURAL ARCH is an opening worn through a FIN, not a hoop: a deep, boxy section
+   (superelliptic, so the faces read flat with worn corners) swept along an irregular spine
+   from foot A to foot B, both feet sunk into the ground. The rock is thicker on the side away
+   from the opening (`hx`), most at the legs, so the outside reads as buttresses and a slab
+   over the crown while the opening stays a clean curve. Each one has its own span, rise,
+   shoulder (p: <1 squarer, >1 pointed), thickness at foot and crown, depth through the fin,
+   lean out of its plane and an apex pushed off-centre. Banded by the strata it is cut from,
+   at a broader pitch than the land (`us`), so a monument reads as a few thick beds. */
+function irisArch(B, F, a){
+  const ax=a.B.x-a.A.x, az=a.B.z-a.A.z, S=Math.hypot(ax,az), ux=ax/S, uz=az/S, ox=-uz, oz=ux;
+  const mx=(a.A.x+a.B.x)/2, mz=(a.A.z+a.B.z)/2;
+  const gA=F.footAt(a.A.x,a.A.z,a.tF), gB=F.footAt(a.B.x,a.B.z,a.tF), y0=Math.min(gA,gB);
+  const Hh=a.H!=null ? a.H : a.top-y0;
+  const NS=a.NS||28, K=a.K||12, bury=8+Math.abs(gA-gB), hx=a.hx||0, us=a.us||0.6, uo=(a.seed||0)*0.137;
+  const sp=[];
+  sp.push({x:-S/2, y:-bury, f:0});
+  for(let k=0;k<=NS;k++){ const th=Math.PI*(1-k/NS), sn=Math.sin(th);
+    sp.push({x:S/2*Math.cos(th)+(a.asym||0)*S*0.5*sn*sn, y:Hh*Math.pow(sn, a.p||1), f:sn}); }
+  sp.push({x:S/2, y:-bury, f:0});
+  const bk=irisBucket(B, mx, mz), base=bk.P.length/3, seed=a.seed||0;
+  const se=(v,e)=>Math.sign(v)*Math.pow(Math.abs(v),e);
+  for(let k=0;k<sp.length;k++){
+    const p=sp[k], pa=sp[Math.max(0,k-1)], pb=sp[Math.min(sp.length-1,k+1)];
+    let tx=pb.x-pa.x, ty=pb.y-pa.y; const tl=Math.hypot(tx,ty)||1; tx/=tl; ty/=tl;
+    const nx=-ty, ny=tx;                                   // in-plane normal: away from the opening
+    const fq=Math.pow(p.f, a.q||1.4);
+    const t=a.tF+(a.tT-a.tF)*fq, dpt=a.dF+(a.dT-a.dF)*fq;
+    const tOut=t+hx*(1-0.45*p.f);                          // buttress at the legs, slab over the crown
+    const lean=(a.lean||0)*Math.pow(Math.max(0,p.y)/Hh,1.5);
+    const lump=1+0.34*(arcVN(k*0.19+seed*5.3, seed*2.9)-0.5);   // slow swelling along the span
+    for(let j=0;j<K;j++){ const ph=j/K*Math.PI*2, c=Math.cos(ph), sn=Math.sin(ph);
+      const n=arcVN(k*0.55+seed*3.1, j*0.9+seed*1.7), n2=arcVN(k*1.7+seed, j*2.3+5.0);
+      const rr=(1+0.26*(n-0.5)+0.12*(n2-0.5))*lump;
+      const ci=se(c,0.5)*(c>0?tOut:t)*rr, co=se(sn,0.5)*dpt*rr;
+      const lx=p.x+nx*ci, ly=p.y+ny*ci;
+      const X=mx+ux*lx+ox*(co+lean), Y=y0+ly, Z=mz+uz*lx+oz*(co+lean);
+      bk.P.push(X,Y,Z); bk.U.push(irisU(X,Y,Z)*us+uo, (k*4+ph*6)/40);
+      const ao=0.80+0.20*Math.min(1,Math.max(0,ly)/18);       // the foot sits in its own shade
+      bk.C.push(ao,ao,ao);
+    }
+  }
+  for(let k=0;k<sp.length-1;k++) for(let j=0;j<K;j++){
+    const a0=base+k*K+j, a1=base+k*K+(j+1)%K, b0=a0+K, b1=a1+K;
+    bk.I.push(a0,b0,a1, a1,b0,b1); }
+  // the feet stand in their own rubble: a low pedestal of coils under each, pushed out away
+  // from the opening, so the arch grows out of a rock mass instead of out of the sand
+  if(a.ped!==false) for(const [ft,sg] of [[a.A,-1],[a.B,1]]){
+    const px=ft.x+ux*sg*(a.tF*0.7+hx*0.5), pz=ft.z+uz*sg*(a.tF*0.7+hx*0.5);
+    const ex=a.tF*1.5+hx*0.6, ez=a.dF*1.25;
+    if(!irisClear(F,px,pz,Math.max(ex,ez)*1.45,6)) continue;
+    const nL=3+((seed*7+sg+3)|0)%2, L=[];
+    for(let q=0;q<nL;q++) L.push({h:4.6, r:1.3-0.18*q});
+    irisStack(B,F,{x:px,z:pz,ex,ez,rot:Math.atan2(uz,ux),M:10,layers:L,seed:seed*3.3+sg,rough:0.45,wob:0.06,dome:1.2});
+  }
+}
+/* A STACK of piped coils round an irregular outline: mesa, butte, hoodoo, spire, the
+   carousel's hub and the giant tower. Each layer is one coil (a round bulge in section),
+   coloured by the band the strata put at its height, with a tread where the next coil
+   steps in, and a cap on top. `layers` is [{h, r}] bottom to top, r a scale on the outline. */
+function irisStack(B, F, s){
+  const M=s.M||16, prof=s.prof||[0.91,0.99,0.99,0.91], fr=s.fr||[0,0.3,0.7,1];
+  const seed=s.seed||0, rot=s.rot||0, cr=Math.cos(rot), sr=Math.sin(rot);
+  const OL=[]; for(let j=0;j<M;j++){ const ph=j/M*Math.PI*2, c=Math.cos(ph), sn=Math.sin(ph);
+    const R=1+(s.rough==null?0.42:s.rough)*(arcVN(c*1.5+seed*2.3, sn*1.5+seed)-0.5)+0.14*(arcVN(c*4+seed, sn*4+seed*3.7)-0.5);
+    const lx=c*s.ex*R, lz=sn*s.ez*R; OL.push([lx*cr-lz*sr, lx*sr+lz*cr]); }
+  const rmax=Math.max(s.ex,s.ez)*(s.layers[0].r||1)*1.2;
+  let y=(s.y0!=null ? s.y0 : F.footAt(s.x,s.z,rmax))-(s.bury!=null?s.bury:5);
+  const bk=irisBucket(B, s.x, s.z);
+  const ring=(r,yy,u,ao,wob)=>{ const st=bk.P.length/3;
+    for(let j=0;j<M;j++){ const w=1+(wob||0)*(arcVN(j*0.8+seed, yy*0.3)-0.5);
+      const X=s.x+OL[j][0]*r*w, Z=s.z+OL[j][1]*r*w;
+      bk.P.push(X,yy,Z); bk.U.push(u, j/M*Math.max(2,Math.round((s.ex+s.ez)*r/40))); bk.C.push(ao,ao,ao); }
+    return st; };
+  const strip=(a,b)=>{ for(let j=0;j<M;j++){ const j1=(j+1)%M; bk.I.push(a+j,b+j,a+j1, a+j1,b+j,b+j1); } };
+  let prevTop=-1, prevR=0;
+  s.layers.forEach((L,k)=>{
+    const h=L.h, r=L.r, ym=y+h*0.5;
+    const ub=irisU(s.x,ym,s.z)*(s.us||0.6)+(s.uOff||0), bd=irisBand(ub), ui=Math.floor(ub);
+    const ao=(s.ao||0.84)+(1-(s.ao||0.84))*Math.min(1,k/3);
+    const st=[];
+    for(let q=0;q<prof.length;q++){
+      const u=ui+bd.u0+(bd.u1-bd.u0)*(0.07+0.86*fr[q]);
+      st.push(ring(r*prof[q], y+h*fr[q], u, ao, L.wob||s.wob||0.06)); }
+    for(let q=0;q<prof.length-1;q++) strip(st[q],st[q+1]);
+    if(s.tread!==false && prevTop>=0 && Math.abs(prevR-r)>0.002){
+      // the tread between this coil and the one below
+      const bot=st[0]; if(prevR>r) strip(prevTop,bot); else strip(bot,prevTop); }
+    prevTop=st[prof.length-1]; prevR=r*prof[prof.length-1];
+    y+=h;
+  });
+  if(s.cap!==false){
+    const L=s.layers[s.layers.length-1], ub=irisU(s.x,y,s.z)*(s.us||0.6)+(s.uOff||0), bd=irisBand(ub), u=Math.floor(ub)+(bd.u0+bd.u1)/2;
+    const c0=bk.P.length/3; bk.P.push(s.x,y+(s.dome||0),s.z); bk.U.push(u,0); bk.C.push(1,1,1);
+    const top=ring(L.r*prof[prof.length-1]*0.999, y, u, 1, 0);
+    for(let j=0;j<M;j++) bk.I.push(c0, top+(j+1)%M, top+j);
+  }
+  return y;
+}
+
+/* THE CORRIDOR GUARD: is a disc at (x,z) of radius r clear of the drivable corridor (and a
+   margin) at every sample? Lateral and along are measured in each sample's own frame, so a
+   foot near a corner is judged against the wall it is actually beside. */
+function irisClear(F, x, z, r, margin){
+  const N=STEPS, inS=F.inS;
+  for(let j=0;j<N;j++){ const s=F.SJ[j], dx=x-s.x, dz=z-s.z;
+    if(dx*dx+dz*dz>(r+margin+60)*(r+margin+60)) continue;
+    const al=dx*s.tx+dz*s.tz; if(Math.abs(al)>r+6) continue;     // only the slices it stands beside
+    const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0 && !s.tun)?HW*2.2:HW*1.28;
+    if(Math.abs(lat)-r < lim+margin) return false; }
+  return true;
+}
+// a point at lateral `lat` off sample i (horizontal, as the physics measures)
+function irisAt(i, lat){ const s=SAMP[((i%STEPS)+STEPS)%STEPS]; return {x:s.p.x+s.n.x*lat, z:s.p.z+s.n.z*lat}; }
+/* An arch that SPANS the road: foot A beyond the infield wall at sample iA, foot B beyond
+   the outside wall at iB (so the road always runs off-centre under it, and a skew between
+   iA and iB turns it across the road at its own angle). `clr` is the crown's underside
+   above the road at the middle sample. */
+function irisSpan(B, F, iA, iB, o){
+  const inS=F.inS, gIn=o.gIn||6, gOut=o.gOut||6;
+  const A=irisAt(iA, inS*(HW*2.2+o.tF+gIn)), Bp=irisAt(iB, -inS*(HW*1.28+o.tF+gOut));
+  const sm=SAMP[Math.round((iA+iB)/2)%STEPS];
+  irisArch(B, F, Object.assign({A, B:Bp, top:sm.p.y+o.clr+o.tT*1.3}, o));
+}
+/* THE GUARDRAIL as two piped cream ropes lying on the shoulder at each side's own wall
+   (48.4 infield, 28.2 outside, and 28.2 both sides in the slot) — where the edge of the
+   world actually is. */
+function irisRopes(F, inS, tunIdx){
+  const inTun=i=>tunIdx.some(([a,b])=>i>=a&&i<=b);
+  const mat=new T.MeshLambertMaterial({color:irisLin(IRIS_PIPE)});
+  for(const side of [-1,1]){ const pts=[];
+    for(let i=0;i<STEPS;i+=5){ const s=SAMP[i], inner=side*inS>0;
+      const lim=(inner&&!inTun(i))?HW*2.2:HW*1.28, out=lim+1.6;
+      const x=s.p.x+s.n.x*side*out, z=s.p.z+s.n.z*side*out;
+      pts.push(new T.Vector3(x, F.groundAt(x,z)+0.8, z)); }                // lying on the land itself
+    trackGroup.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,true), pts.length*2, 1.15, 5, true), mat));
+  }
+}
+/* THE SUMMIT SLOT. The old throat of nested rings becomes a slot cut through banded rock:
+   two walls of strata standing just outside the tunnel's 28.2, their faces rough and
+   wandering (outward only, below the camera), leaning in over the road only where no kart
+   can be in the air; and across it a portal, a thin rib, one very high bridge over the
+   jump, a rib and the exit — five spans, none alike, at their own spacing. */
+function irisSlot(B, F, inS, tunIdx){
+  const JUMP=[[314,366]];
+  const inJ=i=>JUMP.some(([a,b])=>i>=a&&i<=b);
+  for(const [ta,tb] of tunIdx){
+    for(const side of [-1,1]){
+      // the walls are beds of rock: K coils stacked, each a ribbon down the slot with its own
+      // set-back and swell, ledges where one steps in from the next, thickening and thinning
+      // along the run as real beds do; a cap rolling back and a back face into the shoulder
+      const inner=side*inS>0, i0=inner?ta+2:ta-8, i1=inner?tb-2:tb+8, K=11, h0=5.6;
+      const bk=irisBucket(B, SAMP[(ta+tb)>>1].p.x, SAMP[(ta+tb)>>1].p.z), base=bk.P.length/3;
+      const PR=[[0,0],[0.5,-1.5],[1,0]];                    // a coil's section: in toward the road at its waist
+      const V=K*3+2; let cols=0;
+      for(let i=i0;i<=i1;i+=2){ cols++;
+        const s=SAMP[(i+STEPS)%STEPS], sb=Math.sin(s.bank||0);
+        const endk=Math.min(1,(i-i0)/10,(i1-i)/10), ek=endk*endk*(3-2*endk);
+        const L0=32+4.5*arcVN(i*0.08+side*7.1,3.3)+(1-ek)*16;
+        const shY=s.p.y+sb*side*L0-0.8, yEdge=s.p.y+sb*side*HW*1.28;   // the shoulder at the wall; the corridor's edge
+        const Ht=(26+32*arcVN(i*0.05+side*3.7,1.9))*(0.12+0.88*ek);
+        let topL=0, topY=0, yb=-5;
+        for(let k=0;k<K;k++){
+          const h=h0*Math.max(0,Math.min(1,(Ht-yb)/h0)), ym=yb+h*0.5;
+          let L=L0+2.6*(arcVN(i*0.035+k*2.3, side*3.1+k*0.7)-0.5)*2+3.2*(arcVN(k*1.9+side*4.1,0.4)-0.5);
+          if(!inJ(i)) L-=7*arcSS(26,Ht+4,shY+ym-yEdge)*ek;    // the slot closes overhead
+          const X0=s.p.x+s.n.x*side*L, Z0=s.p.z+s.n.z*side*L, ub=irisU(X0,shY+ym,Z0)*0.6+0.31, bd=irisBand(ub), ui=Math.floor(ub);
+          const ao=0.72+0.28*Math.min(1,k/3);
+          for(const [f,dl] of PR){
+            const y=yb+h*f; let Lq=L+dl*Math.min(1,h/5);
+            if(shY+y-yEdge<26) Lq=Math.max(Lq,30.6);
+            if(h<0.05 && k) Lq=topL;                              // an eroded-away bed: collapsed onto the one below
+            const X=s.p.x+s.n.x*side*Lq, Y=shY+y, Z=s.p.z+s.n.z*side*Lq;
+            bk.P.push(X,Y,Z); bk.U.push(ui+bd.u0+(bd.u1-bd.u0)*(0.07+0.86*f), i*0.08); bk.C.push(ao,ao,ao);
+            topL=Lq; topY=Y; }
+          yb+=h; }
+        { const L=topL+20+6*arcVN(i*0.11,side*2.2), X=s.p.x+s.n.x*side*L, Y=topY+1.2, Z=s.p.z+s.n.z*side*L;
+          const ub=irisU(X,Y,Z)*0.6+0.31, bd=irisBand(ub);
+          bk.P.push(X,Y,Z); bk.U.push(Math.floor(ub)+(bd.u0+bd.u1)/2, i*0.08); bk.C.push(0.95,0.95,0.95);
+          const X2=s.p.x+s.n.x*side*(L+6), Z2=s.p.z+s.n.z*side*(L+6), Y2=Math.min(shY, F.groundAt(X2,Z2))-6;
+          bk.P.push(X2,Y2,Z2); bk.U.push(irisU(X2,Y2,Z2)*0.6+0.31, i*0.08); bk.C.push(0.8,0.8,0.8); }
+      }
+      for(let c=0;c<cols-1;c++) for(let r=0;r<V-1;r++){
+        const a=base+c*V+r, b=a+V;
+        bk.I.push(a,a+1,b, b,a+1,b+1); }                        // rock is double-sided
+    }
+    // the spans: feet sunk in the walls (lateral 44), crowns at their own heights
+    const sp=(iA,iB,o)=>{ const A=irisAt(iA, inS*o.f), Bp=irisAt(iB, -inS*o.f), sm=SAMP[Math.round((iA+iB)/2)%STEPS];
+      irisArch(B, F, Object.assign({A, B:Bp, top:sm.p.y+o.clr+o.tT*1.3}, o)); };
+    sp(ta+1, ta+3, {f:45, tF:13, tT:10, dF:18, dT:14, hx:12, p:0.55, q:1.0, clr:31, lean:4, seed:11});
+    sp(ta+7, ta+8, {f:43, tF:8, tT:4.5, dF:7, dT:5, hx:2, p:0.85, q:1.4, clr:36, lean:-6, asym:0.15, seed:12});
+    sp(ta+33, ta+36, {f:46, tF:10, tT:8.5, dF:16, dT:12, hx:8, p:0.45, q:0.9, clr:82, lean:3, seed:13});
+    sp(tb-11, tb-9, {f:44, tF:9, tT:6, dF:10, dT:7, hx:5, p:0.95, q:1.3, clr:33, lean:7, asym:-0.12, seed:14});
+    sp(tb-3, tb-1, {f:45, tF:12, tT:9, dF:16, dT:12, hx:12, p:0.62, q:1.0, clr:32, lean:-5, seed:15});
+  }
+}
+/* THE DESERT. Natural arches at their own irregular stations (spanning, set off the road,
+   one double, one natural bridge), hoodoo clusters along both flanks, a Monument cluster of
+   mesa, buttes and a spire in the middle of the loop, table-lands outside it, the carousel's
+   squat hub on its dais, and the one giant tower, banded and twice the height it was. */
+function irisScenery(F, B, inS, ccx, ccz){
+  const IN=inS, OUT=-inS, R=harbRnd(0x1A15);
+  // 1. arches
+  irisSpan(B,F, 46,52, {tF:12, tT:6.5, dF:16, dT:11, hx:10, p:0.9, q:1.2, lean:9, asym:0.12, clr:54, gIn:6, gOut:7, seed:1});
+  irisArch(B,F, {A:irisAt(75,OUT*152), B:irisAt(86,OUT*116), H:40, tF:8, tT:7, dF:14, dT:12, hx:12, p:0.75, q:1.2, lean:-6, seed:2});
+  { // the double arch: one opening over the road, a lower one beside it, sharing a foot
+    const A=irisAt(118, IN*(HW*2.2+9+5)), M=irisAt(124, OUT*(HW*1.28+11+6)), C=irisAt(132, OUT*(HW*1.28+11+6+82));
+    const sm=SAMP[121], top=sm.p.y+40+6*1.3;
+    irisArch(B,F, {A, B:M, top, tF:9, tT:6, dF:12, dT:9, hx:7, p:1.05, q:1.3, lean:4, seed:3});
+    const y0=Math.min(F.footAt(M.x,M.z,11), F.footAt(C.x,C.z,11));
+    irisArch(B,F, {A:M, B:C, H:(top-y0)*0.58, tF:11, tT:8, dF:13, dT:10, hx:10, p:0.8, q:1.1, lean:5, asym:-0.1, seed:4}); }
+  irisSpan(B,F, 173,179, {tF:12, tT:12, dF:22, dT:18, hx:6, p:0.38, q:0.8, clr:34, lean:2, gIn:6, gOut:6, seed:5});   // the natural bridge
+  irisArch(B,F, {A:irisAt(254,IN*150), B:irisAt(268,IN*196), H:58, tF:8, tT:3.6, dF:7, dT:4, hx:3, p:1.15, q:1.4, lean:16, seed:6});
+  irisSpan(B,F, 522,527, {tF:8, tT:3.8, dF:8, dT:5, hx:4, p:1.2, q:1.5, lean:-10, asym:-0.2, clr:60, gIn:5, gOut:6, seed:7});
+  irisArch(B,F, {A:irisAt(592,OUT*96), B:irisAt(600,OUT*142), H:28, tF:7, tT:6, dF:12, dT:10, hx:9, p:0.7, q:1.1, lean:3, seed:8});
+  irisSpan(B,F, 661,667, {tF:11, tT:8, dF:16, dT:12, hx:10, p:0.85, q:1.1, lean:7, clr:38, gIn:6, gOut:6, seed:9});
+  // 2. hoodoos and spires, in clusters along both flanks
+  const CL=[[22,OUT,72,3],[64,IN,96,4],[101,OUT,62,2],[143,IN,124,5],[158,OUT,88,3],[205,OUT,74,4],[228,IN,104,3],
+            [290,IN,92,3],[302,OUT,78,2],[395,OUT,84,4],[455,OUT,72,3],[505,IN,112,3],[548,OUT,66,4],[575,IN,92,2],
+            [620,OUT,104,5],[648,IN,78,3],[687,OUT,92,3]];
+  for(const [i,side,out,n] of CL){ const c=irisAt(i, side*out);
+    for(let k=0;k<n;k++){
+      const a=R()*6.283, d=k?8+R()*26:0, x=c.x+Math.cos(a)*d, z=c.z+Math.sin(a)*d;
+      const ex=3.2+R()*4.6, ez=ex*(0.7+R()*0.5), spire=R()<0.3, Hh=(spire?30:16)+R()*(spire?42:38), h=3.8+R()*1.6;
+      if(!irisClear(F,x,z,Math.max(ex,ez)*1.7,10)) continue;
+      const nL=Math.max(3,Math.round(Hh/h)), ph=R()*6.28, L=[];
+      for(let q=0;q<nL;q++){ const t=q/nL;
+        const r=spire ? Math.max(0.22,(1-0.78*t))*(1+0.10*Math.sin(q*1.9+ph))+0.55*Math.exp(-q/1.3)
+                      : (1+0.20*Math.sin(q*1.25+ph)-0.18*t)+0.55*Math.exp(-q/1.2);
+        L.push({h, r}); }
+      if(!spire) L.push({h:3.6, r:1.12+R()*0.26});                   // the caprock
+      irisStack(B,F,{x,z,ex,ez,rot:R()*6.28,M:7,prof:[0.9,1,0.9],fr:[0,0.5,1],layers:L,seed:i*0.37+k*1.9,rough:0.3,wob:0.05,tread:false,dome:spire?2.5:1.6});
+    }
+  }
+  // 3. the Monument: mesa, two buttes and a spire in the middle of the loop
+  const mesa=(x,z,ex,ez,rot,n,h,seed,ft)=>{ if(!irisClear(F,x,z,Math.max(ex,ez)*1.5,30)) return;
+    const L=[]; for(let q=0;q<n;q++) L.push({h, r:1+0.42*Math.exp(-q/1.4)*(ft||1)+0.05*Math.sin(q*2.1+seed)-(q===n-1?0.0:0)});
+    irisStack(B,F,{x,z,ex,ez,rot,M:16,layers:L,seed,rough:0.5,wob:0.05}); };
+  mesa(ccx+70, ccz-60, 165, 105, 0.4, 11, 7.2, 2.2);
+  mesa(ccx-230, ccz+170, 52, 40, 1.1, 18, 7.0, 4.7, 1.2);
+  mesa(ccx+290, ccz+270, 38, 32, 2.0, 15, 6.6, 6.1, 1.3);
+  { const x=ccx-140, z=ccz-280; if(irisClear(F,x,z,30,30)){ const L=[]; for(let q=0;q<26;q++) L.push({h:5.4, r:Math.max(0.3,1-0.6*q/26)+0.7*Math.exp(-q/1.6)});
+      irisStack(B,F,{x,z,ex:15,ez:12,rot:0.3,M:11,layers:L,seed:8.8,rough:0.35,wob:0.05,dome:3}); } }
+  // 4. table-lands and buttes outside the loop, at their own distances
+  const OM=[[30,420,120,80,7,7.5],[118,360,70,55,12,7],[190,520,150,95,8,7.8],[282,330,60,48,13,6.8],[372,470,130,90,9,7.2],
+            [470,380,85,60,10,7],[560,540,160,100,7,8],[612,300,55,44,14,6.6],[690,450,110,75,9,7.4]];
+  for(const [i,out,ex,ez,n,h] of OM){ const c=irisAt(i, OUT*out); mesa(c.x, c.z, ex, ez, R()*3, n, h, i*0.13); }
+  // 5. the carousel's hub, squat on its dais
+  if(IRIS_DOME){ const D=IRIS_DOME, L=[];
+    for(const [h,r] of [[6,1.55],[6,1.36],[6,1.2],[7,1.04],[7,1.0],[7,0.96],[6,0.62],[6,0.54],[5,0.46],[5,0.36]]) L.push({h,r});
+    if(irisClear(F,D.x,D.z,48*1.6,20)) irisStack(B,F,{x:D.x,z:D.z,ex:48,ez:44,rot:0.6,M:18,layers:L,seed:3.3,rough:0.25,wob:0.04,dome:4}); }
+  // 6. the giant tower: twice the height, a finer pitch and a flared foot, banded by the strata
+  { const c=irisAt(231, OUT*92), L=[], n=58;
+    for(let q=0;q<n;q++){ const t=q/n; L.push({h:4.0-1.9*t, r:Math.pow(1-0.84*t,0.9)+0.75*Math.exp(-q/2.6)}); }
+    if(irisClear(F,c.x,c.z,21*1.8,8)) irisStack(B,F,{x:c.x,z:c.z,ex:21,ez:21,M:14,layers:L,seed:5.5,rough:0.08,wob:0.02,dome:3,uOff:0}); }
+}
+// Iris's slow motion: the sun breathes, the clouds drift (both inside the dome's shader)
+function irisTick(P, tsec){ P.sky.uniforms.uT.value=tsec; }
 /* ============== MACRO KIT (Lily) ============== *
  * Toy-scale clay pond under tilt-shift blur. Two material rules carry the whole look:
  *  1. The WATER is gloss — hard white specular, like the natatorium road. Wet reads as
@@ -40114,13 +40649,16 @@ function applyTrackLighting(studio, pool, coil, paint, felt, macro, td){
     fill.color.setHex(0xd8c8a4); fill.intensity=0.20; fill.position.set(60, -40, 40);
     flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
   } else if(coil){
-    // A lightbox photographing a sculpture: flat, shadowless, total ~1.65. Anything near
-    // the default rig's ~2.95 forces the palette to be authored dark to survive, which is
-    // exactly the compromise the existing plasticine profile had to make.
-    hemi.color.setHex(0xf4ece0); hemi.groundColor.setHex(0x3a2418); hemi.intensity=0.55;
-    sun.color.setHex(0xffffff);  sun.intensity=0.55;  sun.position.set(40,150,60);
-    rim.color.setHex(0xffc0a0);  rim.intensity=0.30;  rim.position.set(-70,60,-60);
-    fill.color.setHex(0xa8d0ff); fill.intensity=0.25; fill.position.set(60,40,-40);
+    // DESERT, LOW SUN. One hot white-gold key from the sun's own bearing at the end of the
+    // straight (lifted to ~17 degrees so the land still takes it), a cream-and-sage sky fill
+    // over a warm brick bounce, and a faint cool rim from the opposite side to edge the
+    // silhouettes. Total ~1.6, as the old lightbox was: the bands are authored at true value
+    // and the land material carries a little self-colour so shade stays chromatic.
+    hemi.color.setHex(0xe8e6c8); hemi.groundColor.setHex(0x7a3a24); hemi.intensity=0.62;
+    sun.color.setHex(0xffe4b0);  sun.intensity=0.86;
+    sun.position.set(IRIS_SUN.x*190, 58, IRIS_SUN.z*190);
+    rim.color.setHex(0xa8c4b0);  rim.intensity=0.22;  rim.position.set(-IRIS_SUN.x*150,70,-IRIS_SUN.z*150);
+    fill.color.setHex(0xf4d2c0); fill.intensity=0.10; fill.position.set(60,40,-40);
     flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
   } else if(pool){
     // Almost no ambient: the pod canopy is unlit geometry doing the "lighting", so any
@@ -43223,10 +43761,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 260 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1150 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -43255,6 +43793,9 @@ function buildTrack(idx){
   hanaGrain(!!TRACKS[idx].hana || !!TRACKS[idx].shore);   // the paper overlay: on for the two prints, off for every other build
   // Stacey: the land fades, a little, toward a lavender haze (decoded, as the domes write raw)
   if(TRACKS[idx].testcard) scene.fog.color.setHex(TC_HOR).convertSRGBToLinear();
+  // Iris: the far bands blend in the eye and then into the blush haze the dome writes at its
+  // horizon (raw sRGB there, so the fog takes it decoded)
+  if(TRACKS[idx].coil) scene.fog.color.setHex(IRIS_SKYC.HAZE).convertSRGBToLinear();
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -43287,6 +43828,7 @@ function buildTrack(idx){
   let HK=null;                           // Hana's height grid + prop bag, likewise
   let EK=null;                           // Eve's height oracle + prop bag, likewise
   let SK=null;                           // Rosalie's height grid + prop bag, likewise
+  let IK=null;                           // Iris's desert: field, band sheet, rock builder
   applyTrackLighting(bead, pool, coil, paint, felt, macro, TRACKS[idx]);
   if(dawn) applyDawnLighting();          // overrides the felt rig; every light re-set
   if(loom) applyLoomLighting();          // likewise: a low sun in the north-west
@@ -43314,7 +43856,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho;   // Lily lays its own pond; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -43697,32 +44239,25 @@ function buildTrack(idx){
       trackGroup.add(h);
     }
   } else if(coil){
-    // The roadbed as one continuous extrusion, with two ropes plaited along the verge —
-    // the piped guardrail is what stops the fast descent reading as an empty shelf.
-    const under=new T.Mesh(new T.TubeGeometry(curve,STEPS,13,10,loop),
-      new T.MeshPhongMaterial({color:0x4A2A1C, map:coilTex(), shininess:0, specular:0x000000}));
-    // -9 put the tube's crown at p.y+4 against a road at p.y+0.05 — it punched through
-    // the middle 42% of the road and hid the entire banded surface.
-    under.position.y-=18; trackGroup.add(under);
-    for(const side of [-1,1]) for(let lane=0; lane<2; lane++){
-      const pts=[];
-      // A loop course's two walls sit at different distances: HW*1.28 outside, but HW*2.2
-      // on the infield because cutting the apron is a deliberate shortcut. A guardrail at
-      // one fixed distance is therefore correct on one side and 18 units inside the wall
-      // on the other — which is why this course's signature piping was the most driven-
-      // through scenery in the game. Put each rope at its OWN side's wall.
-      const railOut = (side*innerSign>0) ? HW*2.26 : HW*1.36;
-      for(let i=0;i<STEPS;i+=6){
-        const s2=SAMP[i];
-        pts.push(new T.Vector3(
-          s2.p.x+s2.n.x*side*railOut, s2.p.y+1.4+lane*2.8+Math.sin(i*0.08+lane*Math.PI)*1.2,
-          s2.p.z+s2.n.z*side*railOut));
-      }
-      const rope=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts,loop), pts.length, 1.6, 6, loop),
-        new T.MeshPhongMaterial({color:COIL_PAL[side>0?0:6], map:coilTex(),
-          shininess:0, specular:0x000000}));
-      trackGroup.add(rope);
-    }
+    // Iris: the painted desert (see PAINTED-DESERT KIT). The road lies on banded land held
+    // under its own plane; the sky, the field and the band sheet are made here, the rock is
+    // gathered in one builder through the tunnel and scenery sections and flushed at the end.
+    skyDome=irisSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.iris={sky:skyDome.material};
+    const tunIdx=(TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.ceil(a*STEPS),Math.floor(b*STEPS)]);
+    // the carousel: the long banked sweep after the descent, its centre the circle through
+    // three of its samples; the strata ring it and the land domes up under its hub
+    { const a=SAMP[Math.round(0.58*STEPS)].p, b=SAMP[Math.round(0.64*STEPS)].p, c=SAMP[Math.round(0.70*STEPS)].p;
+      const d=2*(a.x*(b.z-c.z)+b.x*(c.z-a.z)+c.x*(a.z-b.z));
+      const A2=a.x*a.x+a.z*a.z, B2=b.x*b.x+b.z*b.z, C2=c.x*c.x+c.z*c.z;
+      const x=(A2*(b.z-c.z)+B2*(c.z-a.z)+C2*(a.z-b.z))/d, z=(A2*(c.x-b.x)+B2*(a.x-c.x)+C2*(b.x-a.x))/d;
+      const R=Math.hypot(b.x-x,b.z-z);
+      IRIS_DOME={x, z, r0:R*0.5, r1:R+240, h:24, off:31}; }
+    const tex=irisStrataTex();
+    IK={tex, tunIdx, land:irisMat(tex), rock:irisMat(tex), B:irisRockB()};
+    IK.rock.side=T.DoubleSide;
+    IK.F=irisField(innerSign, tunIdx);
+    irisTerrain(IK.F, IK.land);
   } else if(felt){
     // The pressed-sheet state: the tube becomes a bank of marbled strata, and the same
     // texture runs everywhere so road, walls and ridges read as one poured material.
@@ -44159,20 +44694,20 @@ function buildTrack(idx){
     for(let i=0;i<160;i++) rg.fillRect(Math.random()*64,Math.random()*256,1,1);  // fibre
     rg.globalAlpha=1;
   } else if(coil){
-    // The stacked-band language on the surface you actually look at most. Bands run
-    // ACROSS the road with a cream hairline between them so no two hues muddy, and a
-    // pitted rope kerb runs down both edges.
+    // The lonely road: the darkest value in the frame, a near-black extrusion with a cream
+    // piped edge down each side and a few cobalt strokes dragged through it (the road in the
+    // reference), so it is a painted surface and not a hole. No centre line.
     // canvas is 64x256, painted with `rg` like every other branch here
-    rg.fillStyle='#4A2A1C'; rg.fillRect(0,0,64,256);
-    const CPAL=['#E0157E','#F0531C','#FFB80E','#8FCB1A','#1BA5D8','#6A2BB5','#0E8F7A','#C81E2E'];
-    for(let y=0;y<256;y+=13){
-      rg.fillStyle=CPAL[(y/13|0)%CPAL.length]; rg.fillRect(0,y,64,12);
-      rg.fillStyle='#F2E6CE'; rg.fillRect(0,y+12,64,1);
-    }
-    rg.fillStyle='#4A2A1C'; rg.fillRect(0,0,7,256); rg.fillRect(57,0,7,256);   // rope kerbs
-    rg.globalAlpha=0.26; rg.fillStyle='#000';
-    for(let y=0;y<256;y+=6){ rg.fillRect(0,y,7,2); rg.fillRect(57,y,7,2); }    // coil seam
-    rg.globalAlpha=1;
+    rg.fillStyle='#0b0907'; rg.fillRect(0,0,64,256);
+    { const RR=harbRnd(0x5177);
+      rg.strokeStyle='#0d1c86'; rg.lineCap='round';
+      for(let k=0;k<7;k++){ const x=9+RR()*46; rg.globalAlpha=0.30+RR()*0.30; rg.lineWidth=0.8+RR()*1.6;
+        rg.beginPath(); rg.moveTo(x,-8); rg.bezierCurveTo(x+(RR()-0.5)*16,85, x+(RR()-0.5)*16,170, x,264); rg.stroke(); }
+      rg.globalAlpha=0.10;
+      for(let k=0;k<420;k++){ rg.fillStyle=RR()<0.5?'#2a2418':'#000'; rg.fillRect(RR()*64, RR()*256, 1, 1+RR()*3); }
+      rg.globalAlpha=1; }
+    rg.fillStyle='#EADCB6'; rg.fillRect(3,0,3,256); rg.fillRect(58,0,3,256);   // the cream piping
+    rg.fillStyle='rgba(120,100,70,0.55)'; rg.fillRect(6,0,1,256); rg.fillRect(57,0,1,256);
   } else if(clay){
     // Rolled-out clay slab: warm terracotta, a hand-pressed centre line and darker
     // thumbed edges. The mottling comes from CLAY_TEX once clayifyScene runs.
@@ -44289,8 +44824,9 @@ function buildTrack(idx){
     ? lilyWaterPatch(new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d0d2a,
         shininess:90,specular:0x40344e,side:T.DoubleSide}), 1.0)
     : coil
-    // matte, opaque, untinted: the banded texture IS the surface here
-    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:0,specular:0x000000,
+    // near-black and matte, with just enough broad warm sheen that the road glows a little
+    // where it runs toward the low sun
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:9,specular:0x3a3020,
         side:T.DoubleSide})
     : paint
     // AUTHORED, not converted. Left to paintifyScene this came out at roughly half the
@@ -44453,12 +44989,13 @@ function buildTrack(idx){
   const motes=new T.Points(mg,new T.PointsMaterial({map:(arc||pix)?null:TEX_SPARK,
     // Marina: humid air over warm water — pale aqua, not pink sparks
     // Ophelia: thistledown and pollen in the sun over the water
-    color:arc?0xffe27a:pix?0xff8ab4:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:0xffc6dd, size:(arc||pix)?1.6:oph?3.0:paint?4.6:felt?4.2:3.2,
+    // Iris: dust in the low sun
+    color:arc?0xffe27a:pix?0xff8ab4:oph?0xfff4d8:paint?0xf0e4c4:felt?0xffd8bc:pool?0xcfeef0:coil?0xf2dcb0:0xffc6dd, size:(arc||pix)?1.6:oph?3.0:paint?4.6:felt?4.2:coil?4.2:3.2,
     sizeAttenuation:true,
     transparent:true, opacity:oph?0.3:paint?0.18:0.5, blending:T.AdditiveBlending, depthWrite:false}));
   trackGroup.add(motes); TRACK_PULSE.motes=motes;
   motes.visible=!hana && !eden && !tc && !sho;          // additive sparks have no place in a print; Eve has her own fireflies
-  TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:0;
+  TRACK_PULSE.motesDim=arc?0.9:oph?0.45:paint?0.16:felt?0.42:pool?0.55:macro?0.4:coil?0.22:0;
 
   // ---- bioluminescent plankton: dense cyan-green glow clouds filling the tunnels ----
   TRACK_PULSE.biolum=null;
@@ -44777,21 +45314,8 @@ function buildTrack(idx){
       tb.position.copy(sp.p); tb.position.y+=0.09; trackGroup.add(tb);
     }
   } else if(coil){
-    // Spiral volutes — the curled scroll-clouds off the reference — standing face-on to
-    // the road, chirality alternating so the verge reads as hand-rolled rather than stamped.
-    const vol=[];
-    for(let i=0;i<STEPS;i+=6){
-      const s2=SAMP[i], ry=Math.atan2(s2.t.x,s2.t.z)+Math.PI/2;
-      for(const side of [-1,1]){
-        const r=3.5+((i*13)%26)/10;
-        // pushed clear of the guardrail ropes at HW+2.8, which were eating them entirely
-        const volOut = (side*innerSign>0) ? HW*2.46 : HW*1.62;
-        vol.push({x:s2.p.x+s2.n.x*side*volOut, y:s2.p.y+0.6+r*0.5,
-                  z:s2.p.z+s2.n.z*side*volOut, s:r, sy:r, sz:(side>0?r:-r)*0.55,
-                  ry, c:COIL_PAL[((i/6|0)+(side>0?0:3))%10]});
-      }
-    }
-    trackGroup.add(coilBatch(new T.TorusGeometry(1,0.18,5,22,4.7), vol));
+    // the piped cream guardrail on the shoulder at each wall (see irisRopes)
+    irisRopes(IK.F, innerSign, IK.tunIdx);
   } else if(loom){
     loomVerge(innerSign);
   } else if(felt){
@@ -44903,21 +45427,8 @@ function buildTrack(idx){
     const fk=ophArcade(OK.F, OK.O, innerSign);
     if(fk){ trackGroup.add(fk.m); TRACK_PULSE.oph.fleck=fk; }
   } else if(coil){
-    // a rainbow throat rather than one fleshy ring: three nested arches cycling the ramp
-    for(const sg of tun){
-      const i0=Math.floor(sg[0]*STEPS), i1=Math.floor(sg[1]*STEPS);
-      for(let i=i0;i<=i1;i+=3){
-        const s2=SAMP[i%STEPS];
-        for(let r=0;r<3;r++){
-          const cr=new T.Mesh(new T.TorusGeometry(HW+5+r*6, 2.6, 6, 20),
-            new T.MeshPhongMaterial({color:COIL_ARCH[(i+r)%COIL_ARCH.length], map:coilTex(),
-              shininess:0, specular:0x000000}));
-          cr.position.copy(s2.p);
-          cr.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s2.t);
-          trackGroup.add(cr);
-        }
-      }
-    }
+    // the summit slot: banded rock walls and five irregular spans (see irisSlot)
+    irisSlot(IK.B, IK.F, innerSign, IK.tunIdx);
   } else if(macro){
     // the wisteria walk and the bamboo grove (see lilyTunnels)
     lilyTunnels(MK, innerSign, MK.G);
@@ -45193,9 +45704,8 @@ function buildTrack(idx){
     if(hana){ pad.material.blending=T.NormalBlending; pad.material.color.set(hanaLin(0xd0482c)); }
     // Rosalie: likewise on paper planks: the chevrons are printed in the vermilion
     if(sho){ pad.material.blending=T.NormalBlending; pad.material.color.set(shLin(SH.RED)); }
-    // Iris: the same on her full-chroma bands — added light vanishes on the yellow and green
-    // ones and the chevrons read as broken blobs, so print them in the kerb's dark rope brown
-    if(coil){ pad.material.blending=T.NormalBlending; pad.material.color.setHex(0x4a2a1c).convertSRGBToLinear(); }
+    // Iris: printed, not added — on her near-black road the chevrons go down in marigold
+    if(coil){ pad.material.blending=T.NormalBlending; pad.material.color.setHex(0xFCB412).convertSRGBToLinear(); }
     trackGroup.add(pad);
     const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana && !sho) trackGroup.add(halo);
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
@@ -45847,120 +46357,10 @@ function buildTrack(idx){
     if(leaves.length) trackGroup.add(harbBatch(new T.SphereGeometry(1,8,5), natMat(0xffffff,24,0x203020), leaves));
     if(cones.length) trackGroup.add(harbBatch(new T.ConeGeometry(1,1,10), natMat(0xffffff,10,0x101010), cones));
   } else if(coil){
-    /* THE SIGNATURE SET. Three families, ordered by how well each reads at 100mph:
-       arch gantries over the road, coil towers flanking it, and colour-wheel wedge
-       plinths under everything so nothing floats.
-       Deliberately NOT a facade: the arches span the road the way the start gantry does,
-       they are never grouped into a wall with a doorway under them, and the towers are
-       freestanding and unevenly spaced rather than a symmetrical pair round a centre. */
-    const towers=[], finials=[], wedges=[], bursts=[];
-    // 1. arch gantries down the nave straight, at accelerating spacing.
-    //    Built as individual tori with a CONSTANT tube, the way the tunnel rings already
-    //    are — instancing a unit torus scaled the section with the radius in-plane while
-    //    pinning it to 0.24 along the road, so each rib was a paper cut-out AND the six
-    //    fused into one solid arched mass. Ribs with air between them are what keeps this
-    //    a gantry over a road rather than a portal.
-    // The legs of a half-torus sit at +-R on the ground, so R has to CLEAR the drivable
-    // corridor or the gantry is a phantom you drive through. That corridor is HW*2.2 = 48.4
-    // on the infield (the apron shortcut) and HW*1.28 = 28.2 outside, so the innermost arch
-    // starts outside 48.4. It makes the rainbow monumental, which is also truer to the
-    // reference than a tight little croquet hoop.
-    const ARCH_TUBE=2.6, ARCH_STEP=8, ARCH_R0=HW*2.35;
-    let at=Math.round(STEPS*0.015);
-    for(const gap of [90,76,64,54,45,38,32]){
-      const s2=SAMP[at%STEPS];
-      for(let r=0;r<6;r++){
-        const ag=new T.TorusGeometry(ARCH_R0+r*ARCH_STEP, ARCH_TUBE, 6, 20, Math.PI);
-        claySculpt(ag, 0.05);                      // hand-rolled wobble, not a CAD torus
-        const am=new T.Mesh(ag, new T.MeshPhongMaterial({color:COIL_ARCH[r], map:coilTex(),
-          shininess:0, specular:0x000000}));
-        am.position.set(s2.p.x, s2.p.y-1, s2.p.z);
-        am.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s2.t);
-        trackGroup.add(am);
-      }
-      at+=gap;
-    }
-    // 2. coil towers — a stack of piped rings, each rotated on so the coil reads as
-    //    continuous rather than as a pile of doughnuts, banded hard up the palette
-    const putTower=(bx,by,bz,scale,rings)=>{
-      // Ring pitch has to SHRINK with the ring, or the coil opens into separate beads as
-      // it tapers. Track the running height rather than assuming a constant 2.6 step, and
-      // seat the finial on the last ring actually placed instead of on a predicted one.
-      let ty=by, last=by, lastSc=9*scale;
-      for(let k=0;k<rings;k++){
-        const sc=(9-k*0.34)*scale;
-        if(sc<=0.4) break;
-        towers.push({x:bx, y:ty, z:bz, s:sc, sy:1.5*scale, sz:sc,
-                     rx:Math.PI/2, ry:k*0.42, c:COIL_PAL[k%10]});
-        last=ty; lastSc=sc;
-        ty += Math.max(1.0, 0.30*sc);            // pitch follows the tube, so no gaps
-      }
-      finials.push({x:bx, y:last+0.30*lastSc, z:bz, s:1.4*scale, c:COIL_PAL[3]});
-    };
-    // jittered off the exact ninths, and one side skipped per station — an even rank of
-    // towers on both sides at regular intervals reads as tiling from any distance
-    for(let k=0;k<9;k++){
-      const i2=(Math.round(k*STEPS/9) + ((k*37)%23) - 11 + STEPS)%STEPS, s2=SAMP[i2];
-      for(const side of [-1,1]){
-        if((k+(side>0?0:1))%4===3) continue;
-        const out=HW*(2.6+((k*7+(side>0?0:2))%5)*0.34);
-        putTower(s2.p.x+s2.n.x*side*out, s2.p.y-4, s2.p.z+s2.n.z*side*out,
-                 1, 16+((k*5)%7));
-      }
-    }
-    // the one giant, on the infield of the helix — the road corkscrews around it
-    { const s2=SAMP[Math.round(STEPS*0.33)%STEPS];
-      putTower(s2.p.x+s2.n.x*HW*3.4, s2.p.y-14, s2.p.z+s2.n.z*HW*3.4, 2.4, 21); }
-    // 3. colour-wheel wedge plinths: twelve 30-degree segments, one per palette entry
-    const putWheel=(cx,cy,cz,R)=>{
-      // %10: entries 10 and 11 are the cream separator and the brown shadow, and putting
-      // them in the wheel gave every disc a white slice and a mud slice
-      for(let w=0;w<12;w++)
-        wedges.push({x:cx, y:cy, z:cz, s:R, sy:5, sz:R, ry:w*Math.PI/6, c:COIL_PAL[w%10]});
-    };
-    for(let k=0;k<9;k++){
-      const i2=(Math.round(k*STEPS/9) + ((k*37)%23) - 11 + STEPS)%STEPS, s2=SAMP[i2];
-      // skip the two nearest the start line: a 30-unit wheel there interpenetrated the
-      // 90-unit apron half a unit below it, two discs of different origins through each other
-      if(i2 < 70 || i2 > STEPS-70) continue;
-      for(const side of [-1,1])
-        putWheel(s2.p.x+s2.n.x*side*HW*2.9, s2.p.y-6.5, s2.p.z+s2.n.z*side*HW*2.9,
-                 26+((k*11)%9));
-    }
-    putWheel(SAMP[0].p.x, SAMP[0].p.y-7, SAMP[0].p.z, 90);          // start/finish apron
-    for(let k=0;k<3;k++){
-      const s2=SAMP[Math.round(STEPS*(0.84+k*0.05))%STEPS];
-      putWheel(s2.p.x+s2.n.x*HW*5, s2.p.y-8, s2.p.z+s2.n.z*HW*5, 38);
-    }
-    // 4. sunburst backdrop discs, standing well back as parallax graphics.
-    //    Nothing is ever placed in FRONT of one — a disc with a figure before it stops
-    //    being a colour wheel and starts being a halo, which this set stays clear of.
-    // The rule has to be ENFORCED, not asserted. Bursts previously sat at +26 with radius
-    // 17 while the towers on the same side at the same stations spanned -4 to +40: total
-    // overlap in bearing and height, which composes a figure in front of a radiating disc.
-    // They now sit well above the tower band, and on stations that share no root with the
-    // tower spacing (k*STEPS/9) so they cannot line up again.
-    for(let k=0;k<4;k++){
-      const s2=SAMP[Math.round(STEPS*(0.115+k*0.237))%STEPS];
-      const side=k%2?1:-1, ry=Math.atan2(s2.t.x,s2.t.z)+Math.PI/2;
-      const cx=s2.p.x+s2.n.x*side*HW*5.5, cz=s2.p.z+s2.n.z*side*HW*5.5, cy=s2.p.y+62;
-      for(let a=0;a<24;a++){
-        const th=a/24*Math.PI*2;
-        bursts.push({x:cx+Math.cos(th)*17*Math.cos(ry), y:cy+Math.sin(th)*17,
-                     z:cz+Math.cos(th)*17*Math.sin(ry),
-                     s:2.6, sy:7, sz:2.6, ry, rz:th+Math.PI/2, c:COIL_PAL[2]});
-      }
-      // a real segmented disc, not a flattened pyramid: twelve wedges cycling the palette
-      for(let w=0;w<12;w++)
-        wedges.push({x:cx, y:cy, z:cz, s:13, sy:1.6, sz:13,
-                     rx:Math.PI/2, ry:w*Math.PI/6, rz:ry, c:COIL_PAL[w%10]});
-    }
-    { const tm=coilBatch(new T.TorusGeometry(1,0.22,6,14), towers);
-      tm.material.map=coilTexAt(9,3); trackGroup.add(tm); }
-    trackGroup.add(coilBatch(new T.SphereGeometry(1,8,6), finials));
-    { const wm=coilBatch(new T.CylinderGeometry(1,1,1,6,1,false,0,Math.PI/6), wedges);
-      wm.material.map=coilTexAt(14,14); trackGroup.add(wm); }
-    trackGroup.add(coilBatch(new T.ConeGeometry(1,1,4), bursts));
+    // the desert: arches, hoodoos, the Monument, table-lands, the carousel's hub and the
+    // giant tower, then every rock in the builder flushed as a few merged meshes
+    irisScenery(IK.F, IK.B, innerSign, ccx, ccz);
+    irisFlush(IK.B, IK.rock);
   } else if(loom){
     loomScenery(innerSign, ccx, ccz);
   } else if(felt){
@@ -58340,6 +58740,8 @@ function frame(now){
   if(TRACK_PULSE.shore) shTick(TRACK_PULSE.shore, tsec);
   // Eve: glow breathes, fronds sway, water ripples, fireflies drift
   if(TRACK_PULSE.eden) edenTick(TRACK_PULSE.eden, tsec);
+  // Iris: the sun breathes and the clouds drift, inside the dome's shader
+  if(TRACK_PULSE.iris) irisTick(TRACK_PULSE.iris, tsec);
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
