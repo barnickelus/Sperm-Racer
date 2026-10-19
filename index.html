@@ -52424,9 +52424,10 @@ const FT_BPM=128, FT_SH=[2.85,1.95,0.9], FT_LU=3.15, FT_LF=2.95;   // the beat w
 const FT_IDLE=[4.2,6.6], FT_SHOW_CD=8, FT_PASS_CD=3;                // seconds between bursts on the road; the showboat's and the one-two's cooldowns
 // arm targets in a shoulder's root frame (+x out from his side, +y up, +z forward), from model-space points on his left
 const ftR=(x,y,z)=>[x-FT_SH[0], y-FT_SH[1], z-FT_SH[2]];
-const FT_W={fold:[0.5,-0.7,0.4], guard:ftR(3.9,1.6,3.0), chin:ftR(3.75,1.95,3.2), jab:ftR(2.0,7.0,9.0), cross:ftR(1.2,6.8,9.0),
+const FT_W={fold:[0.5,-0.7,0.4], guard:ftR(4.15,0.75,2.7), chin:ftR(3.95,1.05,2.95), jab:ftR(2.0,7.0,9.0), cross:ftR(1.2,6.8,9.0),
       upper:ftR(1.8,8.8,4.0), wide:ftR(8.4,2.4,-0.2), up:ftR(3.0,9.6,0.6)};
 const FT_P={fold:[1,-1,0], guard:[1,-1,-0.3], jab:[1,-0.8,0.1], upper:[1,-0.7,0.6], wide:[0.1,-1,0.6], up:[1,0.1,-0.4], back:[0.2,-1,0.2]};
+const _ftNoR={};   // a model ticked with no racer (a preview)
 let _ftBq=60/FT_BPM, _ftSec=null, _ftOff=0, _ftOffT=-9, _ftOffE=null;
 // the beat, as a running count of beats: a produced station's own bar clock while one plays (its scheduler runs ahead
 // of the speakers, so its audio clock is mapped onto ours, output latency included, as tickGuido does; the mapping is
@@ -52451,13 +52452,16 @@ function ftPunch(t,tp){ const d=t-tp;
   return 1-ftEase((d-0.05)/0.29); }
 const _ftV=new T.Vector3(), _ftA=new T.Vector3(), _ftB=new T.Vector3(), _ftQ=new T.Quaternion(), _ftQ2=new T.Quaternion(), _ftE=new T.Euler();
 const _ftL3=(out,A,B,t)=>out.set(A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t, A[2]+(B[2]-A[2])*t);
+// an arm held in a guard pose (bob lifts it), or punched from the guard toward `to` by p (negative p cocks it back)
+function ftGuard(A,pose,bob){ A.want=1; _ftL3(A.W, FT_W[pose], FT_W[pose], 0); A.W.y+=bob; _ftL3(A.P, FT_P.guard, FT_P.guard, 0); }
+function ftPunchTo(A,to,p,pole){ _ftL3(A.W, FT_W.guard, to, p); _ftL3(A.P, FT_P.guard, FT_P[pole], Math.max(0,p)); }
+function ftRnd(S){ S.rs=(S.rs*16807)%2147483647; return (S.rs-1)/2147483646; }   // his own stream: never the shared Math.random
 function tickFighter(o, r, now){
   const ud=o.userData, arms=ud.ftArms; if(!arms) return;
   const S=ud._ft||(ud._ft={t:now, G:null, rs:7919, nextIdle:now+2, lastPass:-99, lastShow:-99, pl:0, showAt:0, pSm:false, brU:0, brK:0,
     a:[{e:0,ev:0,W:new T.Vector3(),P:new T.Vector3(),want:0},{e:0,ev:0,W:new T.Vector3(),P:new T.Vector3(),want:0}], qd:new T.Vector3(), eyOn:false});
-  const rnd=()=>{ S.rs=(S.rs*16807)%2147483647; return (S.rs-1)/2147483646; };   // his own stream: never the shared Math.random
   const dt=Math.min(0.05, Math.max(0, now-S.t)); S.t=now;
-  const R=r||{}, L=R._lk, spin=R.spinT>0, boost=R.boostT>0, spd=Math.abs(R.spd||0);
+  const R=r||_ftNoR, L=R._lk, spin=R.spinT>0, boost=R.boostT>0, spd=Math.abs(R.spd||0);
   const beat=ftBeat(now), bf=beat-Math.floor(beat), q=_ftBq;
   const racing=state==='race' && !R.finished, grid=!R.finished && (state==='count' || spd<6);
   // ---- the finish (ph: seconds since the line): a grin in his guard, the showboat as the orbit reaches his face,
@@ -52482,35 +52486,33 @@ function tickFighter(o, r, now){
   if(!S.G && !fin && !spin && racing && !grid && now>=S.nextIdle){
     if(R.drift===1) S.nextIdle=now+0.8;
     else { const b1=0.42+(Math.ceil(beat+0.42/q)-(beat+0.42/q))*q;              // the first beat once the guard is up
-      S.G=rnd()<0.68 ? {kind:'combo', t0:now, b1} : {kind:'roll', t0:now, b1};
-      S.nextIdle=now+(_ftSec==='top' ? 8*q : FT_IDLE[0]+rnd()*(FT_IDLE[1]-FT_IDLE[0])); } }
+      S.G=ftRnd(S)<0.68 ? {kind:'combo', t0:now, b1} : {kind:'roll', t0:now, b1};
+      S.nextIdle=now+(_ftSec==='top' ? 8*q : FT_IDLE[0]+ftRnd(S)*(FT_IDLE[1]-FT_IDLE[0])); } }
   if(grid || fin) S.nextIdle=Math.max(S.nextIdle, now+1.5);
   // ---- the script: per arm a wanted extension, a wrist target and an elbow pole (root frame); the head's turn; the
   // mouth; the robe's roll and swell; the eyes
   const A0=S.a[0], A1=S.a[1]; A0.want=0; A1.want=0;
   let pitch=0, yaw=0, roll=0, rRoll=0, chest=0, mouthK=null, eyes=null, bu=null, bk=null;
   const G=S.G, t=G ? now-G.t0 : 0;
-  const guard=(A,pose,bob)=>{ A.want=1; _ftL3(A.W, FT_W[pose], FT_W[pose], 0); A.W.y+=bob; _ftL3(A.P, FT_P.guard, FT_P.guard, 0); };
-  const punch=(A,to,p,pole)=>{ _ftL3(A.W, FT_W.guard, to, p); _ftL3(A.P, FT_P.guard, FT_P[pole], Math.max(0,p)); };
   if(fin==='guard' || (!fin && !G && grid)){
     // the grid: guard up at the chin, bouncing on every beat, a jab a bar (alternate hands), the shoulders rolling
     const bob=0.28*Math.exp(-bf*6)*Math.sin(Math.PI*Math.min(1,bf*2));
-    guard(A0,'chin',bob); guard(A1,'chin',bob);
+    ftGuard(A0,'chin',bob); ftGuard(A1,'chin',bob);
     const bar=Math.floor(beat/4), bt=beat-bar*4, tp=2*q, tt=bt*q, which=bar&1 ? A1 : A0, pj=ftPunch(tt,tp);
-    if(pj) punch(which, which===A0 ? FT_W.jab : FT_W.cross, pj, 'jab');
+    if(pj) ftPunchTo(which, which===A0 ? FT_W.jab : FT_W.cross, pj, 'jab');
     pitch+=0.06*Math.exp(-bf*6); roll+=0.08*Math.sin(Math.PI*beat/2); rRoll=0.06*Math.sin(Math.PI*beat/2);
     if(fin) mouthK='grin';
   } else if(fin==='show' || (G && G.kind==='show')){
     // the showboat: arms flung wide and low, chest out, chin up, a shimmy on the beat; a roar, then the grin
     const u=fin ? ph-0.9 : t, END=fin ? 99 : 2.6, op=ftEase(u/0.35)*(1-ftEase((u-(END-0.45))/0.35));
-    for(const A of [A0,A1]){ A.want=u<END-0.2 ? 1 : 0; _ftL3(A.W, FT_W.guard, FT_W.wide, op); A.W.y+=0.45*Math.exp(-bf*5)*op; _ftL3(A.P, FT_P.guard, FT_P.wide, op); }
+    for(let i=0;i<2;i++){ const A=S.a[i]; A.want=u<END-0.2 ? 1 : 0; _ftL3(A.W, FT_W.guard, FT_W.wide, op); A.W.y+=0.45*Math.exp(-bf*5)*op; _ftL3(A.P, FT_P.guard, FT_P.wide, op); }
     chest=op; pitch-=0.24*op; roll+=0.11*Math.sin(Math.PI*beat)*op; rRoll=0.07*Math.sin(Math.PI*beat)*op;
     mouthK=u<0.75 ? 'shout' : 'grin'; if(u<0.75){ eyes=1.15; bu=0.7; bk=0.1; } else { bu=0.4; bk=0; }
     if(G && u>END) S.G=null;
   } else if(fin==='up'){
     // both gloves overhead, pumping on the beat
     const pump=Math.exp(-bf*5)*Math.sin(Math.PI*Math.min(1,bf*2.5));
-    for(const A of [A0,A1]){ A.want=1; _ftL3(A.W, FT_W.up, FT_W.up, 0); A.W.y-=0.9*(1-pump); _ftL3(A.P, FT_P.up, FT_P.up, 0); }
+    for(let i=0;i<2;i++){ const A=S.a[i]; A.want=1; _ftL3(A.W, FT_W.up, FT_W.up, 0); A.W.y-=0.9*(1-pump); _ftL3(A.P, FT_P.up, FT_P.up, 0); }
     pitch-=0.16; roll+=0.06*Math.sin(Math.PI*beat); mouthK='grin'; eyes=0.55; bu=0.5; bk=0;
   } else if(G && G.kind==='combo'){
     // a bob and a weave into the beat, then jab (left), cross (right), uppercut (left), each on its beat
@@ -52519,9 +52521,9 @@ function tickFighter(o, r, now){
     A0.want=out?1:0; A1.want=out?1:0;
     _ftL3(A0.W, FT_W.guard, FT_W.guard, 0); _ftL3(A0.P, FT_P.guard, FT_P.guard, 0); _ftL3(A1.W, FT_W.guard, FT_W.guard, 0); _ftL3(A1.P, FT_P.guard, FT_P.guard, 0);
     const p1=ftPunch(t,b1), p2=ftPunch(t,b1+q), p3=ftPunch(t,b1+2*q);
-    if(p1) punch(A0, FT_W.jab, p1, 'jab');
-    if(p3) punch(A0, FT_W.upper, p3, 'upper');
-    if(p2) punch(A1, FT_W.cross, p2, 'jab');
+    if(p1) ftPunchTo(A0, FT_W.jab, p1, 'jab');
+    if(p3) ftPunchTo(A0, FT_W.upper, p3, 'upper');
+    if(p2) ftPunchTo(A1, FT_W.cross, p2, 'jab');
     const wv=Math.max(0,Math.min(1,t/Math.max(0.2,b1-0.04)));
     roll+=0.24*Math.sin(Math.PI*2*wv)*(1-wv*0.3); pitch+=0.14*Math.sin(Math.PI*wv);
     yaw+=0.1*(p1+p3)-0.1*p2; roll+=0.05*(p2-p1); pitch-=0.08*p3;
@@ -52538,11 +52540,11 @@ function tickFighter(o, r, now){
     const s=G.s, An=s>0 ? A0 : A1, Af=s>0 ? A1 : A0, END=1.3;
     _ftQ2.copy(ud.neck ? ud.neck.quaternion : _ftQ2.identity()).invert();
     _ftV.copy(S.qd).applyQuaternion(_ftQ2); _ftV.y=0; _ftV.normalize();
-    const ox=Math.max(0.6,Math.abs(_ftV.x)), oz=Math.max(-0.75,Math.min(0.35,_ftV.z)), l=Math.hypot(ox,oz);
-    _ftA.set(ox/l*6.6, 1.8, oz/l*6.6);                                                   // a straight shot out toward them
+    const ox=Math.max(0.75,Math.abs(_ftV.x)), oz=Math.max(-0.7,Math.min(0.35,_ftV.z)), l=Math.hypot(ox,oz);
+    _ftA.set(ox/l*6.4, 2.8, oz/l*6.4);                                                   // a straight shot out toward them
     const out=t<END-0.25;
     An.want=out?1:0; Af.want=out?1:0;
-    guard(Af,'chin',0); guard(An,'guard',0);
+    ftGuard(Af,'chin',0); ftGuard(An,'guard',0);
     const pk=Math.max(ftPunch(t,0.3), ftPunch(t,0.56));
     if(pk){ const c=Math.max(0,pk); An.W.lerp(_ftA, c); if(pk<0) An.W.multiplyScalar(1+0.12*pk); _ftL3(An.P, FT_P.guard, FT_P.back, c); }
     yaw+=s*0.25*Math.sin(Math.PI*Math.min(1,t/END)); pitch-=0.1; mouthK='grin'; bu=0.35; bk=0;
@@ -52589,6 +52591,7 @@ function tickFighter(o, r, now){
 function haymakerGeo(){ const g=ftGloveGeo(false); g.translate(0,-1.2,0); g.rotateX(Math.PI/2); g.scale(1.45,1.45,1.45); return g; }
 let _ftCuff=null;
 function haymakerFly(m){
+  m.material.color.copy(vkLin(FT_GREEN)); m.material.emissive.setHex(0x03301a);   // the gloves' own emerald (the halo keeps the item colour)
   m.material.flatShading=false; m.material.shininess=80; m.material.specular=new T.Color(0x8affc0); m.material.needsUpdate=true;
   if(!_ftCuff){ const C=vkLin, M=(y,rx)=>new T.Matrix4().compose(new T.Vector3(0,y,0), new T.Quaternion().setFromEuler(new T.Euler(rx||0,0,0)), new T.Vector3(1,1,1));
     _ftCuff=vkMerge([[new T.CylinderGeometry(0.74,0.66,0.85,22,1,true), M(0.12), C(FT_WHITE)], [new T.TorusGeometry(0.75,0.08,6,26), M(0.16,Math.PI/2), C(FT_ORANGE)],
