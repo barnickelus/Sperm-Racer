@@ -45099,7 +45099,7 @@ function mzMoteMat(){
 }
 // the thread: a ribbon on the floor behind a racer, freshest end brightest, shimmering
 function mzTrailMat(hex){
-  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:-4, polygonOffsetUnits:-4,
     uniforms:{uHead:{value:0}, uCol:{value:new T.Color(hex)}},
     vertexShader:`${MZ_GLSL_COMMON}
       attribute float aI; attribute float aS; varying float vI; varying float vS; varying float vDepth;
@@ -45107,9 +45107,9 @@ function mzTrailMat(hex){
     fragmentShader:`${MZ_GLSL_COMMON}
       uniform float uHead; uniform vec3 uCol; varying float vI; varying float vS; varying float vDepth;
       void main(){ float age=uHead-vI; float fresh=exp(-age/220.0);
-        float core=1.0-abs(vS); core=core*core;
+        float core=pow(1.0-abs(vS),1.5);
         float sh=0.75+0.25*sin(vI*0.35-uT*5.0);
-        float a=(0.26+0.74*fresh)*core*sh*(1.0-smoothstep(uFogR.x,uFogR.y,vDepth));
+        float a=(0.42+0.58*fresh)*core*sh*(1.0-smoothstep(uFogR.x,uFogR.y,vDepth))*1.25;
         gl_FragColor=vec4(mix(uCol,vec3(1.0),0.35*fresh)*a,1.0); }` });
 }
 /* ================= BUILD ================= */
@@ -45183,7 +45183,7 @@ function mzBuildTrack(idx){
   const egg=new T.Mesh(new T.SphereGeometry(C.EGG_R,40,30), edenEggMat()); egg.scale.set(1,1.25,1); egg.position.set(0,eggY,0); trackGroup.add(egg);
   const halo=glowSprite(0xffe2b0,120); halo.material.fog=false; halo.position.copy(egg.position); trackGroup.add(halo);
   const halo2=glowSprite(0xff9a70,320); halo2.material.fog=false; halo2.material.opacity=0.35; halo2.position.set(0,eggY+10,0); trackGroup.add(halo2);
-  egg.userData.edenPulse=edenEggPulse; egg.userData.halo=halo; TRACK_PULSE.egg=egg;
+  egg.userData.edenPulse=edenEggPulse; TRACK_PULSE.egg=egg; M.halos=[halo,halo2];   // the halos breathe in mzTick, and fade as you reach them
   const corona=new T.Group(); corona.position.set(0,eggY,0); trackGroup.add(corona);
   { const R=mzRnd(M.seed^0xC0C0), list=[]; for(let i=0;i<46;i++){ const a=i/46*MZ_TAU+R()*0.1, rr=C.EGG_R*(1.25+R()*0.45), y=(R()-0.5)*C.EGG_R*1.9;
       list.push({x:Math.cos(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), y, z:Math.sin(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), s:2.2+R()*3.0, u:R()*0.25}); }
@@ -45236,6 +45236,10 @@ function mzTick(M, tsec, dt){
         d.rotation.set(0,0,0); d.position.set(ex,ey,ez); d.scale.setScalar(q.s); d.updateMatrix(); K.eyes.setMatrixAt(i*2+e,d.matrix);
         d.position.set(ex+fx*0.2*q.s,ey,ez+fz*0.2*q.s); d.updateMatrix(); K.pup.setMatrixAt(i*2+e,d.matrix); } });
     for(const m of [K.body,K.eyes,K.pup,K.cil]) m.instanceMatrix.needsUpdate=true; }
+  // the lantern's halos: on the heartbeat, and thinned as the camera closes on the egg so the finish is not a white-out
+  { const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
+    const d=Math.hypot(camera.position.x, camera.position.y-M.eggY, camera.position.z), near=Math.max(0,Math.min(1,(d-50)/170));
+    M.halos[0].material.opacity=(0.55+0.30*b)*(0.25+0.75*near); M.halos[1].material.opacity=(0.30+0.12*b)*near*near; }
   if(state==='race'||state==='done') mzTrails(M);
   mzHeart(M, tsec);
 }
@@ -45269,13 +45273,13 @@ function mzTrails(M){
       g.setIndex(new T.BufferAttribute(ix,1)); g.setDrawRange(0,0);
       const m=new T.Mesh(g, mzTrailMat(new T.Color(`hsl(${r.hue}, 90%, 66%)`).getHex())); m.frustumCulled=false; m.renderOrder=1; trackGroup.add(m);
       tr={mesh:m, n:0, lx:r.x, lz:r.z, ly:0, pnx:0, pnz:0, started:false}; M.trails.set(r,tr); }
-    const y=(r.surfY!=null?r.surfY:mzFloorAt(r.x,r.z))+0.09;
+    const y=mzFloorAt(r.x,r.z)+0.22;
     if(!tr.started){ tr.started=true; tr.lx=r.x; tr.lz=r.z; tr.ly=y; continue; }
     if(tr.n>=MZ_TRAIL_CAP) continue;
     const dx=r.x-tr.lx, dz=r.z-tr.lz, d=Math.hypot(dx,dz);
     if(d<3.2) continue;
     if(d>40){ tr.lx=r.x; tr.lz=r.z; tr.ly=y; tr.pnx=0; continue; }   // a rescue: start a fresh strand, no streak over the walls
-    const w=0.85, nx=-dz/d, nz=dx/d, ox=tr.pnx||nx, oz=tr.pnx?tr.pnz:nz, i=tr.n;
+    const w=1.7, nx=-dz/d, nz=dx/d, ox=tr.pnx||nx, oz=tr.pnx?tr.pnz:nz, i=tr.n;
     const pa=tr.mesh.geometry.attributes.position;
     pa.array.set([tr.lx+ox*w, tr.ly, tr.lz+oz*w, tr.lx-ox*w, tr.ly, tr.lz-oz*w, r.x+nx*w, y, r.z+nz*w, r.x-nx*w, y, r.z-nz*w], i*12);
     pa.updateRange.offset=i*12; pa.updateRange.count=12; pa.needsUpdate=true;
@@ -45302,6 +45306,8 @@ function mzCollideRacer(r){   // walls, islands and the egg: push out, lose spee
     for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr){ const ex=kr-d; r.x+=MZ_Q.nx*ex; r.z+=MZ_Q.nz*ex; any=true;
       const sg=r.spd<0?-1:1, imp=-(Math.sin(r.head)*MZ_Q.nx+Math.cos(r.head)*MZ_Q.nz)*sg; if(imp>hit){ hit=imp; hx=MZ_Q.nx; hz=MZ_Q.nz; } } }
     if(!any) break; }
+  // nosed square into a wall: the speed into it goes (a kart pinned there does not wind up while it sits)
+  if(hit>0.5 && r.spd>0) r.spd=Math.min(r.spd, 6+60*(1-hit));
   if(hit>0.2 && (r._wallCD||0)<=0 && Math.abs(r.spd)>12){
     r.spd*=1-0.62*hit; r._wallCD=0.3;
     // glance off: swing the nose along the wall a little so a scrape slides instead of sticking
@@ -45317,7 +45323,11 @@ function mzAssist(r,dt,gas){
   const M=MAZE; if(!gas || Math.abs(r.spd)>9){ r._mzPin=0; return r._mzBack>0 ? (r._mzBack-=dt)>0 : false; }
   if(r._mzBack>0){ r._mzBack-=dt; return true; }
   const fx=r.x+Math.sin(r.head)*(MZ.KR+2.5), fz=r.z+Math.cos(r.head)*(MZ.KR+2.5);
-  if(mzNear(M,fx,fz)<0.8){ r._mzPin=(r._mzPin||0)+dt; if(r._mzPin>0.45){ r._mzPin=0; r._mzBack=0.7; return true; } } else r._mzPin=0;
+  if(mzNear(M,fx,fz)<0.8){ r._mzPin=(r._mzPin||0)+dt; if(r._mzPin>0.45){ r._mzPin=0; r._mzBack=0.8;
+      // and, unless the driver is steering, swing the nose toward the more open way while backing off
+      const c=mzLocate(M,r.x,r.z); let best=null, bv=1e18; if(c<M.NC) for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-r.x,p.z-r.z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
+      r._mzBackSteer = best ? -Math.sign(angDiff(Math.atan2(best.x-r.x,best.z-r.z), r.head)||1) : 0;
+      return true; } } else r._mzPin=0;
   return false;
 }
 // nobody stays stuck: a kart that has gone nowhere for a while is set back in its corridor, nose to the egg
@@ -45443,8 +45453,9 @@ function mzCamGuard(me){
     if(y<wt && mzNear(M,x,z)<0.8){ const req=hy+(wt-hy)/t; if(req>need) need=req; } }
   if(need>p.y+1e-3){ p.y=Math.min(need, hy+30); moved=true; }
   // the egg (an ellipsoid, 1.25 tall)
-  _mzV.set(p.x/(MZ.EGG_R+4), (p.y-M.eggY)/((MZ.EGG_R+4)*1.25), p.z/(MZ.EGG_R+4)); const e=_mzV.length();
-  if(e<1){ const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3) p.x=MZ.EGG_R+4; moved=true; }
+  const er=MZ.EGG_R*(TRACK_PULSE.egg?TRACK_PULSE.egg.scale.x:1)+4;
+  _mzV.set(p.x/er, (p.y-M.eggY)/(er*1.25), p.z/er); const e=_mzV.length();
+  if(e<1){ const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3) p.x=er; moved=true; }
   if(moved) camera.lookAt(_camLook);
 }
 // the course card: rings and a gate, not a road outline
@@ -59080,7 +59091,7 @@ function updateRacer(r,dt){
     }
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
-    if(MAZE && !reverse && mzAssist(r,dt,gas)){ gas=false; brake=true; reverse=true; }   // nosed into a wall: back off
+    if(MAZE && !reverse && mzAssist(r,dt,gas)){ gas=false; brake=true; reverse=true; if(Math.abs(steer)<0.1) steer=r._mzBackSteer||0; }   // nosed into a wall: back off
     if(fire&&!firePrev)useItem(r); firePrev=fire;
     if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
     // tail-whip on demand, any time (a short cooldown stops spamming): the move always
@@ -61011,7 +61022,7 @@ function frame(now){
   if(TRACK_PULSE.maze) mzTick(TRACK_PULSE.maze, tsec, dt);
   if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg;
     if(eggAnim>0){                                  // fertilize! bioluminescent bloom
-      eggAnim-=dt; const k=1+(2.4-eggAnim)*0.7;
+      eggAnim-=dt; const k=1+(2.4-eggAnim)*(MAZE?0.16:0.7);   // the maze's egg stands among the finishers: it swells, it does not swallow them
       e.scale.set(k,k*1.25,k); e.rotation.y+=dt*3;
       // bioluminescent hue waves (cyan->green->blue) rippling fast
       const hue=(0.45 + Math.sin(tsec*6)*0.12 + (2.4-eggAnim)*0.05)%1;
