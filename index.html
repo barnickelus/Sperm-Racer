@@ -44791,16 +44791,22 @@ function mzMake(seed){
   return best;   // nothing passed: race the closest (srNet.maze reports why)
 }
 /* ================= THE LOOK =================
-   The maze is the egg's own protective layers, and it is ALIVE: the egg's heartbeat sends a
-   wave of light out through the rings (lub, then a softer dub, every 1.6 s — the same clock as
-   the egg's own pulse and the heartbeat you hear in the last two rings), the walls breathe,
-   cilia along the crests sway in a travelling wave, motes drift, the wet floor carries slow
-   ripple light and the glow of every wall. Cool periwinkle at the rim, hot gold at the egg.
-   Cheap by construction: a handful of shared shader materials driven by one clock uniform
-   (MZU.uT), walls merged into eight angular sectors, every repeated prop instanced, and every
-   colour written straight out in display space (so these shaders do their own fog, against
-   the sky's horizon colour). */
-const MZ_PAL=[[0.00,0xffd07c],[0.20,0xf4ad93],[0.40,0xdf96c0],[0.60,0xc294d8],[0.80,0xa697e6],[1.00,0x8fa1e8]];
+   The maze is the egg's own protective layers, and it is ALIVE. Value plan, darkest to lightest:
+   the floor (a deep, glossy tissue floor, ~8%), the haze everything recedes into (~25%), the
+   walls (translucent luminous ridges, 45-85%), the egg (the brightest thing in the world).
+   Colour: cool azure at the rim, through violet, orchid and rose, to hot gold at the egg; the
+   world is lit FROM the egg, so wall faces that look toward it are warm and the far ones cool.
+   Life: the egg's heartbeat sends a wave of light out through the rings (lub, then a softer
+   dub, every 1.6 s, the same clock as the egg's pulse and the heartbeat you hear in the last
+   two rings) — the walls, their cilia and the floor all swell with it as it passes. The walls
+   breathe, the cilia sway in a travelling wave, the floor's ripples drift, far cells float in
+   the haze and shafts of light lean in toward the egg.
+   Cheap by construction: a handful of shared shader materials on one clock uniform (MZU.uT),
+   one baked tileable cell/noise texture shared by every shader (no per-pixel voronoi), walls
+   merged into eight angular sectors, every repeated prop instanced, and every colour written
+   straight out in display space (these shaders do their own fog, against the haze). */
+const MZ_PAL=[[0.00,0xffd36a],[0.12,0xffb54f],[0.24,0xff8d6e],[0.38,0xff72a6],[0.55,0xcf6cf2],[0.72,0x9874ff],[0.87,0x6d8dff],[1.00,0x5cb2ff]];
+const MZ_HAZE=0x4b3370;            // the haze the maze recedes into (display space): lighter than the floor, darker than the walls
 function mzTint(u, out){   // u: 0 at the egg .. 1 at the rim -> display-space colour
   u=Math.max(0,Math.min(1,u)); let i=1; while(i<MZ_PAL.length-1 && u>MZ_PAL[i][0]) i++;
   const a=MZ_PAL[i-1], b=MZ_PAL[i], t=(u-a[0])/(b[0]-a[0]);
@@ -44811,55 +44817,81 @@ function mzTint(u, out){   // u: 0 at the egg .. 1 at the rim -> display-space c
 function mzRingU(ring){ return ring<=0 ? 0 : Math.min(1,(ring-0.5)/MZ.K); }
 const MZ_GLSL_COMMON=`
 uniform float uT; uniform vec3 uFog; uniform vec2 uFogR;
-float mzBeat(float rho){   // the heartbeat's light wave: lub, then dub, rolling out from the egg
-  float ph=mod(uT,1.6);
-  float w1=78.0+(ph-0.10)*300.0, w2=78.0+(ph-0.40)*300.0;
-  float a=step(0.10,ph)*exp(-pow((rho-w1)/20.0,2.0))*max(0.0,1.0-(ph-0.10)*0.55);
-  float b=step(0.40,ph)*exp(-pow((rho-w2)/20.0,2.0))*0.55*max(0.0,1.0-(ph-0.40)*0.6);
-  return a+b; }
+// the heartbeat's light wave: one pulse launched 'ago' seconds back, rolling out from the egg at
+// 240 units/s, fading to ~half by the rim; lub at 0.10, dub at 0.40 of every 1.6 s (the previous
+// beat's pair is still on its way to the rim when the next one starts)
+float mzWave(float rho, float ago, float amp){ float d=(rho-(72.0+ago*240.0))/30.0;
+  return step(0.0,ago)*amp*exp(-d*d)*(1.0-0.55*smoothstep(80.0,560.0,rho)); }
+float mzBeat(float rho){ float ph=mod(uT,1.6);
+  return mzWave(rho,ph-0.10,1.0)+mzWave(rho,ph-0.40,0.55)+mzWave(rho,ph+1.50,1.0)+mzWave(rho,ph+1.20,0.55); }
 vec3 mzFogMix(vec3 c, float depth){ return mix(c, uFog, smoothstep(uFogR.x, uFogR.y, depth)); }
-float mzHash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
-float mzNoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-  return mix(mix(mzHash(i),mzHash(i+vec2(1.0,0.0)),f.x),mix(mzHash(i+vec2(0.0,1.0)),mzHash(i+vec2(1.0,1.0)),f.x),f.y); }
 `;
 function mzShaderMat(o){
   const p=Object.assign({}, o); p.uniforms=Object.assign({uT:MAZE.U.uT, uFog:MAZE.U.uFog, uFogR:MAZE.U.uFogR}, o.uniforms||{});
   return new T.ShaderMaterial(p);
 }
-// membrane walls: rim-lit translucent ridges with a cell-and-vein surface, crests that catch the heartbeat
+/* one tileable 256x256 texture every shader shares: R = cell dome (1 at a cell's heart), G = cell
+   border, B and A = two smooth noise layers. Baked once per session (seed-free), never disposed. */
+let MZ_CELLTEX=null;
+function mzCellTex(){
+  if(MZ_CELLTEX) return MZ_CELLTEX;
+  const S=256, G=8, d=new Uint8Array(S*S*4), R=mzRnd(0xCE11), pts=[];
+  for(let j=0;j<G;j++) for(let i=0;i<G;i++) pts.push([(i+0.12+0.76*R())/G, (j+0.12+0.76*R())/G]);
+  const lat=(n,seed)=>{ const r=mzRnd(seed), a=new Float32Array(n*n); for(let i=0;i<a.length;i++) a[i]=r(); return a; };
+  const La=lat(8,0xA1), Lb=lat(16,0xB2), Lc=lat(8,0xC3), Ld=lat(16,0xD4);
+  const vn=(L,n,x,y)=>{ x*=n; y*=n; const i=Math.floor(x), j=Math.floor(y); let fx=x-i, fy=y-j; fx=fx*fx*(3-2*fx); fy=fy*fy*(3-2*fy);
+    const g=(a,b)=>L[(((b%n)+n)%n)*n+(((a%n)+n)%n)];
+    return (g(i,j)*(1-fx)+g(i+1,j)*fx)*(1-fy)+(g(i,j+1)*(1-fx)+g(i+1,j+1)*fx)*fy; };
+  const q8=v=>Math.max(0,Math.min(255,Math.round(v*255)));
+  for(let y=0;y<S;y++) for(let x=0;x<S;x++){ const u=(x+0.5)/S, v=(y+0.5)/S, ci=Math.floor(u*G), cj=Math.floor(v*G); let d1=9, d2=9;
+    for(let dj=-1;dj<=1;dj++) for(let di=-1;di<=1;di++){ const ii=(((ci+di)%G)+G)%G, jj=(((cj+dj)%G)+G)%G, p=pts[jj*G+ii];
+      const dd=Math.hypot(p[0]+(ci+di-ii)/G-u, p[1]+(cj+dj-jj)/G-v)*G; if(dd<d1){ d2=d1; d1=dd; } else if(dd<d2) d2=dd; }
+    const k=(y*S+x)*4;
+    d[k]=q8(1-d1*1.1); d[k+1]=q8(1-(d2-d1)*5.5);
+    d[k+2]=q8(0.65*vn(La,8,u,v)+0.35*vn(Lb,16,u,v)); d[k+3]=q8(0.65*vn(Lc,8,u,v)+0.35*vn(Ld,16,u,v)); }
+  const t=new T.DataTexture(d,S,S,T.RGBAFormat); t.wrapS=t.wrapT=T.RepeatWrapping; t.magFilter=T.LinearFilter; t.minFilter=T.LinearMipmapLinearFilter;
+  t.generateMipmaps=true; t.anisotropy=4; t.needsUpdate=true;
+  return MZ_CELLTEX=t;
+}
+/* membrane walls: soft translucent ridges. Lit from the egg (the faces toward it warm and bright,
+   the far faces in the haze's cool), a luminous crown over a dark wet foot, soft cells in the
+   skin, a wet sheen on the shoulder, a pale rim where the membrane turns away — and the heartbeat
+   swelling the whole body as it passes. No crest stripe: the crown reads by form, not by a line. */
 function mzWallMat(){
-  return mzShaderMat({ uniforms:{}, side:T.DoubleSide,
+  return mzShaderMat({ uniforms:{uCell:{value:mzCellTex()}}, side:T.DoubleSide,
     vertexShader:`${MZ_GLSL_COMMON}
       attribute vec3 color; attribute vec2 aUH;
       varying vec3 vC; varying vec3 vN; varying vec3 vW; varying vec2 vUH; varying float vDepth; varying vec3 vV;
       void main(){ vec3 p=position; float rho=length(p.xz);
-        p+=normal*(0.16*sin(uT*1.25+rho*0.045+aUH.x*0.05))*aUH.y;           // the walls breathe
+        p+=normal*(0.20*sin(uT*1.1+rho*0.045+aUH.x*0.05))*aUH.y;           // the walls breathe
         vec4 w=modelMatrix*vec4(p,1.0); vW=w.xyz; vN=normalize(mat3(modelMatrix)*normal); vC=color; vUH=aUH;
-        vec4 mv=viewMatrix*w; vDepth=-mv.z; vV=normalize(cameraPosition-w.xyz); gl_Position=projectionMatrix*mv; }`,
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; vV=cameraPosition-w.xyz; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
+      uniform sampler2D uCell;
       varying vec3 vC; varying vec3 vN; varying vec3 vW; varying vec2 vUH; varying float vDepth; varying vec3 vV;
-      vec2 mzCell(vec2 p){ vec2 i=floor(p), f=fract(p); float d1=8.0, d2=8.0;
-        for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ vec2 g=vec2(float(x),float(y)); vec2 o=vec2(mzHash(i+g),mzHash(i+g+19.3));
-          float d=length(g+o-f); if(d<d1){ d2=d1; d1=d; } else if(d<d2) d2=d; }
-        return vec2(d1,d2); }
       void main(){
-        vec3 n=normalize(vN); float h=vUH.y, rho=length(vW.xz);
-        vec2 cc=mzCell(vec2(vUH.x*0.32, h*2.6));
-        float edge=1.0-smoothstep(0.0,0.09,cc.y-cc.x);                    // cell walls
-        float vein=pow(1.0-abs(mzNoise(vec2(vUH.x*0.09,h*1.3+uT*0.05))*2.0-1.0),9.0);
-        float fr=pow(1.0-abs(dot(n,vV)),2.2);                               // translucent rim
-        float key=0.5+0.5*max(0.0,dot(n,normalize(vec3(0.3,0.8,0.25))));
+        vec3 n=normalize(vN); vec3 V=normalize(vV); float h=clamp(vUH.y,0.0,1.0), rho=length(vW.xz);
+        if(dot(n,V)<0.0) n=-n;
+        float fac=max(0.0,dot(n,V)), fr=1.0-fac;
+        vec4 cl=texture2D(uCell, vec2(vUH.x*0.036, h*0.27+rho*0.0123));
+        float lum=dot(vC,vec3(0.3,0.55,0.15)); vec3 sat=clamp(mix(vec3(lum),vC,1.3),0.0,1.0);
+        vec3 deep=sat*sat*vec3(0.75,0.62,1.0);                              // light that has gone deep into the jelly: darker, cooler
+        vec3 L=normalize(vec3(-vW.x,150.0,-vW.z));                          // the egg is the light
+        float dif=max(0.0,dot(n,L)), toward=max(0.0,dot(n.xz,normalize(-vW.xz+1e-4)));
+        float hh=smoothstep(0.02,0.95,h);
+        vec3 c=mix(deep*0.22, sat*0.80, hh)*(0.80+0.30*dif+0.22*toward);   // wet foot .. luminous crown
+        c*=0.86+0.30*cl.r*cl.r-0.07*cl.g;                                   // soft cells swelling in the skin
+        c*=0.92+0.16*cl.b;                                                  // and a slow mottle along its length
+        c+=mix(sat,vec3(1.0,0.95,0.88),0.25)*pow(fac,3.0)*0.26*hh;          // the core, lit from within
+        c+=mix(vec3(0.42,0.46,0.85),sat,0.5)*pow(fr,2.0)*0.30*(1.0-toward)*smoothstep(0.15,0.7,h);   // the cool side, lit by the haze
+        c+=mix(sat,vec3(1.0,0.96,1.0),0.5)*pow(fr,3.0)*0.55*smoothstep(0.25,0.8,h);                  // the membrane's pale rim
+        vec3 Hh=normalize(L+V); c+=vec3(1.0,0.93,0.84)*pow(max(0.0,dot(n,Hh)),28.0)*0.42;            // wet sheen
         float beat=mzBeat(rho);
-        float lum=dot(vC,vec3(0.3,0.55,0.15)); vec3 sat=clamp(mix(vec3(lum),vC,1.75),0.0,1.0);   // the palette, pushed saturated
-        vec3 c=mix(sat*0.07, sat*0.36, smoothstep(0.0,1.0,h))*key;                  // dark wet foot, translucent body
-        c+=sat*edge*0.42*(0.35+0.65*h) + sat*vein*0.22;                             // cell walls and veins glow from within
-        c+=sat*fr*0.55*(0.5+0.5*h);                                                  // membrane rim
-        float crest=smoothstep(0.80,1.0,h);
-        c+=mix(sat,vec3(1.0),0.25)*crest*(0.65+1.9*beat);                           // the crest line, and the heartbeat on it
-        c+=sat*beat*0.30*h;
+        c+=mix(sat,vec3(1.0,0.93,0.82),0.4)*beat*(0.20+1.25*h)*(0.75+0.35*cl.r);                    // the heartbeat, swelling through
+        c*=mix(0.30,1.0,smoothstep(0.0,0.16,h));                                                      // the wet contact at the floor
         gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
 }
-// soft additive halo over the wall crests (and the heartbeat riding it)
+// a soft additive glow over the crowns, thin by day and full on the heartbeat
 function mzHaloMat(){
   return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, side:T.DoubleSide,
     vertexShader:`${MZ_GLSL_COMMON}
@@ -44868,14 +44900,14 @@ function mzHaloMat(){
         vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
       varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
-      void main(){ float a=pow(1.0-vA,2.0)*(0.16+0.7*vB); float f=1.0-smoothstep(40.0,330.0,vDepth);
-        gl_FragColor=vec4(mix(vC,vec3(1.0),0.3)*a*f,1.0); }` });
+      void main(){ float a=pow(1.0-vA,2.2)*(0.07+0.62*vB); float f=1.0-smoothstep(30.0,420.0,vDepth);
+        gl_FragColor=vec4(mix(vC,vec3(1.0),0.25)*a*f,1.0); }` });
 }
-// organic props, instanced: gate posts, islands, critters, the egg's corona, the far cell clusters
+// organic props, instanced: gate lanterns, islands, critters: translucent, lit from within
 function mzPropMat(o){
   o=o||{};
   return mzShaderMat({ transparent:!!o.alpha, depthWrite:!o.alpha, blending:o.add?T.AdditiveBlending:T.NormalBlending,
-    uniforms:{uGlow:{value:o.glow!=null?o.glow:0.5}, uAlpha:{value:o.alpha||1}},
+    uniforms:{uGlow:{value:o.glow!=null?o.glow:0.5}, uAlpha:{value:o.alpha||1}, uLan:{value:o.lantern?1:0}},
     vertexShader:`${MZ_GLSL_COMMON}
       varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vB; varying float vY;
       void main(){
@@ -44893,39 +44925,62 @@ function mzPropMat(o){
         vV=normalize(cameraPosition-w.xyz); vB=mzBeat(length(w.xz)); vY=position.y;
         vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
-      uniform float uGlow; uniform float uAlpha;
+      uniform float uGlow; uniform float uAlpha; uniform float uLan;
       varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vB; varying float vY;
-      void main(){ vec3 n=normalize(vN); float fr=pow(1.0-abs(dot(n,vV)),2.0);
+      void main(){ vec3 n=normalize(vN); float fac=abs(dot(n,vV)), fr=1.0-fac;
+        if(uLan>0.5){ float t=smoothstep(0.5,7.5,vY);
+          vec3 c=mix(vC*vC*vec3(0.30,0.24,0.40), vC*1.05, t)*(0.55+0.55*pow(fac,1.6)) + mix(vC,vec3(1.0),0.5)*pow(fr,2.4)*0.65*t + vec3(1.0,0.95,0.85)*vB*0.55*t;
+          gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); return; }
         float key=0.45+0.55*max(0.0,dot(n,normalize(vec3(0.3,0.8,0.25))));
-        vec3 c=vC*(0.30*key+uGlow*0.5) + mix(vC,vec3(1.0),0.4)*fr*(0.9+uGlow) + vC*vB*0.8;
+        vec3 c=vC*(0.24*key+uGlow*0.30) + vC*pow(fac,2.5)*uGlow*0.55 + mix(vC,vec3(1.0),0.45)*pow(fr,2.2)*(0.6+0.5*uGlow) + mix(vC,vec3(1.0),0.3)*vB*0.9;
         gl_FragColor=vec4(mzFogMix(c,vDepth), uAlpha*(0.55+0.45*fr)); }` });
 }
-// the floor: dark wet violet-black, the walls' glow pooled and reflected in it, slow ripple light,
-// a long wet streak of the egg's light, and the heartbeat crossing it
-function mzFloorMat(tex){
-  return mzShaderMat({ uniforms:{uGlowMap:{value:tex}, uExt:{value:MAZE.ext}, uEggY:{value:MZ.HC+22}},
+/* the floor: a deep glossy tissue floor. Under its skin, soft cells (seen with a little parallax)
+   that swell with the heartbeat; on it, the light pooled at the gates, in the loops and round the
+   egg; and, because it is wet, the walls reflected in it (a short march across a map of the walls,
+   away from the eye, broken by ripples), the haze's sheen at grazing angles, and the egg's long
+   warm streak. */
+function mzFloorMat(glowTex, wallTex){
+  const m=mzShaderMat({ uniforms:{uGlowMap:{value:glowTex}, uWallMap:{value:wallTex}, uCell:{value:mzCellTex()}, uExt:{value:MAZE.ext}, uEggY:{value:MZ.HC+22}},
     vertexShader:`${MZ_GLSL_COMMON}
       varying vec3 vW; varying float vDepth;
       void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
-      uniform sampler2D uGlowMap; uniform float uExt; uniform float uEggY;
+      uniform sampler2D uGlowMap; uniform sampler2D uWallMap; uniform sampler2D uCell; uniform float uExt; uniform float uEggY;
       varying vec3 vW; varying float vDepth;
       void main(){
         vec2 uv=vW.xz/(2.0*uExt)+0.5; vec3 g=texture2D(uGlowMap,uv).rgb;
-        float rho=length(vW.xz);
-        vec3 base=vec3(0.082,0.071,0.165);
-        // ripple light: two slow drifting layers, sharpened into caustic threads
-        float r1=mzNoise(vW.xz*0.045+vec2(uT*0.11,uT*0.07)), r2=mzNoise(vW.xz*0.07-vec2(uT*0.08,-uT*0.05));
-        float caus=pow(1.0-abs(r1-r2),10.0);
-        vec3 c=base + g*1.05 + caus*vec3(0.10,0.09,0.20)*(0.6+g.b*2.0);
-        // the wet streak: the egg's light reflected toward the eye
-        vec3 V=normalize(cameraPosition-vW); vec3 L=normalize(vec3(0.0,uEggY,0.0)-vW);
-        float spec=pow(max(0.0,dot(reflect(-V,vec3(0.0,1.0,0.0)),L)),28.0);
-        c+=vec3(1.0,0.78,0.48)*spec*0.55*(1.0-smoothstep(150.0,700.0,rho));
-        c+=vec3(0.45,0.36,0.62)*mzBeat(rho)*0.10;
+        float rho=length(vW.xz), warm=1.0-smoothstep(70.0,330.0,rho);
+        vec3 toC=cameraPosition-vW; vec3 V=normalize(toC); float hl=max(1.0,length(toC.xz));
+        float beat=mzBeat(rho);
+        // ripples: two drifting noise layers from the shared texture
+        vec4 n1=texture2D(uCell, vW.xz*0.006+vec2(uT*0.011,uT*0.007)), n2=texture2D(uCell, vW.zx*0.009-vec2(uT*0.008,-uT*0.006));
+        vec2 rip=vec2(n1.b-n2.a, n1.a-n2.b);
+        // under the skin: soft cells, a little parallax, warmer toward the egg
+        vec4 cl=texture2D(uCell, vW.xz*0.017-toC.xz/max(toC.y,4.0)*0.05+rip*0.02);
+        vec3 base=mix(vec3(0.028,0.024,0.072), vec3(0.070,0.026,0.070), warm);
+        vec3 sub=mix(vec3(0.24,0.20,0.55), vec3(0.55,0.22,0.36), warm);
+        vec3 c=base + sub*(cl.r*cl.r*0.11)*(1.0+3.0*beat) + g*0.85;
+        // the walls reflected: march away from the eye across the wall map (as far as a ridge's
+        // height reflects at this grazing angle), ripples breaking the image
+        vec2 hd=-toC.xz/hl; float Lr=min(64.0, 5.5*hl/max(toC.y,0.5));
+        vec3 rf=texture2D(uWallMap,(vW.xz+hd*(Lr*0.20)+rip*3.0)/(2.0*uExt)+0.5).rgb*0.7
+               +texture2D(uWallMap,(vW.xz+hd*(Lr*0.55)+rip*5.0)/(2.0*uExt)+0.5).rgb
+               +texture2D(uWallMap,(vW.xz+hd*(Lr*0.90)+rip*7.0)/(2.0*uExt)+0.5).rgb*0.8;
+        float fres=pow(1.0-max(0.0,V.y),3.0);
+        c+=rf*(0.10+0.30*fres)*(1.0+0.8*beat);
+        c+=vec3(0.30,0.21,0.46)*fres*0.55;                                  // the haze's sheen on the wet skin
+        float caus=pow(1.0-abs(n1.b-n2.a),12.0);
+        c+=mix(vec3(0.10,0.10,0.26),vec3(0.30,0.18,0.08),warm)*caus*(0.5+g.g*1.4);
+        vec3 Le=normalize(vec3(0.0,uEggY,0.0)-vW);
+        float sp=pow(max(0.0,dot(reflect(-V,vec3(0.0,1.0,0.0)),Le)),22.0);
+        c+=vec3(1.0,0.78,0.46)*sp*0.65*(1.0-smoothstep(150.0,720.0,rho));
+        c+=mix(vec3(0.42,0.36,0.85),vec3(1.0,0.72,0.38),warm)*beat*0.30;    // the heartbeat crossing the floor
         gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
+  m.mzGlow=glowTex; m.mzWalls=wallTex;     // (as properties, so disposeObject frees them with the track)
+  return m;
 }
-// cilia along the crests: three-blade tufts, swaying in a wave that travels round the rings
+// cilia along the crowns: slender stalks with glowing tips, swaying in a wave round the rings
 function mzFrondMat(){
   return mzShaderMat({ side:T.DoubleSide,
     vertexShader:`${MZ_GLSL_COMMON}
@@ -44938,21 +44993,25 @@ function mzFrondMat(){
           vC=vec3(1.0);
         #endif
         float rho=length(base.xz), ang=atan(base.z,base.x);
-        float sway=sin(uT*2.1-ang*9.0-rho*0.04)*0.55+sin(uT*3.3+rho*0.11)*0.18;
-        vec3 p=position; float k=p.y*p.y*0.16;
+        float sway=sin(uT*1.6-ang*9.0-rho*0.04)*0.50+sin(uT*2.7+rho*0.11)*0.15;
+        vec3 p=position; float k=p.y*p.y*0.13;
         p.x+=sway*k; p.z+=sway*k*0.4;
         vec4 w=modelMatrix*im*vec4(p,1.0); vY=position.y; vB=mzBeat(rho);
         vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
       varying vec3 vC; varying float vY; varying float vDepth; varying float vB;
-      void main(){ float t=clamp(vY/2.8,0.0,1.0);
-        vec3 c=mix(vC*0.5, mix(vC,vec3(1.0),0.45)*(1.3+1.6*vB), t*t);
+      void main(){ float t=clamp(vY/2.6,0.0,1.0), tip=smoothstep(2.45,2.6,vY);
+        vec3 c=mix(vC*0.30, vC*0.70, t)*(1.0-tip)+vC*tip*(0.95+1.6*vB);
         gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
 }
-/* ---- geometry: sweep a rounded ridge profile along every wall primitive, eight sectors ---- */
-const MZ_PROF=(()=>{ const P=[[-1,0,-1,0],[-1,0.55,-1,0]];
-  for(let i=0;i<=6;i++){ const a=Math.PI-i/6*Math.PI; P.push([Math.cos(a)*0.92, 0.62+0.38*Math.sin(a), Math.cos(a), Math.sin(a)]); }
-  P.push([1,0.55,1,0],[1,0,1,0]); return P; })();
+/* ---- geometry: sweep a soft ridge profile along every wall primitive, eight sectors ----
+   The profile: a wet meniscus at the foot, a slight waist, a full belly, a rounded crown. */
+const MZ_PROF=(()=>{ const side=[[1.14,0.00,0.55,0.83],[1.00,0.09,0.95,0.30],[1.04,0.30,1.0,0.0],[0.99,0.52,0.95,0.3]], P=[];
+  for(const q of side) P.push([-q[0],q[1],-q[2],q[3]]);
+  for(let i=0;i<=4;i++){ const a=Math.PI-i/4*Math.PI; P.push([Math.cos(a)*0.95, 0.60+0.40*Math.sin(a), Math.cos(a)*0.85, Math.sin(a)]); }
+  for(let i=side.length-1;i>=0;i--){ const q=side[i]; P.push([q[0],q[1],q[2],q[3]]); }
+  for(const q of P){ const l=Math.hypot(q[2],q[3])||1; q[2]/=l; q[3]/=l; }
+  return P; })();
 function mzWallGeos(M){
   const C=M.C, NS=8, buf=[]; for(let s=0;s<NS;s++) buf.push({p:[],n:[],c:[],uh:[],i:[],hp:[],hc:[],hv:[],hi:[]});
   const R=mzRnd(M.seed^0xFACE), col={r:0,g:0,b:0};
@@ -44976,7 +45035,7 @@ function mzWallGeos(M){
         out.push(base.map(v=>{ const ox=v[0]-pt.x, oz=v[2]-pt.z; const al=ox*pt.tz-oz*pt.tx;   // signed across
           const x=pt.x+(pt.tz*al*ca)+(pt.tx*sgn*Math.abs(al)*sa), z=pt.z+(-pt.tx*al*ca)+(pt.tz*sgn*Math.abs(al)*sa);
           const nx=pt.tz*Math.sign(al||1)*ca+pt.tx*sgn*sa, nz=-pt.tx*Math.sign(al||1)*ca+pt.tz*sgn*sa;
-          return [x,v[1],z, nx*Math.abs(v[3]||v[5]?Math.hypot(v[3],v[5]):0)+ (v[3]===0&&v[5]===0?0:0), v[4], nz*Math.hypot(v[3],v[5]), v[6], v[7]]; })); }
+          return [x,v[1],z, nx*Math.hypot(v[3],v[5]), v[4], nz*Math.hypot(v[3],v[5]), v[6], v[7]]; })); }
       return out; };
     let all=rings;
     if(caps&&caps[0]) all=nose(pts[0],-1,true).reverse().concat(all);
@@ -44984,9 +45043,9 @@ function mzWallGeos(M){
     const v0=B.p.length/3;
     for(const rg of all) for(const v of rg){ B.p.push(v[0],v[1],v[2]); B.n.push(v[3],v[4],v[5]); B.c.push(col.r,col.g,col.b); B.uh.push(v[7],v[6]); }
     for(let i=0;i<all.length-1;i++) for(let j=0;j<row-1;j++){ const a=v0+i*row+j, b=a+row; B.i.push(a,b,a+1, b,b+1,a+1); }
-    // the crest halo: a soft sheet standing on the crest
+    // the crown halo: a soft sheet standing on the crown
     const h0=B.hp.length/3;
-    for(const rg of rings){ const top=rg[(row-1)>>1]; B.hp.push(top[0],top[1]-0.4,top[2], top[0],top[1]+3.4,top[2]); B.hc.push(col.r,col.g,col.b,col.r,col.g,col.b); B.hv.push(0,1); }
+    for(const rg of rings){ const top=rg[(row-1)>>1]; B.hp.push(top[0],top[1]-0.5,top[2], top[0],top[1]+3.0,top[2]); B.hc.push(col.r,col.g,col.b,col.r,col.g,col.b); B.hv.push(0,1); }
     for(let i=0;i<rings.length-1;i++){ const a=h0+i*2; B.hi.push(a,a+2,a+1, a+1,a+2,a+3); }
   };
   M.frondSpots=[];
@@ -45001,8 +45060,9 @@ function mzWallGeos(M){
     if(pts.length<=CH+1) ridge(pts, w.hw, w.ring, closed?null:[true,true], 0);
     else for(let i0=0;i0<pts.length-1;i0+=CH){ const i1=Math.min(pts.length-1,i0+CH);
       ridge(pts.slice(i0,i1+1), w.hw, w.ring, closed?null:[i0===0, i1===pts.length-1], i0*4.5); }
-    // tuft spots along the crest, every ~6 units
-    for(let s=0;s<pts.length;s+=(w.kind==='rad'?2:1)) if(R()<0.75) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring});
+    // cilia spots along the crown: clumps and gaps, never a picket fence
+    let run=0, on=false; for(let s=0;s<pts.length;s++){ if(run===0){ on=R()<0.58; run=2+Math.floor(R()*5); } run--;
+      if(on && (w.kind!=='rad' || s%2===0)) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring}); }
   }
   const out=[];
   for(const B of buf){ if(!B.i.length) continue;
@@ -45012,42 +45072,51 @@ function mzWallGeos(M){
     out.push({wall:g, halo:h}); }
   return out;
 }
-// the floor's glow map: every wall's light pooled at its foot (the wet-floor reflection), pools of
-// light at the spoke gates and in the turnaround loops, the egg's warmth spreading from the centre
+// the floor's light map: a little of every wall's light spilt at its foot, warm pools at the spoke
+// gates, the loops as bright pools, the egg's warmth spreading from the centre
 function mzGlowTex(M){
   const S=1024, cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d'), ext=M.ext, k=S/(2*ext);
   const X=x=>(x+ext)*k, Z=z=>(z+ext)*k, col={r:0,g:0,b:0};
-  const css=(u,a,m)=>{ mzTint(u,col); return `rgba(${Math.round(col.r*255*(m||1))},${Math.round(col.g*255*(m||1))},${Math.round(col.b*255*(m||1))},${a})`; };
+  const css=(u,a,m)=>{ mzTint(u,col); return `rgba(${Math.min(255,Math.round(col.r*255*(m||1)))},${Math.min(255,Math.round(col.g*255*(m||1)))},${Math.min(255,Math.round(col.b*255*(m||1)))},${a})`; };
   g.fillStyle='#000'; g.fillRect(0,0,S,S);
   g.globalCompositeOperation='lighter';
-  // the egg's warmth
-  { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(M.C.R0+3.5*M.C.P)*k); gr.addColorStop(0,'rgba(255,190,110,0.85)'); gr.addColorStop(0.25,'rgba(240,140,110,0.42)'); gr.addColorStop(0.6,'rgba(200,110,150,0.12)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+  { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(M.C.R0+3.5*M.C.P)*k); gr.addColorStop(0,'rgba(255,196,110,0.62)'); gr.addColorStop(0.16,'rgba(240,130,120,0.30)'); gr.addColorStop(0.5,'rgba(190,80,150,0.09)'); gr.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=gr; g.fillRect(0,0,S,S); }
-  // wall feet: a soft wide stroke and a tighter one, in each wall's own colour
   g.lineCap='round';
-  for(const pass of [[9,0.13],[3.2,0.30]]){ g.lineWidth=pass[0]*k*1.6;
+  for(const pass of [[10,0.07],[3.6,0.14]]){ g.lineWidth=pass[0]*k*1.6;
     for(const w of M.walls){ if(w.t===2) continue; g.strokeStyle=css(mzRingU(w.ring),pass[1]); g.beginPath();
       if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); } }
-  // light pools at the gates, and the loops as glowing pools
-  const pool=(x,z,r,u,a)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
-  for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 22, mzRingU(q.ring), 0.55); }
-  for(const L of M.loops){ pool(L.x, L.z, 17, mzRingU(L.ring), 0.75); pool(L.x,L.z,7,0,0.5); }
-  // the antechamber: a cool wash so the grid reads
-  { const A=M.ante, x=A.ux*(A.r+90), z=A.uz*(A.r+90); pool(x,z,95,1,0.35); }
+  const pool=(x,z,r,u,a,m)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,m||1.1)); gr.addColorStop(0.5,css(u,a*0.35,m||1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
+  for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 26, mzRingU(q.ring), 0.60); }
+  for(const L of M.loops){ pool(L.x, L.z, 19, mzRingU(L.ring), 0.55); }
+  { const A=M.ante, x=A.ux*(A.r+90), z=A.uz*(A.r+90); pool(x,z,110,1,0.30); }
   const t=new T.CanvasTexture(cv); t.minFilter=T.LinearMipmapLinearFilter; t.anisotropy=4; return t;
 }
-// floor: one polar mesh, terraced, out past the antechamber
+// the walls as the wet floor sees them (each in its own colour): the reflection march reads this
+function mzWallTex(M){
+  const S=1024, cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d'), ext=M.ext, k=S/(2*ext), col={r:0,g:0,b:0};
+  const X=x=>(x+ext)*k, Z=z=>(z+ext)*k;
+  g.fillStyle='#000'; g.fillRect(0,0,S,S); g.lineCap='round'; g.globalCompositeOperation='lighter';
+  for(const pass of [[M.C.T*2.4,0.22],[M.C.T*1.15,0.78]]){ g.lineWidth=pass[0]*k;
+    for(const w of M.walls){ if(w.t===2) continue; mzTint(mzRingU(w.ring),col);
+      g.strokeStyle=`rgba(${Math.round(col.r*255)},${Math.round(col.g*255)},${Math.round(col.b*255)},${pass[1]})`; g.beginPath();
+      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); } }
+  // the egg, mirrored as a warm disc
+  { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(MZ.EGG_R+4)*k); gr.addColorStop(0,'rgba(255,236,190,1)'); gr.addColorStop(0.8,'rgba(255,200,120,0.8)'); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(0,0,S,S); }
+  const t=new T.CanvasTexture(cv); t.minFilter=T.LinearMipmapLinearFilter; t.anisotropy=2; return t;
+}
+// floor: one polar mesh, terraced, out past the antechamber and on into the haze
 function mzFloorGeo(M){
   const C=M.C, Rout=M.ext, NA=192, rs=[0,8,20,36,52,66];
   for(let k=1;k<=C.K;k++){ const a=C.R0+(k-1)*C.P; for(const f of [0,0.22,0.3,0.4,0.5,0.6,0.7,0.78]) rs.push(a+f*C.P); }
-  for(const r of [C.R0+C.K*C.P, C.R0+C.K*C.P+20, C.R0+C.K*C.P+60, C.R0+C.K*C.P+120, C.R0+C.K*C.P+200, Rout]) rs.push(r);
+  for(const r of [C.R0+C.K*C.P, C.R0+C.K*C.P+20, C.R0+C.K*C.P+60, C.R0+C.K*C.P+120, C.R0+C.K*C.P+200, Rout, Rout+150, Rout+350, Rout+620]) rs.push(r);
   rs.sort((a,b)=>a-b);
   const p=[], idx=[];
   for(let i=0;i<rs.length;i++) for(let j=0;j<=NA;j++){ const a=j/NA*MZ_TAU, r=rs[i]; p.push(r*Math.cos(a), r<C.R0?C.HC:mzFloorY(r), r*Math.sin(a)); }
   for(let i=0;i<rs.length-1;i++) for(let j=0;j<NA;j++){ const a=i*(NA+1)+j, b=a+NA+1; idx.push(a,a+1,b, a+1,b+1,b); }
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setIndex(idx); g.computeBoundingSphere(); return g;
 }
-// the gate posts: each spoke gate gets its own shape (and every ring its own colour)
+// the gate lanterns: each spoke gate gets its own shape (and every ring its own colour)
 function mzPostGeos(){
   const L=(pts,seg)=>{ const g=new T.LatheGeometry(pts.map(q=>new T.Vector2(q[0],q[1])), seg||10); g.computeVertexNormals(); return g; };
   return [
@@ -45068,18 +45137,29 @@ function mzInst(geo, mat, list, setter){
   list.forEach((q,i)=>{ setter(q,d,c); d.updateMatrix(); im.setMatrixAt(i,d.matrix); im.setColorAt(i,c); });
   im.count=list.length; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; return im;
 }
+/* the sky: we are inside something vast and soft. Deep plum overhead with the faint walls of
+   enormous cells far above, a luminous haze band at the horizon, warm where the egg is and with
+   slow shafts of light fanning up out of its glow. */
 function mzSkyMat(){
-  return new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, uniforms:{uT:MAZE.U.uT, uEgg:{value:new T.Vector3()}},
+  return new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{uT:MAZE.U.uT, uEgg:{value:new T.Vector3()}, uHaze:MAZE.U.uFog, uCell:{value:mzCellTex()}},
     vertexShader:`varying vec3 vD; void main(){ vD=normalize((modelMatrix*vec4(position,1.0)).xyz-cameraPosition); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`uniform float uT; uniform vec3 uEgg; varying vec3 vD;
-      float h(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
+    fragmentShader:`uniform float uT; uniform vec3 uEgg; uniform vec3 uHaze; uniform sampler2D uCell; varying vec3 vD;
       void main(){ vec3 d=normalize(vD); float y=d.y;
-        vec3 c=mix(vec3(0.20,0.14,0.30), vec3(0.11,0.09,0.25), smoothstep(-0.02,0.22,y));
-        c=mix(c, vec3(0.035,0.03,0.10), smoothstep(0.2,0.75,y));
+        vec3 c=mix(uHaze*1.12, vec3(0.16,0.09,0.25), smoothstep(0.0,0.24,y));
+        c=mix(c, vec3(0.05,0.032,0.10), smoothstep(0.22,0.85,y));
+        c=mix(c, uHaze, smoothstep(0.0,-0.06,y));
+        // far overhead: the walls of enormous soft cells
+        vec2 pc=d.xz/(y+0.28)*0.22+vec2(uT*0.0015,0.0);
+        vec4 cl=texture2D(uCell,pc);
+        c+=vec3(0.30,0.18,0.42)*(cl.g*0.20+cl.r*0.06)*smoothstep(0.05,0.45,y)*(1.0-smoothstep(0.6,0.95,y)*0.5);
+        // the egg's warmth through the haze, and shafts of light fanning up from it
         vec3 e=normalize(uEgg); float g=max(0.0,dot(d,e));
-        c+=vec3(1.0,0.66,0.42)*pow(g,10.0)*0.55 + vec3(0.85,0.45,0.55)*pow(g,3.0)*0.16;
-        vec3 q=floor(d*180.0); float s=step(0.9965,h(q))*smoothstep(0.08,0.4,y)*(0.5+0.5*sin(uT*1.7+h(q+3.1)*30.0));
-        c+=vec3(0.8,0.8,1.0)*s*0.7;
+        c+=vec3(1.0,0.64,0.36)*pow(g,10.0)*0.55 + vec3(0.95,0.46,0.52)*pow(g,2.4)*0.20;
+        vec3 ex=normalize(cross(vec3(0.0,1.0,0.0),e)+1e-4), ey=cross(e,ex);
+        float ang=atan(dot(d,ey),dot(d,ex));
+        float rays=texture2D(uCell,vec2(ang*0.55+uT*0.0035,0.37)).b*texture2D(uCell,vec2(ang*1.3-uT*0.005,0.71)).a;
+        c+=vec3(1.0,0.72,0.46)*smoothstep(0.22,0.5,rays)*pow(g,3.0)*smoothstep(-0.02,0.10,y)*(1.0-smoothstep(0.12,0.5,y))*0.11;
         gl_FragColor=vec4(c,1.0); }` });
 }
 function mzMoteMat(){
@@ -45090,12 +45170,127 @@ function mzMoteMat(){
         float a=uT*(0.05+0.03*fract(aPh*7.1))+aPh*6.2832; float sw=6.0+10.0*fract(aPh*3.7);
         p.x+=cos(a)*sw; p.z+=sin(a*1.3)*sw; p.y+=sin(uT*0.4+aPh*12.0)*3.0;
         vec4 mv=modelViewMatrix*vec4(p,1.0); float d=-mv.z;
-        vC=mix(vec3(1.0,0.78,0.52),vec3(0.62,0.66,1.0),smoothstep(80.0,420.0,r));
+        vC=mix(vec3(1.0,0.80,0.52),vec3(0.62,0.70,1.0),smoothstep(80.0,420.0,r));
         vA=(0.45+0.55*sin(uT*1.1+aPh*40.0))*(1.0-smoothstep(uFogR.x,uFogR.y*1.2,d));
-        gl_PointSize=clamp(900.0*(0.6+fract(aPh*5.3))/d,1.5,14.0); gl_Position=projectionMatrix*mv; }`,
+        gl_PointSize=clamp(1100.0*(0.6+fract(aPh*5.3))/d,1.5,16.0); gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
       varying float vA; varying vec3 vC;
-      void main(){ vec2 q=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(q)); gl_FragColor=vec4(vC*a*a*vA*0.8,1.0); }` });
+      void main(){ vec2 q=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(q)); gl_FragColor=vec4(vC*a*a*vA*0.9,1.0); }` });
+}
+// the far cells: soft rooted domes standing in the haze beyond the rim (lighter than the floor,
+// melting into the haze with distance: aerial perspective, never dark holes in the horizon)
+function mzDomeMat(){
+  return mzShaderMat({
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vY;
+      void main(){ vC=instanceColor; vec4 w=modelMatrix*instanceMatrix*vec4(position,1.0); vN=normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normal);
+        vV=normalize(cameraPosition-w.xyz); vY=position.y; vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vY;
+      void main(){ vec3 n=normalize(vN); float fac=abs(dot(n,vV)), fr=1.0-fac;
+        vec3 c=mix(uFog*0.82, vC*0.55, 0.30) + vC*pow(fr,2.4)*0.85 + vC*pow(fac,5.0)*0.22*smoothstep(-0.2,0.6,vY);
+        gl_FragColor=vec4(mix(c,uFog*1.05,smoothstep(380.0,1350.0,vDepth)*0.85),1.0); }` });
+}
+// the floating cells: camera-facing discs drifting in the haze, a pale membrane, a soft nucleus
+function mzFloatMat(){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec2 vQ; varying vec3 vC; varying float vA;
+      void main(){ vec3 ctr=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz; float sc=length(instanceMatrix[0].xyz);
+        float ph=fract(ctr.x*0.0137+ctr.z*0.0071)*6.2832;
+        ctr+=vec3(sin(uT*0.031+ph)*26.0, sin(uT*0.047+ph*1.7)*12.0, cos(uT*0.027+ph)*26.0);
+        vec3 rel=ctr-cameraPosition; float L=length(rel), k=min(1.0,1250.0/L); ctr=cameraPosition+rel*k; sc*=k;   // always inside the far plane
+        vec3 R=vec3(viewMatrix[0][0],viewMatrix[1][0],viewMatrix[2][0]), U=vec3(viewMatrix[0][1],viewMatrix[1][1],viewMatrix[2][1]);
+        vQ=position.xy*2.0; vC=instanceColor; vA=0.6+0.4*sin(uT*0.37+ph*3.0);
+        gl_Position=projectionMatrix*viewMatrix*vec4(ctr+(R*position.x+U*position.y)*sc,1.0); }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec2 vQ; varying vec3 vC; varying float vA;
+      void main(){ float r=length(vQ); if(r>1.0) discard;
+        float mem=smoothstep(0.45,0.92,r)*(1.0-smoothstep(0.90,1.0,r));
+        vec2 nq=vQ-vec2(0.24,0.14); float nuc=exp(-dot(nq,nq)*9.0);
+        vec3 c=vC*(mem*0.30+(1.0-r*r)*0.10+nuc*0.30*vA);
+        gl_FragColor=vec4(c*0.55,1.0); }` });
+}
+// shafts of light leaning in toward the egg: open cones, soft at their silhouettes, breathing slowly
+function mzShaftMat(){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, side:T.DoubleSide,
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vN; varying vec3 vV; varying float vY; varying float vDepth; varying float vPh;
+      void main(){ vec4 w=modelMatrix*instanceMatrix*vec4(position,1.0); vN=normalize(mat3(modelMatrix)*mat3(instanceMatrix)*normal);
+        vV=normalize(cameraPosition-w.xyz); vY=position.y; vPh=instanceMatrix[3].x*0.05+instanceMatrix[3].z*0.03;
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec3 vN; varying vec3 vV; varying float vY; varying float vDepth; varying float vPh;
+      void main(){ float fac=abs(dot(normalize(vN),vV));
+        float a=pow(fac,2.2)*smoothstep(0.0,0.10,vY)*(1.0-smoothstep(0.35,1.0,vY))*(0.62+0.38*sin(uT*0.21+vPh*7.0));
+        a*=(1.0-smoothstep(1000.0,1450.0,vDepth))*smoothstep(70.0,260.0,vDepth);   // light seen from afar only: never a curtain at the lens
+        gl_FragColor=vec4(vec3(1.0,0.76,0.50)*a*0.085,1.0); }` });
+}
+// the dead-end pools: luminous water round each turnaround island, rings spreading outward
+function mzPoolMat(){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, polygonOffset:true, polygonOffsetFactor:-3, polygonOffsetUnits:-3,
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec2 vQ; varying vec3 vC; varying float vDepth; varying float vB; varying float vPh;
+      void main(){ vC=instanceColor; vQ=position.xz; vec4 w=modelMatrix*instanceMatrix*vec4(position,1.0); vB=mzBeat(length(w.xz)); vPh=w.x*0.11+w.z*0.07;
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec2 vQ; varying vec3 vC; varying float vDepth; varying float vB; varying float vPh;
+      void main(){ float r=length(vQ); if(r>1.0) discard;
+        float rip=pow(0.5+0.5*sin(r*19.0-uT*2.2+vPh),5.0)*smoothstep(0.18,0.32,r);
+        float rim=smoothstep(0.84,0.96,r)*(1.0-smoothstep(0.96,1.0,r));
+        float body=pow(1.0-r,1.2);
+        vec3 c=vC*(body*0.30+rip*0.22*(1.0-r*0.6)+rim*0.45)*(1.0+1.4*vB) + vec3(1.0,0.95,0.9)*rim*0.12;
+        gl_FragColor=vec4(c*(1.0-smoothstep(uFogR.x,uFogR.y,vDepth)),1.0); }` });
+}
+// the egg's corona and its clear shell: additive, lit from within, on the heartbeat
+function mzGlowMat(k){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, uniforms:{uK:{value:k||1}},
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vB; varying float vDist;
+      void main(){
+        #ifdef USE_INSTANCING
+          mat4 im=instanceMatrix;
+        #else
+          mat4 im=mat4(1.0);
+        #endif
+        #ifdef USE_INSTANCING_COLOR
+          vC=instanceColor;
+        #else
+          vC=vec3(1.0,0.86,0.66);
+        #endif
+        vec4 w=modelMatrix*im*vec4(position,1.0); vN=normalize(mat3(modelMatrix)*mat3(im)*normal); vV=normalize(cameraPosition-w.xyz); vDist=length(cameraPosition-w.xyz);
+        vB=mzBeat(90.0); gl_Position=projectionMatrix*viewMatrix*w; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      uniform float uK; varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vB; varying float vDist;
+      void main(){ float fac=abs(dot(normalize(vN),vV)), fr=1.0-fac;
+        vec3 ir=mix(vec3(1.0,0.82,0.62), 0.5+0.5*cos(6.2832*(fr*1.1+uT*0.03+vec3(0.0,0.33,0.67))), 0.4);
+        vec3 c=uK>1.5 ? mix(vC,ir,0.35)*pow(fr,3.0)*0.36*(1.0+0.6*vB)*smoothstep(12.0,70.0,vDist)                    // the shell: only its rim shows
+                      : vC*(0.30+0.60*pow(fac,1.5))*(0.65+0.8*vB);                        // a corona cell: a soft bead of light
+        gl_FragColor=vec4(c,1.0); }` });
+}
+// the egg itself: Eve's pearl, warmed into a lantern — a gold core that brightens toward the
+// middle of what you see, a mottled living surface, an iridescent rim
+const MZ_EGG_B={value:0};
+function mzEggMat(){
+  const m=new T.MeshPhongMaterial({color:0xf1e2cc, emissive:0x000000, shininess:80, specular:0xfff0dc});
+  m.onBeforeCompile=sh=>{ sh.uniforms.uT=MAZE?MAZE.U.uT:{value:0}; sh.uniforms.uB=MZ_EGG_B; sh.uniforms.uCell={value:mzCellTex()};
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vOP;').replace('#include <begin_vertex>','#include <begin_vertex>\nvOP=position;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uT; uniform float uB; uniform sampler2D uCell; varying vec3 vOP;')
+      .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
+      { float fr=1.0-abs(dot(normalize(vNormal), normalize(vViewPosition)));
+        float core=pow(1.0-fr,1.4);
+        vec4 cl=texture2D(uCell, vec2(atan(vOP.z,vOP.x)*0.48+uT*0.004, vOP.y*0.042));
+        vec3 ir=mix(vec3(1.0,0.80,0.66), 0.5+0.5*cos(6.2832*(fr*1.25+uT*0.035+vec3(0.0,0.33,0.67))), 0.35);
+        totalEmissiveRadiance+=vec3(1.0,0.66,0.30)*core*(0.36+0.34*uB)*(0.8+0.4*cl.r) + ir*pow(fr,1.8)*0.36*smoothstep(15.0,80.0,length(vViewPosition)) + vec3(1.0,0.72,0.42)*cl.g*0.16*(0.6+0.6*uB); }`); };
+  m.customProgramCacheKey=()=>'mz-egg';
+  return m;
+}
+function mzEggPulse(e, tsec){   // the lantern's own heartbeat (the shared finish bloom takes over after the line)
+  const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
+  const s=1+0.022*b; e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.10;
+  e.material.color.setRGB(0.74,0.60,0.52);
+  e.material.emissive.setRGB(0.20+0.18*b, 0.13+0.12*b, 0.07+0.06*b);
+  MZ_EGG_B.value=b;
 }
 // the thread: a ribbon on the floor behind a racer, freshest end brightest, shimmering
 function mzTrailMat(hex){
@@ -45118,7 +45313,7 @@ function mzBuildTrack(idx){
   mzSeedNext=null;
   const M=mzMake(seed); MAZE=M;
   const C=M.C; M.ext=C.R0+C.K*C.P+C.ANTE_D+90;
-  M.U={uT:{value:0}, uFog:{value:new T.Color(0x2a2048)}, uFogR:{value:new T.Vector2(160,760)}};
+  M.U={uT:{value:0}, uFog:{value:new T.Color(MZ_HAZE)}, uFogR:{value:new T.Vector2(140,860)}};
   STEPS=0;
   // ---- SAMP: the shortest route, ~10 units a sample (countdown camera, kart idx, test placement) ----
   SAMP.length=0;
@@ -45130,47 +45325,53 @@ function mzBuildTrack(idx){
       const n=new T.Vector3(tt.z,0,-tt.x); SAMP.push({p, t:tt, n, u:i/(P.length-1), bank:0, bn:n.clone()}); }
     STEPS=SAMP.length; }
   innerSign=1;
-  scene.fog.near=160; scene.fog.far=760; scene.fog.color.setHex(0x2a2048).convertSRGBToLinear();
+  // shared state, set here as every course sets its own: the karts' fog matches the haze
+  scene.fog.near=140; scene.fog.far=860; scene.fog.color.setHex(MZ_HAZE).convertSRGBToLinear();
   scene.background.setHex(0x0b0918);
   groundPlane.visible=false;
-  // the rig the racers are lit by: violet cool from above, warm from the egg's side, a rose rim
-  hemi.color.setHex(0x8a7ad8); hemi.groundColor.setHex(0x1a1030); hemi.intensity=0.62;
-  sun.color.setHex(0xffd6a8);  sun.intensity=0.70; sun.position.set(0,140,0);
-  rim.color.setHex(0xa0b4ff);  rim.intensity=0.55; rim.position.set(-120,60,160);
-  fill.color.setHex(0xe08ab8); fill.intensity=0.30; fill.position.set(140,30,-80);
+  // the rig the racers are lit by: lilac from above, warm from the egg's side, a cool rim
+  hemi.color.setHex(0x9a88e0); hemi.groundColor.setHex(0x2a1636); hemi.intensity=0.66;
+  sun.color.setHex(0xffd2a0);  sun.intensity=0.74; sun.position.set(0,140,0);
+  rim.color.setHex(0x8cb8ff);  rim.intensity=0.60; rim.position.set(-120,60,160);
+  fill.color.setHex(0xe68ac0); fill.intensity=0.30; fill.position.set(140,30,-80);
   flesh.color.setHex(0xffb070);flesh.intensity=0.22; flesh.position.set(0,-30,0);
-  // ---- the sky: deep violet, the egg's glow hanging over the centre, a few stars ----
+  // ---- the sky ----
   const skyM=mzSkyMat(); skyDome=new T.Mesh(new T.SphereGeometry(1200,32,16), skyM); skyDome.frustumCulled=false; skyDome.renderOrder=-10; trackGroup.add(skyDome);
   // ---- the floor ----
-  const glowTex=mzGlowTex(M);
-  const floor=new T.Mesh(mzFloorGeo(M), mzFloorMat(glowTex)); trackGroup.add(floor);
-  // ---- the walls (eight sectors), their crest halos ----
+  const floor=new T.Mesh(mzFloorGeo(M), mzFloorMat(mzGlowTex(M), mzWallTex(M))); trackGroup.add(floor);
+  // ---- the walls (eight sectors), their crown halos ----
   const wm=mzWallMat(), hm=mzHaloMat();
   for(const s of mzWallGeos(M)){ trackGroup.add(new T.Mesh(s.wall, wm)); const h=new T.Mesh(s.halo, hm); h.renderOrder=2; trackGroup.add(h); }
-  // ---- cilia tufts along the crests ----
-  { const blade=(()=>{ const p=[], n=[]; const one=(rot,lean)=>{ const c=Math.cos(rot), s=Math.sin(rot);
-        const v=[[-0.13,0],[0.13,0],[-0.09,1.4],[0.09,1.4],[0,2.8]]; const tri=[[0,1,2],[1,3,2],[2,3,4]];
-        for(const tr of tri) for(const k of tr){ const [x,y]=v[k]; p.push(x*c+lean*y*s, y, x*s+lean*y*c*0.3); n.push(-s,0.2,c); } };
-      one(0,0.15); one(2.1,0.25); one(4.2,0.2);
+  const col=new T.Color(), tc={r:0,g:0,b:0};
+  // ---- cilia along the crowns: a slender stalk and a glowing tip ----
+  { const blade=(()=>{ const p=[], n=[]; const rs=[0.22,0.15,0.09,0.05], ys=[0,0.9,1.8,2.5], S=4;
+      for(let k=0;k<3;k++) for(let s=0;s<S;s++){ const a0=s/S*MZ_TAU, a1=(s+1)/S*MZ_TAU;
+        const q=(r,y,a)=>[Math.cos(a)*r+0.045*y*y, y, Math.sin(a)*r];   // (a gentle bend)
+        const A=q(rs[k],ys[k],a0), B=q(rs[k],ys[k],a1), Cc=q(rs[k+1],ys[k+1],a1), D=q(rs[k+1],ys[k+1],a0);
+        for(const v of [A,B,Cc, A,Cc,D]){ p.push(...v); n.push(v[0],0.2,v[2]); } }
+      const tip=new T.IcosahedronGeometry(0.46,0); tip.translate(0.30,2.66,0); const tp=tip.index?tip.toNonIndexed():tip;
+      p.push(...tp.attributes.position.array); n.push(...tp.attributes.normal.array);
       const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setAttribute('normal',new T.Float32BufferAttribute(n,3)); return g; })();
-    const fr=mzFrondMat(), R=mzRnd(M.seed^0xC111A), col={r:0,g:0,b:0};
-    const im=mzInst(blade, fr, M.frondSpots, (q,d,c)=>{ const y=mzFloorY(Math.hypot(q.x,q.z))+C.H*1.0;
-      d.position.set(q.x+(R()-0.5)*1.2, y, q.z+(R()-0.5)*1.2); d.rotation.set(0,R()*6.28,0); d.scale.setScalar(0.7+R()*0.6);
-      mzTint(mzRingU(q.ring),col); c.setRGB(Math.min(1,col.r*1.15),Math.min(1,col.g*1.1),Math.min(1,col.b*1.1)); });
+    const fr=mzFrondMat(), R=mzRnd(M.seed^0xC111A);
+    const im=mzInst(blade, fr, M.frondSpots, (q,d,c)=>{ const y=mzFloorY(Math.hypot(q.x,q.z))+C.H*0.98;
+      d.position.set(q.x+(R()-0.5)*1.0, y, q.z+(R()-0.5)*1.0); d.rotation.set((R()-0.5)*0.35,R()*6.28,(R()-0.5)*0.35); const s=0.5+R()*0.5; d.scale.set(s,s*(0.8+R()*0.6),s);
+      mzTint(mzRingU(q.ring),tc); c.setRGB(Math.min(1,tc.r*1.1),Math.min(1,tc.g*1.1),Math.min(1,tc.b*1.1)); });
     im.frustumCulled=false; trackGroup.add(im); }
-  // ---- gate posts: a shape per gate, two per gate, standing on the wall noses ----
-  const pm=mzPropMat({glow:0.7}), posts=mzPostGeos(), byShape=posts.map(()=>[]);
+  // ---- gate lanterns: a shape per gate, two per gate, standing on the wall noses ----
+  const pm=mzPropMat({glow:0.95, lantern:true}), posts=mzPostGeos(), byShape=posts.map(()=>[]);
   { const R=mzRnd(M.seed^0x6A7E);
     let last=-1;   // neighbouring gates never share a shape, so each one can be learnt
     M.gates.forEach((q,gi)=>{ let sh=q.kind==='egg'?0:q.kind==='rim'?2:Math.floor(R()*posts.length); if(sh===last) sh=(sh+1+Math.floor(R()*(posts.length-1)))%posts.length; last=sh; q.shape=sh;
       const y=mzFloorY(q.r+(q.kind==='rim'?-2:2));
       for(const sd of [-1,1]){ const a=q.th+sd*q.hg; byShape[sh].push({x:q.r*Math.cos(a), z:q.r*Math.sin(a), y:Math.max(y,mzFloorY(q.r-2)), ring:q.ring, rot:a, s:q.kind==='egg'?1.4:q.kind==='rim'?1.3:0.9+R()*0.2}); } }); }
-  const col=new T.Color(), tc={r:0,g:0,b:0};
   byShape.forEach((list,sh)=>{ if(!list.length) return; trackGroup.add(mzInst(posts[sh], pm, list, (q,d,c)=>{ d.position.set(q.x,q.y-0.5,q.z); d.rotation.set(0,-q.rot,0); d.scale.setScalar(q.s);
     mzTint(mzRingU(q.ring),tc); c.setRGB(tc.r,tc.g,tc.b); })); });
-  // ---- turnaround islands: soft glowing domes ----
+  // ---- turnaround islands: soft glowing domes, each in a luminous pool ----
   { const g=new T.SphereGeometry(1,16,10,0,MZ_TAU,0,Math.PI/2);
-    trackGroup.add(mzInst(g, mzPropMat({glow:1.1}), M.loops, (L,d,c)=>{ d.position.set(L.x, mzFloorY(Math.hypot(L.x,L.z))-0.2, L.z); d.scale.set(C.ISL_R,2.6,C.ISL_R); mzTint(mzRingU(L.ring),tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+    trackGroup.add(mzInst(g, mzPropMat({glow:1.2}), M.loops, (L,d,c)=>{ d.position.set(L.x, mzFloorY(Math.hypot(L.x,L.z))-0.2, L.z); d.scale.set(C.ISL_R,2.6,C.ISL_R); mzTint(mzRingU(L.ring),tc); c.setRGB(tc.r,tc.g,tc.b); }));
+    const pg=new T.CircleGeometry(1,40); pg.rotateX(-Math.PI/2);
+    const pools=mzInst(pg, mzPoolMat(), M.loops, (L,d,c)=>{ d.position.set(L.x, mzFloorY(Math.hypot(L.x,L.z))+0.06, L.z); d.scale.set(C.P/2-2,1,C.P/2-2); mzTint(mzRingU(L.ring),tc); c.setRGB(tc.r,tc.g,tc.b); });
+    pools.renderOrder=1; trackGroup.add(pools); }
   // ---- boost pads in the loops: chevrons pointing back out ----
   M.padState=[];
   for(const pd of M.pads){ const y=mzFloorY(Math.hypot(pd.x,pd.z))+0.12;
@@ -45178,26 +45379,41 @@ function mzBuildTrack(idx){
     const m=new T.Mesh(g,new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,blending:T.AdditiveBlending,depthWrite:false,color:0x9fe8ff}));
     m.position.set(pd.x,y,pd.z); m.rotation.y=Math.atan2(pd.dx,pd.dz); m.material.polygonOffset=true; m.material.polygonOffsetFactor=-2; m.material.polygonOffsetUnits=-2;
     trackGroup.add(m); }
-  // ---- the egg: a pearl lantern with a corona of soft cells, on Eve's heartbeat ----
+  // ---- the egg: a pearl lantern standing in its gold pool, a clear shell, a corona of light-beads ----
   const eggY=C.HC+C.EGG_R*1.18;
-  const egg=new T.Mesh(new T.SphereGeometry(C.EGG_R,40,30), edenEggMat()); egg.material.fog=false; egg.scale.set(1,1.25,1);   // a lantern: the haze does not dim it egg.position.set(0,eggY,0); trackGroup.add(egg);
+  const egg=new T.Mesh(new T.SphereGeometry(C.EGG_R,48,32), mzEggMat()); egg.material.fog=false;   // a lantern: the haze does not dim it
+  egg.scale.set(1,1.25,1); egg.position.set(0,eggY,0); trackGroup.add(egg);
+  { const shell=new T.Mesh(new T.SphereGeometry(C.EGG_R*1.12,40,28), mzGlowMat(2)); shell.renderOrder=3; egg.add(shell); }   // (rides the egg's own pulse and swell)
   const halo=glowSprite(0xffe2b0,120); halo.material.fog=false; halo.position.copy(egg.position); trackGroup.add(halo);
-  const halo2=glowSprite(0xff9a70,320); halo2.material.fog=false; halo2.material.opacity=0.35; halo2.position.set(0,eggY+10,0); trackGroup.add(halo2);
-  egg.userData.edenPulse=edenEggPulse; TRACK_PULSE.egg=egg; M.halos=[halo,halo2];   // the halos breathe in mzTick, and fade as you reach them
-  const corona=new T.Group(); corona.position.set(0,eggY,0); trackGroup.add(corona);
-  { const R=mzRnd(M.seed^0xC0C0), list=[]; for(let i=0;i<46;i++){ const a=i/46*MZ_TAU+R()*0.1, rr=C.EGG_R*(1.25+R()*0.45), y=(R()-0.5)*C.EGG_R*1.9;
-      list.push({x:Math.cos(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), y, z:Math.sin(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), s:2.2+R()*3.0, u:R()*0.25}); }
-    const cm=mzPropMat({glow:0.9, alpha:0.6}); cm.uniforms.uFogR={value:new T.Vector2(700,2600)};
-    corona.add(mzInst(new T.IcosahedronGeometry(1,2), cm, list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.setScalar(q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+  const halo2=glowSprite(0xff9a70,320); halo2.material.fog=false; halo2.material.opacity=0.24; halo2.position.set(0,eggY+10,0); trackGroup.add(halo2);
+  egg.userData.edenPulse=mzEggPulse; TRACK_PULSE.egg=egg; M.halos=[halo,halo2];   // the halos breathe in mzTick, and fade as you reach them
+  const corona=new T.Group(); corona.position.set(0,eggY,0); trackGroup.add(corona); M.corona=corona;
+  { const R=mzRnd(M.seed^0xC0C0), list=[];
+    for(let i=0;i<40;i++){ const a=i/40*MZ_TAU+R()*0.12, band=R(), y=-6+band*24, rr=C.EGG_R*(1.30+R()*0.30)*Math.sqrt(Math.max(0.35,1-Math.pow((y-4)/30,2)));
+      list.push({x:Math.cos(a)*rr, y, z:Math.sin(a)*rr, s:0.7+R()*0.9, u:R()*0.12}); }
+    const cm=mzGlowMat(1); corona.add(mzInst(new T.IcosahedronGeometry(1,1), cm, list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.setScalar(q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+  // ---- shafts of light leaning in toward the egg from far overhead ----
+  { const R=mzRnd(M.seed^0x5AF7), list=[{x:0,z:0,tilt:0,dir:0,w:26,len:760}];
+    for(let i=0;i<4;i++) list.push({x:(R()-0.5)*40, z:(R()-0.5)*40, tilt:0.14+R()*0.16, dir:i/4*MZ_TAU+R()*0.9, w:4+R()*5, len:560+R()*200});
+    const g=new T.CylinderGeometry(2.6,1,1,16,1,true); g.translate(0,0.5,0);
+    const sm=mzShaftMat(); const im=mzInst(g, sm, list, (q,d,c)=>{ d.position.set(q.x,C.HC-2,q.z); d.rotation.set(Math.cos(q.dir)*q.tilt,0,Math.sin(q.dir)*q.tilt); d.scale.set(q.w,q.len,q.w); c.setRGB(1,1,1); });
+    im.frustumCulled=false; im.renderOrder=4; trackGroup.add(im); }
   // ---- motes drifting in the air over the maze ----
   { const R=mzRnd(M.seed^0x3073), n=520, p=new Float32Array(n*3), ph=new Float32Array(n);
     for(let i=0;i<n;i++){ const r=Math.sqrt(R())*(C.R0+C.K*C.P+80), a=R()*MZ_TAU; p[i*3]=Math.cos(a)*r; p[i*3+1]=mzFloorY(r)+3+R()*34; p[i*3+2]=Math.sin(a)*r; ph[i]=R(); }
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(p,3)); g.setAttribute('aPh',new T.BufferAttribute(ph,1));
     const pts=new T.Points(g, mzMoteMat()); pts.frustumCulled=false; trackGroup.add(pts); }
-  // ---- beyond the rim: dim cell clusters standing in the far haze ----
-  { const R=mzRnd(M.seed^0xBAC4), list=[]; for(let i=0;i<70;i++){ const a=R()*MZ_TAU, r=M.ext+60+R()*420; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:-30+R()*50, s:24+R()*70, u:0.75+R()*0.25}); }
-    const bm=mzPropMat({glow:0.18}); bm.uniforms.uFogR={value:new T.Vector2(500,2400)};
-    trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), bm, list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.set(q.s,q.s*0.8,q.s); mzTint(q.u,tc); c.setRGB(tc.r*0.5,tc.g*0.45,tc.b*0.7); })); }
+  // ---- beyond the rim: soft cells rooted in the floor, receding into the haze (three depths) ----
+  { const R=mzRnd(M.seed^0xBAC4), list=[];
+    for(let i=0;i<64;i++){ const layer=i<22?0:i<44?1:2, a=R()*MZ_TAU, r=M.ext+40+layer*170+R()*150, s=(26+R()*40)*(1+layer*0.5);
+      if(Math.abs(Math.atan2(Math.sin(a-C.ANG_IN),Math.cos(a-C.ANG_IN)))<0.22 && layer===0) continue;   // keep the antechamber's view open
+      list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, s, sy:0.55+R()*0.5, u:0.55+R()*0.45}); }
+    trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), mzDomeMat(), list, (q,d,c)=>{ d.position.set(q.x,-q.s*0.22,q.z); d.scale.set(q.s,q.s*q.sy,q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+  // ---- and high in the haze: floating cells, drifting ----
+  { const R=mzRnd(M.seed^0xF10A), list=[];
+    for(let i=0;i<40;i++){ const a=R()*MZ_TAU, r=820+R()*480, lo=R()<0.7; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:lo?50+R()*150:200+R()*300, s:lo?30+R()*90:16+R()*40, u:R()<0.25?R()*0.3:0.5+R()*0.5}); }
+    const im=mzInst(new T.PlaneGeometry(1,1), mzFloatMat(), list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.setScalar(q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); });
+    im.frustumCulled=false; im.renderOrder=-5; trackGroup.add(im); }
   // ---- a few friendly microbes drifting above the walls ----
   { const R=mzRnd(M.seed^0x31C2), crit=[]; for(let i=0;i<6;i++) crit.push({r:C.R0+(1.5+R()*(C.K-2))*C.P, a:R()*MZ_TAU, w:(R()<0.5?-1:1)*(0.03+R()*0.04), h:13+R()*10, s:2.0+R()*1.2, u:R(), ph:R()*6});
     const body=new T.InstancedMesh(new T.SphereGeometry(1,16,12), mzPropMat({glow:0.8, alpha:0.75}), crit.length);
@@ -45224,6 +45440,7 @@ function mzItemBoxes(){
 /* ================= RUNTIME ================= */
 function mzTick(M, tsec, dt){
   M.U.uT.value=tsec;
+  if(M.corona) M.corona.rotation.y=tsec*0.05;              // the corona turns slowly round the egg
   if(typeof EDEN_T!=='undefined') EDEN_T.value=tsec;      // the egg's pearl shimmer runs on the same clock
   M.skyM.uniforms.uEgg.value.set(-camera.position.x, M.eggY-camera.position.y+40, -camera.position.z);
   // microbes: slow circles over the rings, bobbing, eyes forward
@@ -45240,7 +45457,7 @@ function mzTick(M, tsec, dt){
   // the lantern's halos: on the heartbeat, and thinned as the camera closes on the egg so the finish is not a white-out
   { const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
     const d=Math.hypot(camera.position.x, camera.position.y-M.eggY, camera.position.z), near=Math.max(0,Math.min(1,(d-50)/170));
-    M.halos[0].material.opacity=(0.55+0.30*b)*(0.25+0.75*near); M.halos[1].material.opacity=(0.30+0.12*b)*near*near; }
+    M.halos[0].material.opacity=(0.42+0.24*b)*(0.15+0.85*near); M.halos[1].material.opacity=(0.20+0.10*b)*near*near; }
   if(state==='race'||state==='done') mzTrails(M);
   mzHeart(M, tsec);
 }
