@@ -45601,7 +45601,7 @@ function mzSegCross(w,ax,az,bx,bz){   // does the move a->b cross this wall's ce
   if(w.t===1){ const ex=w.x1-w.x0, ez=w.z1-w.z0, den=dx*ez-dz*ex; if(Math.abs(den)<1e-9) return false;
     const t=((w.x0-ax)*ez-(w.z0-az)*ex)/den, u=((w.x0-ax)*dz-(w.z0-az)*dx)/den; return t>=0&&t<=1&&u>=0&&u<=1; }
   if(w.t===0){ const fx=ax-w.cx, fz=az-w.cz, A=dx*dx+dz*dz, B=2*(fx*dx+fz*dz), Cc=fx*fx+fz*fz-w.R*w.R, D=B*B-4*A*Cc; if(D<0||A<1e-12) return false;
-    for(const sg of [-1,1]){ const t=(-B+sg*Math.sqrt(D))/(2*A); if(t<0||t>1) continue; let an=Math.atan2(fz+dz*t,fx+dx*t); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an<=w.a1) return true; } }
+    for(let sg=-1;sg<=1;sg+=2){ const t=(-B+sg*Math.sqrt(D))/(2*A); if(t<0||t>1) continue; let an=Math.atan2(fz+dz*t,fx+dx*t); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an<=w.a1) return true; } }
   return false;
 }
 function mzCrossesWall(M,ax,az,bx,bz){
@@ -45615,7 +45615,8 @@ function mzCrossesWall(M,ax,az,bx,bz){
    light hand on the wheel at the corners: lining up with a gate you are heading for, carrying a
    turn you are making away from a wall ahead, and easing you off a wall you are running along. */
 const MZA={
-  on:true,
+  on:true,          // contact is a slide (false: the walls only push out)
+  assist:true,      // the corner assist below (false: none)
   SLIDE_TURN:11,     // a kart touching a wall swings its nose along it at this rate (1/s, more for a squarer hit)
   SLIDE_MIN:0.16,    // ...and keeps at least this share of its speed even square on (it slides away along the wall)
   END_KEEP:0.62,     // nosing into a wall's round end keeps at least this share, deflected round it
@@ -45624,11 +45625,11 @@ const MZA={
   GATE_R:32,         // the gate line-up works this close to a gate's wall line
   GATE_YAW:1.5,      // ...turning the nose toward the gate's centre line at up to this rate (rad/s)
   GATE_POS:9,        // ...and drawing a kart that would clip a gate's edge sideways at up to this rate (units/s)
-  CARRY:1.4,         // a turn the driver is making away from a wall ahead: up to this much extra turn rate (rad/s)
-  LOOK:34,           // ...looking this far ahead for that wall
+  CARRY:2.2,         // a turn the driver is making away from a wall ahead: up to this much extra turn rate (rad/s)
+  LOOK:45,           // ...looking this far ahead for that wall
   CENTRE_D:5,        // a kart this close to a corridor wall (clearance), running along it, is eased off it...
   CENTRE_V:5,        // ...at up to this many units/s
-  FAST:0.55,         // at top speed every assist is this much weaker
+  FAST:0.45,         // at top speed every assist is this much weaker
 };
 const MZ_CN=new Float64Array(8);   // this frame's wall contact normals (up to four)
 function mzCollideRacer(r,dt){   // walls, islands and the egg: push out; the speed into the wall goes, the speed along it stays
@@ -45711,7 +45712,7 @@ function mzGateGrid(M){
 }
 // the corner assist: a light hand, never against the driver's own steering, lighter the faster you go
 function mzCorner(r,dt,turnRate){
-  const M=MAZE; if(!MZA.on || !(r.spd>8) || r.air) return;
+  const M=MAZE; if(!MZA.assist || !(r.spd>8) || r.air) return;
   const st=r._st||0, vfrac=Math.min(1,r.spd/MAXV), w0=1-MZA.FAST*vfrac;
   const hx=Math.sin(r.head), hz=Math.cos(r.head), lx=hz, lz=-hx;   // heading, and its left (where steering + turns it)
   let gating=false;
@@ -45732,7 +45733,7 @@ function mzCorner(r,dt,turnRate){
       if(over>0 && bda<18){ const m=Math.min(over, MZA.GATE_POS*w*dt)*(blc>0?-1:1); r.x+=q.tx*m; r.z+=q.tz*m; } } }
   // (B) a wall ahead that the driver is turning away from: help the turn round, on a smooth arc
   if(Math.abs(st)>0.3){ let t=0, hit=false, nx=0, nz=0;
-    for(let k=0;k<8 && t<MZA.LOOK;k++){ const d=mzNear(M, r.x+hx*t, r.z+hz*t); if(d<MZ.KR*0.8){ hit=true; nx=MZ_Q.nx; nz=MZ_Q.nz; break; } t+=Math.max(1.5, Math.min(8, d-MZ.KR*0.5)); }
+    for(let k=0;k<10 && t<MZA.LOOK;k++){ const d=mzNear(M, r.x+hx*t, r.z+hz*t); if(d<MZ.KR*0.8){ hit=true; nx=MZ_Q.nx; nz=MZ_Q.nz; break; } t+=Math.max(1.5, Math.min(8, d-MZ.KR*0.5)); }
     if(hit){ const imp=-(hx*nx+hz*nz);
       if(imp>0.2 && Math.sign(st)===Math.sign(lx*nx+lz*nz)){
         const need=r.spd*(1-Math.sqrt(1-imp*imp))/Math.max(2, t*imp-1), have=Math.abs(st)*turnRate;
