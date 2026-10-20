@@ -44524,22 +44524,22 @@ function edenTick(E, tsec){
 const MZ_SEED_DEFAULT=0x41D1E5;     // Ariadne's phase-1 seed (her TRACKS entry carries it as `seed`)
 const MZ_RIVAL_TRAILS=false;        // rivals' threads: off by default (owner's call); true draws every racer's
 const MZ={
-  R0:78,        // egg chamber wall radius
-  P:36,         // ring pitch: corridor + wall
-  T:3.2,        // wall thickness (clear corridor = P-T = 32.8, three karts abreast)
+  R0:130,       // egg chamber wall radius (a wide plaza round the egg; it also lengthens every ring, so the race keeps its length with fewer walls)
+  P:44,         // ring pitch: corridor + wall
+  T:3.2,        // wall thickness (clear corridor = P-T = 40.8, roomy for three karts abreast)
   H:5,          // wall height: chest-high to a racer (head ~5.4 over the floor)
-  K:13,         // rings
-  N1:12,        // cells in ring 1
-  DBL:2.0,      // a ring doubles its cells when they would run longer than DBL*P
-  RING_W:8,     // carve bias: ring-wise steps are this much likelier than radial ones
-  BRAID:0.55,   // share of dead ends that try to open a second way out
-  LMIN:8500, LMAX:11500,  // window for the shortest route (units, antechamber front to the egg): about 1:30 at race pace
+  K:9,          // rings (13 read as too dense on the radar: 9 wider rings, about 190 cells instead of 456)
+  N1:8,         // cells in ring 1
+  DBL:3.0,      // a ring doubles its cells when they would run longer than DBL*P (longer cells: fewer walls across the rings)
+  RING_W:10,    // carve bias: ring-wise steps are this much likelier than radial ones
+  BRAID:0.65,   // share of dead ends that try to open a second way out (about 3 dead ends a maze)
+  LMIN:8500, LMAX:12000,  // window for the shortest route (units, antechamber front to the egg): about 1:30-2:00 at race pace
   ALT_OVER:0.62, ALT_LEN:1.7,   // a second route sharing at most this much of the shortest, no longer than this x it
   KR:3.6,       // racer collision radius against walls
   EGG_R:18, FIN_R:36,    // egg radius; you have reached the egg inside FIN_R of its centre
   ANTE_D:150, ANTE_W:62, // antechamber depth past the rim wall, half-width
-  GATE_W:30,    // clear width of a spoke gate
-  ISL_R:3.6,    // turnaround island
+  GATE_W:36,    // clear width of a spoke gate
+  ISL_R:4.5,    // turnaround island
   HC:16,        // floor height at the egg chamber: the rings terrace up toward the egg
   ANG_IN:Math.PI/2,       // the rim gate faces +z
   TRIES:60,
@@ -44788,9 +44788,13 @@ function mzMake(seed){
     const s=(seed+Math.imul(a,0x9E3779B1))|0;
     const M=mzSolve(mzCarve(s, MZ)); mzLayout(M); mzValidate(M); M.attempt=a; M.baseSeed=seed;
     if(M.valid) return M;
-    if(!best || M.errors.length<best.errors.length) best=M;
+    // the carve is a spanning tree from the gate and braiding only opens walls, so every maze
+    // has a way to the egg; even so, a fallback is only ever taken from the solvable ones
+    const ok=M.D[M.entP]<1e17;
+    if(ok && (!best || M.errors.length<best.errors.length)) best=M;
   }
-  return best;   // nothing passed: race the closest (srNet.maze reports why)
+  if(best) return best;   // nothing passed: race the closest solvable one (srNet.maze reports why)
+  const F=mzSolve(mzCarve(seed|0, MZ)); mzLayout(F); mzValidate(F); F.attempt=-1; F.baseSeed=seed; return F;
 }
 /* ================= THE LOOK =================
    The maze is the egg's own protective layers, and it is ALIVE. Value plan, darkest to lightest:
