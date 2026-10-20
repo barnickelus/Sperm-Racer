@@ -59184,6 +59184,7 @@ function updateRacer(r,dt){
   // accelerate
   if(MAZE && !r.you && r._mzRev) r.spd += (-45-r.spd)*Math.min(1,4*dt);          // maze AI backing off a wall
   else if(MAZE && !r.you && r.spd>target) r.spd += (target-r.spd)*Math.min(1,5*dt);   // ...and braking for a corner
+  else if(MAZE && r.drift===1 && drift && Math.abs(steer)>0.6 && r.spd>20) r.spd += (20-r.spd)*Math.min(1,3*dt);   // the maze: drift at full lock is a handbrake turn
   else if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
   else if(reverse) r.spd += ((MAZE?-72:-60)-r.spd)*Math.min(1,(MAZE?6:3)*dt);   // the maze: a quicker reverse
   else if(brake) r.spd += (0-r.spd)*Math.min(1,4*dt);   // firm stop — doesn't creep into reverse on its own
@@ -59198,18 +59199,18 @@ function updateRacer(r,dt){
   // at speed instead — that reads as "it goes where I point it".
   let turnRate=TURN*(1.02-0.24*vfrac);
   if(MAZE) turnRate*=mzTurnK(vfrac);    // the maze: tighter the slower you go, so a corridor U-turn works
-  if(drift && Math.abs(r.spd)>50){
+  if(drift && Math.abs(r.spd)>(MAZE?18:50)){   // (the maze: a drift holds down to a crawl, so it can swing you round)
     // lock the slide to the direction you're actually steering — no random snap,
     // and don't let live steering fight the slide (that caused the squirreliness)
     if(r.drift===0){ r.driftDir = Math.abs(steer)>0.15 ? (steer>0?1:-1) : 0; r.hop=0.22; }
     r.drift=1;
     if(r.driftDir===0 && Math.abs(steer)>0.15) r.driftDir = steer>0?1:-1;
     if(r.driftDir!==0){
-      turnRate*=MAZE?1.25:1.1;
+      turnRate*=MAZE?1.6:1.1;
       steer = MAZE ? r.driftDir*0.7 + steer*0.45 : r.driftDir*0.32 + steer*0.28;     // committed slide + gentle trim (softer; the maze swings round)
     }
     r.driftCharge+=dt;
-    if(MAZE) r.spd*=Math.pow(0.7,dt);           // a maze drift bleeds speed: it is how you turn round
+    if(MAZE) r.spd*=Math.pow(Math.abs(steer)>0.6?0.3:0.7,dt);   // a maze drift bleeds speed (hard at full lock: a handbrake U-turn)
   } else {
     if(r.drift===1){                            // released → mini-turbo
       if(r.driftCharge>1.2) r.boostT=Math.max(r.boostT,0.9);
