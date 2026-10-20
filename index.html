@@ -44892,18 +44892,6 @@ function mzWallMat(){
         c*=mix(0.30,1.0,smoothstep(0.0,0.16,h));                                                      // the wet contact at the floor
         gl_FragColor=vec4(mix(c,uFog,vBF.y),1.0); }` });
 }
-// a soft additive glow over the crowns, thin by day and full on the heartbeat
-function mzHaloMat(){
-  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, side:T.DoubleSide,
-    vertexShader:`${MZ_GLSL_COMMON}
-      attribute vec3 color; attribute float aV; varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
-      void main(){ vec4 w=modelMatrix*vec4(position,1.0); vC=color; vA=aV; vB=mzBeat(length(w.xz));
-        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
-    fragmentShader:`${MZ_GLSL_COMMON}
-      varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
-      void main(){ float a=pow(1.0-vA,2.2)*(0.07+0.62*vB); float f=1.0-smoothstep(30.0,420.0,vDepth);
-        gl_FragColor=vec4(mix(vC,vec3(1.0),0.25)*a*f,1.0); }` });
-}
 // organic props, instanced: gate lanterns, islands, critters: translucent, lit from within
 function mzPropMat(o){
   o=o||{};
@@ -45016,9 +45004,9 @@ const MZ_PROF=(()=>{ const side=[[1.14,0.00,0.55,0.83],[1.03,0.26,1.0,0.05],[0.9
   return P; })();
 const MZ_WSTEP=6.0;   // ridge sections every 6 units (the sag on the tightest ring, r 78, is 0.06)
 function mzWallGeos(M){
-  const C=M.C, NS=8, buf=[]; for(let s=0;s<NS;s++) buf.push({p:[],n:[],c:[],uh:[],i:[],hp:[],hc:[],hv:[],hi:[]});
+  const C=M.C, NS=8, buf=[]; for(let s=0;s<NS*2;s++) buf.push({p:[],n:[],c:[],uh:[],i:[],hp:[],hc:[],hv:[],hi:[]});   // 8 wedges x inner/outer half: the lens culls what it cannot see
   const R=mzRnd(M.seed^0xFACE), col={r:0,g:0,b:0};
-  const sectorOf=(x,z)=>{ let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU; return Math.min(NS-1,Math.floor(a/MZ_TAU*NS)); };
+  const RMID=C.R0+C.P*6.5, sectorOf=(x,z)=>{ let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU; return Math.min(NS-1,Math.floor(a/MZ_TAU*NS))+(Math.hypot(x,z)>RMID?NS:0); };
   // a ridge along points [{x,z,tx,tz}] (tangent), with optional rounded noses at either end
   const ridge=(pts, hw, ring, caps, u0)=>{
     if(pts.length<2) return;
@@ -45046,10 +45034,6 @@ function mzWallGeos(M){
     const v0=B.p.length/3;
     for(const rg of all) for(const v of rg){ B.p.push(v[0],v[1],v[2]); B.n.push(v[3],v[4],v[5]); B.c.push(col.r,col.g,col.b); B.uh.push(v[7],v[6]); }
     for(let i=0;i<all.length-1;i++) for(let j=0;j<row-1;j++){ const a=v0+i*row+j, b=a+row; B.i.push(a,b,a+1, b,b+1,a+1); }
-    // the crown halo: a soft sheet standing on the crown
-    const h0=B.hp.length/3;
-    for(const rg of rings){ const top=rg[(row-1)>>1]; B.hp.push(top[0],top[1]-0.4,top[2], top[0],top[1]+2.2,top[2]); B.hc.push(col.r,col.g,col.b,col.r,col.g,col.b); B.hv.push(0,1); }
-    for(let i=0;i<rings.length-1;i++){ const a=h0+i*2; B.hi.push(a,a+2,a+1, a+1,a+2,a+3); }
   };
   M.frondSpots=[];
   for(const w of M.walls){
@@ -45065,14 +45049,13 @@ function mzWallGeos(M){
       ridge(pts.slice(i0,i1+1), w.hw, w.ring, closed?null:[i0===0, i1===pts.length-1], i0*MZ_WSTEP); }
     // cilia spots along the crown: clumps and gaps, never a picket fence
     let run=0, on=false; for(let s=0;s<pts.length;s++){ if(run===0){ on=R()<0.58; run=1+Math.floor(R()*4); } run--;
-      if(on && (s%3!==2)) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring}); }
+      if(on && s%2===0) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring}); }
   }
   const out=[];
   for(const B of buf){ if(!B.i.length) continue;
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(B.p,3)); g.setAttribute('normal',new T.Float32BufferAttribute(B.n,3));
     g.setAttribute('color',new T.Float32BufferAttribute(B.c,3)); g.setAttribute('aUH',new T.Float32BufferAttribute(B.uh,2)); g.setIndex(B.i); g.computeBoundingSphere();
-    const h=new T.BufferGeometry(); h.setAttribute('position',new T.Float32BufferAttribute(B.hp,3)); h.setAttribute('color',new T.Float32BufferAttribute(B.hc,3)); h.setAttribute('aV',new T.Float32BufferAttribute(B.hv,1)); h.setIndex(B.hi); h.computeBoundingSphere();
-    out.push({wall:g, halo:h}); }
+    out.push({wall:g}); }
   return out;
 }
 // the floor's light map: a little of every wall's light spilt at its foot, warm pools at the spoke
@@ -45343,8 +45326,8 @@ function mzBuildTrack(idx){
   // ---- the floor ----
   const floor=new T.Mesh(mzFloorGeo(M), mzFloorMat(mzGlowTex(M), mzWallTex(M))); trackGroup.add(floor);
   // ---- the walls (eight sectors), their crown halos ----
-  const wm=mzWallMat(), hm=mzHaloMat();
-  for(const s of mzWallGeos(M)){ trackGroup.add(new T.Mesh(s.wall, wm)); const h=new T.Mesh(s.halo, hm); h.renderOrder=2; trackGroup.add(h); }
+  const wm=mzWallMat();
+  for(const s of mzWallGeos(M)) trackGroup.add(new T.Mesh(s.wall, wm));
   const col=new T.Color(), tc={r:0,g:0,b:0};
   // ---- cilia along the crowns: a slender stalk and a glowing tip ----
   { const blade=(()=>{ const p=[], n=[]; const rs=[0.22,0.12,0.05], ys=[0,1.3,2.5], S=3;
