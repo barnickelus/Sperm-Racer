@@ -44525,29 +44525,34 @@ const MZ_SEED_DEFAULT=0x41D1E5;     // Ariadne's phase-1 seed (her TRACKS entry 
 const MZ_RIVAL_TRAILS=false;        // rivals' threads: off by default (owner's call); true draws every racer's
 const MZ={
   R0:130,       // egg chamber wall radius (a wide plaza round the egg; it also lengthens every ring, so the race keeps its length with fewer walls)
-  P:44,         // ring pitch: corridor + wall
-  T:3.2,        // wall thickness (clear corridor = P-T = 40.8, roomy for three karts abreast)
+  P:58,         // ring pitch: corridor + wall (44 -> 58: lanes about a third wider; the board grows to fit)
+  T:3.2,        // wall thickness (clear corridor = P-T = 54.8, roomy for four karts abreast)
   H:5,          // wall height: chest-high to a racer (head ~5.4 over the floor)
   K:9,          // rings (13 read as too dense on the radar: 9 wider rings, about 190 cells instead of 456)
   N1:8,         // cells in ring 1
   DBL:3.0,      // a ring doubles its cells when they would run longer than DBL*P (longer cells: fewer walls across the rings)
   RING_W:10,    // carve bias: ring-wise steps are this much likelier than radial ones
   BRAID:0.65,   // share of dead ends that try to open a second way out (about 3 dead ends a maze)
-  LMIN:8500, LMAX:12000,  // window for the shortest route (units, antechamber front to the egg): about 1:30-2:00 at race pace
+  LMIN:10000, LMAX:15000, // window for the shortest route (units, antechamber front to the egg): about 1:45-2:15 at race pace
   ALT_OVER:0.62, ALT_LEN:1.7,   // a second route sharing at most this much of the shortest, no longer than this x it
   KR:3.6,       // racer collision radius against walls
   EGG_R:18, FIN_R:36,    // egg radius; you have reached the egg inside FIN_R of its centre
   ANTE_D:150, ANTE_W:62, // antechamber depth past the rim wall, half-width
-  GATE_W:36,    // clear width of a spoke gate
-  ISL_R:4.5,    // turnaround island
+  GATE_W:47,    // clear width of a spoke gate
+  ISL_R:6,      // turnaround island
   HC:16,        // floor height at the egg chamber: the rings terrace up toward the egg
   ANG_IN:Math.PI/2,       // the rim gate faces +z
   TRIES:60,
   // clean corners: no ticks, no stubs, every free wall end a rounded bulb
-  TICK:30,      // a ring wall that would run on less than this past a gate to a junction is cut back to the junction (no "+"/"T" ticks)
-  FIN_MIN:30,   // a free-standing piece of ring wall shorter than this (between two gates, no junction) is left out
+  TICK:40,      // a ring wall that would run on less than this past a gate to a junction is cut back to the junction (no "+"/"T" ticks)
+  FIN_MIN:40,   // a free-standing piece of ring wall shorter than this (between two gates, no junction) is left out
   NOSE_R:4.0,   // every free wall end swells into a round bulb this wide (radius), its tip where the wall end was (gate widths unchanged)
   NOSE_L:16,    // ...over this much of the wall (a gentle taper, never a step)
+  // turning bays: opposite every gate, the far wall of each corridor it opens into is drawn back
+  // into a wide shallow bay, so the turn between ring and spoke (and the turn back) has room
+  BAY_W:52,     // a bay runs this far past each side of its gate's opening (along the far wall)
+  BAY_D:18,     // ...at most this deep; never so deep that the corridor behind it gets narrower than a gate
+  BAY_MIN:32,   // ...and only where at least this much half-span fits between openings and loops
 };
 const MZ_TAU=Math.PI*2;
 let MAZE=null;                      // the labyrinth being raced (null on every other course)
@@ -44696,7 +44701,7 @@ function mzLayout(M){
   // radial walls between ring-wise neighbours that are not joined
   const radEnds=[];
   for(const e of E) if(e.kind===0 && !e.open){ const k=ck[e.a], th=M.span(e.a)[1], c=Math.cos(th), s=Math.sin(th);
-    seg(B(k-1)*c, B(k-1)*s, B(k)*c, B(k)*s, k, 'rad'); radEnds.push([k-1,th],[k,th]); }
+    seg(B(k-1)*c, B(k-1)*s, B(k)*c, B(k)*s, k, 'rad'); W[W.length-1].th=th; radEnds.push([k-1,th],[k,th]); }
   const junc=(k,th)=>{ for(const q of radEnds) if(q[0]===k && Math.abs(Math.atan2(Math.sin(q[1]-th),Math.cos(q[1]-th)))<1e-6) return true; return false; };
   // dead ends: a keyhole loop — a semicircle round a soft island, sealed back to the opening.
   // (A loop entered through a ring wall has straight sides, and its gate opens to exactly
@@ -44729,9 +44734,10 @@ function mzLayout(M){
   // leave is a hook: a "+" or "T" tick a kart snags on). The gap never leaves the span of the
   // gate's own cell, so this joins nothing the maze did not already join. A free-standing
   // scrap of wall left between two gates (no junction on it) is left out the same way.
+  const PIECES=[];   // per ring wall: the stretches of wall actually built, [a,b] (null: the whole circle)
   for(let k=0;k<=K;k++){
-    const r=B(k), gaps=GK[k];
-    if(!gaps.length){ arc(0,0,r,0,MZ_TAU,k,'ring'); continue; }
+    const r=B(k), gaps=GK[k], pc=[]; PIECES.push(pc);
+    if(!gaps.length){ pc.push(null); continue; }
     for(const q of gaps){ if(q.loop) continue;
       if((q.a0-q.s0)*r<C.TICK && junc(k,q.s0)) q.a0=q.s0;
       if((q.s1-q.a1)*r<C.TICK && junc(k,q.s1)) q.a1=q.s1; }
@@ -44739,16 +44745,55 @@ function mzLayout(M){
       if(b<=a+1e-4) continue;
       let jn=false; for(const e of radEnds) if(e[0]===k){ let t=e[1]; while(t<a-1e-6) t+=MZ_TAU; while(t>a+MZ_TAU) t-=MZ_TAU; if(t<=b+1e-6){ jn=true; break; } }
       if(!jn && (b-a)*r<C.FIN_MIN) continue;
-      arc(0,0,r,a,b,k,'ring'); }
+      pc.push([a,b]); }
     for(const q of gaps){ q.th=(q.a0+q.a1)/2; q.hg=(q.a1-q.a0)/2; }   // (the opening as built: lanterns, light pools and the corner assist use it)
   }
+  // turning bays. Opposite each gate, the far wall of the corridor on either side of it is drawn
+  // back into a wide, shallow, rounded bay (a cosine bulge outward from the turn), so the swing
+  // from ring to spoke and back has room. A bay sits wholly on one stretch of wall (clear of every
+  // opening and loop), and is only as deep as leaves the corridor behind it a gate wide.
+  M.bays=[]; for(let k=0;k<=K;k++) M.bays.push([]);
+  const adiff=(x,y)=>Math.atan2(Math.sin(x-y),Math.cos(x-y));
+  const pieceAt=(k,a)=>{ for(const p of PIECES[k]){ if(!p) return [a-Math.PI,a+Math.PI]; let t=a; while(t<p[0]) t+=MZ_TAU; while(t>=p[0]+MZ_TAU) t-=MZ_TAU; if(t<=p[1]) return [a-(t-p[0]), a+(p[1]-t)]; } return null; };
+  const wallR=(k,a)=>M.bays[k].length?mzBayR(M.bays[k],B(k),a):B(k);
+  const rimG0=M.gates.find(q=>q.kind==='rim'), deadSet=new Set(M.dead);
+  const placeBay=(q,kw,sg)=>{
+    if(kw<0||kw>K) return;
+    const r=B(kw), pc=pieceAt(kw,q.th); if(!pc) return;
+    const m=(C.NOSE_R+8)/r; let ha=Math.min((q.hg*q.r+C.BAY_W)/r, q.th-pc[0]-m, pc[1]-q.th-m);
+    for(const L of M.loops){ if(L.ring!==kw && L.ring!==kw+1) continue; const rl=Math.hypot(L.x,L.z); ha=Math.min(ha, Math.abs(adiff(Math.atan2(L.z,L.x),q.th))-(C.P/2+10)/rl); }
+    if(kw===K && rimG0) ha=Math.min(ha, Math.abs(adiff(rimG0.th,q.th))-(C.ANTE_W+40)/r);
+    if(ha*r<C.BAY_MIN) return;
+    const bl=M.bays[kw]; for(let i=0;i<bl.length;i+=3) if(Math.sign(bl[i+2])!==sg && Math.abs(adiff(bl[i],q.th))<bl[i+1]+ha) return;
+    let d=C.BAY_D; const far=kw+sg;
+    for(let j=-12;j<=12;j++){ const a=q.th+ha*j/12.5, sh=(1+Math.cos(Math.PI*j/12.5))/2; if(sh>0.03) d=Math.min(d,(C.BAY_D-Math.abs(wallR(kw,a)-r))/sh); }   // (overlapping bays add up: never deeper than one)
+    if(far>=0 && far<=K){ const rf=B(far), me=(C.NOSE_L+4)/rf;
+      for(let j=-12;j<=12;j++){ const a=q.th+ha*j/12.5, sh=(1+Math.cos(Math.PI*j/12.5))/2; if(sh<0.03) continue;
+        const pa=pieceAt(far,a), end=!pa || a-pa[0]<me || pa[1]-a<me;   // an opening, or a wall end's bulb nearby
+        if(!pa && pieceAt(far,a-me)==null && pieceAt(far,a+me)==null) continue;   // well inside an opening: nothing to pinch against
+        d=Math.min(d, (Math.abs(wallR(far,a)-wallR(kw,a))-C.T-(end?2*(C.NOSE_R-C.T/2):0)-(C.GATE_W+0.5))/sh); } }
+    if(d<3) return;
+    bl.push(q.th, ha, sg*d);
+  };
+  for(const q of M.gates){
+    const k=q.k, cellAt=(ring,a)=>{ if(ring<1||ring>K) return -1; let t=a; while(t<0) t+=MZ_TAU; while(t>=MZ_TAU) t-=MZ_TAU; return M.base[ring]+Math.min(N[ring]-1,Math.floor(t/(MZ_TAU/N[ring]))); };
+    if(q.kind!=='egg' && !deadSet.has(cellAt(k,q.th))) placeBay(q,k-1,-1);    // the corridor inside the gate: its inner wall bows inward
+    if(q.kind!=='rim' && !deadSet.has(cellAt(k+1,q.th))) placeBay(q,k+1,1);   // the corridor outside it: its outer wall bows outward
+  }
+  // now the walls themselves (a ring wall carries its bays), and the radial walls run to them
+  for(let k=0;k<=K;k++){ const r=B(k);
+    for(const p of PIECES[k]){ if(!p) arc(0,0,r,0,MZ_TAU,k,'ring'); else arc(0,0,r,p[0],p[1],k,'ring'); if(M.bays[k].length) W[W.length-1].bays=M.bays[k]; } }
+  for(const w of W) if(w.kind==='rad' && w.th!=null){ const k=w.ring, c=Math.cos(w.th), sn=Math.sin(w.th), r0=wallR(k-1,w.th), r1=wallR(k,w.th);
+    w.x0=r0*c; w.z0=r0*sn; w.x1=r1*c; w.z1=r1*sn; }
   // the egg itself is solid
   W.push({t:2,cx:0,cz:0,R:C.EGG_R,hw:0,ring:0,kind:'egg'});
   // the antechamber outside the rim gate: a funnel, two sides and a back wall
   const A=M.ante, at=(s,v)=>[A.ux*(A.r+s)+A.tx*v, A.uz*(A.r+s)+A.tz*v], gw=C.GATE_W/2+hw, aw=C.ANTE_W, ad=C.ANTE_D;
   const rimG=M.gates.find(q=>q.kind==='rim');
-  for(const sd of [-1,1]){ const ea=rimG?(sd<0?rimG.a0:rimG.a1):0, p0=rimG?[A.r*Math.cos(ea),A.r*Math.sin(ea)]:at(0,sd*gw), p1=at(40,sd*aw), p2=at(ad,sd*aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); seg(p1[0],p1[1],p2[0],p2[1],K+1,'ante'); }
-  { const p0=at(ad,-aw), p1=at(ad,aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); }
+  const awS=[aw,aw];   // (a rim gate opened up to a junction is wider than the funnel's mouth: that side of the room widens to meet it)
+  for(const sd of [-1,1]){ const ea=rimG?(sd<0?rimG.a0:rimG.a1):0, ve=rimG?Math.abs(A.r*Math.sin(ea-A.th)):gw, w=Math.max(aw,ve+12); awS[sd<0?0:1]=w;
+    const p0=rimG?[A.r*Math.cos(ea),A.r*Math.sin(ea)]:at(0,sd*gw), p1=at(40,sd*w), p2=at(ad,sd*w); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); seg(p1[0],p1[1],p2[0],p2[1],K+1,'ante'); }
+  { const p0=at(ad,-awS[0]), p1=at(ad,awS[1]); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); }
   // the grid: three abreast, rows 22 apart, facing the gate (room for fifteen)
   M.grid=[]; const head=Math.atan2(-A.ux,-A.uz);
   for(let i=0;i<15;i++){ const row=Math.floor(i/3), col=i%3; const p=at(52+22*row,(col-1)*17); M.grid.push({x:p[0], z:p[1], head}); }
@@ -44772,7 +44817,7 @@ function mzNoses(W, C, M){
   for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2 || (w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6)) continue;
     const L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0);
     for(let e=0;e<2;e++){ let px,pz,ux,uz;
-      if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1; px=w.cx+w.R*Math.cos(a); pz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+      if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; px=w.cx+rr*Math.cos(a); pz=w.cz+rr*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
       else { const dx=(w.x1-w.x0)/(L||1), dz=(w.z1-w.z0)/(L||1); px=e?w.x1:w.x0; pz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
       const tx=px+ux*w.hw, tz=pz+uz*w.hw; let buried=false;
       for(let j=0;j<W.length;j++) if(j!==i && mzPrimDist(W[j],tx,tz)<0.25){ buried=true; break; }
@@ -44780,7 +44825,7 @@ function mzNoses(W, C, M){
   for(let n=0;n<ends.length;n+=3){ const w=W[ends[n]], e=ends[n+1], L=ends[n+2], cut=RN-w.hw;
     if(L<cut*2+RN+4) continue;   // (too short to carry a bulb)
     let cx, cz, ux, uz;
-    if(w.t===0){ if(e) w.a1-=cut/w.R; else w.a0+=cut/w.R; const a=e?w.a1:w.a0, sg=e?1:-1; cx=w.cx+w.R*Math.cos(a); cz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+    if(w.t===0){ if(e) w.a1-=cut/w.R; else w.a0+=cut/w.R; const a=e?w.a1:w.a0, sg=e?1:-1, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; cx=w.cx+rr*Math.cos(a); cz=w.cz+rr*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
     else { const dx=(w.x1-w.x0)/L, dz=(w.z1-w.z0)/L; if(e){ w.x1-=dx*cut; w.z1-=dz*cut; } else { w.x0+=dx*cut; w.z0+=dz*cut; } cx=e?w.x1:w.x0; cz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
     if(e) w.f1=RN; else w.f0=RN;
     M.noses.push({x:cx, z:cz, ux, uz, r:RN, ring:w.ring}); }   // (the bulb's centre and which way its tip points)
@@ -44799,7 +44844,7 @@ function mzGridBuild(M){
   const mark=(x,z,i)=>{ const r=inf; const gi0=Math.floor((x-r+ext)/G), gi1=Math.floor((x+r+ext)/G), gj0=Math.floor((z-r+ext)/G), gj1=Math.floor((z+r+ext)/G);
     for(let gi=gi0;gi<=gi1;gi++) for(let gj=gj0;gj<=gj1;gj++){ if(gi<0||gj<0||gi>=n||gj>=n) continue; const k=gi*n+gj; const L=cells[k]||(cells[k]=[]); if(L[L.length-1]!==i && L.indexOf(i)<0) L.push(i); } };
   M.walls.forEach((w,i)=>{
-    if(w.t===0){ const len=(w.a1-w.a0)*w.R, m=Math.max(2,Math.ceil(len/6)); for(let s=0;s<=m;s++){ const a=w.a0+(w.a1-w.a0)*s/m; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } }
+    if(w.t===0){ const len=(w.a1-w.a0)*w.R, m=Math.max(2,Math.ceil(len/6)); for(let s=0;s<=m;s++){ const a=w.a0+(w.a1-w.a0)*s/m, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; mark(w.cx+rr*Math.cos(a), w.cz+rr*Math.sin(a), i); } }
     else if(w.t===1){ const len=Math.hypot(w.x1-w.x0,w.z1-w.z0), m=Math.max(1,Math.ceil(len/6)); for(let s=0;s<=m;s++) mark(w.x0+(w.x1-w.x0)*s/m, w.z0+(w.z1-w.z0)*s/m, i); }
     else { const m=Math.max(6,Math.ceil(w.R*MZ_TAU/6)); for(let s=0;s<m;s++){ const a=s/m*MZ_TAU; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } if(w.R<G) mark(w.cx,w.cz,i); else { for(let x=-w.R;x<=w.R;x+=G/2) for(let z=-w.R;z<=w.R;z+=G/2) if(x*x+z*z<w.R*w.R) mark(w.cx+x,w.cz+z,i); } }
   });
@@ -44808,14 +44853,27 @@ function mzGridBuild(M){
   M.wallDist=(x,z)=>{ mzNear(M,x,z); return MZ_Q.d; };
 }
 // nearest wall surface to (x,z): MZ_Q.d (negative inside), MZ_Q.nx/nz (outward normal); allocation-free
+// a bayed ring wall's radius at angle a (bays: flat [centre angle, half-span, depth(+out/-in)] ...): each
+// bay a cosine bulge, overlapping ones adding up (smoothly). MZ_BR.dr: d(radius)/d(angle)
+const MZ_BR={r:0,dr:0};
+function mzBayR(b,R,a){
+  let v=0, dv=0;
+  for(let i=0;i<b.length;i+=3){ const da=Math.atan2(Math.sin(a-b[i]),Math.cos(a-b[i])), u=da/b[i+1]; if(u<=-1||u>=1) continue;
+    v+=b[i+2]*(1+Math.cos(Math.PI*u))/2; dv+=-b[i+2]*Math.PI/2*Math.sin(Math.PI*u)/b[i+1]; }
+  MZ_BR.r=R+v; MZ_BR.dr=dv; return MZ_BR.r;
+}
 // (MZ_Q.e: 1 when that surface is the round tip of a bulb, the kart past the wall's end)
 const MZ_Q={d:1e9,nx:0,nz:0,e:0};
 function mzPrimDist(w,x,z){
   let qx,qz,s=0,e=0;
   if(w.t===2){ const dx=x-w.cx, dz=z-w.cz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.R; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=0; return MZ_Q.d; }
   if(w.t===0){ const dx=x-w.cx, dz=z-w.cz; let a=Math.atan2(dz,dx); while(a<w.a0) a+=MZ_TAU; while(a>=w.a0+MZ_TAU) a-=MZ_TAU;
+    if(w.bays && a<=w.a1){   // a bayed wall: distance off its curve (gentle, so the radial offset over the slope is near enough)
+      const rho=Math.hypot(dx,dz)||1e-6, rr=mzBayR(w.bays,w.R,a), sl=MZ_BR.dr/rr, dr=rho-rr, ux=dx/rho, uz=dz/rho;
+      let nx=ux+sl*uz, nz=uz-sl*ux; const nl=Math.hypot(nx,nz); nx/=nl; nz/=nl; if(dr<0){ nx=-nx; nz=-nz; }
+      MZ_Q.d=Math.abs(dr)/nl-(w.fl?mzHalfW(w,(a-w.a0)*w.R):w.hw); MZ_Q.nx=nx; MZ_Q.nz=nz; MZ_Q.e=0; return MZ_Q.d; }
     if(a<=w.a1){ qx=w.cx+w.R*Math.cos(a); qz=w.cz+w.R*Math.sin(a); s=(a-w.a0)*w.R; }
-    else { const hi=(a-w.a1)<(w.a0+MZ_TAU-a), ea=hi?w.a1:w.a0; qx=w.cx+w.R*Math.cos(ea); qz=w.cz+w.R*Math.sin(ea); s=hi?(w.a1-w.a0)*w.R:0; e=hi?w.f1:w.f0; } }
+    else { const hi=(a-w.a1)<(w.a0+MZ_TAU-a), ea=hi?w.a1:w.a0, re=w.bays?mzBayR(w.bays,w.R,ea):w.R; qx=w.cx+re*Math.cos(ea); qz=w.cz+re*Math.sin(ea); s=hi?(w.a1-w.a0)*w.R:0; e=hi?w.f1:w.f0; } }
   else { const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); if(t<0){ t=0; e=w.f0; } else if(t>1){ t=1; e=w.f1; } qx=w.x0+vx*t; qz=w.z0+vz*t; if(w.fl) s=t*w.L; }
   const dx=x-qx, dz=z-qz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-(w.fl?mzHalfW(w,s):w.hw); MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=e?1:0; return MZ_Q.d;
 }
@@ -44835,10 +44893,13 @@ function mzClearLine(M,ax,az,bx,bz,pad){
 /* ---- where am I, how far to go ---- */
 function mzLocate(M,x,z){
   const C=M.C, rho=Math.hypot(x,z);
-  if(rho<C.R0) return M.EGG;
-  const k=Math.floor((rho-C.R0)/C.P)+1;
-  if(k>M.K) return M.ANTE;
+  if(rho<C.R0-C.BAY_D-1) return M.EGG;
   let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU;
+  let k=Math.floor((rho-C.R0)/C.P)+1;
+  if(M.bays){ const bo=k<=M.K?M.bays[k]:null, bi=k-1>=0&&k-1<=M.K?M.bays[k-1]:null;   // a bay moves a wall: the cell is the one inside its walls
+    if(bo&&bo.length&&rho>=mzBayR(bo,C.R0+k*C.P,a)) k++; else if(bi&&bi.length&&rho<mzBayR(bi,C.R0+(k-1)*C.P,a)) k--; }
+  if(k<1) return M.EGG;
+  if(k>M.K) return M.ANTE;
   const n=M.N[k]; return M.base[k]+Math.min(n-1,Math.floor(a/(MZ_TAU/n)));
 }
 function mzRemainAt(M,x,z,c){
@@ -45118,7 +45179,9 @@ function mzWallGeos(M){
       if(w.fl){ const add=(a,b)=>{ const m=Math.ceil((b-a)/2); for(let i=1;i<m;i++) ss.push(a+(b-a)*i/m); }; if(w.f0) add(0,w.fl); if(w.f1) add(L-w.fl,L);
         ss.sort((a,b)=>a-b); for(let i=ss.length-1;i>0;i--) if(ss[i]-ss[i-1]<0.6) ss.splice(i-(i===ss.length-1?1:0),1); } }
     for(const sv of ss){ let p;
-      if(w.t===0){ const a=w.a0+sv/w.R; p={x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}; }
+      if(w.t===0){ const a=w.a0+sv/w.R;
+        if(w.bays){ const rr=mzBayR(w.bays,w.R,a), dr=MZ_BR.dr, c=Math.cos(a), sn=Math.sin(a), tx=dr*c-rr*sn, tz=dr*sn+rr*c, tl=Math.hypot(tx,tz); p={x:rr*c, z:rr*sn, tx:tx/tl, tz:tz/tl}; }
+        else p={x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}; }
       else { const tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1); p={x:w.x0+tx*sv, z:w.z0+tz*sv, tx, tz}; }
       p.s=sv; if(w.fl){ p.h=mzHalfW(w,sv); const d0=w.f0?sv:1e9, d1=w.f1?L-sv:1e9, dm=Math.min(d0,d1)/(w.fl*1.5); p.k=dm>=1?1:dm*dm*(3-2*dm); }
       pts.push(p); }
@@ -45137,6 +45200,11 @@ function mzWallGeos(M){
     out.push({wall:g}); }
   return out;
 }
+// trace a wall's centre line on a 2D canvas (a bayed ring wall as a polyline)
+function mzTraceWall(g,w,X,Z,k){
+  if(w.t===0 && w.bays){ const n=Math.max(8,Math.ceil((w.a1-w.a0)*w.R/4)); for(let i=0;i<=n;i++){ const a=w.a0+(w.a1-w.a0)*i/n, rr=mzBayR(w.bays,w.R,a); i?g.lineTo(X(rr*Math.cos(a)),Z(rr*Math.sin(a))):g.moveTo(X(rr*Math.cos(a)),Z(rr*Math.sin(a))); } }
+  else if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); }
+}
 // the floor's light map: a little of every wall's light spilt at its foot, warm pools at the spoke
 // gates, the loops as bright pools, the egg's warmth spreading from the centre
 function mzGlowTex(M){
@@ -45150,7 +45218,7 @@ function mzGlowTex(M){
   g.lineCap='round';
   for(const pass of [[10,0.07],[3.6,0.14]]){ g.lineWidth=pass[0]*k*1.6;
     for(const w of M.walls){ if(w.t===2) continue; g.strokeStyle=css(mzRingU(w.ring),pass[1]); g.beginPath();
-      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); }
+      mzTraceWall(g,w,X,Z,k); g.stroke(); }
     for(const b of M.noses){ g.fillStyle=css(mzRingU(b.ring),pass[1]); g.beginPath(); g.arc(X(b.x),Z(b.z),(b.r+pass[0]*0.4)*k,0,MZ_TAU); g.fill(); } }   // (the bulbs spill light too)
   const pool=(x,z,r,u,a,m)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,m||1.1)); gr.addColorStop(0.5,css(u,a*0.35,m||1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
   for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 26, mzRingU(q.ring), 0.60); }
@@ -45166,7 +45234,7 @@ function mzWallTex(M){
   for(const pass of [[M.C.T*2.4,0.22],[M.C.T*1.15,0.78]]){ g.lineWidth=pass[0]*k;
     for(const w of M.walls){ if(w.t===2) continue; mzTint(mzRingU(w.ring),col);
       g.strokeStyle=`rgba(${Math.round(col.r*255)},${Math.round(col.g*255)},${Math.round(col.b*255)},${pass[1]})`; g.beginPath();
-      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); }
+      mzTraceWall(g,w,X,Z,k); g.stroke(); }
     for(const b of M.noses){ mzTint(mzRingU(b.ring),col); g.fillStyle=`rgba(${Math.round(col.r*255)},${Math.round(col.g*255)},${Math.round(col.b*255)},${pass[1]})`; g.beginPath(); g.arc(X(b.x),Z(b.z),b.r*pass[0]/(M.C.T)*k,0,MZ_TAU); g.fill(); } }
   // the egg, mirrored as a warm disc
   { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(MZ.EGG_R+4)*k); gr.addColorStop(0,'rgba(255,236,190,1)'); gr.addColorStop(0.8,'rgba(255,200,120,0.8)'); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(0,0,S,S); }
@@ -45483,7 +45551,7 @@ function mzBuildTrack(idx){
     trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), mzDomeMat(), list, (q,d,c)=>{ d.position.set(q.x,-q.s*0.22,q.z); d.scale.set(q.s,q.s*q.sy,q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
   // ---- and high in the haze: floating cells, drifting ----
   { const R=mzRnd(M.seed^0xF10A), list=[];
-    for(let i=0;i<28;i++){ const a=R()*MZ_TAU, r=820+R()*480, lo=R()<0.7; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:lo?50+R()*150:200+R()*300, s:lo?30+R()*90:16+R()*40, u:R()<0.25?R()*0.3:0.5+R()*0.5}); }
+    for(let i=0;i<28;i++){ const a=R()*MZ_TAU, r=M.ext+54+R()*480, lo=R()<0.7; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:lo?50+R()*150:200+R()*300, s:lo?30+R()*90:16+R()*40, u:R()<0.25?R()*0.3:0.5+R()*0.5}); }
     const im=mzInst(new T.PlaneGeometry(1,1), mzFloatMat(), list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.setScalar(q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); });
     im.frustumCulled=false; im.renderOrder=-5; trackGroup.add(im); }
   // ---- a few friendly microbes drifting above the walls ----
@@ -45600,6 +45668,9 @@ function mzSegCross(w,ax,az,bx,bz){   // does the move a->b cross this wall's ce
   const dx=bx-ax, dz=bz-az;
   if(w.t===1){ const ex=w.x1-w.x0, ez=w.z1-w.z0, den=dx*ez-dz*ex; if(Math.abs(den)<1e-9) return false;
     const t=((w.x0-ax)*ez-(w.z0-az)*ex)/den, u=((w.x0-ax)*dz-(w.z0-az)*dx)/den; return t>=0&&t<=1&&u>=0&&u<=1; }
+  if(w.t===0 && w.bays){   // a bayed wall: the move crosses it if its two ends lie either side of the curve
+    const sideOf=(x,z)=>{ let an=Math.atan2(z,x); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an>w.a1) return 0; return Math.hypot(x,z)<mzBayR(w.bays,w.R,an)?-1:1; };
+    const sa=sideOf(ax,az), sb=sideOf(bx,bz); return sa!==0 && sb!==0 && sa!==sb; }
   if(w.t===0){ const fx=ax-w.cx, fz=az-w.cz, A=dx*dx+dz*dz, B=2*(fx*dx+fz*dz), Cc=fx*fx+fz*fz-w.R*w.R, D=B*B-4*A*Cc; if(D<0||A<1e-12) return false;
     for(let sg=-1;sg<=1;sg+=2){ const t=(-B+sg*Math.sqrt(D))/(2*A); if(t<0||t>1) continue; let an=Math.atan2(fz+dz*t,fx+dx*t); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an<=w.a1) return true; } }
   return false;
@@ -45622,14 +45693,19 @@ const MZA={
   END_KEEP:0.62,     // nosing into a wall's round end keeps at least this share, deflected round it
   PIN_T:0.5, PIN_V:12,   // pressed against a wall, moving slower than PIN_V for PIN_T seconds: pinned...
   EASE_T:0.55,       // ...so it is eased off the wall over this long, nose to the open way
-  GATE_R:32,         // the gate line-up works this close to a gate's wall line
+  GATE_R:40,         // the gate line-up works this close to a gate's wall line
   GATE_YAW:1.5,      // ...turning the nose toward the gate's centre line at up to this rate (rad/s)
   GATE_POS:9,        // ...and drawing a kart that would clip a gate's edge sideways at up to this rate (units/s)
   CARRY:2.2,         // a turn the driver is making away from a wall ahead: up to this much extra turn rate (rad/s)
-  LOOK:45,           // ...looking this far ahead for that wall
-  CENTRE_D:5,        // a kart this close to a corridor wall (clearance), running along it, is eased off it...
+  LOOK:55,           // ...looking this far ahead for that wall
+  CENTRE_D:6,        // a kart this close to a corridor wall (clearance), running along it, is eased off it...
   CENTRE_V:5,        // ...at up to this many units/s
   FAST:0.45,         // at top speed every assist is this much weaker
+  PIVOT_V:34,        // slower than this with the wheel over: a pivot...
+  PIVOT_RATE:6.6,    // ...turning this fast at a standstill (rad/s: a half-turn in under half a second)
+  PIVOT_HOLD:14,     // ...rolling no faster than this while it does
+  UTURN_A:1.9,       // wheel hard over through more than this much turn (rad: more than a corner) at speed...
+  UTURN_BLEED:0.08,  // ...sheds speed at this rate (share kept per second) until the pivot takes over
 };
 const MZ_CN=new Float64Array(8);   // this frame's wall contact normals (up to four)
 function mzCollideRacer(r,dt){   // walls, islands and the egg: push out; the speed into the wall goes, the speed along it stays
@@ -45651,7 +45727,9 @@ function mzCollideRacer(r,dt){   // walls, islands and the egg: push out; the sp
       // else the way to the egg (and it holds that choice while it stays in touch)
       const tx=-nz, tz=nx, ht=(hx*tx+hz*tz)*sg;
       let side=r._mzSide||0;
-      if(Math.abs(ht)>0.12) side=ht>0?1:-1;
+      const stI=r._st||0, lx=hz, lz=-hx;   // (the heading's left: where steering + turns it)
+      if(Math.abs(stI)>0.5 && imp>0.5 && r._mzStT>0.2){ const tl=tx*lx+tz*lz; if(Math.abs(tl)>0.05) side=(stI>0?1:-1)*(tl>0?1:-1)*sg; }   // driver hard over, nose well into it: slide the way they are turning (a U-turn goes round)
+      else if(Math.abs(ht)>0.12) side=ht>0?1:-1;
       else if(!side){ const st=r._st||0; if(Math.abs(st)>0.2) side=(st>0?1:-1)*sg;
         else { const c=mzLocate(M,r.x,r.z); let best=null, bv=1e18; if(c<M.NC) for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-r.x,p.z-r.z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
           side = best ? (((best.x-r.x)*tx+(best.z-r.z)*tz)>=0?1:-1) : 1; } }
@@ -45670,11 +45748,11 @@ function mzCollideRacer(r,dt){   // walls, islands and the egg: push out; the sp
           burst(r.x,r.y+1,r.z,0xc8b8ff,4+Math.round(4*imp),22,0.3,3);
           if(r.you){ kickShake(0.10+0.22*imp); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); } } }
     }
-    // pinned: in touch with a wall and going nowhere
-    if(r._mzPx!=null && ((r._mzTouch||0)>0) && !(r.spinT>0) && !r.finished && !(r._mzEase>0)){
-      const v=Math.hypot(r.x-r._mzPx, r.z-r._mzPz)/dt;
-      if(v<MZA.PIN_V){ r._mzPinT=(r._mzPinT||0)+dt; if(r._mzPinT>MZA.PIN_T) mzUnpin(r); } else r._mzPinT=Math.max(0,(r._mzPinT||0)-2*dt);
-    } else if(!((r._mzTouch||0)>0)) r._mzPinT=0;
+    // pinned: in touch with a wall and going nowhere (net: a kart rocking to and fro on the spot is pinned too)
+    if(((r._mzTouch||0)>0) && !(r.spinT>0) && !r.finished && !(r._mzEase>0)){
+      if(r._mzAx==null || Math.hypot(r.x-r._mzAx, r.z-r._mzAz)>MZA.PIN_V*MZA.PIN_T){ r._mzAx=r.x; r._mzAz=r.z; r._mzPinT=0; }
+      else { r._mzPinT=(r._mzPinT||0)+dt; if(r._mzPinT>MZA.PIN_T){ mzUnpin(r); r._mzAx=null; } }
+    } else if(!((r._mzTouch||0)>0)){ r._mzPinT=0; r._mzAx=null; }
     r._mzPx=r.x; r._mzPz=r.z;
   } else if(any && imp>0.5 && r.spd>0) r.spd=Math.min(r.spd, 6+60*(1-imp));   // (a spinning or coasting kart: just the old scrub)
   r._mzLc=mzLocate(M,r.x,r.z); r._mzLx=r.x; r._mzLz=r.z;
@@ -45701,6 +45779,19 @@ function mzEase(r,dt){
 }
 // the maze's handling: a kart turns harder the slower it goes, so it can swing round in a corridor
 function mzTurnK(vfrac){ return 1.3+0.95*(1-vfrac); }
+// turning round. Slow (or backing up) with the wheel well over, a racer pivots on the spot — a full
+// half-turn in about half a second — and holds its speed down while it does. Wheel held hard over
+// past a corner's worth of turn at speed (a U-turn under way; a phone has no brake) sheds speed
+// fast so the pivot takes over. Any driver: keys, stick, tilt, the AI.
+function mzPivot(r,dt,steer,rate){
+  const a=Math.abs(steer), v=Math.abs(r.spd);
+  if(a>0.5 && Math.sign(steer)===r._mzStS) r._mzStT=(r._mzStT||0)+dt; else { r._mzStS=a>0.5?Math.sign(steer):0; r._mzStT=0; }   // (how long the wheel has been held over one way: the wall slide reads it)
+  if(a>0.85){ r._mzLockA=(r._mzLockA||0)+Math.abs(rate*(r._st||0))*dt; if(r._mzLockA>MZA.UTURN_A && v>MZA.PIVOT_V*0.7) r.spd*=Math.pow(MZA.UTURN_BLEED,dt); }
+  else if(a<0.5) r._mzLockA=0;
+  r._mzPiv = a>0.6 && v<MZA.PIVOT_V;
+  if(a<0.35 || v>=MZA.PIVOT_V) return rate;
+  const w=1-v/MZA.PIVOT_V; return Math.max(rate, rate+(MZA.PIVOT_RATE-rate)*w);
+}
 // the gates near a point: their own little spatial hash (built with the maze, queried allocation-free)
 function mzGateGrid(M){
   const g=M.grd, cells=new Array(g.n*g.n), reach=MZA.GATE_R+g.G, hw=M.C.T/2;
@@ -45726,11 +45817,12 @@ function mzCorner(r,dt,turnRate){
       const lc=dl+(hx*q.tx+hz*q.tz)*ad/va; if(Math.abs(lc)>q.hc+8) continue;               // ...and through (or just shy of) the opening
       if(ad<bda){ bda=ad; bq=q; blc=lc; } }
     if(bq){ gating=true;
-      const q=bq, da=(r.x-q.cx)*q.ax+(r.z-q.cz)*q.az, sd=da>0?-1:1, px=q.cx+q.ax*sd*12, pz=q.cz+q.az*sd*12;
-      const err=angDiff(Math.atan2(px-r.x,pz-r.z), r.head), u=1-bda/MZA.GATE_R, w=u*u*(3-2*u)*w0;
-      if(!(Math.abs(st)>0.25 && Math.sign(st)!==Math.sign(err))) r.head+=Math.max(-1,Math.min(1,err/0.5))*MZA.GATE_YAW*w*dt;
-      const room=q.hc-MZ.KR-2.5, over=Math.abs(blc)-room;
-      if(over>0 && bda<18){ const m=Math.min(over, MZA.GATE_POS*w*dt)*(blc>0?-1:1); r.x+=q.tx*m; r.z+=q.tz*m; } } }
+      // only a line that would clip the opening's edge is corrected (a clean line through it is the driver's own):
+      // the nose eased toward the opening's middle, and the kart drawn sideways off the edge as it arrives
+      const q=bq, u=1-bda/MZA.GATE_R, w=u*u*(3-2*u)*w0, room=q.hc-MZ.KR-2.5, over=Math.abs(blc)-room;
+      if(over>0){ const err=angDiff(Math.atan2(q.cx-r.x,q.cz-r.z), r.head);
+        if(!(Math.abs(st)>0.25 && Math.sign(st)!==Math.sign(err))) r.head+=Math.max(-1,Math.min(1,err/0.5))*MZA.GATE_YAW*w*Math.min(1,over/6)*dt;
+        if(bda<18){ const m=Math.min(over, MZA.GATE_POS*w*dt)*(blc>0?-1:1); r.x+=q.tx*m; r.z+=q.tz*m; } } } }
   // (B) a wall ahead that the driver is turning away from: help the turn round, on a smooth arc
   if(Math.abs(st)>0.3){ let t=0, hit=false, nx=0, nz=0;
     for(let k=0;k<10 && t<MZA.LOOK;k++){ const d=mzNear(M, r.x+hx*t, r.z+hz*t); if(d<MZ.KR*0.8){ hit=true; nx=MZ_Q.nx; nz=MZ_Q.nz; break; } t+=Math.max(1.5, Math.min(8, d-MZ.KR*0.5)); }
@@ -45776,6 +45868,7 @@ function mzChoose(r,S,c,entry){
   const cand=[]; for(const pi of L) if(pi!==entry && M.PT[pi].kind!==3) cand.push(pi);
   const cost=pi=>{ const p=M.PT[pi]; return M.D[pi]+Math.hypot(p.x-r.x,p.z-r.z)*0.2; };
   cand.sort((a,b)=>cost(a)-cost(b));
+  if(!cand.length) return entry>=0 ? entry : L[0];   // (nowhere on but back: the gate cell entered from its one inner way)
   if(cand.length===1) return cand[0];
   const nb=pi=>{ const p=M.PT[pi]; return p.a===c?p.b:p.a; };
   if(Math.random()<mzSkillP(r,S)) return cand[0];
@@ -59585,6 +59678,7 @@ function updateRacer(r,dt){
   r.boostT=Math.max(0,r.boostT-dt);
   if(r.boostT>0) target=BOOSTV;
   if(MAZE && !r.you && r._mzCap!=null) target=Math.min(target, r._mzCap);   // the maze AI slows for its corners
+  if(MAZE && r._mzPiv) target=Math.min(target, MZA.PIVOT_HOLD);         // pivoting: it turns on the spot rather than drive off in a circle
 
   // accelerate
   if(MAZE && !r.you && r._mzRev) r.spd += (-45-r.spd)*Math.min(1,4*dt);          // maze AI backing off a wall
@@ -59604,6 +59698,7 @@ function updateRacer(r,dt){
   // at speed instead — that reads as "it goes where I point it".
   let turnRate=TURN*(1.02-0.24*vfrac);
   if(MAZE) turnRate*=mzTurnK(vfrac);    // the maze: tighter the slower you go, so a corridor U-turn works
+  if(MAZE) turnRate=mzPivot(r,dt,steer,turnRate);   // ...and slow with the wheel over, a swimmer pivots on the spot
   if(drift && Math.abs(r.spd)>(MAZE?18:50)){   // (the maze: a drift holds down to a crawl, so it can swing you round)
     // lock the slide to the direction you're actually steering — no random snap,
     // and don't let live steering fight the slide (that caused the squirreliness)
@@ -61188,8 +61283,7 @@ function mzMapDraw(M, S, ext, lw){
   for(const w of M.walls){
     if(w.kind==='egg' || w.kind==='island') continue;
     g.strokeStyle=w.kind==='ante'?'rgba(143,161,232,0.7)':tint(Math.min(w.ring,M.K)); g.beginPath();
-    if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*sc,w.a0,w.a1);
-    else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); }
+    mzTraceWall(g,w,X,Z,sc);
     g.stroke();
   }
   const eg=g.createRadialGradient(S/2,S/2,0,S/2,S/2,C.R0*sc);
