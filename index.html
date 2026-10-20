@@ -713,6 +713,19 @@
     font-size:13px;flex-direction:column;gap:5px;cursor:pointer;background:rgba(30,22,10,.45);}
   body:not(.touch) #whipbtn .wk{display:block;font-size:11px;letter-spacing:0;padding:1px 6px;line-height:1.3;
     border:1px solid currentColor;border-radius:4px;background:none;color:inherit;opacity:.85;}
+  /* Ariadne: no minimap and no distance readout — your place alone, where the lap counter sits,
+     and the standings list moves up into the map's corner */
+  body.maze-course #mapwrap, body.maze-course #lap{display:none;}
+  body.maze-course #pos{top:calc(12px + var(--st));}
+  body.maze-course #leader{top:calc(12px + var(--st));}
+  @media (orientation:portrait) and (max-width:500px),(orientation:landscape) and (max-height:500px) and (pointer:coarse){
+    body.maze-course #pos{top:calc(10px + var(--st));right:calc(52px + var(--sr));}
+    body.maze-course #leader{top:calc(10px + var(--st));}
+  }
+  @media (orientation:landscape) and (max-height:500px) and (pointer:coarse){
+    body.maze-course #pos{top:calc(8px + var(--st));}
+    body.maze-course #leader{top:calc(8px + var(--st));left:calc(10px + var(--sl));}
+  }
 </style>
 </head>
 <body>
@@ -32628,6 +32641,19 @@ const TRACKS=[
          [680,16,610],[550,22,680],[400,30,660],[250,38,720],[130,44,870],[-30,46,940],[-200,42,880],
          [-330,36,900],[-490,30,990],[-680,26,960],[-850,22,830],[-960,16,640],[-970,12,450],[-900,10,290],
          [-770,10,190],[-650,10,160]]},
+  /* Ariadne — "the Labyrinth" (see THE LABYRINTH KIT). One run in, no laps, to the egg at the
+     heart of a circular maze of ring corridors joined by short spokes: the egg's own protective
+     layers, chest-high membrane walls, periwinkle at the rim warming to gold at the egg. She gave
+     Theseus the thread; every racer leaves one on the floor. Built from `seed` by the kit, so a
+     seed per race is a later one-line change (mzPickSeed). Her placeholder song is a descending
+     minor line over i-bVII-bVI-V (0,-2,-4,-5), the walk down into the maze; a produced record
+     comes later. */
+  {name:'Ariadne', maze:true, loop:false, egg:true, seed:0x41D1E5, key:3, tempo:176, sky:0x15122a,
+   song:{ name:"Ariadne's Thread",
+          mel: [0,null,3,2,    0,null,-2,0,   3,null,5,7,    5,null,3,null],
+          melB:[12,null,10,8,  7,null,8,10,   12,null,15,14, 12,null,null,null],
+          bass:[0,-2,-4,-5] },
+   ctrl:[[0,0,0],[0,0,1]]},
 ];
 // Samples per course. 700 everywhere except where a course asks for more (Eve's run is ~26k
 // units long and carries 2,600 to keep the same ~10-unit spacing). Set on EVERY buildTrack.
@@ -44470,6 +44496,962 @@ function edenTick(E, tsec){
     if(b.u) b.u.value=b.base*k; else b.m.color.setScalar(k); }
 }
 
+/* ============== THE LABYRINTH KIT (Ariadne) ==============================================
+   Ariadne gave Theseus the thread through the labyrinth; here the labyrinth is the egg's own
+   protective layers and the thread is the glowing trail every racer leaves on the floor.
+
+   THE KIT IS THE GENERATOR. Everything about the maze — its rings, walls, gates, dead-end
+   loops, the start antechamber, the route the standings are measured along — comes out of
+   mzMake(seed). Phase 1 races one fixed seed (the course's `seed`), but nothing below assumes
+   it: a race simply builds from whatever seed it is handed (mzSeedNext, which the multiplayer
+   start message carries), so a seed per race later is a one-line change in mzPickSeed().
+
+   Layout: concentric RING corridors (ring 1 hugs the egg chamber, ring K is the rim), each cut
+   into cells about a corridor wide (a ring doubles its cell count whenever its cells would
+   run longer than two corridor widths). A randomised depth-first growing tree, strongly
+   biased to run ALONG the rings, carves the passages; two gates open into the egg chamber;
+   then the maze is BRAIDED — some dead ends get a second opening — but only where that keeps
+   the shortest route inside the course's length window, so there is more than one way in
+   without a shortcut that skips the maze. Every dead end that is left becomes a keyhole: the
+   corridor ends in a round turnaround loop around a soft island, so a dead end is a U-turn,
+   never a reverse. Every generated maze is validated (mzValidate) and a seed whose maze fails
+   steps on to its next attempt, deterministically, so every peer builds the same one.
+
+   Everything is gated on MAZE (null on every other course). Nothing here runs, allocates or
+   draws a random number unless the Ariadne course is built. */
+const MZ_SEED_DEFAULT=0x41D1E5;     // Ariadne's phase-1 seed (her TRACKS entry carries it as `seed`)
+const MZ_RIVAL_TRAILS=false;        // rivals' threads: off by default (owner's call); true draws every racer's
+const MZ={
+  R0:78,        // egg chamber wall radius
+  P:36,         // ring pitch: corridor + wall
+  T:3.2,        // wall thickness (clear corridor = P-T = 32.8, three karts abreast)
+  H:5,          // wall height: chest-high to a racer (head ~5.4 over the floor)
+  K:13,         // rings
+  N1:12,        // cells in ring 1
+  DBL:2.0,      // a ring doubles its cells when they would run longer than DBL*P
+  RING_W:8,     // carve bias: ring-wise steps are this much likelier than radial ones
+  BRAID:0.55,   // share of dead ends that try to open a second way out
+  LMIN:8500, LMAX:11500,  // window for the shortest route (units, antechamber front to the egg): about 1:30 at race pace
+  ALT_OVER:0.62, ALT_LEN:1.7,   // a second route sharing at most this much of the shortest, no longer than this x it
+  KR:3.6,       // racer collision radius against walls
+  EGG_R:18, FIN_R:36,    // egg radius; you have reached the egg inside FIN_R of its centre
+  ANTE_D:150, ANTE_W:62, // antechamber depth past the rim wall, half-width
+  GATE_W:30,    // clear width of a spoke gate
+  ISL_R:3.6,    // turnaround island
+  HC:16,        // floor height at the egg chamber: the rings terrace up toward the egg
+  ANG_IN:Math.PI/2,       // the rim gate faces +z
+  TRIES:60,
+};
+const MZ_TAU=Math.PI*2;
+let MAZE=null;                      // the labyrinth being raced (null on every other course)
+let mzSeedNext=null;                // the seed the next build uses (multiplayer start); null = the course's own
+function mzPickSeed(t){ return (t&&t.seed!=null) ? t.seed : MZ_SEED_DEFAULT; }   // phase 2: a fresh seed per race here
+function mzRnd(seed){ let a=seed|0; return ()=>{ a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// the floor terraces up toward the egg: each ring is level, the step up lies across its inner wall
+function mzFloorY(rho){
+  const C=MZ, u=(rho-C.R0)/C.P;                       // ring coordinate: ring k spans [k-1,k]
+  if(u<=0) return C.HC; if(u>=C.K) return 0;
+  const v=u-0.5, n=Math.floor(v), f=v-n, s=f<0.3?0:f>0.7?1:((f-0.3)/0.4)*((f-0.3)/0.4)*(3-2*((f-0.3)/0.4));
+  const step=Math.max(0,Math.min(C.K-1,n+s));
+  return C.HC*(1-step/(C.K-1));
+}
+/* ---- carving ---- */
+function mzCarve(seed, C){
+  const R0=C.R0, P=C.P, K=C.K, R=mzRnd(seed);
+  const N=[0], base=[0], cr=[0]; let n=C.N1, tot=0;
+  for(let k=1;k<=K;k++){ const c=R0+(k-0.5)*P; if(k>1 && MZ_TAU*(c-P/2)/n>C.DBL*P) n*=2; N[k]=n; base[k]=tot; tot+=n; cr[k]=c; }
+  const NC=tot, ck=new Int16Array(NC), cj=new Int16Array(NC);
+  for(let k=1;k<=K;k++) for(let j=0;j<N[k];j++){ ck[base[k]+j]=k; cj[base[k]+j]=j; }
+  const id=(k,j)=>base[k]+((j%N[k])+N[k])%N[k];
+  const E=[], adj=[]; for(let c=0;c<NC;c++) adj.push([]);
+  const addE=(a,b,kind)=>{ E.push({a,b,kind,open:false}); adj[a].push(E.length-1); adj[b].push(E.length-1); };
+  for(let k=1;k<=K;k++) for(let j=0;j<N[k];j++){
+    addE(id(k,j),id(k,j+1),0);                          // ring-wise neighbour (radial wall between)
+    if(k<K){ if(N[k+1]===N[k]) addE(id(k,j),id(k+1,j),1); else { addE(id(k,j),id(k+1,2*j),1); addE(id(k,j),id(k+1,2*j+1),1); } }
+  }
+  const M={seed, C, K, N, base, cr, NC, ck, cj, id, E, adj};
+  M.other=(e,c)=>E[e].a===c?E[e].b:E[e].a;
+  M.span=c=>{ const w=MZ_TAU/N[ck[c]]; return [cj[c]*w, (cj[c]+1)*w]; };
+  M.ent=id(K,Math.floor(C.ANG_IN/(MZ_TAU/N[K])));
+  const vis=new Uint8Array(NC), st=[M.ent]; vis[M.ent]=1;
+  while(st.length){ const c=st[st.length-1]; let tw=0; const cand=[];
+    for(const e of adj[c]){ const o=M.other(e,c); if(vis[o]) continue; const w=E[e].kind===0?C.RING_W:1; cand.push(e,w); tw+=w; }
+    if(!cand.length){ st.pop(); continue; }
+    let x=R()*tw, pick=cand[0]; for(let i=0;i<cand.length;i+=2){ x-=cand[i+1]; if(x<=0){ pick=cand[i]; break; } }
+    E[pick].open=true; const o=M.other(pick,c); vis[o]=1; st.push(o);
+  }
+  // the egg's two gates: the ring-1 cell deepest in the tree, and the one opposite it
+  const td=new Int32Array(NC).fill(-1), q=[M.ent]; td[M.ent]=0;
+  for(let h=0;h<q.length;h++){ const c=q[h]; for(const e of adj[c]) if(E[e].open){ const o=M.other(e,c); if(td[o]<0){ td[o]=td[c]+1; q.push(o); } } }
+  let g1=base[1]; for(let j=0;j<N[1];j++) if(td[base[1]+j]>td[g1]) g1=base[1]+j;
+  M.goals=[g1, id(1,cj[g1]+N[1]/2)];
+  M.deg=c=>{ let d=(c===M.ent?1:0)+(M.goals.indexOf(c)>=0?1:0); for(const e of adj[c]) if(E[e].open) d++; return d; };
+  // braid, keeping the shortest route inside the window
+  const dead=[]; for(let c=0;c<NC;c++) if(M.deg(c)===1) dead.push(c);
+  for(let i=dead.length-1;i>0;i--){ const j=Math.floor(R()*(i+1)); const t=dead[i]; dead[i]=dead[j]; dead[j]=t; }
+  let L=mzCellRoute(M).L;
+  for(const c of dead){ if(R()>=C.BRAID || M.deg(c)!==1) continue;
+    const cl=adj[c].filter(e=>!E[e].open);
+    for(let i=cl.length-1;i>0;i--){ const j=Math.floor(R()*(i+1)); const t=cl[i]; cl[i]=cl[j]; cl[j]=t; }
+    cl.sort((a,b)=>(M.deg(M.other(a,c))===1?0:1)-(M.deg(M.other(b,c))===1?0:1));   // join two dead ends first
+    for(const e of cl){ E[e].open=true; const L2=mzCellRoute(M).L; if(L2>=C.LMIN || L2>=L){ L=L2; break; } E[e].open=false; }
+  }
+  return M;
+}
+// cell-centre graph: shortest route entrance -> egg (with optional edge weight multiplier)
+function mzCellRoute(M, mul){
+  const {NC,ck,cr,E,adj,ent,goals}=M, D=new Float64Array(NC).fill(1e18), prv=new Int32Array(NC).fill(-1), pe=new Int32Array(NC).fill(-1), done=new Uint8Array(NC);
+  const cx=c=>{ const s=M.span(c), a=(s[0]+s[1])/2; return [cr[ck[c]]*Math.cos(a), cr[ck[c]]*Math.sin(a)]; };
+  D[ent]=0;
+  for(;;){ let u=-1, bd=1e18; for(let i=0;i<NC;i++) if(!done[i]&&D[i]<bd){ bd=D[i]; u=i; } if(u<0) break; done[u]=1;
+    const pu=cx(u);
+    for(const e of adj[u]){ if(!E[e].open) continue; const v=M.other(e,u); const pv=cx(v); const w=Math.hypot(pu[0]-pv[0],pu[1]-pv[1])*(mul&&mul[e]?mul[e]:1);
+      if(D[u]+w<D[v]){ D[v]=D[u]+w; prv[v]=u; pe[v]=e; } } }
+  let best=-1; for(const g of goals) if(best<0||D[g]<D[best]) best=g;
+  const path=[], edges=[]; for(let c=best;c>=0;c=prv[c]){ path.push(c); if(pe[c]>=0) edges.push(pe[c]); }
+  return {L:D[best]<1e17?D[best]:1e18, path:path.reverse(), edges};
+}
+/* ---- portals, distances to the egg, dead ends, the route ---- */
+function mzSolve(M){
+  const {C,K,cr,NC,ck,E,ent,goals}=M, R0=C.R0, P=C.P, B=k=>R0+k*P;
+  const PT=[], cellP=[]; for(let c=0;c<NC+2;c++) cellP.push([]);
+  const EGG=NC, ANTE=NC+1;
+  const add=(x,z,a,b,kind,e,th,r)=>{ PT.push({x,z,a,b,kind,e,th,r}); cellP[a].push(PT.length-1); cellP[b].push(PT.length-1); };
+  for(let ei=0;ei<E.length;ei++){ const e=E[ei]; if(!e.open) continue;
+    if(e.kind===0){ const k=ck[e.a], th=M.span(e.a)[1]; add(cr[k]*Math.cos(th), cr[k]*Math.sin(th), e.a, e.b, 0, ei, th, cr[k]); }
+    else { const o=ck[e.a]<ck[e.b]?e.b:e.a, i=o===e.a?e.b:e.a, s=M.span(o), th=(s[0]+s[1])/2, r=B(ck[i]);
+      add(r*Math.cos(th), r*Math.sin(th), i, o, 1, ei, th, r); } }
+  for(const g of goals){ const s=M.span(g), th=(s[0]+s[1])/2; add(R0*Math.cos(th), R0*Math.sin(th), g, EGG, 2, -1, th, R0); }
+  { const s=M.span(ent), th=(s[0]+s[1])/2; add(B(K)*Math.cos(th), B(K)*Math.sin(th), ent, ANTE, 3, -1, th, B(K)); M.entTh=th; }
+  const NP=PT.length, D=new Float64Array(NP).fill(1e18), done=new Uint8Array(NP), nx=new Int32Array(NP).fill(-1);
+  for(let i=0;i<NP;i++) if(PT[i].kind===2) D[i]=R0-C.FIN_R;
+  for(;;){ let u=-1, bd=1e18; for(let i=0;i<NP;i++) if(!done[i]&&D[i]<bd){ bd=D[i]; u=i; } if(u<0) break; done[u]=1;
+    for(const c of [PT[u].a, PT[u].b]){ if(c>=NC) continue; for(const v of cellP[c]){ if(v===u) continue; const w=Math.hypot(PT[u].x-PT[v].x, PT[u].z-PT[v].z);
+      if(D[u]+w<D[v]){ D[v]=D[u]+w; nx[v]=u; } } } }
+  M.PT=PT; M.cellP=cellP; M.D=D; M.EGG=EGG; M.ANTE=ANTE; M.NP=NP;
+  M.entP=cellP[ANTE][0];
+  M.ante={th:M.entTh, ux:Math.cos(M.entTh), uz:Math.sin(M.entTh), tx:-Math.sin(M.entTh), tz:Math.cos(M.entTh), r:B(K)};
+  M.L=D[M.entP]+50;                       // from the front of the grid
+  M.Rstart=D[M.entP]+C.ANTE_D;            // remaining distance that counts as no progress at all
+  M.dead=[]; for(let c=0;c<NC;c++) if(cellP[c].length===1) M.dead.push(c);
+  // the shortest route as a polyline: antechamber front, portals downhill, the egg
+  const pts=[[M.ante.ux*(B(K)+50), M.ante.uz*(B(K)+50)]];
+  for(let p=M.entP; p>=0; p=nx[p]){ pts.push([PT[p].x, PT[p].z]); if(PT[p].kind===2){ const a=PT[p].th; pts.push([Math.cos(a)*C.FIN_R, Math.sin(a)*C.FIN_R]); break; } }
+  M.route=pts;
+  return M;
+}
+/* ---- validation: solvable, length window, a second way in, clearances, every dead end looped ---- */
+function mzValidate(M){
+  const C=M.C, err=[];
+  if(!(M.D[M.entP]<1e17)) err.push('unsolvable');
+  if(M.L<C.LMIN||M.L>C.LMAX) err.push('route length '+Math.round(M.L)+' outside '+C.LMIN+'..'+C.LMAX);
+  // every cell reachable from the gate
+  { const seen=new Uint8Array(M.NC), q=[M.ent]; seen[M.ent]=1; for(let h=0;h<q.length;h++){ const c=q[h]; for(const e of M.adj[c]) if(M.E[e].open){ const o=M.other(e,c); if(!seen[o]){ seen[o]=1; q.push(o); } } }
+    if(q.length!==M.NC) err.push('unreachable cells '+(M.NC-q.length)); }
+  // a second route: penalise the shortest one's passages and route again
+  { const r0=mzCellRoute(M), mul={}; for(const e of r0.edges) mul[e]=25; const r1=mzCellRoute(M,mul);
+    const on=new Set(r0.edges); let sh=0, tl=0; const cx=c=>{ const s=M.span(c), a=(s[0]+s[1])/2; return [M.cr[M.ck[c]]*Math.cos(a), M.cr[M.ck[c]]*Math.sin(a)]; };
+    for(const e of r1.edges){ const a=cx(M.E[e].a), b=cx(M.E[e].b), w=Math.hypot(a[0]-b[0],a[1]-b[1]); tl+=w; if(on.has(e)) sh+=w; }
+    M.alt={share:tl?sh/tl:1, ratio:r0.L>0?tl/r0.L:9};
+    if(M.alt.share>C.ALT_OVER || M.alt.ratio>C.ALT_LEN) err.push('no second way in (share '+M.alt.share.toFixed(2)+', x'+M.alt.ratio.toFixed(2)+')'); }
+  // clearances (the geometry is built from these, so the numbers are the proof)
+  const clear=C.P-C.T; if(clear<3*2*C.KR+8) err.push('corridor too narrow '+clear);
+  for(let k=1;k<=M.K;k++){ const arc=MZ_TAU*(C.R0+(k-1)*C.P)/M.N[k]; if(arc<C.GATE_W+C.T+1) err.push('ring '+k+' cells too short for a gate ('+arc.toFixed(1)+')'); }
+  // turnaround loop: island + a lane a racer fits round, with room for two in it
+  const lane=(C.P-C.T)/2-C.ISL_R; if(lane<2*C.KR+2) err.push('loop lane too narrow '+lane.toFixed(1));
+  if(Math.PI*(C.ISL_R+C.KR+lane/2)<2*7) err.push('loop too short for two');
+  if(M.loops && M.loops.length!==M.dead.length) err.push('dead ends without loops '+(M.dead.length-M.loops.length));
+  // the grid: twelve slots inside the antechamber, clear of the walls and of each other
+  if(M.grid){ const s=M.grid; for(let i=0;i<s.length;i++){ for(let j=i+1;j<s.length;j++) if(Math.hypot(s[i].x-s[j].x,s[i].z-s[j].z)<9) err.push('grid slots '+i+','+j+' overlap');
+      if(M.wallDist && M.wallDist(s[i].x,s[i].z)<C.KR+3) err.push('grid slot '+i+' on a wall'); } }
+  M.valid=!err.length; M.errors=err;
+  return M.valid;
+}
+/* ---- layout: every wall as a primitive (arc / segment / disc), dead-end loops, the antechamber,
+   the grid, item boxes and pads. Walls are ridges of half-width T/2 round their centre line. ---- */
+function mzLayout(M){
+  const {C,K,N,cr,ck,cj,E,adj,ent,goals,id}=M, R0=C.R0, P=C.P, hw=C.T/2, B=k=>R0+k*P, R=mzRnd(M.seed^0x5EED);
+  const W=[];   // {t:0 arc cx,cz,R,a0,a1 | t:1 seg x0,z0,x1,z1 | t:2 disc cx,cz,R ; hw, ring, kind}
+  const arc=(cx,cz,r,a0,a1,ring,kind)=>W.push({t:0,cx,cz,R:r,a0,a1,hw,ring,kind:kind||'ring'});
+  const seg=(x0,z0,x1,z1,ring,kind)=>W.push({t:1,x0,z0,x1,z1,hw,ring,kind:kind||'rad'});
+  M.gates=[];
+  // ring walls k=0..K at radius B(k): spans are the cells just outside (ring 1 for the egg chamber, ring K for the rim)
+  for(let k=0;k<=K;k++){
+    const r=B(k), sk=k===0?1:k===K?K:k+1, n=N[sk], w=MZ_TAU/n, hg=(C.GATE_W+C.T)/2/r, gaps=[];
+    for(let j=0;j<n;j++){ const s=id(sk,j); let open=false, kind='spoke';
+      if(k===0){ open=goals.indexOf(s)>=0; kind='egg'; } else if(k===K){ open=s===ent; kind='rim'; }
+      else for(const e of adj[s]) if(E[e].kind===1 && ck[M.other(e,s)]===k && E[e].open){ open=true; break; }
+      if(open){ const m=(j+0.5)*w; gaps.push(m); M.gates.push({k, th:m, r, hg, kind, ring:k}); } }
+    if(!gaps.length){ arc(0,0,r,0,MZ_TAU,k,'ring'); continue; }
+    for(let i=0;i<gaps.length;i++){ const a=gaps[i]+hg, b=(i+1<gaps.length?gaps[i+1]:gaps[0]+MZ_TAU)-hg; if(b>a+1e-4) arc(0,0,r,a,b,k,'ring'); }
+  }
+  // radial walls between ring-wise neighbours that are not joined
+  for(const e of E) if(e.kind===0 && !e.open){ const k=ck[e.a], th=M.span(e.a)[1], c=Math.cos(th), s=Math.sin(th);
+    seg(B(k-1)*c, B(k-1)*s, B(k)*c, B(k)*s, k, 'rad'); }
+  // dead ends: a keyhole loop — a semicircle round a soft island, sealed back to the opening
+  M.loops=[]; M.pads=[]; M.boxes=[];
+  for(const c of M.dead){
+    const p=M.PT[M.cellP[c][0]], k=ck[c], rc=cr[k], s=M.span(c); let ix, iz, fx, fz;
+    if(p.kind===0){ const near0=Math.abs(Math.atan2(Math.sin(p.th-s[0]),Math.cos(p.th-s[0])))<Math.abs(Math.atan2(Math.sin(p.th-s[1]),Math.cos(p.th-s[1])));
+      const sg=near0?1:-1, tf=near0?s[1]:s[0], th=tf-sg*(P/2)/rc;
+      ix=rc*Math.cos(th); iz=rc*Math.sin(th); fx=-Math.sin(th)*sg; fz=Math.cos(th)*sg; }
+    else { ix=rc*Math.cos(p.th); iz=rc*Math.sin(p.th); const out=p.r>rc?-1:1; fx=Math.cos(p.th)*out; fz=Math.sin(p.th)*out;
+      const tx=-fz, tz=fx; for(const sd of [-1,1]){ const ax=ix+tx*sd*P/2, az=iz+tz*sd*P/2; seg(ax,az, ax-fx*P/2, az-fz*P/2, k, 'loop'); } }
+    const fa=Math.atan2(fz,fx); arc(ix,iz,P/2,fa-Math.PI/2,fa+Math.PI/2,k,'loop');
+    W.push({t:2,cx:ix,cz:iz,R:C.ISL_R,hw:0,ring:k,kind:'island'});
+    const L={cell:c, x:ix, z:iz, fx, fz, ring:k, reward:null}; const roll=R();
+    const lane=C.ISL_R+C.KR+((C.P-C.T)/2-C.ISL_R)/2;
+    if(roll<0.42){ L.reward='box'; M.boxes.push({x:ix+fx*lane, z:iz+fz*lane, loop:true}); }
+    else if(roll<0.72){ L.reward='pad'; M.pads.push({x:ix-fx*lane, z:iz-fz*lane, dx:-fx, dz:-fz, r:9}); }
+    M.loops.push(L);
+  }
+  // the egg itself is solid
+  W.push({t:2,cx:0,cz:0,R:C.EGG_R,hw:0,ring:0,kind:'egg'});
+  // the antechamber outside the rim gate: a funnel, two sides and a back wall
+  const A=M.ante, at=(s,v)=>[A.ux*(A.r+s)+A.tx*v, A.uz*(A.r+s)+A.tz*v], gw=C.GATE_W/2+hw, aw=C.ANTE_W, ad=C.ANTE_D;
+  for(const sd of [-1,1]){ const p0=at(0,sd*gw), p1=at(40,sd*aw), p2=at(ad,sd*aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); seg(p1[0],p1[1],p2[0],p2[1],K+1,'ante'); }
+  { const p0=at(ad,-aw), p1=at(ad,aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); }
+  // the grid: three abreast, rows 22 apart, facing the gate (room for fifteen)
+  M.grid=[]; const head=Math.atan2(-A.ux,-A.uz);
+  for(let i=0;i<15;i++){ const row=Math.floor(i/3), col=i%3; const p=at(52+22*row,(col-1)*17); M.grid.push({x:p[0], z:p[1], head}); }
+  // item boxes on the corridors as well: along the shortest route, and in cells off it
+  { const pts=M.route; let tot=0; const cum=[0]; for(let i=1;i<pts.length;i++){ tot+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]); cum.push(tot); }
+    for(let q=1;q<=6;q++){ const d=tot*q/7.5+60; let i=1; while(i<pts.length-1&&cum[i]<d) i++; const t=(d-cum[i-1])/Math.max(1e-6,cum[i]-cum[i-1]);
+      M.boxes.push({x:pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t, z:pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t, loop:false}); }
+    const on=new Set(mzCellRoute(M).path); let n=0;
+    for(let tries=0;tries<200&&n<4;tries++){ const c=Math.floor(R()*M.NC); if(on.has(c)||M.dead.indexOf(c)>=0||ck[c]<3) continue; const s=M.span(c), a=(s[0]+s[1])/2;
+      M.boxes.push({x:cr[ck[c]]*Math.cos(a), z:cr[ck[c]]*Math.sin(a), loop:false}); n++; } }
+  M.walls=W;
+  mzGridBuild(M);
+  return M;
+}
+/* ---- spatial hash over the wall primitives (built once; queried allocation-free) ---- */
+function mzGridBuild(M){
+  const G=16, ext=M.C.R0+M.K*M.C.P+M.C.ANTE_D+60, n=Math.ceil(2*ext/G), cells=new Array(n*n), inf=M.C.T/2+M.C.KR+2;
+  const mark=(x,z,i)=>{ const r=inf; const gi0=Math.floor((x-r+ext)/G), gi1=Math.floor((x+r+ext)/G), gj0=Math.floor((z-r+ext)/G), gj1=Math.floor((z+r+ext)/G);
+    for(let gi=gi0;gi<=gi1;gi++) for(let gj=gj0;gj<=gj1;gj++){ if(gi<0||gj<0||gi>=n||gj>=n) continue; const k=gi*n+gj; const L=cells[k]||(cells[k]=[]); if(L[L.length-1]!==i && L.indexOf(i)<0) L.push(i); } };
+  M.walls.forEach((w,i)=>{
+    if(w.t===0){ const len=(w.a1-w.a0)*w.R, m=Math.max(2,Math.ceil(len/6)); for(let s=0;s<=m;s++){ const a=w.a0+(w.a1-w.a0)*s/m; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } }
+    else if(w.t===1){ const len=Math.hypot(w.x1-w.x0,w.z1-w.z0), m=Math.max(1,Math.ceil(len/6)); for(let s=0;s<=m;s++) mark(w.x0+(w.x1-w.x0)*s/m, w.z0+(w.z1-w.z0)*s/m, i); }
+    else { const m=Math.max(6,Math.ceil(w.R*MZ_TAU/6)); for(let s=0;s<m;s++){ const a=s/m*MZ_TAU; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } if(w.R<G) mark(w.cx,w.cz,i); else { for(let x=-w.R;x<=w.R;x+=G/2) for(let z=-w.R;z<=w.R;z+=G/2) if(x*x+z*z<w.R*w.R) mark(w.cx+x,w.cz+z,i); } }
+  });
+  const EMPTY=[]; for(let k=0;k<cells.length;k++) if(!cells[k]) cells[k]=EMPTY;
+  M.grd={G,ext,n,cells};
+  M.wallDist=(x,z)=>{ mzNear(M,x,z); return MZ_Q.d; };
+}
+// nearest wall surface to (x,z): MZ_Q.d (negative inside), MZ_Q.nx/nz (outward normal); allocation-free
+const MZ_Q={d:1e9,nx:0,nz:0};
+function mzPrimDist(w,x,z){
+  let qx,qz;
+  if(w.t===2){ const dx=x-w.cx, dz=z-w.cz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.R; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; return MZ_Q.d; }
+  if(w.t===0){ const dx=x-w.cx, dz=z-w.cz; let a=Math.atan2(dz,dx); while(a<w.a0) a+=MZ_TAU; while(a>=w.a0+MZ_TAU) a-=MZ_TAU;
+    if(a<=w.a1){ qx=w.cx+w.R*Math.cos(a); qz=w.cz+w.R*Math.sin(a); }
+    else { const e=(a-w.a1)<(w.a0+MZ_TAU-a)?w.a1:w.a0; qx=w.cx+w.R*Math.cos(e); qz=w.cz+w.R*Math.sin(e); } }
+  else { const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); t=t<0?0:t>1?1:t; qx=w.x0+vx*t; qz=w.z0+vz*t; }
+  const dx=x-qx, dz=z-qz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.hw; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; return MZ_Q.d;
+}
+function mzCellList(M,x,z){ const g=M.grd, gi=Math.floor((x+g.ext)/g.G), gj=Math.floor((z+g.ext)/g.G);
+  return (gi<0||gj<0||gi>=g.n||gj>=g.n) ? null : g.cells[gi*g.n+gj]; }
+function mzNear(M,x,z){
+  const L=mzCellList(M,x,z); let bd=1e9, bx=0, bz=0;
+  if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],x,z); if(d<bd){ bd=d; bx=MZ_Q.nx; bz=MZ_Q.nz; } }
+  MZ_Q.d=bd; MZ_Q.nx=bx; MZ_Q.nz=bz; return bd;
+}
+// is the straight line a->b clear of walls (sampled every 3 units)
+function mzClearLine(M,ax,az,bx,bz,pad){
+  const L=Math.hypot(bx-ax,bz-az), n=Math.max(1,Math.ceil(L/3));
+  for(let i=1;i<n;i++){ const t=i/n; if(mzNear(M,ax+(bx-ax)*t,az+(bz-az)*t)<(pad||0)) return false; }
+  return true;
+}
+/* ---- where am I, how far to go ---- */
+function mzLocate(M,x,z){
+  const C=M.C, rho=Math.hypot(x,z);
+  if(rho<C.R0) return M.EGG;
+  const k=Math.floor((rho-C.R0)/C.P)+1;
+  if(k>M.K) return M.ANTE;
+  let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU;
+  const n=M.N[k]; return M.base[k]+Math.min(n-1,Math.floor(a/(MZ_TAU/n)));
+}
+function mzRemainAt(M,x,z,c){
+  if(c===M.EGG) return Math.max(0,Math.hypot(x,z)-M.C.FIN_R);
+  const L=M.cellP[c]; let best=1e18;
+  for(let i=0;i<L.length;i++){ const q=M.PT[L[i]], v=Math.hypot(x-q.x,z-q.z)+M.D[q.ID!==undefined?q.ID:L[i]]; if(v<best) best=v; }
+  return best;
+}
+/* ---- one seed in, one validated maze out: a seed whose maze fails steps on to its next
+   attempt (deterministically, so every peer lands on the same maze) ---- */
+function mzMake(seed){
+  let best=null;
+  for(let a=0;a<MZ.TRIES;a++){
+    const s=(seed+Math.imul(a,0x9E3779B1))|0;
+    const M=mzSolve(mzCarve(s, MZ)); mzLayout(M); mzValidate(M); M.attempt=a; M.baseSeed=seed;
+    if(M.valid) return M;
+    if(!best || M.errors.length<best.errors.length) best=M;
+  }
+  return best;   // nothing passed: race the closest (srNet.maze reports why)
+}
+/* ================= THE LOOK =================
+   The maze is the egg's own protective layers, and it is ALIVE: the egg's heartbeat sends a
+   wave of light out through the rings (lub, then a softer dub, every 1.6 s — the same clock as
+   the egg's own pulse and the heartbeat you hear in the last two rings), the walls breathe,
+   cilia along the crests sway in a travelling wave, motes drift, the wet floor carries slow
+   ripple light and the glow of every wall. Cool periwinkle at the rim, hot gold at the egg.
+   Cheap by construction: a handful of shared shader materials driven by one clock uniform
+   (MZU.uT), walls merged into eight angular sectors, every repeated prop instanced, and every
+   colour written straight out in display space (so these shaders do their own fog, against
+   the sky's horizon colour). */
+const MZ_PAL=[[0.00,0xffd07c],[0.20,0xf4ad93],[0.40,0xdf96c0],[0.60,0xc294d8],[0.80,0xa697e6],[1.00,0x8fa1e8]];
+function mzTint(u, out){   // u: 0 at the egg .. 1 at the rim -> display-space colour
+  u=Math.max(0,Math.min(1,u)); let i=1; while(i<MZ_PAL.length-1 && u>MZ_PAL[i][0]) i++;
+  const a=MZ_PAL[i-1], b=MZ_PAL[i], t=(u-a[0])/(b[0]-a[0]);
+  const ca=a[1], cb=b[1], o=out||{r:0,g:0,b:0};
+  o.r=((ca>>16&255)+(((cb>>16&255)-(ca>>16&255))*t))/255; o.g=((ca>>8&255)+(((cb>>8&255)-(ca>>8&255))*t))/255; o.b=((ca&255)+(((cb&255)-(ca&255))*t))/255;
+  return o;
+}
+function mzRingU(ring){ return ring<=0 ? 0 : Math.min(1,(ring-0.5)/MZ.K); }
+const MZ_GLSL_COMMON=`
+uniform float uT; uniform vec3 uFog; uniform vec2 uFogR;
+float mzBeat(float rho){   // the heartbeat's light wave: lub, then dub, rolling out from the egg
+  float ph=mod(uT,1.6);
+  float w1=78.0+(ph-0.10)*300.0, w2=78.0+(ph-0.40)*300.0;
+  float a=step(0.10,ph)*exp(-pow((rho-w1)/20.0,2.0))*max(0.0,1.0-(ph-0.10)*0.55);
+  float b=step(0.40,ph)*exp(-pow((rho-w2)/20.0,2.0))*0.55*max(0.0,1.0-(ph-0.40)*0.6);
+  return a+b; }
+vec3 mzFogMix(vec3 c, float depth){ return mix(c, uFog, smoothstep(uFogR.x, uFogR.y, depth)); }
+float mzHash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float mzNoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(mzHash(i),mzHash(i+vec2(1.0,0.0)),f.x),mix(mzHash(i+vec2(0.0,1.0)),mzHash(i+vec2(1.0,1.0)),f.x),f.y); }
+`;
+function mzShaderMat(o){
+  const p=Object.assign({}, o); p.uniforms=Object.assign({uT:MAZE.U.uT, uFog:MAZE.U.uFog, uFogR:MAZE.U.uFogR}, o.uniforms||{});
+  return new T.ShaderMaterial(p);
+}
+// membrane walls: rim-lit translucent ridges with a cell-and-vein surface, crests that catch the heartbeat
+function mzWallMat(){
+  return mzShaderMat({ uniforms:{}, side:T.DoubleSide,
+    vertexShader:`${MZ_GLSL_COMMON}
+      attribute vec3 color; attribute vec2 aUH;
+      varying vec3 vC; varying vec3 vN; varying vec3 vW; varying vec2 vUH; varying float vDepth; varying vec3 vV;
+      void main(){ vec3 p=position; float rho=length(p.xz);
+        p+=normal*(0.16*sin(uT*1.25+rho*0.045+aUH.x*0.05))*aUH.y;           // the walls breathe
+        vec4 w=modelMatrix*vec4(p,1.0); vW=w.xyz; vN=normalize(mat3(modelMatrix)*normal); vC=color; vUH=aUH;
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; vV=normalize(cameraPosition-w.xyz); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying vec3 vN; varying vec3 vW; varying vec2 vUH; varying float vDepth; varying vec3 vV;
+      vec2 mzCell(vec2 p){ vec2 i=floor(p), f=fract(p); float d1=8.0, d2=8.0;
+        for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ vec2 g=vec2(float(x),float(y)); vec2 o=vec2(mzHash(i+g),mzHash(i+g+19.3));
+          float d=length(g+o-f); if(d<d1){ d2=d1; d1=d; } else if(d<d2) d2=d; }
+        return vec2(d1,d2); }
+      void main(){
+        vec3 n=normalize(vN); float h=vUH.y, rho=length(vW.xz);
+        vec2 cc=mzCell(vec2(vUH.x*0.32, h*2.6));
+        float edge=1.0-smoothstep(0.0,0.09,cc.y-cc.x);                    // cell walls
+        float vein=pow(1.0-abs(mzNoise(vec2(vUH.x*0.09,h*1.3+uT*0.05))*2.0-1.0),9.0);
+        float fr=pow(1.0-abs(dot(n,vV)),2.2);                               // translucent rim
+        float key=0.5+0.5*max(0.0,dot(n,normalize(vec3(0.3,0.8,0.25))));
+        float beat=mzBeat(rho);
+        vec3 deep=vC*0.16;
+        vec3 c=mix(deep, vC*0.62, smoothstep(0.0,1.0,h))*key;
+        c+=vC*edge*0.30*(0.6+0.4*h) + vC*vein*0.18;
+        c+=mix(vC,vec3(1.0),0.35)*fr*0.75;
+        float crest=smoothstep(0.78,1.0,h);
+        c+=mix(vC,vec3(1.0),0.45)*crest*(0.55+1.6*beat);
+        c+=vC*beat*0.35*h;
+        gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
+}
+// soft additive halo over the wall crests (and the heartbeat riding it)
+function mzHaloMat(){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, side:T.DoubleSide,
+    vertexShader:`${MZ_GLSL_COMMON}
+      attribute vec3 color; attribute float aV; varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
+      void main(){ vec4 w=modelMatrix*vec4(position,1.0); vC=color; vA=aV; vB=mzBeat(length(w.xz));
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
+      void main(){ float a=pow(1.0-vA,2.0)*(0.20+0.65*vB); float f=1.0-smoothstep(uFogR.x,uFogR.y,vDepth);
+        gl_FragColor=vec4(mix(vC,vec3(1.0),0.3)*a*f,1.0); }` });
+}
+// organic props, instanced: gate posts, islands, critters, the egg's corona, the far cell clusters
+function mzPropMat(o){
+  o=o||{};
+  return mzShaderMat({ transparent:!!o.alpha, depthWrite:!o.alpha, blending:o.add?T.AdditiveBlending:T.NormalBlending,
+    uniforms:{uGlow:{value:o.glow!=null?o.glow:0.5}, uAlpha:{value:o.alpha||1}},
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vB; varying float vY;
+      void main(){
+        #ifdef USE_INSTANCING
+          mat4 im=instanceMatrix;
+        #else
+          mat4 im=mat4(1.0);
+        #endif
+        #ifdef USE_INSTANCING_COLOR
+          vC=instanceColor;
+        #else
+          vC=vec3(1.0);
+        #endif
+        vec4 w=modelMatrix*im*vec4(position,1.0); vN=normalize(mat3(modelMatrix)*mat3(im)*normal);
+        vV=normalize(cameraPosition-w.xyz); vB=mzBeat(length(w.xz)); vY=position.y;
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      uniform float uGlow; uniform float uAlpha;
+      varying vec3 vC; varying vec3 vN; varying vec3 vV; varying float vDepth; varying float vB; varying float vY;
+      void main(){ vec3 n=normalize(vN); float fr=pow(1.0-abs(dot(n,vV)),2.0);
+        float key=0.45+0.55*max(0.0,dot(n,normalize(vec3(0.3,0.8,0.25))));
+        vec3 c=vC*(0.30*key+uGlow*0.5) + mix(vC,vec3(1.0),0.4)*fr*(0.9+uGlow) + vC*vB*0.8;
+        gl_FragColor=vec4(mzFogMix(c,vDepth), uAlpha*(0.55+0.45*fr)); }` });
+}
+// the floor: dark wet violet-black, the walls' glow pooled and reflected in it, slow ripple light,
+// a long wet streak of the egg's light, and the heartbeat crossing it
+function mzFloorMat(tex){
+  return mzShaderMat({ uniforms:{uGlowMap:{value:tex}, uExt:{value:MAZE.ext}, uEggY:{value:MZ.HC+22}},
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vW; varying float vDepth;
+      void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      uniform sampler2D uGlowMap; uniform float uExt; uniform float uEggY;
+      varying vec3 vW; varying float vDepth;
+      void main(){
+        vec2 uv=vW.xz/(2.0*uExt)+0.5; vec3 g=texture2D(uGlowMap,uv).rgb;
+        float rho=length(vW.xz);
+        vec3 base=vec3(0.082,0.071,0.165);
+        // ripple light: two slow drifting layers, sharpened into caustic threads
+        float r1=mzNoise(vW.xz*0.045+vec2(uT*0.11,uT*0.07)), r2=mzNoise(vW.xz*0.07-vec2(uT*0.08,-uT*0.05));
+        float caus=pow(1.0-abs(r1-r2),10.0);
+        vec3 c=base + g*1.05 + caus*vec3(0.10,0.09,0.20)*(0.6+g.b*2.0);
+        // the wet streak: the egg's light reflected toward the eye
+        vec3 V=normalize(cameraPosition-vW); vec3 L=normalize(vec3(0.0,uEggY,0.0)-vW);
+        float spec=pow(max(0.0,dot(reflect(-V,vec3(0.0,1.0,0.0)),L)),28.0);
+        c+=vec3(1.0,0.78,0.48)*spec*0.55*(1.0-smoothstep(150.0,700.0,rho));
+        c+=vec3(0.45,0.36,0.62)*mzBeat(rho)*0.10;
+        gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
+}
+// cilia along the crests: three-blade tufts, swaying in a wave that travels round the rings
+function mzFrondMat(){
+  return mzShaderMat({ side:T.DoubleSide,
+    vertexShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying float vY; varying float vDepth; varying float vB;
+      void main(){
+        mat4 im=instanceMatrix; vec3 base=(modelMatrix*im*vec4(0.0,0.0,0.0,1.0)).xyz;
+        #ifdef USE_INSTANCING_COLOR
+          vC=instanceColor;
+        #else
+          vC=vec3(1.0);
+        #endif
+        float rho=length(base.xz), ang=atan(base.z,base.x);
+        float sway=sin(uT*2.1-ang*9.0-rho*0.04)*0.55+sin(uT*3.3+rho*0.11)*0.18;
+        vec3 p=position; float k=p.y*p.y*0.16;
+        p.x+=sway*k; p.z+=sway*k*0.4;
+        vec4 w=modelMatrix*im*vec4(p,1.0); vY=position.y; vB=mzBeat(rho);
+        vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying vec3 vC; varying float vY; varying float vDepth; varying float vB;
+      void main(){ float t=clamp(vY/2.6,0.0,1.0);
+        vec3 c=mix(vC*0.35, mix(vC,vec3(1.0),0.5)*(1.1+1.4*vB), t*t);
+        gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
+}
+/* ---- geometry: sweep a rounded ridge profile along every wall primitive, eight sectors ---- */
+const MZ_PROF=(()=>{ const P=[[-1,0,-1,0],[-1,0.55,-1,0]];
+  for(let i=0;i<=6;i++){ const a=Math.PI-i/6*Math.PI; P.push([Math.cos(a)*0.92, 0.62+0.38*Math.sin(a), Math.cos(a), Math.sin(a)]); }
+  P.push([1,0.55,1,0],[1,0,1,0]); return P; })();
+function mzWallGeos(M){
+  const C=M.C, NS=8, buf=[]; for(let s=0;s<NS;s++) buf.push({p:[],n:[],c:[],uh:[],i:[],hp:[],hc:[],hv:[],hi:[]});
+  const R=mzRnd(M.seed^0xFACE), col={r:0,g:0,b:0};
+  const sectorOf=(x,z)=>{ let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU; return Math.min(NS-1,Math.floor(a/MZ_TAU*NS)); };
+  // a ridge along points [{x,z,tx,tz}] (tangent), with optional rounded noses at either end
+  const ridge=(pts, hw, ring, caps, u0)=>{
+    if(pts.length<2) return;
+    const mid=pts[pts.length>>1], B=buf[sectorOf(mid.x,mid.z)];
+    mzTint(mzRingU(ring), col);
+    const ph=R()*100, row=MZ_PROF.length;
+    const rings=[];   // each: list of [x,y,z,nx,ny,nz,h]
+    let u=u0||0;
+    const sec=(x,z,tx,tz,uu)=>{ const nx=tz, nz=-tx;            // across the wall
+      const th=1+0.22*Math.sin(uu*0.07+ph)+0.10*Math.sin(uu*0.23+ph*2.0), hh=C.H*(1+0.07*Math.sin(uu*0.05+ph*1.3));
+      const y0=mzFloorY(Math.hypot(x,z))-0.6;
+      const out=[]; for(const q of MZ_PROF){ const ox=q[0]*hw*th; out.push([x+nx*ox, y0+q[1]*(hh+0.6), z+nz*ox, nx*q[2], q[3], nz*q[2], q[1], uu]); } return out; };
+    for(let i=0;i<pts.length;i++){ if(i>0) u+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].z-pts[i-1].z); rings.push(sec(pts[i].x,pts[i].z,pts[i].tx,pts[i].tz,u)); }
+    // noses: the profile swung round the end point
+    const nose=(pt,sgn,first)=>{ const out=[]; const base=sec(pt.x,pt.z,pt.tx,pt.tz,first?(u0||0):u);
+      for(let s=1;s<=5;s++){ const a=s/5*Math.PI/2; const ca=Math.cos(a), sa=Math.sin(a);
+        out.push(base.map(v=>{ const ox=v[0]-pt.x, oz=v[2]-pt.z; const al=ox*pt.tz-oz*pt.tx;   // signed across
+          const x=pt.x+(pt.tz*al*ca)+(pt.tx*sgn*Math.abs(al)*sa), z=pt.z+(-pt.tx*al*ca)+(pt.tz*sgn*Math.abs(al)*sa);
+          const nx=pt.tz*Math.sign(al||1)*ca+pt.tx*sgn*sa, nz=-pt.tx*Math.sign(al||1)*ca+pt.tz*sgn*sa;
+          return [x,v[1],z, nx*Math.abs(v[3]||v[5]?Math.hypot(v[3],v[5]):0)+ (v[3]===0&&v[5]===0?0:0), v[4], nz*Math.hypot(v[3],v[5]), v[6], v[7]]; })); }
+      return out; };
+    let all=rings;
+    if(caps&&caps[0]) all=nose(pts[0],-1,true).reverse().concat(all);
+    if(caps&&caps[1]) all=all.concat(nose(pts[pts.length-1],1,false));
+    const v0=B.p.length/3;
+    for(const rg of all) for(const v of rg){ B.p.push(v[0],v[1],v[2]); B.n.push(v[3],v[4],v[5]); B.c.push(col.r,col.g,col.b); B.uh.push(v[7],v[6]); }
+    for(let i=0;i<all.length-1;i++) for(let j=0;j<row-1;j++){ const a=v0+i*row+j, b=a+row; B.i.push(a,b,a+1, b,b+1,a+1); }
+    // the crest halo: a soft sheet standing on the crest
+    const h0=B.hp.length/3;
+    for(const rg of rings){ const top=rg[(row-1)>>1]; B.hp.push(top[0],top[1]-0.4,top[2], top[0],top[1]+3.4,top[2]); B.hc.push(col.r,col.g,col.b,col.r,col.g,col.b); B.hv.push(0,1); }
+    for(let i=0;i<rings.length-1;i++){ const a=h0+i*2; B.hi.push(a,a+2,a+1, a+1,a+2,a+3); }
+  };
+  M.frondSpots=[];
+  for(const w of M.walls){
+    if(w.t===2) continue;
+    const pts=[];
+    if(w.t===0){ const len=(w.a1-w.a0)*w.R, n=Math.max(2,Math.ceil(len/4.5));
+      for(let s=0;s<=n;s++){ const a=w.a0+(w.a1-w.a0)*s/n; pts.push({x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}); } }
+    else { const L=Math.hypot(w.x1-w.x0,w.z1-w.z0), n=Math.max(1,Math.ceil(L/4.5)), tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1);
+      for(let s=0;s<=n;s++) pts.push({x:w.x0+(w.x1-w.x0)*s/n, z:w.z0+(w.z1-w.z0)*s/n, tx, tz}); }
+    const closed=w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6, CH=40;
+    if(pts.length<=CH+1) ridge(pts, w.hw, w.ring, closed?null:[true,true], 0);
+    else for(let i0=0;i0<pts.length-1;i0+=CH){ const i1=Math.min(pts.length-1,i0+CH);
+      ridge(pts.slice(i0,i1+1), w.hw, w.ring, closed?null:[i0===0, i1===pts.length-1], i0*4.5); }
+    // tuft spots along the crest, every ~6 units
+    for(let s=0;s<pts.length;s+=(w.kind==='rad'?2:1)) if(R()<0.75) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring});
+  }
+  const out=[];
+  for(const B of buf){ if(!B.i.length) continue;
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(B.p,3)); g.setAttribute('normal',new T.Float32BufferAttribute(B.n,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(B.c,3)); g.setAttribute('aUH',new T.Float32BufferAttribute(B.uh,2)); g.setIndex(B.i); g.computeBoundingSphere();
+    const h=new T.BufferGeometry(); h.setAttribute('position',new T.Float32BufferAttribute(B.hp,3)); h.setAttribute('color',new T.Float32BufferAttribute(B.hc,3)); h.setAttribute('aV',new T.Float32BufferAttribute(B.hv,1)); h.setIndex(B.hi); h.computeBoundingSphere();
+    out.push({wall:g, halo:h}); }
+  return out;
+}
+// the floor's glow map: every wall's light pooled at its foot (the wet-floor reflection), pools of
+// light at the spoke gates and in the turnaround loops, the egg's warmth spreading from the centre
+function mzGlowTex(M){
+  const S=1024, cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d'), ext=M.ext, k=S/(2*ext);
+  const X=x=>(x+ext)*k, Z=z=>(z+ext)*k, col={r:0,g:0,b:0};
+  const css=(u,a,m)=>{ mzTint(u,col); return `rgba(${Math.round(col.r*255*(m||1))},${Math.round(col.g*255*(m||1))},${Math.round(col.b*255*(m||1))},${a})`; };
+  g.fillStyle='#000'; g.fillRect(0,0,S,S);
+  g.globalCompositeOperation='lighter';
+  // the egg's warmth
+  { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(M.C.R0+3.5*M.C.P)*k); gr.addColorStop(0,'rgba(255,190,110,0.85)'); gr.addColorStop(0.25,'rgba(240,140,110,0.42)'); gr.addColorStop(0.6,'rgba(200,110,150,0.12)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=gr; g.fillRect(0,0,S,S); }
+  // wall feet: a soft wide stroke and a tighter one, in each wall's own colour
+  g.lineCap='round';
+  for(const pass of [[9,0.13],[3.2,0.30]]){ g.lineWidth=pass[0]*k*1.6;
+    for(const w of M.walls){ if(w.t===2) continue; g.strokeStyle=css(mzRingU(w.ring),pass[1]); g.beginPath();
+      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); } }
+  // light pools at the gates, and the loops as glowing pools
+  const pool=(x,z,r,u,a)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
+  for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 22, mzRingU(q.ring), 0.55); }
+  for(const L of M.loops){ pool(L.x, L.z, 17, mzRingU(L.ring), 0.75); pool(L.x,L.z,7,0,0.5); }
+  // the antechamber: a cool wash so the grid reads
+  { const A=M.ante, x=A.ux*(A.r+90), z=A.uz*(A.r+90); pool(x,z,95,1,0.35); }
+  const t=new T.CanvasTexture(cv); t.minFilter=T.LinearMipmapLinearFilter; t.anisotropy=4; return t;
+}
+// floor: one polar mesh, terraced, out past the antechamber
+function mzFloorGeo(M){
+  const C=M.C, Rout=M.ext, NA=192, rs=[0,8,20,36,52,66];
+  for(let k=1;k<=C.K;k++){ const a=C.R0+(k-1)*C.P; for(const f of [0,0.22,0.3,0.4,0.5,0.6,0.7,0.78]) rs.push(a+f*C.P); }
+  for(const r of [C.R0+C.K*C.P, C.R0+C.K*C.P+20, C.R0+C.K*C.P+60, C.R0+C.K*C.P+120, C.R0+C.K*C.P+200, Rout]) rs.push(r);
+  rs.sort((a,b)=>a-b);
+  const p=[], idx=[];
+  for(let i=0;i<rs.length;i++) for(let j=0;j<=NA;j++){ const a=j/NA*MZ_TAU, r=rs[i]; p.push(r*Math.cos(a), r<C.R0?C.HC:mzFloorY(r), r*Math.sin(a)); }
+  for(let i=0;i<rs.length-1;i++) for(let j=0;j<NA;j++){ const a=i*(NA+1)+j, b=a+NA+1; idx.push(a,a+1,b, a+1,b+1,b); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setIndex(idx); g.computeBoundingSphere(); return g;
+}
+// the gate posts: each spoke gate gets its own shape (and every ring its own colour)
+function mzPostGeos(){
+  const L=(pts,seg)=>{ const g=new T.LatheGeometry(pts.map(q=>new T.Vector2(q[0],q[1])), seg||10); g.computeVertexNormals(); return g; };
+  return [
+    L([[0,0],[1.2,0.3],[1.5,2.5],[1.0,5.0],[2.2,6.6],[2.0,8.0],[0.6,8.9],[0,9]]),            // bulb
+    L([[0,0],[1.6,0.4],[0.8,3.5],[0.5,7.0],[0.9,8.2],[0,10]]),                                // spire
+    L([[0,0],[1.0,0.3],[0.8,5.5],[2.8,6.2],[3.0,7.0],[1.6,7.9],[0,8.1]]),                     // mushroom
+    L([[0,0],[1.4,0.3],[1.9,2.0],[0.8,4.0],[1.9,5.6],[1.6,7.4],[0.5,8.4],[0,8.5]]),           // double bulb
+    (()=>{ const g=new T.TorusGeometry(2.6,0.75,8,16); g.translate(0,6.4,0); const s=new T.CylinderGeometry(0.75,1.3,4.3,8); s.translate(0,2.1,0); return shMergeSafe([g,s]); })(),   // ring
+    L([[0,0],[1.3,0.3],[1.0,2.0],[2.0,3.6],[1.1,5.0],[2.0,6.6],[0.9,8.0],[0,8.8]]),           // spindle of beads
+  ];
+}
+function shMergeSafe(geos){   // merge non-indexed copies of a few small geometries (position + normal)
+  const P=[], N=[]; for(const g0 of geos){ const g=g0.index?g0.toNonIndexed():g0; P.push(...g.attributes.position.array); N.push(...g.attributes.normal.array); }
+  const m=new T.BufferGeometry(); m.setAttribute('position',new T.Float32BufferAttribute(P,3)); m.setAttribute('normal',new T.Float32BufferAttribute(N,3)); return m;
+}
+function mzInst(geo, mat, list, setter){
+  const im=new T.InstancedMesh(geo, mat, Math.max(1,list.length)); const d=new T.Object3D(), c=new T.Color();
+  list.forEach((q,i)=>{ setter(q,d,c); d.updateMatrix(); im.setMatrixAt(i,d.matrix); im.setColorAt(i,c); });
+  im.count=list.length; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; return im;
+}
+function mzSkyMat(){
+  return new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, uniforms:{uT:MAZE.U.uT, uEgg:{value:new T.Vector3()}},
+    vertexShader:`varying vec3 vD; void main(){ vD=normalize((modelMatrix*vec4(position,1.0)).xyz-cameraPosition); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform float uT; uniform vec3 uEgg; varying vec3 vD;
+      float h(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
+      void main(){ vec3 d=normalize(vD); float y=d.y;
+        vec3 c=mix(vec3(0.20,0.14,0.30), vec3(0.11,0.09,0.25), smoothstep(-0.02,0.22,y));
+        c=mix(c, vec3(0.035,0.03,0.10), smoothstep(0.2,0.75,y));
+        vec3 e=normalize(uEgg); float g=max(0.0,dot(d,e));
+        c+=vec3(1.0,0.66,0.42)*pow(g,10.0)*0.55 + vec3(0.85,0.45,0.55)*pow(g,3.0)*0.16;
+        vec3 q=floor(d*180.0); float s=step(0.9965,h(q))*smoothstep(0.08,0.4,y)*(0.5+0.5*sin(uT*1.7+h(q+3.1)*30.0));
+        c+=vec3(0.8,0.8,1.0)*s*0.7;
+        gl_FragColor=vec4(c,1.0); }` });
+}
+function mzMoteMat(){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+    vertexShader:`${MZ_GLSL_COMMON}
+      attribute float aPh; varying float vA; varying vec3 vC;
+      void main(){ vec3 p=position; float r=length(p.xz);
+        float a=uT*(0.05+0.03*fract(aPh*7.1))+aPh*6.2832; float sw=6.0+10.0*fract(aPh*3.7);
+        p.x+=cos(a)*sw; p.z+=sin(a*1.3)*sw; p.y+=sin(uT*0.4+aPh*12.0)*3.0;
+        vec4 mv=modelViewMatrix*vec4(p,1.0); float d=-mv.z;
+        vC=mix(vec3(1.0,0.78,0.52),vec3(0.62,0.66,1.0),smoothstep(80.0,420.0,r));
+        vA=(0.45+0.55*sin(uT*1.1+aPh*40.0))*(1.0-smoothstep(uFogR.x,uFogR.y*1.2,d));
+        gl_PointSize=clamp(900.0*(0.6+fract(aPh*5.3))/d,1.5,14.0); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      varying float vA; varying vec3 vC;
+      void main(){ vec2 q=gl_PointCoord-0.5; float a=smoothstep(0.5,0.0,length(q)); gl_FragColor=vec4(vC*a*a*vA*0.8,1.0); }` });
+}
+// the thread: a ribbon on the floor behind a racer, freshest end brightest, shimmering
+function mzTrailMat(hex){
+  return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending,
+    uniforms:{uHead:{value:0}, uCol:{value:new T.Color(hex)}},
+    vertexShader:`${MZ_GLSL_COMMON}
+      attribute float aI; attribute float aS; varying float vI; varying float vS; varying float vDepth;
+      void main(){ vI=aI; vS=aS; vec4 mv=modelViewMatrix*vec4(position,1.0); vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`${MZ_GLSL_COMMON}
+      uniform float uHead; uniform vec3 uCol; varying float vI; varying float vS; varying float vDepth;
+      void main(){ float age=uHead-vI; float fresh=exp(-age/220.0);
+        float core=1.0-abs(vS); core=core*core;
+        float sh=0.75+0.25*sin(vI*0.35-uT*5.0);
+        float a=(0.26+0.74*fresh)*core*sh*(1.0-smoothstep(uFogR.x,uFogR.y,vDepth));
+        gl_FragColor=vec4(mix(uCol,vec3(1.0),0.35*fresh)*a,1.0); }` });
+}
+/* ================= BUILD ================= */
+function mzBuildTrack(idx){
+  const t=TRACKS[idx], seed=mzSeedNext!=null ? mzSeedNext : mzPickSeed(t);
+  mzSeedNext=null;
+  const M=mzMake(seed); MAZE=M;
+  const C=M.C; M.ext=C.R0+C.K*C.P+C.ANTE_D+90;
+  M.U={uT:{value:0}, uFog:{value:new T.Color(0x2a2048)}, uFogR:{value:new T.Vector2(160,760)}};
+  STEPS=0;
+  // ---- SAMP: the shortest route, ~10 units a sample (countdown camera, kart idx, test placement) ----
+  SAMP.length=0;
+  { const R=M.route, P=[]; for(let i=0;i<R.length-1;i++){ const a=R[i], b=R[i+1], L=Math.hypot(b[0]-a[0],b[1]-a[1]), n=Math.max(1,Math.ceil(L/10));
+      for(let s=0;s<n;s++) P.push([a[0]+(b[0]-a[0])*s/n, a[1]+(b[1]-a[1])*s/n]); }
+    P.push(R[R.length-1]);
+    for(let i=0;i<P.length;i++){ const a=P[Math.max(0,i-1)], b=P[Math.min(P.length-1,i+1)], L=Math.hypot(b[0]-a[0],b[1]-a[1])||1;
+      const tt=new T.Vector3((b[0]-a[0])/L,0,(b[1]-a[1])/L), p=new T.Vector3(P[i][0], mzFloorAt(P[i][0],P[i][1]), P[i][1]);
+      const n=new T.Vector3(tt.z,0,-tt.x); SAMP.push({p, t:tt, n, u:i/(P.length-1), bank:0, bn:n.clone()}); }
+    STEPS=SAMP.length; }
+  innerSign=1;
+  scene.fog.near=160; scene.fog.far=760; scene.fog.color.setHex(0x2a2048).convertSRGBToLinear();
+  scene.background.setHex(0x0b0918);
+  groundPlane.visible=false;
+  // the rig the racers are lit by: violet cool from above, warm from the egg's side, a rose rim
+  hemi.color.setHex(0x8a7ad8); hemi.groundColor.setHex(0x1a1030); hemi.intensity=0.62;
+  sun.color.setHex(0xffd6a8);  sun.intensity=0.70; sun.position.set(0,140,0);
+  rim.color.setHex(0xa0b4ff);  rim.intensity=0.55; rim.position.set(-120,60,160);
+  fill.color.setHex(0xe08ab8); fill.intensity=0.30; fill.position.set(140,30,-80);
+  flesh.color.setHex(0xffb070);flesh.intensity=0.22; flesh.position.set(0,-30,0);
+  // ---- the sky: deep violet, the egg's glow hanging over the centre, a few stars ----
+  const skyM=mzSkyMat(); skyDome=new T.Mesh(new T.SphereGeometry(1200,32,16), skyM); skyDome.frustumCulled=false; skyDome.renderOrder=-10; trackGroup.add(skyDome);
+  // ---- the floor ----
+  const glowTex=mzGlowTex(M);
+  const floor=new T.Mesh(mzFloorGeo(M), mzFloorMat(glowTex)); trackGroup.add(floor);
+  // ---- the walls (eight sectors), their crest halos ----
+  const wm=mzWallMat(), hm=mzHaloMat();
+  for(const s of mzWallGeos(M)){ trackGroup.add(new T.Mesh(s.wall, wm)); const h=new T.Mesh(s.halo, hm); h.renderOrder=2; trackGroup.add(h); }
+  // ---- cilia tufts along the crests ----
+  { const blade=(()=>{ const p=[], n=[]; const one=(rot,lean)=>{ const c=Math.cos(rot), s=Math.sin(rot);
+        const v=[[-0.32,0],[0.32,0],[-0.2,1.3],[0.2,1.3],[0,2.6]]; const tri=[[0,1,2],[1,3,2],[2,3,4]];
+        for(const tr of tri) for(const k of tr){ const [x,y]=v[k]; p.push(x*c+lean*y*s, y, x*s+lean*y*c*0.3); n.push(-s,0.2,c); } };
+      one(0,0.15); one(2.1,0.25); one(4.2,0.2);
+      const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setAttribute('normal',new T.Float32BufferAttribute(n,3)); return g; })();
+    const fr=mzFrondMat(), R=mzRnd(M.seed^0xC111A), col={r:0,g:0,b:0};
+    const im=mzInst(blade, fr, M.frondSpots, (q,d,c)=>{ const y=mzFloorY(Math.hypot(q.x,q.z))+C.H*1.0;
+      d.position.set(q.x+(R()-0.5)*1.2, y, q.z+(R()-0.5)*1.2); d.rotation.set(0,R()*6.28,0); d.scale.setScalar(0.7+R()*0.6);
+      mzTint(mzRingU(q.ring),col); c.setRGB(Math.min(1,col.r*1.15),Math.min(1,col.g*1.1),Math.min(1,col.b*1.1)); });
+    im.frustumCulled=false; trackGroup.add(im); }
+  // ---- gate posts: a shape per gate, two per gate, standing on the wall noses ----
+  const pm=mzPropMat({glow:0.7}), posts=mzPostGeos(), byShape=posts.map(()=>[]);
+  { const R=mzRnd(M.seed^0x6A7E);
+    M.gates.forEach((q,gi)=>{ const sh=Math.floor(R()*posts.length), y=mzFloorY(q.r+(q.kind==='rim'?-2:2));
+      for(const sd of [-1,1]){ const a=q.th+sd*q.hg; byShape[sh].push({x:q.r*Math.cos(a), z:q.r*Math.sin(a), y:Math.max(y,mzFloorY(q.r-2)), ring:q.ring, rot:a, s:q.kind==='egg'?1.4:q.kind==='rim'?1.3:0.9+R()*0.2}); } }); }
+  const col=new T.Color(), tc={r:0,g:0,b:0};
+  byShape.forEach((list,sh)=>{ if(!list.length) return; trackGroup.add(mzInst(posts[sh], pm, list, (q,d,c)=>{ d.position.set(q.x,q.y-0.5,q.z); d.rotation.set(0,-q.rot,0); d.scale.setScalar(q.s);
+    mzTint(mzRingU(q.ring),tc); c.setRGB(tc.r,tc.g,tc.b); })); });
+  // ---- turnaround islands: soft glowing domes ----
+  { const g=new T.SphereGeometry(1,16,10,0,MZ_TAU,0,Math.PI/2);
+    trackGroup.add(mzInst(g, mzPropMat({glow:1.1}), M.loops, (L,d,c)=>{ d.position.set(L.x, mzFloorY(Math.hypot(L.x,L.z))-0.2, L.z); d.scale.set(C.ISL_R,2.6,C.ISL_R); mzTint(mzRingU(L.ring),tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+  // ---- boost pads in the loops: chevrons pointing back out ----
+  M.padState=[];
+  for(const pd of M.pads){ const y=mzFloorY(Math.hypot(pd.x,pd.z))+0.12;
+    const g=new T.PlaneGeometry(14,16); g.rotateX(-Math.PI/2); g.rotateY(Math.PI);
+    const m=new T.Mesh(g,new T.MeshBasicMaterial({map:TEX_PAD,transparent:true,blending:T.AdditiveBlending,depthWrite:false,color:0x9fe8ff}));
+    m.position.set(pd.x,y,pd.z); m.rotation.y=Math.atan2(pd.dx,pd.dz); m.material.polygonOffset=true; m.material.polygonOffsetFactor=-2; m.material.polygonOffsetUnits=-2;
+    trackGroup.add(m); }
+  // ---- the egg: a pearl lantern with a corona of soft cells, on Eve's heartbeat ----
+  const eggY=C.HC+C.EGG_R*1.18;
+  const egg=new T.Mesh(new T.SphereGeometry(C.EGG_R,40,30), edenEggMat()); egg.scale.set(1,1.25,1); egg.position.set(0,eggY,0); trackGroup.add(egg);
+  const halo=glowSprite(0xffe2b0,120); halo.material.fog=false; halo.position.copy(egg.position); trackGroup.add(halo);
+  const halo2=glowSprite(0xff9a70,320); halo2.material.fog=false; halo2.material.opacity=0.35; halo2.position.set(0,eggY+10,0); trackGroup.add(halo2);
+  egg.userData.edenPulse=edenEggPulse; egg.userData.halo=halo; TRACK_PULSE.egg=egg;
+  const corona=new T.Group(); corona.position.set(0,eggY,0); trackGroup.add(corona);
+  { const R=mzRnd(M.seed^0xC0C0), list=[]; for(let i=0;i<46;i++){ const a=i/46*MZ_TAU+R()*0.1, rr=C.EGG_R*(1.25+R()*0.45), y=(R()-0.5)*C.EGG_R*1.9;
+      list.push({x:Math.cos(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), y, z:Math.sin(a)*rr*Math.sqrt(1-Math.min(0.8,(y/(C.EGG_R*1.4))**2)), s:2.2+R()*3.0, u:R()*0.25}); }
+    corona.add(mzInst(new T.IcosahedronGeometry(1,2), mzPropMat({glow:0.9, alpha:0.6}), list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.setScalar(q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
+  // ---- motes drifting in the air over the maze ----
+  { const R=mzRnd(M.seed^0x3073), n=520, p=new Float32Array(n*3), ph=new Float32Array(n);
+    for(let i=0;i<n;i++){ const r=Math.sqrt(R())*(C.R0+C.K*C.P+80), a=R()*MZ_TAU; p[i*3]=Math.cos(a)*r; p[i*3+1]=mzFloorY(r)+3+R()*34; p[i*3+2]=Math.sin(a)*r; ph[i]=R(); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(p,3)); g.setAttribute('aPh',new T.BufferAttribute(ph,1));
+    const pts=new T.Points(g, mzMoteMat()); pts.frustumCulled=false; trackGroup.add(pts); }
+  // ---- beyond the rim: dim cell clusters standing in the far haze ----
+  { const R=mzRnd(M.seed^0xBAC4), list=[]; for(let i=0;i<70;i++){ const a=R()*MZ_TAU, r=M.ext+60+R()*420; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:-30+R()*50, s:24+R()*70, u:0.75+R()*0.25}); }
+    trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), mzPropMat({glow:0.25}), list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.set(q.s,q.s*0.8,q.s); mzTint(q.u,tc); c.setRGB(tc.r*0.55,tc.g*0.5,tc.b*0.65); })); }
+  // ---- a few friendly microbes drifting above the walls ----
+  { const R=mzRnd(M.seed^0x31C2), crit=[]; for(let i=0;i<6;i++) crit.push({r:C.R0+(1.5+R()*(C.K-2))*C.P, a:R()*MZ_TAU, w:(R()<0.5?-1:1)*(0.03+R()*0.04), h:13+R()*10, s:2.0+R()*1.2, u:R(), ph:R()*6});
+    const body=new T.InstancedMesh(new T.SphereGeometry(1,16,12), mzPropMat({glow:0.8, alpha:0.75}), crit.length);
+    const eyes=new T.InstancedMesh(new T.SphereGeometry(0.34,8,6), new T.MeshBasicMaterial({color:0xfdf6ff}), crit.length*2);
+    const pup=new T.InstancedMesh(new T.SphereGeometry(0.17,6,5), new T.MeshBasicMaterial({color:0x1a1030}), crit.length*2);
+    const cil=new T.InstancedMesh(new T.TorusGeometry(1.15,0.12,5,24), mzPropMat({glow:1.2, alpha:0.7}), crit.length);
+    crit.forEach((q,i)=>{ mzTint(q.u,tc); col.setRGB(tc.r,tc.g,tc.b); body.setColorAt(i,col); cil.setColorAt(i,col); });
+    for(const m of [body,eyes,pup,cil]){ m.frustumCulled=false; trackGroup.add(m); }
+    M.crit={list:crit, body, eyes, pup, cil, d:new T.Object3D()}; }
+  // ---- item-box spots and pads for buildRacers / the sim ----
+  boostPads=[]; jumpPads=[]; breakables=[];
+  M.eggY=eggY; M.skyM=skyM;
+  M.trails=null; M.beatPh=0;
+  TRACK_PULSE.maze=M;
+  eggAnim=0; mapBounds=null;
+}
+// floor height at a point (the antechamber and the rim apron are level)
+function mzFloorAt(x,z){ const r=Math.hypot(x,z); return r<MZ.R0?MZ.HC:mzFloorY(r); }
+// the item boxes, placed where the kit put them (the shared box mesh, lifted onto the terrace)
+function mzItemBoxes(){
+  return MAZE.boxes.map(b=>{ const it=makeItemBox(0); const y=mzFloorAt(b.x,b.z)+5;
+    it.mesh.position.set(b.x,y,b.z); it.base.set(b.x,y,b.z); return it; });
+}
+/* ================= RUNTIME ================= */
+function mzTick(M, tsec, dt){
+  M.U.uT.value=tsec;
+  if(typeof EDEN_T!=='undefined') EDEN_T.value=tsec;      // the egg's pearl shimmer runs on the same clock
+  M.skyM.uniforms.uEgg.value.set(-camera.position.x, M.eggY-camera.position.y+40, -camera.position.z);
+  // microbes: slow circles over the rings, bobbing, eyes forward
+  { const K=M.crit, d=K.d;
+    K.list.forEach((q,i)=>{ const a=q.a+tsec*q.w, x=Math.cos(a)*q.r, z=Math.sin(a)*q.r, y=mzFloorY(q.r)+q.h+Math.sin(tsec*0.9+q.ph)*2.2;
+      const hd=Math.atan2(-Math.sin(a)*Math.sign(q.w), Math.cos(a)*Math.sign(q.w)), sq=1+0.08*Math.sin(tsec*3+q.ph);
+      d.position.set(x,y,z); d.rotation.set(0,hd,0); d.scale.set(q.s*sq,q.s/sq*0.85,q.s*sq); d.updateMatrix(); K.body.setMatrixAt(i,d.matrix);
+      d.rotation.set(Math.PI/2+Math.sin(tsec*2+q.ph)*0.25,hd,0); d.scale.setScalar(q.s); d.updateMatrix(); K.cil.setMatrixAt(i,d.matrix);
+      const fx=Math.sin(hd), fz=Math.cos(hd), sx=Math.cos(hd), sz=-Math.sin(hd);
+      for(let e=0;e<2;e++){ const sd=e?1:-1, ex=x+(fx*0.82+sx*sd*0.38)*q.s, ez=z+(fz*0.82+sz*sd*0.38)*q.s, ey=y+0.32*q.s;
+        d.rotation.set(0,0,0); d.position.set(ex,ey,ez); d.scale.setScalar(q.s); d.updateMatrix(); K.eyes.setMatrixAt(i*2+e,d.matrix);
+        d.position.set(ex+fx*0.2*q.s,ey,ez+fz*0.2*q.s); d.updateMatrix(); K.pup.setMatrixAt(i*2+e,d.matrix); } });
+    for(const m of [K.body,K.eyes,K.pup,K.cil]) m.instanceMatrix.needsUpdate=true; }
+  if(state==='race'||state==='done') mzTrails(M);
+  mzHeart(M, tsec);
+}
+// the egg's heartbeat, audible in the last two rings and the chamber (lub at 0.10, dub at 0.40 of 1.6 s)
+function mzHeart(M, tsec){
+  const ph=tsec%1.6, prev=M.beatPh; M.beatPh=ph;
+  if(state!=='race' || !actx || !masterGain) return;
+  const me=racers.find(r=>r.you); if(!me) return;
+  const rho=Math.hypot(me.x,me.z), edge=M.C.R0+2*M.C.P, v=Math.max(0,Math.min(1,(edge-rho)/(2*M.C.P)+0.15))*(rho<edge?1:0);
+  if(v<=0) return;
+  const hit=(x)=>prev<x && ph>=x;
+  if(hit(0.10)) mzThump(0.42*v); else if(hit(0.40)) mzThump(0.26*v);
+}
+function mzThump(vol){
+  const t=actx.currentTime, o=actx.createOscillator(), g=actx.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(64,t); o.frequency.exponentialRampToValueAtTime(38,t+0.22);
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.018); g.gain.exponentialRampToValueAtTime(0.0001,t+0.34);
+  o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.36);
+}
+// threads: your own always, rivals' only with MZ_RIVAL_TRAILS. Preallocated ribbons, partial uploads.
+const MZ_TRAIL_CAP=6000;   // segments (~3.2 units each: about 19,000 units of thread)
+function mzTrails(M){
+  if(!M.trails || M.trailsFor!==racers){ if(M.trails) for(const tr of M.trails.values()){ trackGroup.remove(tr.mesh); tr.mesh.geometry.dispose(); tr.mesh.material.dispose(); }
+    M.trails=new Map(); M.trailsFor=racers; }
+  for(const r of racers){
+    if(!(r.you || MZ_RIVAL_TRAILS)) continue;
+    let tr=M.trails.get(r);
+    if(!tr){ const cap=MZ_TRAIL_CAP, pos=new Float32Array(cap*4*3), ai=new Float32Array(cap*4), as=new Float32Array(cap*4), ix=new Uint16Array(cap*6);
+      for(let i=0;i<cap;i++){ ai[i*4]=ai[i*4+1]=i; ai[i*4+2]=ai[i*4+3]=i+1; as[i*4]=as[i*4+2]=-1; as[i*4+1]=as[i*4+3]=1; const a=(i*4)%65536; ix.set([a,a+1,a+2, a+1,a+3,a+2], i*6); }
+      const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(pos,3)); g.setAttribute('aI',new T.BufferAttribute(ai,1)); g.setAttribute('aS',new T.BufferAttribute(as,1));
+      g.setIndex(new T.BufferAttribute(ix,1)); g.setDrawRange(0,0);
+      const m=new T.Mesh(g, mzTrailMat(new T.Color(`hsl(${r.hue}, 90%, 66%)`).getHex())); m.frustumCulled=false; m.renderOrder=1; trackGroup.add(m);
+      tr={mesh:m, n:0, lx:r.x, lz:r.z, ly:0, pnx:0, pnz:0, started:false}; M.trails.set(r,tr); }
+    const y=(r.surfY!=null?r.surfY:mzFloorAt(r.x,r.z))+0.09;
+    if(!tr.started){ tr.started=true; tr.lx=r.x; tr.lz=r.z; tr.ly=y; continue; }
+    if(tr.n>=MZ_TRAIL_CAP) continue;
+    const dx=r.x-tr.lx, dz=r.z-tr.lz, d=Math.hypot(dx,dz);
+    if(d<3.2) continue;
+    if(d>40){ tr.lx=r.x; tr.lz=r.z; tr.ly=y; tr.pnx=0; continue; }   // a rescue: start a fresh strand, no streak over the walls
+    const w=0.85, nx=-dz/d, nz=dx/d, ox=tr.pnx||nx, oz=tr.pnx?tr.pnz:nz, i=tr.n;
+    const pa=tr.mesh.geometry.attributes.position;
+    pa.array.set([tr.lx+ox*w, tr.ly, tr.lz+oz*w, tr.lx-ox*w, tr.ly, tr.lz-oz*w, r.x+nx*w, y, r.z+nz*w, r.x-nx*w, y, r.z-nz*w], i*12);
+    pa.updateRange.offset=i*12; pa.updateRange.count=12; pa.needsUpdate=true;
+    tr.n++; tr.lx=r.x; tr.lz=r.z; tr.ly=y; tr.pnx=nx; tr.pnz=nz;
+    tr.mesh.geometry.setDrawRange(0, tr.n*6);
+    tr.mesh.material.uniforms.uHead.value=tr.n;
+  }
+}
+/* ---- the sim on the maze ---- */
+function mzPlace(r,dt){   // height on the terraces, where am I, how far to go; true once at the egg
+  const M=MAZE, fy=mzFloorAt(r.x,r.z);
+  r.surfY=fy;
+  if(!r.air){ r.y += ((fy+HOVER_H) - r.y)*Math.min(1, 20*dt); r.y=Math.max(r.y, fy+HOVER_H*0.55); }
+  const c=mzLocate(M,r.x,r.z), R=mzRemainAt(M,r.x,r.z,c);
+  r._mzCell=c; r._mzR=R;
+  r.total=r.prog=Math.max(0,Math.min(1,1-R/M.Rstart));
+  r.idx=Math.max(0,Math.min(STEPS-1,Math.round(r.prog*(STEPS-1))));
+  return c===M.EGG && R<=0;
+}
+function mzCollideRacer(r){   // walls, islands and the egg: push out, lose speed by how square the hit was
+  const M=MAZE, kr=MZ.KR*(r.megaT>0?1.4:1);
+  let hit=0, hx=0, hz=0;
+  for(let pass=0;pass<2;pass++){ const L=mzCellList(M,r.x,r.z); if(!L) break; let any=false;
+    for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr){ const ex=kr-d; r.x+=MZ_Q.nx*ex; r.z+=MZ_Q.nz*ex; any=true;
+      const sg=r.spd<0?-1:1, imp=-(Math.sin(r.head)*MZ_Q.nx+Math.cos(r.head)*MZ_Q.nz)*sg; if(imp>hit){ hit=imp; hx=MZ_Q.nx; hz=MZ_Q.nz; } } }
+    if(!any) break; }
+  if(hit>0.2 && (r._wallCD||0)<=0 && Math.abs(r.spd)>12){
+    r.spd*=1-0.62*hit; r._wallCD=0.3;
+    // glance off: swing the nose along the wall a little so a scrape slides instead of sticking
+    if(hit<0.85){ const tx=-hz, tz=hx, f=Math.sin(r.head)*tx+Math.cos(r.head)*tz, want=Math.atan2(tx*Math.sign(f||1), tz*Math.sign(f||1)); r.head+=angDiff(want,r.head)*0.35*(r.spd<0?0:1); }
+    burst(r.x,r.y+1,r.z,0xc8b8ff,6,22,0.3,3);
+    if(r.you){ kickShake(0.22+0.2*hit); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); }
+  }
+}
+// the maze's handling: a kart turns harder the slower it goes, so it can swing round in a corridor
+function mzTurnK(vfrac){ return 1.3+0.95*(1-vfrac); }
+// a human who has nosed into a wall and is stopped there backs off by themselves (phones have no brake)
+function mzAssist(r,dt,gas){
+  const M=MAZE; if(!gas || Math.abs(r.spd)>9){ r._mzPin=0; return r._mzBack>0 ? (r._mzBack-=dt)>0 : false; }
+  if(r._mzBack>0){ r._mzBack-=dt; return true; }
+  const fx=r.x+Math.sin(r.head)*(MZ.KR+2.5), fz=r.z+Math.cos(r.head)*(MZ.KR+2.5);
+  if(mzNear(M,fx,fz)<0.8){ r._mzPin=(r._mzPin||0)+dt; if(r._mzPin>0.45){ r._mzPin=0; r._mzBack=0.7; return true; } } else r._mzPin=0;
+  return false;
+}
+// nobody stays stuck: a kart that has gone nowhere for a while is set back in its corridor, nose to the egg
+function mzRescue(r,dt){
+  const M=MAZE; if(r.finished || state!=='race' || raceTime<4) return;
+  const q=r._mzSt||(r._mzSt={x:r.x,z:r.z,t:0});
+  const out=Math.hypot(r.x,r.z)>M.ext-20 || mzNear(M,r.x,r.z)<-0.5;
+  if(Math.hypot(r.x-q.x,r.z-q.z)>4){ q.x=r.x; q.z=r.z; q.t=0; } else q.t+=dt;
+  const lim=r.you?6.5:3.5;
+  if(!out && q.t<lim) return;
+  q.t=0;
+  let c=mzLocate(M,r.x,r.z), x, z;
+  if(c===M.ANTE || c===M.EGG || out){ if(c===M.EGG && !out){ return; } const g=M.grid[1]; x=g.x; z=g.z; c=M.ANTE; }
+  else { const s=M.span(c), a=(s[0]+s[1])/2, rr=M.cr[M.ck[c]]; x=rr*Math.cos(a); z=rr*Math.sin(a); }
+  // face the cheapest way out of this cell
+  let best=null, bv=1e18; for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-x,p.z-z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
+  r.x=x; r.z=z; if(best) r.head=Math.atan2(best.x-x,best.z-z);
+  r.spd=Math.min(Math.max(r.spd,20),40); r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r._mz=null;
+  if(r.you){ showToast('Repositioned'); kickShake(0.4); }
+}
+/* ---- the AI in the maze: it picks a way at every fork — right with a chance that grows with
+   its skill (and with how long it has been lost), wrong otherwise — remembers the cells it has
+   been through so it does not walk back into a dead end it has tried, turns round in the loops,
+   and slows for the corners it can see coming. ---- */
+function mzSkillP(r,S){ return Math.min(0.97, Math.max(0.3, 0.3+((r.skill||0.95)-0.82)*3.1) + Math.min(0.45, S.lost*0.018) + (raceTime>300?1:0)); }
+function mzChoose(r,S,c,entry){
+  const M=MAZE;
+  if(c===M.EGG) return -1;
+  const L=M.cellP[c]; if(L.length===1) return L[0];          // a dead end: back the way it came (via the loop)
+  const cand=[]; for(const pi of L) if(pi!==entry && M.PT[pi].kind!==3) cand.push(pi);
+  const cost=pi=>{ const p=M.PT[pi]; return M.D[pi]+Math.hypot(p.x-r.x,p.z-r.z)*0.2; };
+  cand.sort((a,b)=>cost(a)-cost(b));
+  if(cand.length===1) return cand[0];
+  const nb=pi=>{ const p=M.PT[pi]; return p.a===c?p.b:p.a; };
+  if(Math.random()<mzSkillP(r,S)) return cand[0];
+  const wrong=cand.slice(1).filter(pi=>!S.vis[nb(pi)]);
+  if(!wrong.length) return cand[0];
+  return wrong[Math.floor(Math.random()*wrong.length)];
+}
+function mzAIState(r){ const M=MAZE; return {cell:-9, entry:-1, plan:-1, next:-9, plan2:-1, vis:new Uint8Array(M.NC+2), lost:0, best:1e9, stuck:0, rev:0, loop:-1, lcell:-1}; }
+function mzAISteer(r,dt){
+  const M=MAZE, S=r._mz||(r._mz=mzAIState(r));
+  // progress memory: how long since this kart last got meaningfully closer
+  const R=r._mzR!=null?r._mzR:M.Rstart; if(R<S.best-30){ S.best=R; S.lost=0; } else S.lost+=dt;
+  const c=mzLocate(M,r.x,r.z);
+  if(c!==S.cell){
+    const prev=S.cell; S.cell=c; S.vis[c]=Math.min(250,S.vis[c]+1);
+    let entry=-1; if(prev>=0) for(const pi of M.cellP[c]){ const p=M.PT[pi]; if(p.a===prev||p.b===prev){ entry=pi; break; } }
+    S.entry=entry;
+    if(S.next!==c && prev>=0 && c<M.NC) entry=-1;    // carried somewhere it did not mean to go: the way back is an option too
+    S.plan = (S.next===c && S.plan2>=0 && S.plan2!==entry) ? S.plan2 : mzChoose(r,S,c,entry);
+    S.next=-9; S.plan2=-1;
+    S.loop = (c<M.NC && M.cellP[c].length===1) ? 0 : -1;
+  }
+  // stuck against something: back off for a moment
+  if(Math.abs(r.spd)<10 && raceTime>2.5 && !r.finished){ S.stuck+=dt; if(S.stuck>0.9){ S.stuck=0; S.rev=0.75; } } else S.stuck=0;
+  // where to aim
+  let ax, az, cap=MAXV*1.5, turn=0;
+  const spd=Math.max(0,r.spd), LA=16+spd*0.16;
+  if(c===M.EGG){ ax=0; az=0; }
+  else if(S.loop>=0){
+    // round the island: in on one side, past the apex, out on the other
+    const Lp=M.loops.find(l=>l.cell===c);
+    if(Lp){ const lane=MZ.ISL_R+MZ.KR+3.4, sx=-Lp.fz, sz=Lp.fx;
+      if(S.lsd==null || S.lcell!==c){ S.lcell=c; S.lsd=((r.x-Lp.x)*sx+(r.z-Lp.z)*sz)>=0?1:-1; }
+      const wps=[[Lp.x+sx*S.lsd*lane-Lp.fx*1, Lp.z+sz*S.lsd*lane-Lp.fz*1],[Lp.x+Lp.fx*lane, Lp.z+Lp.fz*lane],[Lp.x-sx*S.lsd*lane, Lp.z-sz*S.lsd*lane],[M.PT[S.plan].x, M.PT[S.plan].z]];
+      const w=wps[Math.min(3,S.loop)]; if(Math.hypot(w[0]-r.x,w[1]-r.z)<7 && S.loop<3) S.loop++;
+      ax=wps[Math.min(3,S.loop)][0]; az=wps[Math.min(3,S.loop)][1]; cap=S.loop<3?34:70; }
+    else { const p=M.PT[S.plan]; ax=p.x; az=p.z; }
+  } else {
+    const p=M.PT[S.plan]; if(!p){ ax=0; az=0; }
+    else {
+      const d=Math.hypot(p.x-r.x,p.z-r.z);
+      // plan one cell ahead once the portal is near, so the line flows through it
+      if(d<LA+30 && S.next===-9){ const nc=p.a===c?p.b:p.a; S.next=nc; S.plan2=(nc>=M.NC)?-1:mzChoose(r,S,nc,S.plan); }
+      const q2=S.plan2>=0?M.PT[S.plan2]:(S.next===M.EGG?{x:0,z:0}:null);
+      ax=p.x; az=p.z;
+      if(q2){ const ex=q2.x-p.x, ez=q2.z-p.z, el=Math.hypot(ex,ez)||1;
+        const vx=p.x-r.x, vz=p.z-r.z, vl=Math.hypot(vx,vz)||1;
+        turn=Math.acos(Math.max(-1,Math.min(1,(vx*ex+vz*ez)/(vl*el))));
+        if(d<LA){ const k=Math.min(1,(LA-d)/el); const tx=p.x+ex*k, tz=p.z+ez*k; if(mzClearLine(M,r.x,r.z,tx,tz,MZ.KR*0.6)){ ax=tx; az=tz; } } }
+      // the corner this portal leads into: slow enough to make it
+      let vc=34+(150-34)*Math.pow(Math.cos(turn/2),3.2);
+      if(q2 && turn>0.6) vc=Math.min(vc, 18+1.5*Math.hypot(q2.x-p.x,q2.z-p.z));   // a tight sequence needs room to turn in
+      cap=Math.sqrt(vc*vc+2*150*Math.max(0,d-6));
+    }
+  }
+  r._mzCap=cap;
+  const want=Math.atan2(ax-r.x, az-r.z), dd=angDiff(want,r.head);
+  if(S.rev>0){ S.rev-=dt; r._mzRev=true; return Math.max(-1,Math.min(1,-dd*2)); }
+  r._mzRev=false;
+  return Math.max(-1,Math.min(1,dd*2.2));
+}
+// after the egg: coast round it in a lazy orbit instead of sliding into it
+function mzCoast(r,dt){
+  r.spd*=Math.pow(0.25,dt);
+  const rho=Math.hypot(r.x,r.z)||1, ux=r.x/rho, uz=r.z/rho, hx=Math.sin(r.head), hz=Math.cos(r.head);
+  const sd=(-uz*hx+ux*hz)>=0?1:-1, tx=-uz*sd+ux*(46-rho)*0.05, tz=ux*sd+uz*(46-rho)*0.05;
+  r.head+=Math.max(-1,Math.min(1,angDiff(Math.atan2(tx,tz),r.head)*1.8))*TURN*1.6*dt*Math.min(1,Math.abs(r.spd)/30);
+  r.x+=hx*r.spd*dt; r.z+=hz*r.spd*dt;
+  mzCollideRacer(r);
+  const fy=mzFloorAt(r.x,r.z); r.surfY=fy; r.air=false; r.vy=0; r.y+=((fy+HOVER_H)-r.y)*Math.min(1,5*dt);
+}
+// a frame for items dropped on the maze (no road to line up with: the kart's own heading)
+const MZ_FR={p:{x:0,y:0,z:0}, t:{x:0,y:0,z:1}, n:{x:1,y:0,z:0}, bank:0};
+function mzFrame(r){ const f=MZ_FR, h=r.head; f.p.x=r.x; f.p.y=r.surfY!=null?r.surfY:0; f.p.z=r.z; f.t.x=Math.sin(h); f.t.z=Math.cos(h); f.n.x=f.t.z; f.n.z=-f.t.x; return f; }
+// directional pads in the loops: a kick only for a kart on its way back out
+function mzPads(r){
+  const M=MAZE; for(const p of M.pads){ if(Math.hypot(r.x-p.x,r.z-p.z)<p.r && Math.sin(r.head)*p.dx+Math.cos(r.head)*p.dz>0.3 && r.spd>0){
+    r.boostT=Math.max(r.boostT,0.95); const now=performance.now(); if(now-(r._padHit||0)>700){ r._padHit=now; burst(r.x,r.y+2,r.z,0x9fe8ff,15,50,0.4,4); if(r.you) SFX.boost(); } break; } }
+}
+// the chase camera never sinks into a ridge, never loses the kart behind one, never enters the egg
+const _mzV=new T.Vector3();
+function mzCamGuard(me){
+  const M=MAZE, p=camera.position; if(!M) return;
+  let moved=false;
+  const top=mzFloorAt(p.x,p.z)+MZ.H+1.4;
+  if(p.y<top && mzNear(M,p.x,p.z)<1.4){ p.y=top; moved=true; }
+  // line of sight from the head: lift the lens until every ridge it crosses is below the line
+  const hx=me.x, hy=me.y+3.2, hz=me.z, L=Math.hypot(p.x-hx,p.z-hz), n=Math.ceil(L/2.5);
+  let need=p.y;
+  for(let i=1;i<n;i++){ const t=i/n, x=hx+(p.x-hx)*t, z=hz+(p.z-hz)*t, wt=mzFloorAt(x,z)+MZ.H+0.5, y=hy+(p.y-hy)*t;
+    if(y<wt && mzNear(M,x,z)<0.8){ const req=hy+(wt-hy)/t; if(req>need) need=req; } }
+  if(need>p.y+1e-3){ p.y=Math.min(need, hy+30); moved=true; }
+  // the egg (an ellipsoid, 1.25 tall)
+  _mzV.set(p.x/(MZ.EGG_R+4), (p.y-M.eggY)/((MZ.EGG_R+4)*1.25), p.z/(MZ.EGG_R+4)); const e=_mzV.length();
+  if(e<1){ const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3) p.x=MZ.EGG_R+4; moved=true; }
+  if(moved) camera.lookAt(_camLook);
+}
+// the course card: rings and a gate, not a road outline
+function mzCourseArt(t){
+  const ink='hsl(250 85% 80%)';
+  let rings=''; for(let k=0;k<6;k++){ const r=10+k*7; const g=(k*67)%360; rings+=`<path d="M${(50+r*Math.cos(g*Math.PI/180)).toFixed(1)} ${(50+r*Math.sin(g*Math.PI/180)).toFixed(1)} A${r} ${r} 0 1 1 ${(50+r*Math.cos((g-40)*Math.PI/180)).toFixed(1)} ${(50+r*Math.sin((g-40)*Math.PI/180)).toFixed(1)}" fill="none" stroke="${ink}" stroke-width="2.4" stroke-linecap="round" opacity="${(0.55+k*0.08).toFixed(2)}"/>`; }
+  const svg=`<svg class="tp" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${rings}<circle cx="50" cy="50" r="5" fill="#ffd07c"/></svg>`;
+  return {svg, plate:'radial-gradient(120% 95% at 50% 50%,#4a2f5e,#15122a)', ac:'#ffd07c', ix:'hsl(250 85% 82%)'};
+}
+
 function disposeObject(o){
   if(!o) return;
   const seen=new Set();
@@ -44481,6 +45463,8 @@ function disposeObject(o){
 }
 function buildTrack(idx){
   selTrack=idx;
+  MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
+  document.body.classList.toggle('maze-course', !!TRACKS[idx].maze);   // its HUD: no minimap, place only
   if(trackGroup){
     scene.remove(trackGroup);
     disposeObject(trackGroup);
@@ -44617,6 +45601,7 @@ function buildTrack(idx){
     : TRACKS[idx].macro ? 0x14144a : 0x2a1a22);  // dark so speculars/pods carry
   groundPlane.scale.set(TRACKS[idx].sc||1,1,TRACKS[idx].sc||1);   // a scaled course needs a wider ground (a no-op at 1)
   trackLoop = loop; trackCross = cross;
+  if(TRACKS[idx].maze){ mzBuildTrack(idx); return; }   // Ariadne: the labyrinth kit builds the whole course
   const CTRL=TRACKS[idx].ctrl.map(p=>new T.Vector3(p[0],p[1],p[2]));
   const curve=new T.CatmullRomCurve3(CTRL,loop,'catmullrom',0.5);
   curve.arcLengthDivisions=600;
@@ -50680,6 +51665,7 @@ const LD_SH=10;
 // nothing hangs in mid-air beside a road that has no ground there.
 const _shN=new T.Vector3(), _shZ=new T.Vector3(0,0,1);
 function roadShadowFrame(i, x, z, n){
+  if(MAZE){ n.set(0,1,0); return 1; }   // the maze floor is level under a kart and has no edge
   const s=SAMP[i], s2=SAMP[(i+1)%SAMP.length], lat=(x-s.p.x)*s.n.x+(z-s.p.z)*s.n.z, sb=Math.sin(s.bank||0);
   const dx=s2.p.x-s.p.x, dz=s2.p.z-s.p.z, dl=Math.hypot(dx,dz), gr=dl>0.5 ? (s2.p.y-s.p.y)/dl : 0;
   const gx=dl>0.5?dx/dl:s.t.x, gz=dl>0.5?dz/dl:s.t.z;
@@ -50704,7 +51690,7 @@ function dragonShadow(o, r, dr){
     for(let k=0;k<LD_SH;k++) im.setColorAt(k,new T.Color(1,1,1));
     r.shadow.parent.add(im); dr.shadow=im; r._dshadow=im;
   }
-  const im=dr.shadow, local=!r.remote && typeof SAMP!=='undefined' && SAMP.length;
+  const im=dr.shadow, local=!r.remote && typeof SAMP!=='undefined' && SAMP.length && !MAZE;
   let hint=r.idx||0;
   for(let k=0;k<LD_SH;k++){
     const t=0.06+k*0.094, rad=dragonAt(b,t);
@@ -57914,11 +58900,14 @@ function giveItem(r){
   else if(roll<0.86) r.item='glue';
   else if(roll<0.94) r.item='mega';
   else r.item='clap';       // rarest — it's the wildest one, hits everyone nearby at once
+  // the maze: no homing crash shots (they would follow nothing there) — a glue shot or a shield instead
+  if(MAZE && (r.item==='spore'||r.item==='signature')) r.item = r.item==='spore' ? 'glue' : 'shield';
   if(r.you) r._roll=0.8;     // item roulette spins for the player before it settles
 }
 // Road surface height under a dropped hazard: the racer's own sample, extended across the
 // banking and along the slope to where the item lands (r.y sits HOVER_H above the road).
 function hazardSurfY(r,x,z){
+  if(MAZE) return mzFloorAt(x,z);
   const sp=SAMP[r.idx]; if(!sp) return r.surfY!=null?r.surfY:r.y-HOVER_H;
   const dx=x-sp.p.x, dz=z-sp.p.z, hl=Math.hypot(sp.t.x,sp.t.z)||1;
   return sp.p.y + Math.sin(sp.bank||0)*(dx*sp.n.x+dz*sp.n.z) + sp.t.y/hl*(dx*sp.t.x+dz*sp.t.z)/hl;
@@ -57951,7 +58940,7 @@ function useItem(r){
     // Dental Dam: an upright clear membrane dropped BEHIND the holder, standing across part of
     // the lane and facing along the track. It keeps the holder's lateral line (clamped so the
     // panel stays on the road), sits on the road surface, and lives ~12s before fading out.
-    const sp=SAMP[r.idx]||SAMP[nearest(r.x,r.z)];
+    const sp=MAZE?mzFrame(r):(SAMP[r.idx]||SAMP[nearest(r.x,r.z)]);   // the maze: square to the kart's own heading
     const back=11, halfW=9, hgt=7, hl=Math.hypot(sp.t.x,sp.t.z)||1, tx=sp.t.x/hl, tz=sp.t.z/hl;
     let bx=r.x-tx*back, bz=r.z-tz*back;
     const lat=(bx-sp.p.x)*sp.n.x+(bz-sp.p.z)*sp.n.z, lim=HW-halfW;
@@ -58028,6 +59017,7 @@ function updateRacer(r,dt){
   // A remote human's kart is authored on their machine; here it is pure playback.
   if(r.remote){ netApplySnap(r,dt); return; }
   if(r.finished){                      // everyone coasts to a stop after finishing —
+    if(MAZE){ mzCoast(r,dt); return; }   // (in the maze: a lazy orbit round the egg)
     r.spd*=Math.pow(0.1,dt);           // the player used to keep driving, which meant the
     r.x+=Math.sin(r.head)*r.spd*dt;    // victory camera was chasing a moving target and
     r.z+=Math.cos(r.head)*r.spd*dt;    // never actually got around to the face
@@ -58069,8 +59059,11 @@ function updateRacer(r,dt){
         // Reverse is a second, deeper threshold (REV_T) that also has to be HELD
         // (REV_HOLD seconds) before it engages, so a quick deep pull just brakes hard
         // instead of snapping straight into reverse.
-        const BRAKE_T=0.55, REV_T=0.85, REV_HOLD=0.4;
-        const straightBack = joyY>0 && Math.abs(joyX) < joyY*0.5;
+        // in the maze, near a standstill, turning round must never be a hassle: a shallower pull
+        // anywhere in the lower half reverses at once
+        const mzq=!!MAZE && Math.abs(r.spd)<30;
+        const BRAKE_T=mzq?0.35:0.55, REV_T=mzq?0.45:0.85, REV_HOLD=mzq?0:0.4;
+        const straightBack = joyY>0 && Math.abs(joyX) < joyY*(mzq?1.0:0.5);
         if(straightBack && joyY>BRAKE_T){
           r._revHoldT = (r._revHoldT||0) + (joyY>REV_T ? dt : 0);
           gas=false; brake=true; reverse = r._revHoldT>=REV_HOLD;
@@ -58084,6 +59077,7 @@ function updateRacer(r,dt){
     }
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
+    if(MAZE && !reverse && mzAssist(r,dt,gas)){ gas=false; brake=true; reverse=true; }   // nosed into a wall: back off
     if(fire&&!firePrev)useItem(r); firePrev=fire;
     if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
     // tail-whip on demand, any time (a short cooldown stops spamming): the move always
@@ -58092,6 +59086,7 @@ function updateRacer(r,dt){
     if(whip && !whipPrev && !r._wh && (performance.now()-(r._whip||0))>WHIP_CD) whipStart(r, whipTarget);
     whipPrev=whip;
   } else {
+    if(MAZE){ steer=mzAISteer(r,dt); gas=true; drift=false; } else {   // the maze: a way picked at every fork
     // AI steer toward lookahead centerline point (clamp at the end on open courses)
     const look=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
     const wob=Math.sin((r.wob+=dt*1.8))*30;
@@ -58101,6 +59096,7 @@ function updateRacer(r,dt){
     steer=Math.max(-1,Math.min(1,d*1.8));
     gas=true;
     drift=Math.abs(d)>0.5 && r.spd>70;
+    }
     // rubber-band
     r.aiDelay-=dt;
     if(r.item==='dam'){
@@ -58125,10 +59121,11 @@ function updateRacer(r,dt){
     placeOnTrack(r,dt); return; }
 
   // off-road check
-  const ci=nearest(r.x,r.z, r.air?null:r.y); r.idx=ci;   // ignore height while airborne
+  const ci=MAZE?(r.idx|0):nearest(r.x,r.z, r.air?null:r.y); r.idx=ci;   // ignore height while airborne (the maze keeps its own)
   const cs=SAMP[ci];
-  const off=Math.hypot(r.x-cs.p.x, r.z-cs.p.z);
+  const off=MAZE?0:Math.hypot(r.x-cs.p.x, r.z-cs.p.z);   // the maze has no road edge: its walls hold you
   const onRoad = r.air ? true : off<HW;   // airborne keeps full speed (flying over things)
+  if(MAZE) mzRescue(r,dt);                // the maze's own rescue (a stuck kart, set back in its corridor)
 
   // off-track rescue: if stuck off the road too long (e.g. spun around), snap
   // back to the centerline facing forward along the track
@@ -58157,13 +59154,16 @@ function updateRacer(r,dt){
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
   if(r.boostT>0) target=BOOSTV;
+  if(MAZE && !r.you && r._mzCap!=null) target=Math.min(target, r._mzCap);   // the maze AI slows for its corners
 
   // accelerate
-  if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
-  else if(reverse) r.spd += (-60-r.spd)*Math.min(1,3*dt);
+  if(MAZE && !r.you && r._mzRev) r.spd += (-45-r.spd)*Math.min(1,4*dt);          // maze AI backing off a wall
+  else if(MAZE && !r.you && r.spd>target) r.spd += (target-r.spd)*Math.min(1,5*dt);   // ...and braking for a corner
+  else if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
+  else if(reverse) r.spd += ((MAZE?-72:-60)-r.spd)*Math.min(1,(MAZE?6:3)*dt);   // the maze: a quicker reverse
   else if(brake) r.spd += (0-r.spd)*Math.min(1,4*dt);   // firm stop — doesn't creep into reverse on its own
   else r.spd += (0-r.spd)*Math.min(1,1.4*dt);
-  r.spd=Math.max(-50,Math.min(BOOSTV,r.spd));
+  r.spd=Math.max(MAZE?-72:-50,Math.min(BOOSTV,r.spd));
 
   // turning (speed-scaled); drift sharpens & charges
   const vfrac=Math.min(1,Math.abs(r.spd)/MAXV);
@@ -58172,6 +59172,7 @@ function updateRacer(r,dt){
   // down (not twitch) at top speed. Keep most of the authority low-down and shed a little
   // at speed instead — that reads as "it goes where I point it".
   let turnRate=TURN*(1.02-0.24*vfrac);
+  if(MAZE) turnRate*=mzTurnK(vfrac);    // the maze: tighter the slower you go, so a corridor U-turn works
   if(drift && Math.abs(r.spd)>50){
     // lock the slide to the direction you're actually steering — no random snap,
     // and don't let live steering fight the slide (that caused the squirreliness)
@@ -58179,10 +59180,11 @@ function updateRacer(r,dt){
     r.drift=1;
     if(r.driftDir===0 && Math.abs(steer)>0.15) r.driftDir = steer>0?1:-1;
     if(r.driftDir!==0){
-      turnRate*=1.1;
-      steer = r.driftDir*0.32 + steer*0.28;     // committed slide + gentle trim (softer)
+      turnRate*=MAZE?1.25:1.1;
+      steer = MAZE ? r.driftDir*0.7 + steer*0.45 : r.driftDir*0.32 + steer*0.28;     // committed slide + gentle trim (softer; the maze swings round)
     }
     r.driftCharge+=dt;
+    if(MAZE) r.spd*=Math.pow(0.7,dt);           // a maze drift bleeds speed: it is how you turn round
   } else {
     if(r.drift===1){                            // released → mini-turbo
       if(r.driftCharge>1.2) r.boostT=Math.max(r.boostT,0.9);
@@ -58214,7 +59216,7 @@ function updateRacer(r,dt){
   // HOLDING you rather than like you are balancing on it. Scaled by speed because a
   // pinned superconductor resists displacement harder the faster it is moving through the
   // field, and that also stops the pull fighting you when parking.
-  { const s=SAMP[r.idx];
+  if(!MAZE){ const s=SAMP[r.idx];        // (no groove in the maze)
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;
     const grip = onRoad ? (1.5 + 1.7*vfrac) : 0.45;
     const pull = Math.min(0.9, grip*dt) * lat;
@@ -58237,7 +59239,8 @@ function updateRacer(r,dt){
   // proven algebraically equal to Rodrigues' rotation formula), so this needs the opposite
   // sign flowing in to cancel the downstream negation and come out as +s.bank in the end.
   let bankWant=-(SAMP[r.idx].bank||0)/0.85;
-  if(!r.air){ const s=SAMP[r.idx];   // no walls while airborne — jump over barriers/gaps
+  if(MAZE) mzCollideRacer(r);           // the maze: its walls, islands and the egg
+  else if(!r.air){ const s=SAMP[r.idx];   // no walls while airborne — jump over barriers/gaps
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;   // +lat toward +normal
     if(TRACKS[selTrack].berm && tunnelAt(r.prog)){
       // gravitational-distortion berm (experimental, Valentina's tunnels): the tube wall
@@ -58279,6 +59282,7 @@ function updateRacer(r,dt){
   }
   r._bank += (bankWant-r._bank)*Math.min(1,6*dt);   // smooth the berm roll in/out
 
+  if(MAZE) mzPads(r);                   // the maze's pads kick only on the way back out of a loop
   // boost pads — drive over a chevron strip for a speed kick
   for(const p of boostPads){
     if(Math.hypot(r.x-p.x, r.z-p.z) < p.r){
@@ -58346,6 +59350,7 @@ function updateRacer(r,dt){
 const HOVER_H=2.4;   // characters float this far above the literal road surface — the
                       // shadow (tracked separately via r.surfY, see syncObjects) sells it
 function placeOnTrack(r,dt){
+  if(MAZE){ if(mzPlace(r,dt) && !r.finished) placeFinish(r); return; }   // the maze: terraces, distance left along its graph
   // hug the track height (unless airborne after a jump ramp) — on a banked corner the
   // road surface isn't flat across its width, so the target height has to account for
   // how far off centerline the racer actually is, or it clips into the raised outer
@@ -58393,7 +59398,11 @@ function placeOnTrack(r,dt){
     r.prog=u; r.total=u;                          // point-to-point: progress = distance to the egg
     done = u>=0.985;
   }
-  if(!r.finished && done){
+  if(!r.finished && done) placeFinish(r);
+}
+// the finish itself, shared by every course (the maze reaches it from mzPlace)
+function placeFinish(r){
+  {
     r.finished=true; r.finishT=raceTime;
     if(r.you){                                   // finish flourish for the player — THE climax of the race
       hitStopT=0.12;                             // freeze-frame beat before everything else lands
@@ -58659,11 +59668,12 @@ function collide(){
     for(const r of racers){ if(r===p.owner||r.finished)continue;
       const dd=Math.hypot(r.x-p.x,r.z-p.z); const ahead=Math.cos(p.head)*(r.z-p.z)+Math.sin(p.head)*(r.x-p.x);
       if(ahead>0&&dd<bd){bd=dd;best=r;} }
-    if(best){ const want=Math.atan2(best.x-p.x,best.z-p.z); p.head+=angDiff(want,p.head)*0.06; }
+    if(best && (!MAZE || mzClearLine(MAZE,p.x,p.z,best.x,best.z,0))){ const want=Math.atan2(best.x-p.x,best.z-p.z); p.head+=angDiff(want,p.head)*0.06; }   // the maze: only at a rival in plain sight
   }
   projectiles=projectiles.filter(p=>{
     p.life-=1/60; p.x+=Math.sin(p.head)*p.spd/60; p.z+=Math.cos(p.head)*p.spd/60;
-    const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z);
+    if(MAZE){ p.mesh.position.set(p.x,mzFloorAt(p.x,p.z)+3,p.z); if(mzNear(MAZE,p.x,p.z)<1.6) p.life=0; }   // the maze: a shot dies on a wall
+    else { const ci=nearest(p.x,p.z); p.mesh.position.set(p.x,SAMP[ci].p.y+3,p.z); }
     for(const r of racers){ if(r===p.owner||r.finished||r.spinT>0||r.shieldT>0||r.megaT>0)continue;
       if(Math.hypot(r.x-p.x,r.z-p.z)<5){
         if(NET.on){ const nv=netVictim(p,r,p.glue?'glue':'spin',p.glue?{gl:3.5}:{sp:1.2});
@@ -59498,6 +60508,7 @@ function updateCamera(dt){
   else _camPush.set(0,0,0);
   _camPushOn=false; _camRoll=0;
   updateCameraCore(dt);
+  if(MAZE){ const me=racers.find(r=>r.you); if(me) mzCamGuard(me); }   // the maze: clear of ridges and the egg
   // 'done' too: the results panel goes up on the frame the race ends and the lens must not
   // snap back to the raw orbit point (often inside a rival dragon) behind it
   if((state==='count'||state==='race'||state==='done') && !(camMode==='fp' && state==='race' && !(racers.find(r=>r.you)||{}).finished)){
@@ -59850,7 +60861,7 @@ function frame(now){
         // project the stragglers from their remaining distance at the pace you just ran (order preserved);
         // a course that keeps the default race length keeps the old flat 12 s per lap
         const paceLap = TRACKS[selTrack].laps ? (meF.finishT||raceTime)/lapsOf() : 12;
-        for(const r of racers) if(!r.finished){ r.finished=true; r.finishT=raceTime+(lapsOf()-r.total)*paceLap;
+        for(const r of racers) if(!r.finished){ r.finished=true; r.finishT=raceTime+(MAZE?(r._mzR||0)/95:(lapsOf()-r.total)*paceLap);
           r.air=false; r.vy=0; if(r.surfY!=null) r.y=r.surfY+HOVER_H; }   // no freezing mid-jump
         endRace();
       }
@@ -59858,7 +60869,7 @@ function frame(now){
     syncHUD();
   }
   if(state==='count') countdownGlance(dt, now);
-  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); drawMap(); }
+  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); if(!MAZE) drawMap(); }   // no minimap in the maze
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
@@ -59993,6 +61004,8 @@ function frame(now){
   if(TRACK_PULSE.biolum){   // plankton shimmer on a faster cycle than the ambient beat
     TRACK_PULSE.biolum.material.opacity=0.5+0.4*Math.sin(tsec*3.1);
     TRACK_PULSE.biolum.material.size=4.0+Math.sin(tsec*2.2)*0.8; }
+  // Ariadne: the heartbeat's light, cilia, motes, microbes, threads, the heartbeat itself
+  if(TRACK_PULSE.maze) mzTick(TRACK_PULSE.maze, tsec, dt);
   if(TRACK_PULSE.egg){ const e=TRACK_PULSE.egg;
     if(eggAnim>0){                                  // fertilize! bioluminescent bloom
       eggAnim-=dt; const k=1+(2.4-eggAnim)*0.7;
@@ -60334,6 +61347,7 @@ function netRecv(m){
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
       selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
+      mzSeedNext=(m.seed!=null)?m.seed:null;   // the host's maze, exactly
       netBeginRace();
       break;
     case 's': {                               // a human's own kart
@@ -60553,7 +61567,8 @@ function netHostStart(){
     while(lineup.length<6 && pool.length){ const t=pool.shift(); lineup.push({id:null, ai:true, typeId:t.id, name:t.name, k:lineup.length}); }
   }
   NET.lineup=lineup;
-  netSend({t:'start', track:selTrack, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
+  const seed=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzPickSeed(TRACKS[selTrack])) : undefined;   // the maze's seed travels with the grid
+  netSend({t:'start', track:selTrack, seed, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
   netBeginRace();
 }
 function netBeginRace(){
@@ -61261,7 +62276,7 @@ buildRacers = function(){
   for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
   for(const p of projectiles){ scene.remove(p.mesh); disposeObject(p.mesh); }
   hazards=[]; projectiles=[];
-  items=itemStations(TRACKS[selTrack]).map(makeItemBox);   // Eve lays her own
+  items=MAZE?mzItemBoxes():itemStations(TRACKS[selTrack]).map(makeItemBox);   // Eve lays her own; the maze puts them where its kit did
 
   // track-authored cyst slalom (Valentina): staggered gates on the flat-out straight —
   // same mesh/collision as a dropped cyst, alternating sides, rebuilt every race start
@@ -61355,6 +62370,8 @@ buildRacers = function(){
     // (same expression placeOnTrack solves once the race is running)
     const gSurf=sg.p.y + Math.sin(sg.bank||0)*lane;
     pos.y=gSurf+HOVER_H;
+    const mzG=MAZE?MAZE.grid[Math.min(k,MAZE.grid.length-1)]:null;   // the maze: its antechamber grid, three abreast
+    if(mzG) pos.set(mzG.x,HOVER_H,mzG.z);
     obj.position.copy(pos);
     scene.add(obj);
     // soft ground shadow disc that grounds the racer
@@ -61370,7 +62387,7 @@ buildRacers = function(){
       remote: !!(np && (np.ai ? !NET.host : np.id!==NET.self)),
       human: !!(np && !np.ai),
       x:pos.x, z:pos.z, y:pos.y, surfY:gSurf, _bank:-(sg.bank||0)/0.85,
-      head:Math.atan2(sg.t.x,sg.t.z),    // facing along the road where it stands
+      head:mzG?mzG.head:Math.atan2(sg.t.x,sg.t.z),    // facing along the road where it stands (the maze: its gate)
       spd:0, idx:2, prog:s.u, lap:0, total:0,
       drift:0, driftDir:0, driftCharge:0, hop:0, slip:0,
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
@@ -61469,7 +62486,7 @@ function setupJoystick(){
 // Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
 function paintSummary(){
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
-    if(dl) dl.textContent=(['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
+    if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? 'one run to the egg · item boxes · hold the drift' : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
   const el=$('picksum'); if(!el||!chosenType) return;
   el.textContent=TRACKS[selTrack].name+' · '+chosenType.name+' · '+difficulty;
 }
@@ -61499,6 +62516,7 @@ function showSelect(){
   revealPick(false); updateScrollHint();
 }
 function courseArt(t){
+  if(t.maze) return mzCourseArt(t);
   const n=t.sky||0, r=(n>>16&255)/255, g=(n>>8&255)/255, b=(n&255)/255;
   const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn;
   let h=0, s=0;
@@ -61523,13 +62541,13 @@ function courseArt(t){
   return {svg, plate:`radial-gradient(120% 95% at 28% 16%,${c1},${c2})`, ac:light?'#6df2d0':hs(hue,.85,.72), ix:light?hs(hue,.5,.2):hs(hue,.85,.78)};
 }
 // ---- track picker (start screen): a swipeable strip of "slides", the centred one is the pick ----
-const TRACK_FIRST=['Felicity','Namie','Rosalie','Ophelia','Eve','Stacey'];   // the strip opens on these, and a first visit starts on the first
+const TRACK_FIRST=['Felicity','Namie','Rosalie','Ophelia','Eve','Stacey','Ariadne'];   // the strip opens on these, and a first visit starts on the first
 function setupTrackPick(){
   const wrap=$('trackpick'); if(!wrap) return;
   wrap.innerHTML='';
   const cards=[];
   // display order only (TRACKS indices stay put: saved picks, Grand Prix and lobbies key off them):
-  // Felicity, Namie, Rosalie, Ophelia, Eve and Stacey open the strip; these sit at the end of it, in this order (Valentina and Clara last)
+  // Felicity, Namie, Rosalie, Ophelia, Eve, Stacey and Ariadne open the strip; these sit at the end of it, in this order (Valentina and Clara last)
   const FIRST=TRACK_FIRST, LAST=['Seraphina','Delilah','Bianca','Valentina','Clara'];
   const at=n=>TRACKS.findIndex(t=>t.name===n);
   const ord=FIRST.map(at).filter(i=>i>=0)
@@ -62146,6 +63164,11 @@ window.srNet={
         drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
         tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null, swing:curStyle.swing||0},
       mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
+  // the labyrinth being raced (null on every other course): its seed, whether it validated, and where everyone is in it
+  get maze(){ if(!MAZE) return null; return {seed:MAZE.baseSeed, attempt:MAZE.attempt, valid:MAZE.valid, errors:MAZE.errors.slice(),
+    route:Math.round(MAZE.L), cells:MAZE.NC, deadEnds:MAZE.dead.length, gates:MAZE.gates.length, boxes:MAZE.boxes.length, pads:MAZE.pads.length,
+    alt:MAZE.alt?{share:+MAZE.alt.share.toFixed(2), ratio:+MAZE.alt.ratio.toFixed(2)}:null,
+    karts:racers.map(r=>({name:r.name, you:!!r.you, cell:r._mzCell, remain:Math.round(r._mzR||0), skill:+(r.skill||1).toFixed(3)}))}; },
   get race(){ return {state, laps:lapsOf(), time:+raceTime.toFixed(2), auth:NET.auth, hostId:NET.hostId||null,
     karts:racers.map(r=>({name:r.name, id:r.id, you:!!r.you, nk:r.nk,
       remote:!!r.remote, human:!!r.human, netId:r.netId||null, lap:r.lap, prog:+(r.prog||0).toFixed(3),
