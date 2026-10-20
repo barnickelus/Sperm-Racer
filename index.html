@@ -44543,6 +44543,11 @@ const MZ={
   HC:16,        // floor height at the egg chamber: the rings terrace up toward the egg
   ANG_IN:Math.PI/2,       // the rim gate faces +z
   TRIES:60,
+  // clean corners: no ticks, no stubs, every free wall end a rounded bulb
+  TICK:30,      // a ring wall that would run on less than this past a gate to a junction is cut back to the junction (no "+"/"T" ticks)
+  FIN_MIN:30,   // a free-standing piece of ring wall shorter than this (between two gates, no junction) is left out
+  NOSE_R:4.0,   // every free wall end swells into a round bulb this wide (radius), its tip where the wall end was (gate widths unchanged)
+  NOSE_L:16,    // ...over this much of the wall (a gentle taper, never a step)
 };
 const MZ_TAU=Math.PI*2;
 let MAZE=null;                      // the labyrinth being raced (null on every other course)
@@ -44677,20 +44682,25 @@ function mzLayout(M){
   const arc=(cx,cz,r,a0,a1,ring,kind)=>W.push({t:0,cx,cz,R:r,a0,a1,hw,ring,kind:kind||'ring'});
   const seg=(x0,z0,x1,z1,ring,kind)=>W.push({t:1,x0,z0,x1,z1,hw,ring,kind:kind||'rad'});
   M.gates=[];
-  // ring walls k=0..K at radius B(k): spans are the cells just outside (ring 1 for the egg chamber, ring K for the rim)
+  // the gates in every ring wall k=0..K at radius B(k): each a gap in the span of the cell just
+  // outside it (ring 1 for the egg chamber, ring K for the rim), centred in that span for now
+  const GK=[];
   for(let k=0;k<=K;k++){
     const r=B(k), sk=k===0?1:k===K?K:k+1, n=N[sk], w=MZ_TAU/n, hg=(C.GATE_W+C.T)/2/r, gaps=[];
     for(let j=0;j<n;j++){ const s=id(sk,j); let open=false, kind='spoke';
       if(k===0){ open=goals.indexOf(s)>=0; kind='egg'; } else if(k===K){ open=s===ent; kind='rim'; }
       else for(const e of adj[s]) if(E[e].kind===1 && ck[M.other(e,s)]===k && E[e].open){ open=true; break; }
-      if(open){ const m=(j+0.5)*w; gaps.push(m); M.gates.push({k, th:m, r, hg, kind, ring:k}); } }
-    if(!gaps.length){ arc(0,0,r,0,MZ_TAU,k,'ring'); continue; }
-    for(let i=0;i<gaps.length;i++){ const a=gaps[i]+hg, b=(i+1<gaps.length?gaps[i+1]:gaps[0]+MZ_TAU)-hg; if(b>a+1e-4) arc(0,0,r,a,b,k,'ring'); }
+      if(open){ const m=(j+0.5)*w, q={k, th:m, r, hg, kind, ring:k, a0:m-hg, a1:m+hg, s0:j*w, s1:(j+1)*w}; gaps.push(q); M.gates.push(q); } }
+    GK.push(gaps);
   }
   // radial walls between ring-wise neighbours that are not joined
+  const radEnds=[];
   for(const e of E) if(e.kind===0 && !e.open){ const k=ck[e.a], th=M.span(e.a)[1], c=Math.cos(th), s=Math.sin(th);
-    seg(B(k-1)*c, B(k-1)*s, B(k)*c, B(k)*s, k, 'rad'); }
-  // dead ends: a keyhole loop — a semicircle round a soft island, sealed back to the opening
+    seg(B(k-1)*c, B(k-1)*s, B(k)*c, B(k)*s, k, 'rad'); radEnds.push([k-1,th],[k,th]); }
+  const junc=(k,th)=>{ for(const q of radEnds) if(q[0]===k && Math.abs(Math.atan2(Math.sin(q[1]-th),Math.cos(q[1]-th)))<1e-6) return true; return false; };
+  // dead ends: a keyhole loop — a semicircle round a soft island, sealed back to the opening.
+  // (A loop entered through a ring wall has straight sides, and its gate opens to exactly
+  // their width so the ring wall ends inside them: no lip at the loop mouth.)
   M.loops=[]; M.pads=[]; M.boxes=[];
   for(const c of M.dead){
     const p=M.PT[M.cellP[c][0]], k=ck[c], rc=cr[k], s=M.span(c); let ix, iz, fx, fz;
@@ -44698,7 +44708,14 @@ function mzLayout(M){
       const sg=near0?1:-1, tf=near0?s[1]:s[0], th=tf-sg*(P/2)/rc;
       ix=rc*Math.cos(th); iz=rc*Math.sin(th); fx=-Math.sin(th)*sg; fz=Math.cos(th)*sg; }
     else { ix=rc*Math.cos(p.th); iz=rc*Math.sin(p.th); const out=p.r>rc?-1:1; fx=Math.cos(p.th)*out; fz=Math.sin(p.th)*out;
-      const tx=-fz, tz=fx; for(const sd of [-1,1]){ const ax=ix+tx*sd*P/2, az=iz+tz*sd*P/2; seg(ax,az, ax-fx*P/2, az-fz*P/2, k, 'loop'); } }
+      const tx=-fz, tz=fx, gq=M.gates.find(q=>Math.abs(q.r-p.r)<1e-6 && Math.abs(Math.atan2(Math.sin(q.th-p.th),Math.cos(q.th-p.th)))<1e-6);
+      for(const sd of [-1,1]){ const ax=ix+tx*sd*P/2, az=iz+tz*sd*P/2;
+        // run the side back to where it meets the ring wall's circle (not a tangent's length short of it)
+        const bx=ax-fx*P, bz=az-fz*P, ddx=bx-ax, ddz=bz-az, qa=ddx*ddx+ddz*ddz, qb=2*(ax*ddx+az*ddz), qc=ax*ax+az*az-p.r*p.r, disc=Math.max(0,qb*qb-4*qa*qc);
+        const t=(-qb+(qc>0?-1:1)*Math.sqrt(disc))/(2*qa), ex=ax+ddx*t, ez=az+ddz*t;
+        seg(ax,az, ex,ez, k, 'loop');
+        const ea=Math.atan2(ez,ex); radEnds.push([Math.round((p.r-R0)/P), ea]);
+        if(gq){ const d=Math.atan2(Math.sin(ea-gq.th),Math.cos(ea-gq.th)); if(d<0) gq.a0=gq.th+d; else gq.a1=gq.th+d; gq.loop=true; } } }
     const fa=Math.atan2(fz,fx); arc(ix,iz,P/2,fa-Math.PI/2,fa+Math.PI/2,k,'loop');
     W.push({t:2,cx:ix,cz:iz,R:C.ISL_R,hw:0,ring:k,kind:'island'});
     const L={cell:c, x:ix, z:iz, fx, fz, ring:k, reward:null}; const roll=R();
@@ -44707,11 +44724,30 @@ function mzLayout(M){
     else if(roll<0.72){ L.reward='pad'; M.pads.push({x:ix-fx*lane, z:iz-fz*lane, dx:-fx, dz:-fz, r:9}); }
     M.loops.push(L);
   }
+  // the ring walls, cut at their gates. A gate whose wall would run on only a few units to a
+  // junction with a radial wall opens right up to that junction instead (the stub it would
+  // leave is a hook: a "+" or "T" tick a kart snags on). The gap never leaves the span of the
+  // gate's own cell, so this joins nothing the maze did not already join. A free-standing
+  // scrap of wall left between two gates (no junction on it) is left out the same way.
+  for(let k=0;k<=K;k++){
+    const r=B(k), gaps=GK[k];
+    if(!gaps.length){ arc(0,0,r,0,MZ_TAU,k,'ring'); continue; }
+    for(const q of gaps){ if(q.loop) continue;
+      if((q.a0-q.s0)*r<C.TICK && junc(k,q.s0)) q.a0=q.s0;
+      if((q.s1-q.a1)*r<C.TICK && junc(k,q.s1)) q.a1=q.s1; }
+    for(let i=0;i<gaps.length;i++){ const q=gaps[i], nq=gaps[(i+1)%gaps.length], a=q.a1, b=nq.a0+(i+1<gaps.length?0:MZ_TAU);
+      if(b<=a+1e-4) continue;
+      let jn=false; for(const e of radEnds) if(e[0]===k){ let t=e[1]; while(t<a-1e-6) t+=MZ_TAU; while(t>a+MZ_TAU) t-=MZ_TAU; if(t<=b+1e-6){ jn=true; break; } }
+      if(!jn && (b-a)*r<C.FIN_MIN) continue;
+      arc(0,0,r,a,b,k,'ring'); }
+    for(const q of gaps){ q.th=(q.a0+q.a1)/2; q.hg=(q.a1-q.a0)/2; }   // (the opening as built: lanterns, light pools and the corner assist use it)
+  }
   // the egg itself is solid
   W.push({t:2,cx:0,cz:0,R:C.EGG_R,hw:0,ring:0,kind:'egg'});
   // the antechamber outside the rim gate: a funnel, two sides and a back wall
   const A=M.ante, at=(s,v)=>[A.ux*(A.r+s)+A.tx*v, A.uz*(A.r+s)+A.tz*v], gw=C.GATE_W/2+hw, aw=C.ANTE_W, ad=C.ANTE_D;
-  for(const sd of [-1,1]){ const p0=at(0,sd*gw), p1=at(40,sd*aw), p2=at(ad,sd*aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); seg(p1[0],p1[1],p2[0],p2[1],K+1,'ante'); }
+  const rimG=M.gates.find(q=>q.kind==='rim');
+  for(const sd of [-1,1]){ const ea=rimG?(sd<0?rimG.a0:rimG.a1):0, p0=rimG?[A.r*Math.cos(ea),A.r*Math.sin(ea)]:at(0,sd*gw), p1=at(40,sd*aw), p2=at(ad,sd*aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); seg(p1[0],p1[1],p2[0],p2[1],K+1,'ante'); }
   { const p0=at(ad,-aw), p1=at(ad,aw); seg(p0[0],p0[1],p1[0],p1[1],K+1,'ante'); }
   // the grid: three abreast, rows 22 apart, facing the gate (room for fifteen)
   M.grid=[]; const head=Math.atan2(-A.ux,-A.uz);
@@ -44723,13 +44759,43 @@ function mzLayout(M){
     const on=new Set(mzCellRoute(M).path); let n=0;
     for(let tries=0;tries<200&&n<4;tries++){ const c=Math.floor(R()*M.NC); if(on.has(c)||M.dead.indexOf(c)>=0||ck[c]<3) continue; const s=M.span(c), a=(s[0]+s[1])/2;
       M.boxes.push({x:cr[ck[c]]*Math.cos(a), z:cr[ck[c]]*Math.sin(a), loop:false}); n++; } }
+  mzNoses(W, C, M);
   M.walls=W;
   mzGridBuild(M);
   return M;
 }
+// every free wall end (the side of a gate, a lone fin) swells into a round bulb, its tip where the
+// wall end was (so no gate gets narrower): a kart that meets it rolls round it instead of
+// catching on a thin edge. The same shape is the collision (mzPrimDist) and the mesh (mzWallGeos).
+function mzNoses(W, C, M){
+  const RN=C.NOSE_R, ends=[]; M.noses=[];
+  for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2 || (w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6)) continue;
+    const L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0);
+    for(let e=0;e<2;e++){ let px,pz,ux,uz;
+      if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1; px=w.cx+w.R*Math.cos(a); pz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+      else { const dx=(w.x1-w.x0)/(L||1), dz=(w.z1-w.z0)/(L||1); px=e?w.x1:w.x0; pz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
+      const tx=px+ux*w.hw, tz=pz+uz*w.hw; let buried=false;
+      for(let j=0;j<W.length;j++) if(j!==i && mzPrimDist(W[j],tx,tz)<0.25){ buried=true; break; }
+      if(!buried) ends.push(i,e,L); } }
+  for(let n=0;n<ends.length;n+=3){ const w=W[ends[n]], e=ends[n+1], L=ends[n+2], cut=RN-w.hw;
+    if(L<cut*2+RN+4) continue;   // (too short to carry a bulb)
+    let cx, cz, ux, uz;
+    if(w.t===0){ if(e) w.a1-=cut/w.R; else w.a0+=cut/w.R; const a=e?w.a1:w.a0, sg=e?1:-1; cx=w.cx+w.R*Math.cos(a); cz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+    else { const dx=(w.x1-w.x0)/L, dz=(w.z1-w.z0)/L; if(e){ w.x1-=dx*cut; w.z1-=dz*cut; } else { w.x0+=dx*cut; w.z0+=dz*cut; } cx=e?w.x1:w.x0; cz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
+    if(e) w.f1=RN; else w.f0=RN;
+    M.noses.push({x:cx, z:cz, ux, uz, r:RN, ring:w.ring}); }   // (the bulb's centre and which way its tip points)
+  for(const w of W) if(w.f0||w.f1){ w.L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0); w.fl=Math.min(C.NOSE_L, w.L*(w.f0&&w.f1?0.5:0.9)); }
+}
+// a wall's half-width at arc length s along it (its bulbs swell in over fl with a smoothstep)
+function mzHalfW(w,s){
+  let h=w.hw; if(!w.fl) return h;
+  if(w.f0 && s<w.fl){ const u=1-s/w.fl; h=Math.max(h, w.hw+(w.f0-w.hw)*u*u*(3-2*u)); }
+  if(w.f1 && s>w.L-w.fl){ const u=1-(w.L-s)/w.fl; h=Math.max(h, w.hw+(w.f1-w.hw)*u*u*(3-2*u)); }
+  return h;
+}
 /* ---- spatial hash over the wall primitives (built once; queried allocation-free) ---- */
 function mzGridBuild(M){
-  const G=16, ext=M.C.R0+M.K*M.C.P+M.C.ANTE_D+60, n=Math.ceil(2*ext/G), cells=new Array(n*n), inf=M.C.T/2+M.C.KR+2;
+  const G=16, ext=M.C.R0+M.K*M.C.P+M.C.ANTE_D+60, n=Math.ceil(2*ext/G), cells=new Array(n*n), inf=Math.max(M.C.T/2,M.C.NOSE_R)+M.C.KR+2;
   const mark=(x,z,i)=>{ const r=inf; const gi0=Math.floor((x-r+ext)/G), gi1=Math.floor((x+r+ext)/G), gj0=Math.floor((z-r+ext)/G), gj1=Math.floor((z+r+ext)/G);
     for(let gi=gi0;gi<=gi1;gi++) for(let gj=gj0;gj<=gj1;gj++){ if(gi<0||gj<0||gi>=n||gj>=n) continue; const k=gi*n+gj; const L=cells[k]||(cells[k]=[]); if(L[L.length-1]!==i && L.indexOf(i)<0) L.push(i); } };
   M.walls.forEach((w,i)=>{
@@ -44742,22 +44808,23 @@ function mzGridBuild(M){
   M.wallDist=(x,z)=>{ mzNear(M,x,z); return MZ_Q.d; };
 }
 // nearest wall surface to (x,z): MZ_Q.d (negative inside), MZ_Q.nx/nz (outward normal); allocation-free
-const MZ_Q={d:1e9,nx:0,nz:0};
+// (MZ_Q.e: 1 when that surface is the round tip of a bulb, the kart past the wall's end)
+const MZ_Q={d:1e9,nx:0,nz:0,e:0};
 function mzPrimDist(w,x,z){
-  let qx,qz;
-  if(w.t===2){ const dx=x-w.cx, dz=z-w.cz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.R; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; return MZ_Q.d; }
+  let qx,qz,s=0,e=0;
+  if(w.t===2){ const dx=x-w.cx, dz=z-w.cz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.R; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=0; return MZ_Q.d; }
   if(w.t===0){ const dx=x-w.cx, dz=z-w.cz; let a=Math.atan2(dz,dx); while(a<w.a0) a+=MZ_TAU; while(a>=w.a0+MZ_TAU) a-=MZ_TAU;
-    if(a<=w.a1){ qx=w.cx+w.R*Math.cos(a); qz=w.cz+w.R*Math.sin(a); }
-    else { const e=(a-w.a1)<(w.a0+MZ_TAU-a)?w.a1:w.a0; qx=w.cx+w.R*Math.cos(e); qz=w.cz+w.R*Math.sin(e); } }
-  else { const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); t=t<0?0:t>1?1:t; qx=w.x0+vx*t; qz=w.z0+vz*t; }
-  const dx=x-qx, dz=z-qz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.hw; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; return MZ_Q.d;
+    if(a<=w.a1){ qx=w.cx+w.R*Math.cos(a); qz=w.cz+w.R*Math.sin(a); s=(a-w.a0)*w.R; }
+    else { const hi=(a-w.a1)<(w.a0+MZ_TAU-a), ea=hi?w.a1:w.a0; qx=w.cx+w.R*Math.cos(ea); qz=w.cz+w.R*Math.sin(ea); s=hi?(w.a1-w.a0)*w.R:0; e=hi?w.f1:w.f0; } }
+  else { const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); if(t<0){ t=0; e=w.f0; } else if(t>1){ t=1; e=w.f1; } qx=w.x0+vx*t; qz=w.z0+vz*t; if(w.fl) s=t*w.L; }
+  const dx=x-qx, dz=z-qz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-(w.fl?mzHalfW(w,s):w.hw); MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=e?1:0; return MZ_Q.d;
 }
 function mzCellList(M,x,z){ const g=M.grd, gi=Math.floor((x+g.ext)/g.G), gj=Math.floor((z+g.ext)/g.G);
   return (gi<0||gj<0||gi>=g.n||gj>=g.n) ? null : g.cells[gi*g.n+gj]; }
 function mzNear(M,x,z){
-  const L=mzCellList(M,x,z); let bd=1e9, bx=0, bz=0;
-  if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],x,z); if(d<bd){ bd=d; bx=MZ_Q.nx; bz=MZ_Q.nz; } }
-  MZ_Q.d=bd; MZ_Q.nx=bx; MZ_Q.nz=bz; return bd;
+  const L=mzCellList(M,x,z); let bd=1e9, bx=0, bz=0, be=0;
+  if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],x,z); if(d<bd){ bd=d; bx=MZ_Q.nx; bz=MZ_Q.nz; be=MZ_Q.e; } }
+  MZ_Q.d=bd; MZ_Q.nx=bx; MZ_Q.nz=bz; MZ_Q.e=be; return bd;
 }
 // is the straight line a->b clear of walls (sampled every 3 units)
 function mzClearLine(M,ax,az,bx,bz,pad){
@@ -45021,13 +45088,14 @@ function mzWallGeos(M){
     const ph=R()*100, row=MZ_PROF.length;
     const rings=[];   // each: list of [x,y,z,nx,ny,nz,h]
     let u=u0||0;
-    const sec=(x,z,tx,tz,uu)=>{ const nx=tz, nz=-tx;            // across the wall
-      const th=1+0.22*Math.sin(uu*0.07+ph)+0.10*Math.sin(uu*0.23+ph*2.0), hh=C.H*(1+0.07*Math.sin(uu*0.05+ph*1.3));
+    const sec=(x,z,tx,tz,uu,pt)=>{ const nx=tz, nz=-tx;            // across the wall
+      // (the organic swell in thickness fades out toward a bulb, so the bulb you see is the bulb you hit)
+      const th=1+(0.22*Math.sin(uu*0.07+ph)+0.10*Math.sin(uu*0.23+ph*2.0))*(pt.k==null?1:pt.k), hh=C.H*(1+0.07*Math.sin(uu*0.05+ph*1.3)), hwp=pt.h||hw;
       const y0=mzFloorY(Math.hypot(x,z))-0.6;
-      const out=[]; for(const q of MZ_PROF){ const ox=q[0]*hw*th; out.push([x+nx*ox, y0+q[1]*(hh+0.6), z+nz*ox, nx*q[2], q[3], nz*q[2], q[1], uu]); } return out; };
-    for(let i=0;i<pts.length;i++){ if(i>0) u+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].z-pts[i-1].z); rings.push(sec(pts[i].x,pts[i].z,pts[i].tx,pts[i].tz,u)); }
+      const out=[]; for(const q of MZ_PROF){ const ox=q[0]*hwp*th; out.push([x+nx*ox, y0+q[1]*(hh+0.6), z+nz*ox, nx*q[2], q[3], nz*q[2], q[1], uu]); } return out; };
+    for(let i=0;i<pts.length;i++){ if(i>0) u+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].z-pts[i-1].z); rings.push(sec(pts[i].x,pts[i].z,pts[i].tx,pts[i].tz,u,pts[i])); }
     // noses: the profile swung round the end point
-    const nose=(pt,sgn,first)=>{ const out=[]; const base=sec(pt.x,pt.z,pt.tx,pt.tz,first?(u0||0):u);
+    const nose=(pt,sgn,first)=>{ const out=[]; const base=sec(pt.x,pt.z,pt.tx,pt.tz,first?(u0||0):u,pt);
       for(let s=1;s<=5;s++){ const a=s/5*Math.PI/2; const ca=Math.cos(a), sa=Math.sin(a);
         out.push(base.map(v=>{ const ox=v[0]-pt.x, oz=v[2]-pt.z; const al=ox*pt.tz-oz*pt.tx;   // signed across
           const x=pt.x+(pt.tz*al*ca)+(pt.tx*sgn*Math.abs(al)*sa), z=pt.z+(-pt.tx*al*ca)+(pt.tz*sgn*Math.abs(al)*sa);
@@ -45044,15 +45112,20 @@ function mzWallGeos(M){
   M.frondSpots=[];
   for(const w of M.walls){
     if(w.t===2) continue;
-    const pts=[];
-    if(w.t===0){ const len=(w.a1-w.a0)*w.R, n=Math.max(2,Math.ceil(len/MZ_WSTEP));
-      for(let s=0;s<=n;s++){ const a=w.a0+(w.a1-w.a0)*s/n; pts.push({x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}); } }
-    else { const L=Math.hypot(w.x1-w.x0,w.z1-w.z0), n=Math.max(1,Math.ceil(L/MZ_WSTEP)), tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1);
-      for(let s=0;s<=n;s++) pts.push({x:w.x0+(w.x1-w.x0)*s/n, z:w.z0+(w.z1-w.z0)*s/n, tx, tz}); }
+    const pts=[], L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0);
+    // stations along the wall: every MZ_WSTEP, closer (2 units) over a bulb's taper so its curve is smooth
+    const ss=[]; { const n=Math.max(w.t===0?2:1,Math.ceil(L/MZ_WSTEP)); for(let i=0;i<=n;i++) ss.push(L*i/n);
+      if(w.fl){ const add=(a,b)=>{ const m=Math.ceil((b-a)/2); for(let i=1;i<m;i++) ss.push(a+(b-a)*i/m); }; if(w.f0) add(0,w.fl); if(w.f1) add(L-w.fl,L);
+        ss.sort((a,b)=>a-b); for(let i=ss.length-1;i>0;i--) if(ss[i]-ss[i-1]<0.6) ss.splice(i-(i===ss.length-1?1:0),1); } }
+    for(const sv of ss){ let p;
+      if(w.t===0){ const a=w.a0+sv/w.R; p={x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}; }
+      else { const tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1); p={x:w.x0+tx*sv, z:w.z0+tz*sv, tx, tz}; }
+      p.s=sv; if(w.fl){ p.h=mzHalfW(w,sv); const d0=w.f0?sv:1e9, d1=w.f1?L-sv:1e9, dm=Math.min(d0,d1)/(w.fl*1.5); p.k=dm>=1?1:dm*dm*(3-2*dm); }
+      pts.push(p); }
     const closed=w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6, CH=30;
     if(pts.length<=CH+1) ridge(pts, w.hw, w.ring, closed?null:[true,true], 0);
     else for(let i0=0;i0<pts.length-1;i0+=CH){ const i1=Math.min(pts.length-1,i0+CH);
-      ridge(pts.slice(i0,i1+1), w.hw, w.ring, closed?null:[i0===0, i1===pts.length-1], i0*MZ_WSTEP); }
+      ridge(pts.slice(i0,i1+1), w.hw, w.ring, closed?null:[i0===0, i1===pts.length-1], pts[i0].s); }
     // cilia spots along the crown: clumps and gaps, never a picket fence
     let run=0, on=false; for(let s=0;s<pts.length;s++){ if(run===0){ on=R()<0.58; run=1+Math.floor(R()*4); } run--;
       if(on && s%2===0) M.frondSpots.push({x:pts[s].x, z:pts[s].z, tx:pts[s].tx, tz:pts[s].tz, ring:w.ring}); }
@@ -45077,7 +45150,8 @@ function mzGlowTex(M){
   g.lineCap='round';
   for(const pass of [[10,0.07],[3.6,0.14]]){ g.lineWidth=pass[0]*k*1.6;
     for(const w of M.walls){ if(w.t===2) continue; g.strokeStyle=css(mzRingU(w.ring),pass[1]); g.beginPath();
-      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); } }
+      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); }
+    for(const b of M.noses){ g.fillStyle=css(mzRingU(b.ring),pass[1]); g.beginPath(); g.arc(X(b.x),Z(b.z),(b.r+pass[0]*0.4)*k,0,MZ_TAU); g.fill(); } }   // (the bulbs spill light too)
   const pool=(x,z,r,u,a,m)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,m||1.1)); gr.addColorStop(0.5,css(u,a*0.35,m||1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
   for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 26, mzRingU(q.ring), 0.60); }
   for(const L of M.loops){ pool(L.x, L.z, 19, mzRingU(L.ring), 0.55); }
@@ -45092,7 +45166,8 @@ function mzWallTex(M){
   for(const pass of [[M.C.T*2.4,0.22],[M.C.T*1.15,0.78]]){ g.lineWidth=pass[0]*k;
     for(const w of M.walls){ if(w.t===2) continue; mzTint(mzRingU(w.ring),col);
       g.strokeStyle=`rgba(${Math.round(col.r*255)},${Math.round(col.g*255)},${Math.round(col.b*255)},${pass[1]})`; g.beginPath();
-      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); } }
+      if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); } g.stroke(); }
+    for(const b of M.noses){ mzTint(mzRingU(b.ring),col); g.fillStyle=`rgba(${Math.round(col.r*255)},${Math.round(col.g*255)},${Math.round(col.b*255)},${pass[1]})`; g.beginPath(); g.arc(X(b.x),Z(b.z),b.r*pass[0]/(M.C.T)*k,0,MZ_TAU); g.fill(); } }
   // the egg, mirrored as a warm disc
   { const gr=g.createRadialGradient(X(0),Z(0),0,X(0),Z(0),(MZ.EGG_R+4)*k); gr.addColorStop(0,'rgba(255,236,190,1)'); gr.addColorStop(0.8,'rgba(255,200,120,0.8)'); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(0,0,S,S); }
   const t=new T.CanvasTexture(cv); t.minFilter=T.LinearMipmapLinearFilter; return t;
@@ -45109,6 +45184,7 @@ function mzFloorGeo(M){
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setIndex(idx); g.computeBoundingSphere(); return g;
 }
 // the gate lanterns: each spoke gate gets its own shape (and every ring its own colour)
+const MZ_POST_R=[2.2,1.6,3.0,1.9,3.35,2.0];   // each shape's widest radius (a lantern is scaled to stand inside its wall)
 function mzPostGeos(){
   const L=(pts,seg)=>{ const g=new T.LatheGeometry(pts.map(q=>new T.Vector2(q[0],q[1])), seg||10); g.computeVertexNormals(); return g; };
   return [
@@ -45303,7 +45379,7 @@ function mzTrailMat(hex){
 function mzBuildTrack(idx){
   const t=TRACKS[idx], seed=mzSeedNext!=null ? mzSeedNext : mzPickSeed(t);
   mzSeedNext=null;
-  const M=mzMake(seed); MAZE=M;
+  const M=mzMake(seed); MAZE=M; mzGateGrid(M);
   const C=M.C; M.ext=C.R0+C.K*C.P+C.ANTE_D+90;
   M.U={uT:{value:0}, uFog:{value:new T.Color(MZ_HAZE)}, uFogR:{value:new T.Vector2(140,860)}};
   STEPS=0;
@@ -45355,7 +45431,11 @@ function mzBuildTrack(idx){
     let last=-1;   // neighbouring gates never share a shape, so each one can be learnt
     M.gates.forEach((q,gi)=>{ let sh=q.kind==='egg'?0:q.kind==='rim'?2:Math.floor(R()*posts.length); if(sh===last) sh=(sh+1+Math.floor(R()*(posts.length-1)))%posts.length; last=sh; q.shape=sh;
       const y=mzFloorY(q.r+(q.kind==='rim'?-2:2));
-      for(const sd of [-1,1]){ const a=q.th+sd*q.hg; byShape[sh].push({x:q.r*Math.cos(a), z:q.r*Math.sin(a), y:Math.max(y,mzFloorY(q.r-2)), ring:q.ring, rot:a, s:q.kind==='egg'?1.4:q.kind==='rim'?1.3:0.9+R()*0.2}); } }); }
+      for(const sd of [-1,1]){ const a=q.th+sd*q.hg; let x=q.r*Math.cos(a), z=q.r*Math.sin(a), h=C.T/2, s0=q.kind==='egg'?1.4:q.kind==='rim'?1.3:0.9+R()*0.2;
+        // stand in the wall end's bulb, set back from its tip, never wider than the wall it stands in
+        const tx=x-Math.sin(a)*sd*C.T/2, tz=z+Math.cos(a)*sd*C.T/2;
+        for(const b of M.noses) if(Math.hypot(b.x+b.ux*b.r-tx, b.z+b.uz*b.r-tz)<1){ x=b.x; z=b.z; h=b.r; break; }
+        byShape[sh].push({x, z, y:Math.max(y,mzFloorY(q.r-2)), ring:q.ring, rot:a, s:Math.min(s0, 0.95*h/MZ_POST_R[sh])}); } }); }
   byShape.forEach((list,sh)=>{ if(!list.length) return; trackGroup.add(mzInst(posts[sh], pm, list, (q,d,c)=>{ d.position.set(q.x,q.y-0.5,q.z); d.rotation.set(0,-q.rot,0); d.scale.setScalar(q.s);
     mzTint(mzRingU(q.ring),tc); c.setRGB(tc.r,tc.g,tc.b); })); });
   // ---- turnaround islands: soft glowing domes, each in a luminous pool ----
@@ -45512,40 +45592,155 @@ function mzPlace(r,dt){   // height on the terraces, where am I, how far to go; 
   return c===M.EGG && R<=0;
 }
 // are two cells joined (an open edge, a gate)? A wall is a cell boundary, so a kart that lands in an
-// unjoined cell went through a wall (a shove from a rival, a ram) and is put back where it was
+// unjoined cell may have gone through a wall (a shove from a rival, a ram) and is put back where it
+// was — but only if its path really crossed a wall (a kart cutting the corner of a wide opening
+// steps diagonally between two cells that are joined through a third, and that is no crime)
 function mzLinked(M,a,b){ if(a===b) return true; const L=M.cellP[a]; if(!L) return false; for(let i=0;i<L.length;i++){ const p=M.PT[L[i]]; if(p.a===b||p.b===b) return true; } return false; }
-function mzCollideRacer(r){   // walls, islands and the egg: push out, lose speed by how square the hit was
+function mzSegCross(w,ax,az,bx,bz){   // does the move a->b cross this wall's centre line?
+  const dx=bx-ax, dz=bz-az;
+  if(w.t===1){ const ex=w.x1-w.x0, ez=w.z1-w.z0, den=dx*ez-dz*ex; if(Math.abs(den)<1e-9) return false;
+    const t=((w.x0-ax)*ez-(w.z0-az)*ex)/den, u=((w.x0-ax)*dz-(w.z0-az)*dx)/den; return t>=0&&t<=1&&u>=0&&u<=1; }
+  if(w.t===0){ const fx=ax-w.cx, fz=az-w.cz, A=dx*dx+dz*dz, B=2*(fx*dx+fz*dz), Cc=fx*fx+fz*fz-w.R*w.R, D=B*B-4*A*Cc; if(D<0||A<1e-12) return false;
+    for(const sg of [-1,1]){ const t=(-B+sg*Math.sqrt(D))/(2*A); if(t<0||t>1) continue; let an=Math.atan2(fz+dz*t,fx+dx*t); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an<=w.a1) return true; } }
+  return false;
+}
+function mzCrossesWall(M,ax,az,bx,bz){
+  for(let k=0;k<2;k++){ const L=mzCellList(M,k?bx:ax,k?bz:az); if(!L) continue; for(let i=0;i<L.length;i++) if(mzSegCross(M.walls[L[i]],ax,az,bx,bz)) return true; }
+  return false;
+}
+/* ---- the corner feel (Ariadne only): one set of numbers to tune it ----
+   A wall is a slide, not a stop: touching one takes away only the speed INTO it, and the nose
+   swings along it. A wall's round end turns a kart round it. Nobody is ever pinned: a kart pressed
+   against a wall and going nowhere for half a second is eased off it, nose to the open way. And a
+   light hand on the wheel at the corners: lining up with a gate you are heading for, carrying a
+   turn you are making away from a wall ahead, and easing you off a wall you are running along. */
+const MZA={
+  on:true,
+  SLIDE_TURN:11,     // a kart touching a wall swings its nose along it at this rate (1/s, more for a squarer hit)
+  SLIDE_MIN:0.16,    // ...and keeps at least this share of its speed even square on (it slides away along the wall)
+  END_KEEP:0.62,     // nosing into a wall's round end keeps at least this share, deflected round it
+  PIN_T:0.5, PIN_V:12,   // pressed against a wall, moving slower than PIN_V for PIN_T seconds: pinned...
+  EASE_T:0.55,       // ...so it is eased off the wall over this long, nose to the open way
+  GATE_R:32,         // the gate line-up works this close to a gate's wall line
+  GATE_YAW:1.5,      // ...turning the nose toward the gate's centre line at up to this rate (rad/s)
+  GATE_POS:9,        // ...and drawing a kart that would clip a gate's edge sideways at up to this rate (units/s)
+  CARRY:1.4,         // a turn the driver is making away from a wall ahead: up to this much extra turn rate (rad/s)
+  LOOK:34,           // ...looking this far ahead for that wall
+  CENTRE_D:5,        // a kart this close to a corridor wall (clearance), running along it, is eased off it...
+  CENTRE_V:5,        // ...at up to this many units/s
+  FAST:0.55,         // at top speed every assist is this much weaker
+};
+const MZ_CN=new Float64Array(8);   // this frame's wall contact normals (up to four)
+function mzCollideRacer(r,dt){   // walls, islands and the egg: push out; the speed into the wall goes, the speed along it stays
   const M=MAZE, kr=MZ.KR*(r.megaT>0?1.4:1);
-  { const c=mzLocate(M,r.x,r.z); if(r._mzLc!=null && !mzLinked(M,r._mzLc,c) && Math.hypot(r.x-r._mzLx,r.z-r._mzLz)<30){ r.x=r._mzLx; r.z=r._mzLz; } }   // (a long jump is a deliberate placement)
-  let hit=0, hx=0, hz=0;
-  for(let pass=0;pass<2;pass++){ const L=mzCellList(M,r.x,r.z); if(!L) break; let any=false;
-    for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr){ const ex=kr-d; r.x+=MZ_Q.nx*ex; r.z+=MZ_Q.nz*ex; any=true;
-      const sg=r.spd<0?-1:1, imp=-(Math.sin(r.head)*MZ_Q.nx+Math.cos(r.head)*MZ_Q.nz)*sg; if(imp>hit){ hit=imp; hx=MZ_Q.nx; hz=MZ_Q.nz; } } }
-    if(!any) break; }
-  // nosed square into a wall: the speed into it goes (a kart pinned there does not wind up while it sits)
-  if(hit>0.5 && r.spd>0) r.spd=Math.min(r.spd, 6+60*(1-hit));
-  if(hit>0.2 && (r._wallCD||0)<=0 && Math.abs(r.spd)>12){
-    r.spd*=1-0.62*hit; r._wallCD=0.3;
-    // glance off: swing the nose along the wall a little so a scrape slides instead of sticking
-    if(hit<0.85){ const tx=-hz, tz=hx, f=Math.sin(r.head)*tx+Math.cos(r.head)*tz, want=Math.atan2(tx*Math.sign(f||1), tz*Math.sign(f||1)); r.head+=angDiff(want,r.head)*0.35*(r.spd<0?0:1); }
-    burst(r.x,r.y+1,r.z,0xc8b8ff,6,22,0.3,3);
-    if(r.you){ kickShake(0.22+0.2*hit); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); }
-  }
+  { const c=mzLocate(M,r.x,r.z); if(r._mzLc!=null && !mzLinked(M,r._mzLc,c) && Math.hypot(r.x-r._mzLx,r.z-r._mzLz)<30 && mzCrossesWall(M,r._mzLx,r._mzLz,r.x,r.z)){ r.x=r._mzLx; r.z=r._mzLz; } }   // (a long jump is a deliberate placement)
+  let imp=-2, nx=0, nz=0, end=0, any=false, nc=0, snx=0, snz=0;
+  const hx=Math.sin(r.head), hz=Math.cos(r.head), sg=r.spd<0?-1:1, CN=MZ_CN;
+  for(let pass=0;pass<2;pass++){ const L=mzCellList(M,r.x,r.z); if(!L) break; let moved=false;
+    for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr){ const ex=kr-d; r.x+=MZ_Q.nx*ex; r.z+=MZ_Q.nz*ex; moved=true; any=true;
+      const im=-(hx*MZ_Q.nx+hz*MZ_Q.nz)*sg; if(im>imp){ imp=im; nx=MZ_Q.nx; nz=MZ_Q.nz; end=MZ_Q.e; } } }
+    if(!moved) break; }
+  // every wall it is touching now (a kart in a corner touches two, though it is pushed off only one a frame)
+  if(any && dt>0){ const L=mzCellList(M,r.x,r.z); if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr+0.35){ snx+=MZ_Q.nx; snz+=MZ_Q.nz; if(nc<4){ CN[nc*2]=MZ_Q.nx; CN[nc*2+1]=MZ_Q.nz; nc++; } } } }
+  if(dt>0){
+    if(any){ r._mzTouch=0.15; const sl=Math.hypot(snx,snz); if(sl>0.2){ r._mzNx=snx/sl; r._mzNz=snz/sl; } else { r._mzNx=nx; r._mzNz=nz; } }   // (in a corner: straight out of it)
+    else if((r._mzTouch||0)>0){ r._mzTouch-=dt; if(r._mzTouch<=0){ r._mzPaid=0; r._mzSide=0; } }
+    if(any && imp>0 && MZA.on && !(r._mzEase>0)){
+      // along the wall: the way the kart was already going; square on, the way the driver steers,
+      // else the way to the egg (and it holds that choice while it stays in touch)
+      const tx=-nz, tz=nx, ht=(hx*tx+hz*tz)*sg;
+      let side=r._mzSide||0;
+      if(Math.abs(ht)>0.12) side=ht>0?1:-1;
+      else if(!side){ const st=r._st||0; if(Math.abs(st)>0.2) side=(st>0?1:-1)*sg;
+        else { const c=mzLocate(M,r.x,r.z); let best=null, bv=1e18; if(c<M.NC) for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-r.x,p.z-r.z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
+          side = best ? (((best.x-r.x)*tx+(best.z-r.z)*tz)>=0?1:-1) : 1; } }
+      r._mzSide=side;
+      // nosed into a corner (the slide would run into the other wall): no swing, the speed goes, and if
+      // it stays there the pinned-kart ease backs it out
+      let wedge=false; for(let k=0;k<nc;k++) if((side*tx*CN[k*2]+side*tz*CN[k*2+1])<-0.2) wedge=true;
+      if(wedge) imp=Math.max(imp,0.97);
+      else { const want=Math.atan2(side*sg*tx, side*sg*tz); r.head+=angDiff(want,r.head)*Math.min(1,MZA.SLIDE_TURN*dt*(0.4+imp)); }
+      // speed: what went INTO the wall is lost, once per touch (a kart sliding along does not keep paying)
+      const paid=r._mzPaid||0;
+      if(imp>paid){ const v0=Math.abs(r.spd);
+        let f=Math.sqrt(Math.max(0,1-imp*imp))/Math.max(1e-3,Math.sqrt(Math.max(0,1-paid*paid)));
+        f=Math.max(f, end?MZA.END_KEEP:MZA.SLIDE_MIN); r.spd*=Math.min(1,f); r._mzPaid=imp;
+        if(imp>0.35 && v0>25 && (r._wallCD||0)<=0){ r._wallCD=0.3;
+          burst(r.x,r.y+1,r.z,0xc8b8ff,4+Math.round(4*imp),22,0.3,3);
+          if(r.you){ kickShake(0.10+0.22*imp); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); } } }
+    }
+    // pinned: in touch with a wall and going nowhere
+    if(r._mzPx!=null && ((r._mzTouch||0)>0) && !(r.spinT>0) && !r.finished && !(r._mzEase>0)){
+      const v=Math.hypot(r.x-r._mzPx, r.z-r._mzPz)/dt;
+      if(v<MZA.PIN_V){ r._mzPinT=(r._mzPinT||0)+dt; if(r._mzPinT>MZA.PIN_T) mzUnpin(r); } else r._mzPinT=Math.max(0,(r._mzPinT||0)-2*dt);
+    } else if(!((r._mzTouch||0)>0)) r._mzPinT=0;
+    r._mzPx=r.x; r._mzPz=r.z;
+  } else if(any && imp>0.5 && r.spd>0) r.spd=Math.min(r.spd, 6+60*(1-imp));   // (a spinning or coasting kart: just the old scrub)
   r._mzLc=mzLocate(M,r.x,r.z); r._mzLx=r.x; r._mzLz=r.z;
+}
+// pinned against a wall: pick the open way (toward the egg's way out of this cell, never into the wall)
+function mzUnpin(r){
+  const M=MAZE, nx=r._mzNx||0, nz=r._mzNz||0, c=mzLocate(M,r.x,r.z);
+  let best=null, bv=1e18; if(c<M.NC) for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-r.x,p.z-r.z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
+  let dx=nx, dz=nz;
+  if(best){ const bx=best.x-r.x, bz=best.z-r.z, bl=Math.hypot(bx,bz)||1, ux=bx/bl, uz=bz/bl, dn=ux*nx+uz*nz;
+    if(dn>-0.3){ dx=ux+nx*0.6; dz=uz+nz*0.6; }                       // the way out is clear of this wall: head for it, a little off the wall
+    else { const s=(ux*-nz+uz*nx)>=0?1:-1; dx=-nz*s+nx*0.5; dz=nx*s+nz*0.5; } }   // it is through the wall: along it, the nearer way round
+  const l=Math.hypot(dx,dz)||1; r._mzEx=dx/l; r._mzEz=dz/l; r._mzEase=MZA.EASE_T; r._mzPinT=0; r._mzPin=(r._mzPin||0)+1;
+}
+// easing a pinned kart off its wall (any driver: keys, touch, the AI): swing to the open way, off the wall, rolling
+function mzEase(r,dt){
+  if(!(r._mzEase>0)) return false;
+  r._mzEase-=dt;
+  const want=Math.atan2(r._mzEx,r._mzEz), d=angDiff(want,r.head), back=Math.abs(d)>1.9;
+  if(back){ r.head+=angDiff(want+Math.PI,r.head)*Math.min(1,5*dt); r.spd=Math.min(r.spd,-10); r.spd+=(-26-r.spd)*Math.min(1,6*dt); }   // the open way is behind: roll back into it
+  else { r.head+=d*Math.min(1,6*dt); r.spd=Math.max(r.spd, 20); }
+  const nx=r._mzNx||0, nz=r._mzNz||0; r.x+=nx*7*dt; r.z+=nz*7*dt;
+  return true;
 }
 // the maze's handling: a kart turns harder the slower it goes, so it can swing round in a corridor
 function mzTurnK(vfrac){ return 1.3+0.95*(1-vfrac); }
-// a human who has nosed into a wall and is stopped there backs off by themselves (phones have no brake)
-function mzAssist(r,dt,gas){
-  const M=MAZE; if(!gas || Math.abs(r.spd)>9){ r._mzPin=0; return r._mzBack>0 ? (r._mzBack-=dt)>0 : false; }
-  if(r._mzBack>0){ r._mzBack-=dt; return true; }
-  const fx=r.x+Math.sin(r.head)*(MZ.KR+2.5), fz=r.z+Math.cos(r.head)*(MZ.KR+2.5);
-  if(mzNear(M,fx,fz)<0.8){ r._mzPin=(r._mzPin||0)+dt; if(r._mzPin>0.45){ r._mzPin=0; r._mzBack=0.8;
-      // and, unless the driver is steering, swing the nose toward the more open way while backing off
-      const c=mzLocate(M,r.x,r.z); let best=null, bv=1e18; if(c<M.NC) for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-r.x,p.z-r.z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
-      r._mzBackSteer = best ? -Math.sign(angDiff(Math.atan2(best.x-r.x,best.z-r.z), r.head)||1) : 0;
-      return true; } } else r._mzPin=0;
-  return false;
+// the gates near a point: their own little spatial hash (built with the maze, queried allocation-free)
+function mzGateGrid(M){
+  const g=M.grd, cells=new Array(g.n*g.n), reach=MZA.GATE_R+g.G, hw=M.C.T/2;
+  M.gates.forEach((q,gi)=>{ q.cx=q.r*Math.cos(q.th); q.cz=q.r*Math.sin(q.th); q.ax=Math.cos(q.th); q.az=Math.sin(q.th); q.tx=-q.az; q.tz=q.ax; q.hc=q.hg*q.r-hw;
+    const ext=reach+q.hc; const i0=Math.floor((q.cx-ext+g.ext)/g.G), i1=Math.floor((q.cx+ext+g.ext)/g.G), j0=Math.floor((q.cz-ext+g.ext)/g.G), j1=Math.floor((q.cz+ext+g.ext)/g.G);
+    for(let i=i0;i<=i1;i++) for(let j=j0;j<=j1;j++){ if(i<0||j<0||i>=g.n||j>=g.n) continue; const k=i*g.n+j; (cells[k]||(cells[k]=[])).push(gi); } });
+  const EMPTY=[]; for(let k=0;k<cells.length;k++) if(!cells[k]) cells[k]=EMPTY;
+  M.ggrd=cells;
+}
+// the corner assist: a light hand, never against the driver's own steering, lighter the faster you go
+function mzCorner(r,dt,turnRate){
+  const M=MAZE; if(!MZA.on || !(r.spd>8) || r.air) return;
+  const st=r._st||0, vfrac=Math.min(1,r.spd/MAXV), w0=1-MZA.FAST*vfrac;
+  const hx=Math.sin(r.head), hz=Math.cos(r.head), lx=hz, lz=-hx;   // heading, and its left (where steering + turns it)
+  let gating=false;
+  // (A) a gate it is clearly heading for: nose to the gate's centre line, drawn off an edge it would clip
+  if(M.ggrd){ const g=M.grd, gi=Math.floor((r.x+g.ext)/g.G), gj=Math.floor((r.z+g.ext)/g.G);
+    const L=(gi<0||gj<0||gi>=g.n||gj>=g.n)?null:M.ggrd[gi*g.n+gj];
+    let bq=null, bda=1e9, blc=0;
+    if(L) for(let i=0;i<L.length;i++){ const q=M.gates[L[i]], dx=r.x-q.cx, dz=r.z-q.cz, da=dx*q.ax+dz*q.az, ad=Math.abs(da);
+      if(ad>MZA.GATE_R || ad<1) continue;
+      const dl=dx*q.tx+dz*q.tz, va=-(hx*q.ax+hz*q.az)*(da>0?1:-1); if(va<0.3) continue;   // heading across its wall line, not along it
+      const lc=dl+(hx*q.tx+hz*q.tz)*ad/va; if(Math.abs(lc)>q.hc+8) continue;               // ...and through (or just shy of) the opening
+      if(ad<bda){ bda=ad; bq=q; blc=lc; } }
+    if(bq){ gating=true;
+      const q=bq, da=(r.x-q.cx)*q.ax+(r.z-q.cz)*q.az, sd=da>0?-1:1, px=q.cx+q.ax*sd*12, pz=q.cz+q.az*sd*12;
+      const err=angDiff(Math.atan2(px-r.x,pz-r.z), r.head), u=1-bda/MZA.GATE_R, w=u*u*(3-2*u)*w0;
+      if(!(Math.abs(st)>0.25 && Math.sign(st)!==Math.sign(err))) r.head+=Math.max(-1,Math.min(1,err/0.5))*MZA.GATE_YAW*w*dt;
+      const room=q.hc-MZ.KR-2.5, over=Math.abs(blc)-room;
+      if(over>0 && bda<18){ const m=Math.min(over, MZA.GATE_POS*w*dt)*(blc>0?-1:1); r.x+=q.tx*m; r.z+=q.tz*m; } } }
+  // (B) a wall ahead that the driver is turning away from: help the turn round, on a smooth arc
+  if(Math.abs(st)>0.3){ let t=0, hit=false, nx=0, nz=0;
+    for(let k=0;k<8 && t<MZA.LOOK;k++){ const d=mzNear(M, r.x+hx*t, r.z+hz*t); if(d<MZ.KR*0.8){ hit=true; nx=MZ_Q.nx; nz=MZ_Q.nz; break; } t+=Math.max(1.5, Math.min(8, d-MZ.KR*0.5)); }
+    if(hit){ const imp=-(hx*nx+hz*nz);
+      if(imp>0.2 && Math.sign(st)===Math.sign(lx*nx+lz*nz)){
+        const need=r.spd*(1-Math.sqrt(1-imp*imp))/Math.max(2, t*imp-1), have=Math.abs(st)*turnRate;
+        r.head+=Math.sign(st)*Math.min(MZA.CARRY, Math.max(0, need-have))*w0*dt; } } }
+  // (C) running along a corridor wall, close to it: eased back toward the middle (not while lining up a gate, not when steering at it)
+  if(!gating){ const d=mzNear(M,r.x,r.z), cl=d-MZ.KR;
+    if(cl<MZA.CENTRE_D && cl>-1){ const nx=MZ_Q.nx, nz=MZ_Q.nz, along=Math.abs(hx*nx+hz*nz)<0.4, at=Math.abs(st)>0.25 && Math.sign(st)===-Math.sign(lx*nx+lz*nz);
+      if(along && !at){ const m=MZA.CENTRE_V*w0*dt*(1-Math.max(0,cl)/MZA.CENTRE_D); r.x+=nx*m; r.z+=nz*m; } } }
 }
 // nobody stays stuck: a kart that has gone nowhere for a while is set back in its corridor, nose to the egg
 function mzRescue(r,dt){
@@ -59312,7 +59507,6 @@ function updateRacer(r,dt){
     }
     drift = keys.has('shift')||keys.has('k')||touch.drift;
     fire = keys.has(' ')||keys.has('l')||touch.fire;
-    if(MAZE && !reverse && mzAssist(r,dt,gas)){ gas=false; brake=true; reverse=true; if(Math.abs(steer)<0.1) steer=r._mzBackSteer||0; }   // nosed into a wall: back off
     if(fire&&!firePrev)useItem(r); firePrev=fire;
     if(r._roll>0) r._roll-=dt;     // tick the item-roulette spin
     // tail-whip on demand, any time (a short cooldown stops spamming): the move always
@@ -59436,6 +59630,7 @@ function updateRacer(r,dt){
     const rate = Math.abs(want) > Math.abs(cur) ? 16 : 10;
     r._st = cur + (want-cur)*Math.min(1, rate*dt); }
   r.head += r._st*turnRate*dt*Math.sign(r.spd||1);
+  if(MAZE && !mzEase(r,dt)) mzCorner(r,dt,turnRate);   // the maze: a pinned kart eased off its wall; else a light hand at the corners
 
   // visual slip + hop
   const wantSlip = r.drift? r.driftDir*0.45 : 0;
@@ -59475,7 +59670,7 @@ function updateRacer(r,dt){
   // proven algebraically equal to Rodrigues' rotation formula), so this needs the opposite
   // sign flowing in to cancel the downstream negation and come out as +s.bank in the end.
   let bankWant=-(SAMP[r.idx].bank||0)/0.85;
-  if(MAZE) mzCollideRacer(r);           // the maze: its walls, islands and the egg
+  if(MAZE) mzCollideRacer(r,dt);        // the maze: its walls, islands and the egg (a slide, not a stop)
   else if(!r.air){ const s=SAMP[r.idx];   // no walls while airborne — jump over barriers/gaps
     const lat=(r.x-s.p.x)*s.n.x + (r.z-s.p.z)*s.n.z;   // +lat toward +normal
     if(TRACKS[selTrack].berm && tunnelAt(r.prog)){
