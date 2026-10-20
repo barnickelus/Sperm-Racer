@@ -45290,7 +45290,9 @@ function mzTrails(M){
 }
 /* ---- the sim on the maze ---- */
 function mzPlace(r,dt){   // height on the terraces, where am I, how far to go; true once at the egg
-  const M=MAZE, fy=mzFloorAt(r.x,r.z);
+  const M=MAZE;
+  if(r.spinT>0) mzCollideRacer(r);      // a spinning kart skips the steering path, not the walls
+  const fy=mzFloorAt(r.x,r.z);
   r.surfY=fy;
   if(!r.air){ r.y += ((fy+HOVER_H) - r.y)*Math.min(1, 20*dt); r.y=Math.max(r.y, fy+HOVER_H*0.55); }
   const c=mzLocate(M,r.x,r.z), R=mzRemainAt(M,r.x,r.z,c);
@@ -45299,8 +45301,12 @@ function mzPlace(r,dt){   // height on the terraces, where am I, how far to go; 
   r.idx=Math.max(0,Math.min(STEPS-1,Math.round(r.prog*(STEPS-1))));
   return c===M.EGG && R<=0;
 }
+// are two cells joined (an open edge, a gate)? A wall is a cell boundary, so a kart that lands in an
+// unjoined cell went through a wall (a shove from a rival, a ram) and is put back where it was
+function mzLinked(M,a,b){ if(a===b) return true; const L=M.cellP[a]; if(!L) return false; for(let i=0;i<L.length;i++){ const p=M.PT[L[i]]; if(p.a===b||p.b===b) return true; } return false; }
 function mzCollideRacer(r){   // walls, islands and the egg: push out, lose speed by how square the hit was
   const M=MAZE, kr=MZ.KR*(r.megaT>0?1.4:1);
+  { const c=mzLocate(M,r.x,r.z); if(r._mzLc!=null && !mzLinked(M,r._mzLc,c)){ r.x=r._mzLx; r.z=r._mzLz; } }
   let hit=0, hx=0, hz=0;
   for(let pass=0;pass<2;pass++){ const L=mzCellList(M,r.x,r.z); if(!L) break; let any=false;
     for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.walls[L[i]],r.x,r.z); if(d<kr){ const ex=kr-d; r.x+=MZ_Q.nx*ex; r.z+=MZ_Q.nz*ex; any=true;
@@ -45315,6 +45321,7 @@ function mzCollideRacer(r){   // walls, islands and the egg: push out, lose spee
     burst(r.x,r.y+1,r.z,0xc8b8ff,6,22,0.3,3);
     if(r.you){ kickShake(0.22+0.2*hit); SFX.bump&&SFX.bump(); buzz(HAPTIC.wall); }
   }
+  r._mzLc=mzLocate(M,r.x,r.z); r._mzLx=r.x; r._mzLz=r.z;
 }
 // the maze's handling: a kart turns harder the slower it goes, so it can swing round in a corridor
 function mzTurnK(vfrac){ return 1.3+0.95*(1-vfrac); }
@@ -45340,11 +45347,14 @@ function mzRescue(r,dt){
   if(!out && q.t<lim) return;
   q.t=0;
   let c=mzLocate(M,r.x,r.z), x, z;
-  if(c===M.ANTE || c===M.EGG || out){ if(c===M.EGG && !out){ return; } const g=M.grid[1]; x=g.x; z=g.z; c=M.ANTE; }
-  else { const s=M.span(c), a=(s[0]+s[1])/2, rr=M.cr[M.ck[c]]; x=rr*Math.cos(a); z=rr*Math.sin(a); }
+  const far=Math.hypot(r.x,r.z)>M.ext-20;
+  if(c===M.EGG && !far){ if(q.t<lim) return; const a=Math.atan2(r.z,r.x); x=(MZ.FIN_R+10)*Math.cos(a); z=(MZ.FIN_R+10)*Math.sin(a); }
+  else if(c===M.ANTE || far){ const g=M.grid[1]; x=g.x; z=g.z; c=M.ANTE; }
+  else { const s=M.span(c), a=(s[0]+s[1])/2, rr=M.cr[M.ck[c]]; x=rr*Math.cos(a); z=rr*Math.sin(a);
+    const L=M.loops.find(l=>l.cell===c); if(L){ x=L.x-L.fx*(MZ.P/2-MZ.KR-2); z=L.z-L.fz*(MZ.P/2-MZ.KR-2); } }   // (a loop cell: in front of its island, not on it)
   // face the cheapest way out of this cell
   let best=null, bv=1e18; for(const pi of M.cellP[c]){ const p=M.PT[pi], v=Math.hypot(p.x-x,p.z-z)+M.D[pi]; if(v<bv){ bv=v; best=p; } }
-  r.x=x; r.z=z; if(best) r.head=Math.atan2(best.x-x,best.z-z);
+  r.x=x; r.z=z; if(best) r.head=Math.atan2(best.x-x,best.z-z); r._mzLc=null;
   r.spd=Math.min(Math.max(r.spd,20),40); r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r._mz=null;
   if(r.you){ showToast('Repositioned'); kickShake(0.4); }
 }
