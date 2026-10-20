@@ -44850,13 +44850,13 @@ function mzWallMat(){
         float fr=pow(1.0-abs(dot(n,vV)),2.2);                               // translucent rim
         float key=0.5+0.5*max(0.0,dot(n,normalize(vec3(0.3,0.8,0.25))));
         float beat=mzBeat(rho);
-        vec3 deep=vC*0.16;
-        vec3 c=mix(deep, vC*0.62, smoothstep(0.0,1.0,h))*key;
-        c+=vC*edge*0.30*(0.6+0.4*h) + vC*vein*0.18;
-        c+=mix(vC,vec3(1.0),0.35)*fr*0.75;
-        float crest=smoothstep(0.78,1.0,h);
-        c+=mix(vC,vec3(1.0),0.45)*crest*(0.55+1.6*beat);
-        c+=vC*beat*0.35*h;
+        float lum=dot(vC,vec3(0.3,0.55,0.15)); vec3 sat=clamp(mix(vec3(lum),vC,1.75),0.0,1.0);   // the palette, pushed saturated
+        vec3 c=mix(sat*0.07, sat*0.36, smoothstep(0.0,1.0,h))*key;                  // dark wet foot, translucent body
+        c+=sat*edge*0.42*(0.35+0.65*h) + sat*vein*0.22;                             // cell walls and veins glow from within
+        c+=sat*fr*0.55*(0.5+0.5*h);                                                  // membrane rim
+        float crest=smoothstep(0.80,1.0,h);
+        c+=mix(sat,vec3(1.0),0.25)*crest*(0.65+1.9*beat);                           // the crest line, and the heartbeat on it
+        c+=sat*beat*0.30*h;
         gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
 }
 // soft additive halo over the wall crests (and the heartbeat riding it)
@@ -44868,7 +44868,7 @@ function mzHaloMat(){
         vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
       varying vec3 vC; varying float vA; varying float vB; varying float vDepth;
-      void main(){ float a=pow(1.0-vA,2.0)*(0.20+0.65*vB); float f=1.0-smoothstep(uFogR.x,uFogR.y,vDepth);
+      void main(){ float a=pow(1.0-vA,2.0)*(0.16+0.7*vB); float f=1.0-smoothstep(40.0,330.0,vDepth);
         gl_FragColor=vec4(mix(vC,vec3(1.0),0.3)*a*f,1.0); }` });
 }
 // organic props, instanced: gate posts, islands, critters, the egg's corona, the far cell clusters
@@ -44945,8 +44945,8 @@ function mzFrondMat(){
         vec4 mv=viewMatrix*w; vDepth=-mv.z; gl_Position=projectionMatrix*mv; }`,
     fragmentShader:`${MZ_GLSL_COMMON}
       varying vec3 vC; varying float vY; varying float vDepth; varying float vB;
-      void main(){ float t=clamp(vY/2.6,0.0,1.0);
-        vec3 c=mix(vC*0.35, mix(vC,vec3(1.0),0.5)*(1.1+1.4*vB), t*t);
+      void main(){ float t=clamp(vY/2.8,0.0,1.0);
+        vec3 c=mix(vC*0.5, mix(vC,vec3(1.0),0.45)*(1.3+1.6*vB), t*t);
         gl_FragColor=vec4(mzFogMix(c,vDepth),1.0); }` });
 }
 /* ---- geometry: sweep a rounded ridge profile along every wall primitive, eight sectors ---- */
@@ -45149,7 +45149,7 @@ function mzBuildTrack(idx){
   for(const s of mzWallGeos(M)){ trackGroup.add(new T.Mesh(s.wall, wm)); const h=new T.Mesh(s.halo, hm); h.renderOrder=2; trackGroup.add(h); }
   // ---- cilia tufts along the crests ----
   { const blade=(()=>{ const p=[], n=[]; const one=(rot,lean)=>{ const c=Math.cos(rot), s=Math.sin(rot);
-        const v=[[-0.32,0],[0.32,0],[-0.2,1.3],[0.2,1.3],[0,2.6]]; const tri=[[0,1,2],[1,3,2],[2,3,4]];
+        const v=[[-0.13,0],[0.13,0],[-0.09,1.4],[0.09,1.4],[0,2.8]]; const tri=[[0,1,2],[1,3,2],[2,3,4]];
         for(const tr of tri) for(const k of tr){ const [x,y]=v[k]; p.push(x*c+lean*y*s, y, x*s+lean*y*c*0.3); n.push(-s,0.2,c); } };
       one(0,0.15); one(2.1,0.25); one(4.2,0.2);
       const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(p,3)); g.setAttribute('normal',new T.Float32BufferAttribute(n,3)); return g; })();
@@ -45161,7 +45161,9 @@ function mzBuildTrack(idx){
   // ---- gate posts: a shape per gate, two per gate, standing on the wall noses ----
   const pm=mzPropMat({glow:0.7}), posts=mzPostGeos(), byShape=posts.map(()=>[]);
   { const R=mzRnd(M.seed^0x6A7E);
-    M.gates.forEach((q,gi)=>{ const sh=Math.floor(R()*posts.length), y=mzFloorY(q.r+(q.kind==='rim'?-2:2));
+    let last=-1;   // neighbouring gates never share a shape, so each one can be learnt
+    M.gates.forEach((q,gi)=>{ let sh=q.kind==='egg'?0:q.kind==='rim'?2:Math.floor(R()*posts.length); if(sh===last) sh=(sh+1+Math.floor(R()*(posts.length-1)))%posts.length; last=sh; q.shape=sh;
+      const y=mzFloorY(q.r+(q.kind==='rim'?-2:2));
       for(const sd of [-1,1]){ const a=q.th+sd*q.hg; byShape[sh].push({x:q.r*Math.cos(a), z:q.r*Math.sin(a), y:Math.max(y,mzFloorY(q.r-2)), ring:q.ring, rot:a, s:q.kind==='egg'?1.4:q.kind==='rim'?1.3:0.9+R()*0.2}); } }); }
   const col=new T.Color(), tc={r:0,g:0,b:0};
   byShape.forEach((list,sh)=>{ if(!list.length) return; trackGroup.add(mzInst(posts[sh], pm, list, (q,d,c)=>{ d.position.set(q.x,q.y-0.5,q.z); d.rotation.set(0,-q.rot,0); d.scale.setScalar(q.s);
@@ -45193,7 +45195,8 @@ function mzBuildTrack(idx){
     const pts=new T.Points(g, mzMoteMat()); pts.frustumCulled=false; trackGroup.add(pts); }
   // ---- beyond the rim: dim cell clusters standing in the far haze ----
   { const R=mzRnd(M.seed^0xBAC4), list=[]; for(let i=0;i<70;i++){ const a=R()*MZ_TAU, r=M.ext+60+R()*420; list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, y:-30+R()*50, s:24+R()*70, u:0.75+R()*0.25}); }
-    trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), mzPropMat({glow:0.25}), list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.set(q.s,q.s*0.8,q.s); mzTint(q.u,tc); c.setRGB(tc.r*0.55,tc.g*0.5,tc.b*0.65); })); }
+    const bm=mzPropMat({glow:0.18}); bm.uniforms.uFogR={value:new T.Vector2(500,2400)};
+    trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), bm, list, (q,d,c)=>{ d.position.set(q.x,q.y,q.z); d.scale.set(q.s,q.s*0.8,q.s); mzTint(q.u,tc); c.setRGB(tc.r*0.5,tc.g*0.45,tc.b*0.7); })); }
   // ---- a few friendly microbes drifting above the walls ----
   { const R=mzRnd(M.seed^0x31C2), crit=[]; for(let i=0;i<6;i++) crit.push({r:C.R0+(1.5+R()*(C.K-2))*C.P, a:R()*MZ_TAU, w:(R()<0.5?-1:1)*(0.03+R()*0.04), h:13+R()*10, s:2.0+R()*1.2, u:R(), ph:R()*6});
     const body=new T.InstancedMesh(new T.SphereGeometry(1,16,12), mzPropMat({glow:0.8, alpha:0.75}), crit.length);
