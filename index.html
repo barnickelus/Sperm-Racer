@@ -715,17 +715,18 @@
     border:1px solid currentColor;border-radius:4px;background:none;color:inherit;opacity:.85;}
   /* Ariadne: no minimap and no distance readout — your place alone, where the lap counter sits,
      and the standings list moves up into the map's corner */
-  body.maze-course #mapwrap, body.maze-course #lap{display:none;}
+  body.maze-course:not(.maze-radar) #mapwrap, body.maze-course #lap{display:none;}
   body.maze-course #pos{top:calc(12px + var(--st));}
-  body.maze-course #leader{top:calc(12px + var(--st));}
+  body.maze-course:not(.maze-radar) #leader{top:calc(12px + var(--st));}
   @media (orientation:portrait) and (max-width:500px),(orientation:landscape) and (max-height:500px) and (pointer:coarse){
     body.maze-course #pos{top:calc(10px + var(--st));right:calc(52px + var(--sr));}
-    body.maze-course #leader{top:calc(10px + var(--st));}
+    body.maze-course:not(.maze-radar) #leader{top:calc(10px + var(--st));}
   }
   @media (orientation:landscape) and (max-height:500px) and (pointer:coarse){
     body.maze-course #pos{top:calc(8px + var(--st));}
-    body.maze-course #leader{top:calc(8px + var(--st));left:calc(10px + var(--sl));}
+    body.maze-course:not(.maze-radar) #leader{top:calc(8px + var(--st));left:calc(10px + var(--sl));}
   }
+  /* the "Maze radar" test toggle (lab settings) puts the map back, drawn as the labyrinth */
 </style>
 </head>
 <body>
@@ -856,6 +857,7 @@
         <button class="go alt tile" id="sliderbtn">Side throttle: OFF</button>
         <button class="go alt tile on" id="musicbtn">Music: ON</button>
         <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
+        <button class="go alt tile" id="mazeradarbtn">Maze radar: OFF</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="fsbtn">Fullscreen</button>
       </div>
@@ -45693,6 +45695,7 @@ function buildTrack(idx){
   selTrack=idx;
   MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
   document.body.classList.toggle('maze-course', !!TRACKS[idx].maze);   // its HUD: no minimap, place only
+  { const ml=document.querySelector('#mapwrap .ml'); if(ml) ml.textContent=TRACKS[idx].maze?'labyrinth':'circuit'; }   // (unless the maze radar is on)
   if(trackGroup){
     scene.remove(trackGroup);
     disposeObject(trackGroup);
@@ -60968,6 +60971,58 @@ function drawMap(){
       mx.fillStyle=`hsl(${r.hue} 80% 62%)`; mx.fill(); }
   }
 }
+/* Maze radar (a lab-settings toggle, off by default — the labyrinth is meant to be raced
+   blind): the walls are drawn once per maze into an offscreen canvas, ring by ring in the
+   course's rim-to-egg colours, and each frame only blits that and drops the dots on top. */
+let mazeRadar=0;   // 0 off, 1 close-up (follows you, a few rings around), 2 the whole maze
+try{ mazeRadar=+(localStorage.getItem('sr_mazeradar')||0)||0; if(mazeRadar<0||mazeRadar>2) mazeRadar=0; }catch(_){}
+document.body.classList.toggle('maze-radar', mazeRadar>0);
+const MZ_MAP_NEAR=210;   // close-up radius, world units (about three rings each way)
+let mzMapCache=null;     // {M, small, big, ext} for the maze they were drawn from
+function mzMapDraw(M, S, ext, lw){
+  const cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d'), C=M.C, sc=(S/2)/ext;
+  const X=x=>S/2+x*sc, Z=z=>S/2+z*sc;
+  const rim=[143,161,232], egg=[255,208,124];
+  const tint=k=>{ const t=1-Math.min(1,k/M.K); return `rgb(${rim.map((v,i)=>Math.round(v+(egg[i]-v)*t)).join(',')})`; };
+  g.lineCap='round'; g.lineWidth=lw;
+  for(const w of M.walls){
+    if(w.kind==='egg' || w.kind==='island') continue;
+    g.strokeStyle=w.kind==='ante'?'rgba(143,161,232,0.7)':tint(Math.min(w.ring,M.K)); g.beginPath();
+    if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*sc,w.a0,w.a1);
+    else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); }
+    g.stroke();
+  }
+  const eg=g.createRadialGradient(S/2,S/2,0,S/2,S/2,C.R0*sc);
+  eg.addColorStop(0,'rgba(255,240,200,0.95)'); eg.addColorStop(0.35,'rgba(255,208,124,0.6)'); eg.addColorStop(1,'rgba(255,208,124,0)');
+  g.fillStyle=eg; g.beginPath(); g.arc(S/2,S/2,C.R0*sc,0,7); g.fill();
+  return cv;
+}
+function drawMazeMap(){
+  const M=MAZE, W=150;
+  if(!mzMapCache || mzMapCache.M!==M){
+    const C=M.C, ext=C.R0+M.K*C.P+C.ANTE_D*0.5+14;
+    mzMapCache={M, ext, small:mzMapDraw(M,W,ext,1.3), big:mzMapDraw(M,Math.round(W*ext/MZ_MAP_NEAR),ext,2.2)};
+  }
+  const me=racers.find(r=>r.you), near=mazeRadar===1 && me, ext=mzMapCache.ext;
+  // view: centre (cx,cz) and radius in world units, mapped onto the 150px canvas
+  const cx=near?me.x:0, cz=near?me.z:0, rad=near?MZ_MAP_NEAR:ext, sc=(W/2)/rad;
+  const X=x=>W/2+(x-cx)*sc, Z=z=>W/2+(z-cz)*sc;
+  mx.clearRect(0,0,W,W);
+  if(near){ const big=mzMapCache.big, bs=big.width/(2*ext);   // crop the big drawing around you
+    mx.drawImage(big, (cx-rad+ext)*bs, (cz-rad+ext)*bs, 2*rad*bs, 2*rad*bs, 0,0,W,W);
+    // the egg's direction, at the rim of the close-up, when it's out of view
+    const dx=-cx, dz=-cz, d=Math.hypot(dx,dz);
+    if(d>rad*0.9){ const ux=dx/d, uz=dz/d, ex=W/2+ux*(W/2-7), ez=W/2+uz*(W/2-7);
+      mx.beginPath(); mx.arc(ex,ez,4,0,7); mx.fillStyle='rgba(255,208,124,0.9)'; mx.shadowColor='#ffd07c'; mx.shadowBlur=8; mx.fill(); mx.shadowBlur=0; }
+  } else mx.drawImage(mzMapCache.small,0,0);
+  for(const r of racers){
+    const px=X(r.x), pz=Z(r.z); if(px<-6||pz<-6||px>W+6||pz>W+6) continue;
+    mx.beginPath(); mx.arc(px,pz,r.you?(near?4.2:3.6):(near?3.2:2.6),0,7);
+    if(r.you){ mx.fillStyle='#fff'; mx.shadowColor='#fff'; mx.shadowBlur=7; mx.fill(); mx.shadowBlur=0; }
+    else { mx.fillStyle=`hsl(${r.hue} 80% 62%)`; mx.fill();
+      if(r.human && r.remote){ mx.beginPath(); mx.arc(px,pz,5.5,0,7); mx.strokeStyle=`hsl(${r.hue} 90% 70%)`; mx.lineWidth=1.4; mx.stroke(); } }
+  }
+}
 const ord=n=>['','1st','2nd','3rd','4th'][n]||n+'th';
 function fmt(s){const m=Math.floor(s/60);return `${String(m).padStart(2,'0')}:${(s%60).toFixed(1).padStart(4,'0')}`;}
 function syncLeader(){
@@ -61098,7 +61153,7 @@ function frame(now){
     syncHUD();
   }
   if(state==='count') countdownGlance(dt, now);
-  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); if(!MAZE) drawMap(); }   // no minimap in the maze
+  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); }   // no minimap in the maze unless the radar toggle is on
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
@@ -62984,6 +63039,13 @@ setupFullscreen();
   const paint=()=>{ b.textContent='Soundtrack: '+(soundtrack==='course'?'Course songs':'Racer songs'); b.classList.toggle('on',soundtrack==='course'); };
   b.onclick=()=>{ soundtrack=soundtrack==='course'?'racer':'course';
     try{ localStorage.setItem('sr_soundtrack',soundtrack); }catch(_){}
+    paint(); };
+  paint(); })();
+// Maze radar: a test switch for Ariadne's map (see drawMazeMap); remembered on this device
+(function setupMazeRadar(){ const b=$('mazeradarbtn'); if(!b)return;
+  const paint=()=>{ b.textContent='Maze radar: '+['OFF','Close-up','Whole maze'][mazeRadar]; b.classList.toggle('on',mazeRadar>0); };
+  b.onclick=()=>{ mazeRadar=(mazeRadar+1)%3; document.body.classList.toggle('maze-radar',mazeRadar>0);
+    try{ localStorage.setItem('sr_mazeradar',String(mazeRadar)); }catch(_){}
     paint(); };
   paint(); })();
 // in-race "car radio" seek knobs — tap either one to step to the prev/next station,
