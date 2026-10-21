@@ -46296,10 +46296,18 @@ function mzCamGuard(me){
     if(y<wt && mzNear(M,x,z)<0.8){ const req=hy+(wt-hy)/t; if(req>need) need=req; } }
   if(need>p.y+1e-3){ p.y=Math.min(need, hy+30); moved=true; }
   // the egg (an ellipsoid, 1.25 tall)
-  const er=MZ.EGG_R*(TRACK_PULSE.egg?TRACK_PULSE.egg.scale.x:1)+4;
-  _mzV.set(p.x/er, (p.y-M.eggY)/(er*1.25), p.z/er); const e=_mzV.length();
-  if(e<1){ const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3) p.x=er; moved=true; }
+  if(mzEggGuard(true)) moved=true;
   if(moved) camera.lookAt(_camLook);
+}
+// the lens out of the egg: pushed out round it (sideways), true when it moved (look: aim it again here)
+function mzEggGuard(noLook){
+  const M=MAZE, p=camera.position; if(!M) return false;
+  const er=MZ.EGG_R*(TRACK_PULSE.egg?Math.max(1,TRACK_PULSE.egg.scale.x):1)+4;
+  _mzV.set(p.x/er, (p.y-M.eggY)/(er*1.25), p.z/er); const e=_mzV.length();
+  if(e>=1) return false;
+  const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; p.y=M.eggY+(p.y-M.eggY)*k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3 && Math.abs(p.y-M.eggY)<1e-3) p.x=er;   // (onto its surface, the way it was off the centre)
+  if(!noLook) camera.lookAt(_camLook);
+  return true;
 }
 // the course card: rings and a gate, not a road outline
 function mzCourseArt(t){
@@ -61378,6 +61386,7 @@ function updateCamera(dt){
     if(_camPush.lengthSq()>1e-6){
       camera.position.add(_camPush); camera.lookAt(_camLook);
       if(_camRoll) camera.rotateZ(_camRoll);
+      if(MAZE) mzEggGuard();   // the maze: a push out from a rival never puts the lens inside the egg (they all arrive there)
       _camPushed.copy(camera.position); _camPushOn=true;
     }
   } else _camPush.set(0,0,0);
