@@ -44704,7 +44704,7 @@ function mzLayout(M){
   for(const q of M.gates){ const kw=q.k; q.cin=kw===0?M.EGG:cellAt(kw,q.th); q.cout=kw===K?M.ANTE:cellAt(kw+1,q.th); q.zone=[q.cin,q.cout];
     q.fm={x:q.r*Math.cos(q.th-q.hg), z:q.r*Math.sin(q.th-q.hg)}; q.fp={x:q.r*Math.cos(q.th+q.hg), z:q.r*Math.sin(q.th+q.hg)};
     q.jx=(q.fm.x+q.fp.x)/2; q.jz=(q.fm.z+q.fp.z)/2; }
-  M.bends=[]; M.loops=[]; M.pads=[]; M.boxes=[]; M.bays=null;
+  M.bends=[]; M.loops=[]; M.pads=[]; M.boxes=[];
   const deadSet=new Set(M.dead);
   // a quarter round one fin tip f of gate q, on the inside (toward the egg) or the outside of its wall
   const quarter=(q,f,inside,cell)=>{ const o=f===q.fm?q.fp:q.fm, aJ=Math.atan2(o.z-f.z,o.x-f.x), ar=Math.atan2(f.z,f.x)+(inside?Math.PI:0), d=adiff(aJ,ar);
@@ -44773,7 +44773,8 @@ function mzLayout(M){
     for(let i=0;i<=n;i++){ const t=i/n, v=ok(...pt(t)); if(v && s0<0) s0=i; if((!v || i===n) && s0>=0){ const e=v?n:i; let ta=s0/n, tb=e/n;
         if(s0>0) ta=edge((s0-1)/n, ta); if(!v) tb=edge((e-1)/n, tb);
         if((tb-ta)*L>=1.2){ const p0=pt(ta), p1=pt(tb); W.push({t:1, x0:p0[0], z0:p0[1], x1:p1[0], z1:p1[1], hw, ring, kind}); } s0=-1; } } };
-  for(let k=0;k<=K;k++) keepArc(0,0,B(k),0,MZ_TAU,k,'ring');
+  for(let k=0;k<=K;k++){ let a0=0; for(let i=0;i<720;i++){ const t=i/720*MZ_TAU; if(!ok(B(k)*Math.cos(t),B(k)*Math.sin(t))){ a0=t; break; } }   // (start where the circle is open, so no wall is cut in two at angle 0)
+    keepArc(0,0,B(k),a0,a0+MZ_TAU,k,'ring'); }
   const capOf=(x,z,dir,r,ring)=>keepArc(x,z,r,dir-Math.PI/2,dir+Math.PI/2,ring,'cap');
   for(const bd of BL){ const off=bd.w+hw;
     if(bd.kind==='bend') keepArc(bd.cx,bd.cz,bd.R+off,bd.a0,bd.a1,bd.ring,'bend');
@@ -44783,8 +44784,8 @@ function mzLayout(M){
       if(bd.w>WB+1){ capOf(bd.x0,bd.z0,Math.atan2(-uz,-ux),off,bd.ring); capOf(bd.x1,bd.z1,Math.atan2(uz,ux),off,bd.ring); } } }   // (the antechamber's room has round ends; its corridor runs into the maze and the room)
   // round every corner where two walls meet at an angle (a wall corner standing into the lane, or a
   // lane's square corner): a fillet arc tangent to both, and both cut back to it
+  for(let i=W.length-1;i>=0;i--){ const w=W[i]; if((w.t===0 && w.a1-w.a0<MZ_TAU-1e-6 && (w.a1-w.a0)*w.R<4) || (w.t===1 && Math.hypot(w.x1-w.x0,w.z1-w.z0)<4)) W.splice(i,1); }   // (slivers where two walls part company)
   mzFillets(W, C.CORNER_R);
-  for(let i=W.length-1;i>=0;i--){ const w=W[i]; if((w.t===0 && w.a1-w.a0<MZ_TAU-1e-6 && (w.a1-w.a0)*w.R<3) || (w.t===1 && Math.hypot(w.x1-w.x0,w.z1-w.z0)<3)) W.splice(i,1); }   // (slivers where two walls part company)
   // the egg itself is solid
   W.push({t:2,cx:0,cz:0,R:C.EGG_R,hw:0,ring:0,kind:'egg'});
   // two lanes may only touch where the maze joins them (else a wall must stand between)
@@ -44812,7 +44813,7 @@ function mzLayout(M){
 }
 // walls that meet at an angle get a fillet: a circle of radius rr tangent to both centre lines, found by
 // a few Newton steps from the straight-line estimate, the two walls trimmed to where it touches them
-function mzFillets(W, rr){
+function mzFillets(W, rr0){
   const ends=[];   // [piece, end, x, z, ux, uz] with u pointing from the end into its piece
   const endOf=(w,e)=>{ if(w.t===0){ const a=e?w.a1:w.a0, x=w.cx+w.R*Math.cos(a), z=w.cz+w.R*Math.sin(a), sg=e?-1:1; return [x,z,-Math.sin(a)*sg,Math.cos(a)*sg]; }
     const L=Math.hypot(w.x1-w.x0,w.z1-w.z0)||1, dx=(w.x1-w.x0)/L, dz=(w.z1-w.z0)/L; return e?[w.x1,w.z1,-dx,-dz]:[w.x0,w.z0,dx,dz]; };
@@ -44820,14 +44821,15 @@ function mzFillets(W, rr){
   for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2 || (w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6)) continue; for(let e=0;e<2;e++) ends.push([i,e,...endOf(w,e)]); }
   const used=new Set();
   for(let a=0;a<ends.length;a++){ if(used.has(a)) continue; const A=ends[a]; const grp=[a];
-    for(let b=0;b<ends.length;b++) if(b!==a && Math.hypot(ends[b][2]-A[2],ends[b][3]-A[3])<0.8) grp.push(b);
+    for(let b=0;b<ends.length;b++) if(b!==a && Math.hypot(ends[b][2]-A[2],ends[b][3]-A[3])<2.5) grp.push(b);
     if(grp.length!==2){ for(const g of grp) used.add(g); continue; }
     const Bn=ends[grp[1]]; used.add(a); used.add(grp[1]); if(A[0]===Bn[0]) continue;
     const cs=A[4]*Bn[4]+A[5]*Bn[5]; if(cs<-0.985) continue;            // (already a smooth join)
     const wi=W[A[0]], wj=W[Bn[0]], half=Math.acos(Math.max(-1,Math.min(1,cs)))/2;
     let bx=A[4]+Bn[4], bz=A[5]+Bn[5]; const bl=Math.hypot(bx,bz)||1; bx/=bl; bz/=bl;
+    let rr=rr0; while(rr/Math.tan(half)>Math.min(lenOf(wi),lenOf(wj))-1.2 && rr>2.5) rr*=0.7;   // (a short wall: a tighter round)
+    if(rr/Math.tan(half)>Math.min(lenOf(wi),lenOf(wj))-1.2) continue;
     let cx=A[2]+bx*rr/Math.sin(half), cz=A[3]+bz*rr/Math.sin(half);
-    const tl=rr/Math.tan(half); if(tl>Math.min(lenOf(wi),lenOf(wj))-1.2) continue;
     const near=(w,x,z)=>{ mzPrimDist(w,x,z); return [MZ_Q.d+w.hw, MZ_Q.nx, MZ_Q.nz]; };   // distance to the centre line, direction away from it
     for(let it=0;it<12;it++){ const p=near(wi,cx,cz), q=near(wj,cx,cz), det=p[1]*q[2]-p[2]*q[1]; if(Math.abs(det)<1e-6) break;
       const ri=rr-p[0], rj=rr-q[0]; cx+=(ri*q[2]-rj*p[2])/det; cz+=(p[1]*rj-q[1]*ri)/det; }
@@ -44838,6 +44840,30 @@ function mzFillets(W, rr){
     const ai=Math.atan2(ti[1]-cz,ti[0]-cx), aj=Math.atan2(tj[1]-cz,tj[0]-cx), d=Math.atan2(Math.sin(aj-ai),Math.cos(aj-ai));
     W.push({t:0, cx, cz, R:rr, a0:d>0?ai:aj, a1:d>0?ai+d:aj-d, hw:wi.hw, ring:wi.ring, kind:'fillet'});
   }
+  // a wall that runs into the side of another (a T): a fillet on each side of it, both touching it the
+  // same way back from the joint, so the joint is a smooth Y
+  const n0=W.length;
+  for(let a=0;a<ends.length;a++){ if(used.has(a)) continue; const A=ends[a], wi=W[A[0]]; if(A[0]>=n0) continue;
+    let j=-1; for(let k=0;k<n0;k++){ if(k===A[0]) continue; const wk=W[k]; if(wk.t===2) continue; const d=mzPrimDist(wk,A[2],A[3])+wk.hw; if(d<0.6){ j=k; break; } }
+    if(j<0) continue; const wj=W[j]; mzPrimDist(wj,A[2],A[3]);
+    let tx,tz; if(wj.t===0){ const an=Math.atan2(A[3]-wj.cz,A[2]-wj.cx); tx=-Math.sin(an); tz=Math.cos(an); } else { const L=Math.hypot(wj.x1-wj.x0,wj.z1-wj.z0)||1; tx=(wj.x1-wj.x0)/L; tz=(wj.z1-wj.z0)/L; }
+    const near=(w,x,z)=>{ mzPrimDist(w,x,z); return [MZ_Q.d+w.hw, MZ_Q.nx, MZ_Q.nz]; };
+    const halves=[1,-1].map(sg=>Math.acos(Math.max(-1,Math.min(1,A[4]*tx*sg+A[5]*tz*sg)))/2);
+    if(Math.min(...halves)<0.13) continue;                          // (all but tangent already)
+    let tl=rr0/Math.tan(Math.min(...halves)); tl=Math.min(tl, lenOf(wi)-1.2); if(tl<2) continue;
+    const fil=[]; let ok=true;
+    for(let q=0;q<2;q++){ const sg=q?-1:1, half=halves[q], rr=tl*Math.tan(half); let bx=A[4]+tx*sg, bz=A[5]+tz*sg; const bl=Math.hypot(bx,bz)||1; bx/=bl; bz/=bl;
+      let cx=A[2]+bx*rr/Math.sin(half), cz=A[3]+bz*rr/Math.sin(half);
+      for(let it=0;it<12;it++){ const p=near(wi,cx,cz), r2=near(wj,cx,cz), det=p[1]*r2[2]-p[2]*r2[1]; if(Math.abs(det)<1e-6) break;
+        const ri=rr-p[0], rj=rr-r2[0]; cx+=(ri*r2[2]-rj*p[2])/det; cz+=(p[1]*rj-r2[1]*ri)/det; }
+      const p=near(wi,cx,cz), r2=near(wj,cx,cz); if(Math.abs(p[0]-rr)>0.25 || Math.abs(r2[0]-rr)>0.25){ ok=false; break; }
+      fil.push([cx,cz,rr,[cx-p[1]*rr, cz-p[2]*rr],[cx-r2[1]*rr, cz-r2[2]*rr]]); }
+    if(!ok) continue;
+    const t0=fil[0][3]; if(wi.t===0){ const o=A[1]?wi.a1:wi.a0, an=o+Math.atan2(Math.sin(Math.atan2(t0[1]-wi.cz,t0[0]-wi.cx)-o),Math.cos(Math.atan2(t0[1]-wi.cz,t0[0]-wi.cx)-o)); if(A[1]) wi.a1=an; else wi.a0=an; } else if(A[1]){ wi.x1=t0[0]; wi.z1=t0[1]; } else { wi.x0=t0[0]; wi.z0=t0[1]; }
+    for(const [cx,cz,rr,ti,tj] of fil){ const ai=Math.atan2(ti[1]-cz,ti[0]-cx), aj=Math.atan2(tj[1]-cz,tj[0]-cx), d=Math.atan2(Math.sin(aj-ai),Math.cos(aj-ai));
+      W.push({t:0, cx, cz, R:rr, a0:d>0?ai:aj, a1:d>0?ai+d:aj-d, hw:wi.hw, ring:wi.ring, kind:'fillet'}); }
+    used.add(a);
+  }
 }
 // every free wall end (the side of a gate, a lone fin) swells into a round bulb, its tip where the
 // wall end was (so no gate gets narrower): a kart that meets it rolls round it instead of
@@ -44847,7 +44873,7 @@ function mzNoses(W, C, M){
   for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2 || (w.t===0 && w.a1-w.a0>=MZ_TAU-1e-6)) continue;
     const L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0);
     for(let e=0;e<2;e++){ let px,pz,ux,uz;
-      if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; px=w.cx+rr*Math.cos(a); pz=w.cz+rr*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+      if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1; px=w.cx+w.R*Math.cos(a); pz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
       else { const dx=(w.x1-w.x0)/(L||1), dz=(w.z1-w.z0)/(L||1); px=e?w.x1:w.x0; pz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
       const tx=px+ux*w.hw, tz=pz+uz*w.hw; let buried=false;
       for(let j=0;j<W.length;j++) if(j!==i && mzPrimDist(W[j],tx,tz)<0.25){ buried=true; break; }
@@ -44855,7 +44881,7 @@ function mzNoses(W, C, M){
   for(let n=0;n<ends.length;n+=3){ const w=W[ends[n]], e=ends[n+1], L=ends[n+2], cut=RN-w.hw;
     if(L<cut*2+RN+4) continue;   // (too short to carry a bulb)
     let cx, cz, ux, uz;
-    if(w.t===0){ if(e) w.a1-=cut/w.R; else w.a0+=cut/w.R; const a=e?w.a1:w.a0, sg=e?1:-1, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; cx=w.cx+rr*Math.cos(a); cz=w.cz+rr*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
+    if(w.t===0){ if(e) w.a1-=cut/w.R; else w.a0+=cut/w.R; const a=e?w.a1:w.a0, sg=e?1:-1; cx=w.cx+w.R*Math.cos(a); cz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
     else { const dx=(w.x1-w.x0)/L, dz=(w.z1-w.z0)/L; if(e){ w.x1-=dx*cut; w.z1-=dz*cut; } else { w.x0+=dx*cut; w.z0+=dz*cut; } cx=e?w.x1:w.x0; cz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
     if(e) w.f1=RN; else w.f0=RN;
     M.noses.push({x:cx, z:cz, ux, uz, r:RN, ring:w.ring}); }   // (the bulb's centre and which way its tip points)
@@ -44888,7 +44914,7 @@ function mzGridBuild(M){
   const mark=(x,z,i)=>{ const r=inf; const gi0=Math.floor((x-r+ext)/G), gi1=Math.floor((x+r+ext)/G), gj0=Math.floor((z-r+ext)/G), gj1=Math.floor((z+r+ext)/G);
     for(let gi=gi0;gi<=gi1;gi++) for(let gj=gj0;gj<=gj1;gj++){ if(gi<0||gj<0||gi>=n||gj>=n) continue; const k=gi*n+gj; const L=cells[k]||(cells[k]=[]); if(L[L.length-1]!==i && L.indexOf(i)<0) L.push(i); } };
   M.walls.forEach((w,i)=>{
-    if(w.t===0){ const len=(w.a1-w.a0)*w.R, m=Math.max(2,Math.ceil(len/6)); for(let s=0;s<=m;s++){ const a=w.a0+(w.a1-w.a0)*s/m, rr=w.bays?mzBayR(w.bays,w.R,a):w.R; mark(w.cx+rr*Math.cos(a), w.cz+rr*Math.sin(a), i); } }
+    if(w.t===0){ const len=(w.a1-w.a0)*w.R, m=Math.max(2,Math.ceil(len/6)); for(let s=0;s<=m;s++){ const a=w.a0+(w.a1-w.a0)*s/m; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } }
     else if(w.t===1){ const len=Math.hypot(w.x1-w.x0,w.z1-w.z0), m=Math.max(1,Math.ceil(len/6)); for(let s=0;s<=m;s++) mark(w.x0+(w.x1-w.x0)*s/m, w.z0+(w.z1-w.z0)*s/m, i); }
     else { const m=Math.max(6,Math.ceil(w.R*MZ_TAU/6)); for(let s=0;s<m;s++){ const a=s/m*MZ_TAU; mark(w.cx+w.R*Math.cos(a), w.cz+w.R*Math.sin(a), i); } if(w.R<G) mark(w.cx,w.cz,i); else { for(let x=-w.R;x<=w.R;x+=G/2) for(let z=-w.R;z<=w.R;z+=G/2) if(x*x+z*z<w.R*w.R) mark(w.cx+x,w.cz+z,i); } }
   });
@@ -44897,27 +44923,14 @@ function mzGridBuild(M){
   M.wallDist=(x,z)=>{ mzNear(M,x,z); return MZ_Q.d; };
 }
 // nearest wall surface to (x,z): MZ_Q.d (negative inside), MZ_Q.nx/nz (outward normal); allocation-free
-// a bayed ring wall's radius at angle a (bays: flat [centre angle, half-span, depth(+out/-in)] ...): each
-// bay a cosine bulge, overlapping ones adding up (smoothly). MZ_BR.dr: d(radius)/d(angle)
-const MZ_BR={r:0,dr:0};
-function mzBayR(b,R,a){
-  let v=0, dv=0;
-  for(let i=0;i<b.length;i+=3){ const da=Math.atan2(Math.sin(a-b[i]),Math.cos(a-b[i])), u=da/b[i+1]; if(u<=-1||u>=1) continue;
-    v+=b[i+2]*(1+Math.cos(Math.PI*u))/2; dv+=-b[i+2]*Math.PI/2*Math.sin(Math.PI*u)/b[i+1]; }
-  MZ_BR.r=R+v; MZ_BR.dr=dv; return MZ_BR.r;
-}
 // (MZ_Q.e: 1 when that surface is the round tip of a bulb, the kart past the wall's end)
 const MZ_Q={d:1e9,nx:0,nz:0,e:0};
 function mzPrimDist(w,x,z){
   let qx,qz,s=0,e=0;
   if(w.t===2){ const dx=x-w.cx, dz=z-w.cz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-w.R; MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=0; return MZ_Q.d; }
   if(w.t===0){ const dx=x-w.cx, dz=z-w.cz; let a=Math.atan2(dz,dx); while(a<w.a0) a+=MZ_TAU; while(a>=w.a0+MZ_TAU) a-=MZ_TAU;
-    if(w.bays && a<=w.a1){   // a bayed wall: distance off its curve (gentle, so the radial offset over the slope is near enough)
-      const rho=Math.hypot(dx,dz)||1e-6, rr=mzBayR(w.bays,w.R,a), sl=MZ_BR.dr/rr, dr=rho-rr, ux=dx/rho, uz=dz/rho;
-      let nx=ux+sl*uz, nz=uz-sl*ux; const nl=Math.hypot(nx,nz); nx/=nl; nz/=nl; if(dr<0){ nx=-nx; nz=-nz; }
-      MZ_Q.d=Math.abs(dr)/nl-(w.fl?mzHalfW(w,(a-w.a0)*w.R):w.hw); MZ_Q.nx=nx; MZ_Q.nz=nz; MZ_Q.e=0; return MZ_Q.d; }
     if(a<=w.a1){ qx=w.cx+w.R*Math.cos(a); qz=w.cz+w.R*Math.sin(a); s=(a-w.a0)*w.R; }
-    else { const hi=(a-w.a1)<(w.a0+MZ_TAU-a), ea=hi?w.a1:w.a0, re=w.bays?mzBayR(w.bays,w.R,ea):w.R; qx=w.cx+re*Math.cos(ea); qz=w.cz+re*Math.sin(ea); s=hi?(w.a1-w.a0)*w.R:0; e=hi?w.f1:w.f0; } }
+    else { const hi=(a-w.a1)<(w.a0+MZ_TAU-a), ea=hi?w.a1:w.a0; qx=w.cx+w.R*Math.cos(ea); qz=w.cz+w.R*Math.sin(ea); s=hi?(w.a1-w.a0)*w.R:0; e=hi?w.f1:w.f0; } }
   else { const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); if(t<0){ t=0; e=w.f0; } else if(t>1){ t=1; e=w.f1; } qx=w.x0+vx*t; qz=w.z0+vz*t; if(w.fl) s=t*w.L; }
   const dx=x-qx, dz=z-qz, d=Math.hypot(dx,dz)||1e-6; MZ_Q.d=d-(w.fl?mzHalfW(w,s):w.hw); MZ_Q.nx=dx/d; MZ_Q.nz=dz/d; MZ_Q.e=e?1:0; return MZ_Q.d;
 }
@@ -44943,8 +44956,6 @@ function mzLocate(M,x,z){
   if(rho<C.R0) return M.EGG;
   let a=Math.atan2(z,x); if(a<0) a+=MZ_TAU;
   let k=Math.floor((rho-C.R0)/C.P)+1;
-  if(M.bays){ const bo=k<=M.K?M.bays[k]:null, bi=k-1>=0&&k-1<=M.K?M.bays[k-1]:null;   // a bay moves a wall: the cell is the one inside its walls
-    if(bo&&bo.length&&rho>=mzBayR(bo,C.R0+k*C.P,a)) k++; else if(bi&&bi.length&&rho<mzBayR(bi,C.R0+(k-1)*C.P,a)) k--; }
   if(k<1) return M.EGG;
   if(k>M.K) return M.ANTE;
   const n=M.N[k]; return M.base[k]+Math.min(n-1,Math.floor(a/(MZ_TAU/n)));
@@ -45227,8 +45238,7 @@ function mzWallGeos(M){
         ss.sort((a,b)=>a-b); for(let i=ss.length-1;i>0;i--) if(ss[i]-ss[i-1]<0.6) ss.splice(i-(i===ss.length-1?1:0),1); } }
     for(const sv of ss){ let p;
       if(w.t===0){ const a=w.a0+sv/w.R;
-        if(w.bays){ const rr=mzBayR(w.bays,w.R,a), dr=MZ_BR.dr, c=Math.cos(a), sn=Math.sin(a), tx=dr*c-rr*sn, tz=dr*sn+rr*c, tl=Math.hypot(tx,tz); p={x:rr*c, z:rr*sn, tx:tx/tl, tz:tz/tl}; }
-        else p={x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}; }
+        p={x:w.cx+w.R*Math.cos(a), z:w.cz+w.R*Math.sin(a), tx:-Math.sin(a), tz:Math.cos(a)}; }
       else { const tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1); p={x:w.x0+tx*sv, z:w.z0+tz*sv, tx, tz}; }
       p.s=sv; if(w.fl){ p.h=mzHalfW(w,sv); const d0=w.f0?sv:1e9, d1=w.f1?L-sv:1e9, dm=Math.min(d0,d1)/(w.fl*1.5); p.k=dm>=1?1:dm*dm*(3-2*dm); }
       pts.push(p); }
@@ -45247,10 +45257,9 @@ function mzWallGeos(M){
     out.push({wall:g}); }
   return out;
 }
-// trace a wall's centre line on a 2D canvas (a bayed ring wall as a polyline)
+// trace a wall's centre line on a 2D canvas
 function mzTraceWall(g,w,X,Z,k){
-  if(w.t===0 && w.bays){ const n=Math.max(8,Math.ceil((w.a1-w.a0)*w.R/4)); for(let i=0;i<=n;i++){ const a=w.a0+(w.a1-w.a0)*i/n, rr=mzBayR(w.bays,w.R,a); i?g.lineTo(X(rr*Math.cos(a)),Z(rr*Math.sin(a))):g.moveTo(X(rr*Math.cos(a)),Z(rr*Math.sin(a))); } }
-  else if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); }
+  if(w.t===0) g.arc(X(w.cx),Z(w.cz),w.R*k,w.a0,w.a1); else { g.moveTo(X(w.x0),Z(w.z0)); g.lineTo(X(w.x1),Z(w.z1)); }
 }
 // the floor's light map: a little of every wall's light spilt at its foot, warm pools at the spoke
 // gates, the loops as bright pools, the egg's warmth spreading from the centre
@@ -45727,9 +45736,6 @@ function mzSegCross(w,ax,az,bx,bz){   // does the move a->b cross this wall's ce
   const dx=bx-ax, dz=bz-az;
   if(w.t===1){ const ex=w.x1-w.x0, ez=w.z1-w.z0, den=dx*ez-dz*ex; if(Math.abs(den)<1e-9) return false;
     const t=((w.x0-ax)*ez-(w.z0-az)*ex)/den, u=((w.x0-ax)*dz-(w.z0-az)*dx)/den; return t>=0&&t<=1&&u>=0&&u<=1; }
-  if(w.t===0 && w.bays){   // a bayed wall: the move crosses it if its two ends lie either side of the curve
-    const sideOf=(x,z)=>{ let an=Math.atan2(z,x); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an>w.a1) return 0; return Math.hypot(x,z)<mzBayR(w.bays,w.R,an)?-1:1; };
-    const sa=sideOf(ax,az), sb=sideOf(bx,bz); return sa!==0 && sb!==0 && sa!==sb; }
   if(w.t===0){ const fx=ax-w.cx, fz=az-w.cz, A=dx*dx+dz*dz, B=2*(fx*dx+fz*dz), Cc=fx*fx+fz*fz-w.R*w.R, D=B*B-4*A*Cc; if(D<0||A<1e-12) return false;
     for(let sg=-1;sg<=1;sg+=2){ const t=(-B+sg*Math.sqrt(D))/(2*A); if(t<0||t>1) continue; let an=Math.atan2(fz+dz*t,fx+dx*t); while(an<w.a0) an+=MZ_TAU; while(an>=w.a0+MZ_TAU) an-=MZ_TAU; if(an<=w.a1) return true; } }
   return false;
