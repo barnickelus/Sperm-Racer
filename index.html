@@ -862,7 +862,6 @@
         <button class="go alt tile on" id="musicbtn">Music: ON</button>
         <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
         <button class="go alt tile on" id="mazeradarbtn">Maze radar: Whole maze</button>
-        <button class="go alt tile" id="mzstartbtn">Maze start: 1 gate</button>
         <button class="go alt tile" id="mzmazebtn">Mazes: new each race</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="fsbtn">Fullscreen</button>
@@ -33310,6 +33309,18 @@ const TRACKS=[
           melB:[12,null,10,8,  7,null,8,10,   12,null,15,14, 12,null,null,null],
           bass:[0,-2,-4,-5] },
    ctrl:[[0,0,0],[0,0,1]]},
+  /* Penelope — the six-gate labyrinth. Penelope wove by day and unpicked her weaving every night: a
+     maze that remakes itself, a fresh one every race. The same kit as Ariadne (MZ6): one wedge carved
+     once and repeated six times round the circle, a gate and an antechamber in every wedge, the field
+     split evenly over the gates, every gate exactly as far from the egg as every other. Her own look
+     (jade at the rim through coral to gold at the egg, a sea-green haze: MZ_LOOKS.penelope). The
+     grid song is a placeholder until her course song is produced. */
+  {name:'Penelope', maze:true, mazeMode:'six', look:'penelope', loop:false, egg:true, key:5, tempo:168, sky:0x0c1f24,
+   song:{ name:"Penelope's Loom",
+          mel: [0,2,null,4,   7,null,4,2,    0,null,2,4,    5,4,2,null],
+          melB:[7,null,9,7,   4,null,2,4,    7,9,null,11,   12,null,null,null],
+          bass:[0,-3,-5,-1] },
+   ctrl:[[0,0,0],[0,0,1]]},
 ];
 // Samples per course. 700 everywhere except where a course asks for more (Eve's run is ~26k
 // units long and carries 2,600 to keep the same ~10-unit spacing). Set on EVERY buildTrack.
@@ -45218,8 +45229,11 @@ const MZ6=Object.assign({}, MZ, {
   SYM:6,        // wedges
   N1:6,         // ring 1: one cell per wedge (the rings then double to 12 and 24: every count a multiple of six)
   SHARE:1,      // rings 1..SHARE are open all the way round (the wedges meet there)
-  LMIN:2300, LMAX:3600,   // shortest route from a gate (antechamber front to the egg): a sprint, about 20-45 s
-  BRAID:0.65, ALT_OVER:0.62, ALT_LEN:1.7,
+  K:15,         // Penelope's board: six rings more than Ariadne's (lanes as wide), so a sixth of it is still a race
+  LMIN:5000, LMAX:9000,   // shortest route from a gate (antechamber front to the egg)
+  PRIM:0.25,     // the carve grows now and then from an older cell (not only the newest): the passages branch, so there are wrong turns to take
+  BRAID:0.2,    // few dead ends opened: real ones are left, so a wrong turn costs time
+  ALT_OVER:0.62, ALT_LEN:1.7,
   BOX_Q:2,      // item boxes along each gate's route (and one off it per wedge)
 });
 const MZ_TAU=Math.PI*2;
@@ -45231,29 +45245,70 @@ function mzPickSeed(t){ return (t&&t.seed!=null) ? t.seed : MZ_SEED_DEFAULT; }  
 const MZ_NO_MAX=9999;
 function mzSeedOf(no){ return (MZ_SEED_DEFAULT+Math.imul(no|0,7919))|0; }
 let MZC=MZ;                         // the board being raced (MZ, or MZ6 for six gates): the floor's terraces and the ring tints read it
-// what the player chose (lab settings): the start ('one', 'six' or 'rand') and the maze ('new' every race,
-// 'keep': the last one raced, again and again, or 'orig': maze #0)
-let mzStartPref='one', mzMazePref='new';
-try{ const a=localStorage.getItem('sr_mzstart'); if(a==='one'||a==='six'||a==='rand') mzStartPref=a; const b=localStorage.getItem('sr_mzmaze'); if(b==='new'||b==='keep'||b==='orig') mzMazePref=b; }catch(_){}
-let mzNext=null;                    // the maze the next race will use, picked ahead ({no, mode}) so the menu preview, the deck and the race agree
-let mzLast=null;                    // the maze last raced ("Same maze")
-try{ const v=JSON.parse(localStorage.getItem('sr_mzlast')||'null'); if(v && v.no>=0 && v.no<=MZ_NO_MAX && (v.mode==='one'||v.mode==='six')) mzLast={no:v.no|0, mode:v.mode}; }catch(_){}
+// Two maze courses: Ariadne (one gate) and Penelope (six gates); a course's start is its own (TRACKS
+// `mazeMode`), never a setting. What the player chose (lab settings) is the maze: 'new' every race,
+// 'keep': the course's last one, again and again, or 'orig': maze #0. Each course remembers its own
+// next and last maze.
+let mzMazePref='new';
+try{ const b=localStorage.getItem('sr_mzmaze'); if(b==='new'||b==='keep'||b==='orig') mzMazePref=b;
+  localStorage.removeItem('sr_mzstart');   // (the old start setting: gone, so a saved "six gates" can never reach Ariadne)
+  const old=JSON.parse(localStorage.getItem('sr_mzlast')||'null'); localStorage.removeItem('sr_mzlast');
+  if(old && old.mode==='one' && old.no>=0 && old.no<=MZ_NO_MAX && !localStorage.getItem('sr_mzlast_Ariadne')) localStorage.setItem('sr_mzlast_Ariadne',JSON.stringify({no:old.no|0, mode:'one'})); }catch(_){}
+function mzModeOf(t){ return t && t.mazeMode==='six' ? 'six' : 'one'; }
+function mzCourseOf(t){ return (t && t.maze) ? t : (TRACKS[selTrack] && TRACKS[selTrack].maze ? TRACKS[selTrack] : null); }
+const mzNextBy={}, mzLastBy={};     // per course: the maze its next race will use (picked ahead, so the menu preview, the deck and the race agree), and the one last raced ("Same maze")
+function mzLastOf(t){ t=mzCourseOf(t); if(!t) return null;
+  if(!(t.name in mzLastBy)){ let v=null; try{ v=JSON.parse(localStorage.getItem('sr_mzlast_'+t.name)||'null'); }catch(_){} mzLastBy[t.name]=(v && v.no>=0 && v.no<=MZ_NO_MAX) ? {no:v.no|0, mode:mzModeOf(t)} : null; }
+  return mzLastBy[t.name]; }
+function mzSetLast(t,p){ t=mzCourseOf(t); if(!t||!p) return; mzLastBy[t.name]={no:p.no, mode:mzModeOf(t)}; try{ localStorage.setItem('sr_mzlast_'+t.name,JSON.stringify(mzLastBy[t.name])); }catch(_){} }
 function mzRand(n){ try{ const a=new Uint32Array(1); crypto.getRandomValues(a); return a[0]%n; }catch(_){ return Math.floor(Math.random()*n); } }   // (not Math.random: picking a maze never shifts a race's own draws)
-function mzPlan(){
-  if(!mzNext) mzNext={no: mzMazePref==='orig' ? 0 : (mzMazePref==='keep' && mzLast) ? mzLast.no : 1+mzRand(MZ_NO_MAX), mode: mzStartPref==='rand' ? (mzRand(2)?'six':'one') : mzStartPref};
-  return mzNext;
-}
+function mzPlan(t){ t=mzCourseOf(t); if(!t) return null;
+  if(!mzNextBy[t.name]){ const last=mzLastOf(t); mzNextBy[t.name]={no: mzMazePref==='orig' ? 0 : (mzMazePref==='keep' && last) ? last.no : 1+mzRand(MZ_NO_MAX), mode: mzModeOf(t)}; }
+  return mzNextBy[t.name]; }
+function mzForget(t){ t=mzCourseOf(t); if(t) delete mzNextBy[t.name]; }
 function mzLabel(p){ return p ? 'Maze #'+p.no+(p.mode==='six'?' · six gates':'') : ''; }
-// the last two mazes made are kept: the menu preview (or a quiet moment on the results screen)
+// the last three mazes made are kept: the menu preview (or a quiet moment on the results screen)
 // makes the next race's maze, so the race itself only builds its meshes, and "Same maze" is ready too
-let mzCacheM=null, mzCacheM2=null;
+let mzCache=[];
+function mzCached(no, mode){ for(const M of mzCache) if(M.no===no && M.mode===mode) return M; return null; }
+function mzKeep(M){ mzCache=[M].concat(mzCache.filter(x=>x!==M)).slice(0,3); }
 function mzGet(no, mode){
-  for(const M of [mzCacheM, mzCacheM2]) if(M && M.no===no && M.mode===mode) return M;
-  const M=mzMake(mzSeedOf(no), mode); M.no=no; mzCacheM2=mzCacheM; mzCacheM=M; return M;
+  const C=mzCached(no,mode); if(C) return C;
+  const M=mzMake(mzSeedOf(no), mode); M.no=no; mzKeep(M); return M;
 }
-// make a maze ahead, off the race's own start: a moment after the results go up (not mid-race)
+/* Making a maze takes a moment (a big six-gate one, most of a second on a slow phone), so the mazes the
+   menu and the next race will want are made ahead on a worker thread: the kit's own functions, sent to
+   it as source; the maze comes back as plain data and gets its little helper functions again here. */
+let mzWk=null; const mzWkBusy={};
+function mzRevive(M){
+  const {N,base,ck,cj,E,adj}=M, S=M.sym||1;
+  M.id=(k,j)=>base[k]+((j%N[k])+N[k])%N[k];
+  M.other=(e,c)=>E[e].a===c?E[e].b:E[e].a;
+  M.span=c=>{ const w=MZ_TAU/N[ck[c]]; return [cj[c]*w, (cj[c]+1)*w]; };
+  M.deg=c=>{ let d=((M.ents?M.ents.indexOf(c)>=0:c===M.ent)?1:0)+(M.goals.indexOf(c)>=0?1:0); for(const e of adj[c]) if(E[e].open) d++; return d; };
+  if(S>1){ M.rot=(c,r)=>M.id(ck[c], cj[c]+r*N[ck[c]]/S); M.wedge0=c=>M.id(ck[c], cj[c]%(N[ck[c]]/S)); }
+  M.wallDist=(x,z)=>{ mzNear(M,x,z); return MZ_Q.d; };
+  return M;
+}
+function mzWorker(){
+  if(mzWk!==null) return mzWk; mzWk=false;
+  try{
+    const fns=[mzRnd,mzCarve,mzCarve6,mzCellRoute,mzAlt,mzCheckGraph,mzSolve,mzValidate,mzPinch,mzLayout,mzFillets,mzMaybeNear,mzNoses,mzHalfW,mzHash,mzBandDist,mzBandSD,mzHashList,mzGridBuild,mzPrimDist,mzCellList,mzNear,mzLinked,mzMake,mzSeedOf];
+    const src='"use strict";\nconst MZ='+JSON.stringify(MZ)+', MZ6='+JSON.stringify(MZ6)+', MZ_TAU=Math.PI*2, MZ_Q={d:1e9,nx:0,nz:0,e:0}, MZ_SEED_DEFAULT='+MZ_SEED_DEFAULT+';\n'
+      +fns.map(f=>f.toString()).join('\n')
+      +'\nonmessage=e=>{ const q=e.data; let M=null; try{ M=mzMake(mzSeedOf(q.no),q.mode); M.no=q.no; for(const k in M) if(typeof M[k]==="function") delete M[k]; }catch(err){ M=null; } postMessage({q,M}); };';
+    const w=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+    w.onmessage=e=>{ const {q,M}=e.data; delete mzWkBusy[q.no+':'+q.mode]; if(M && !mzCached(q.no,q.mode)) mzKeep(mzRevive(M)); };
+    w.onerror=()=>{ mzWk=false; };
+    mzWk=w;
+  }catch(_){ mzWk=false; }
+  return mzWk;
+}
+// make a maze ahead, off the race's own start: on the worker if there is one, else a moment after the
+// results go up (not mid-race)
 function mzPrefetch(p){
-  if(!p) return; const want={no:p.no, mode:p.mode};
+  if(!p || mzCached(p.no,p.mode)) return; const want={no:p.no, mode:p.mode}, k=want.no+':'+want.mode;
+  const w=mzWorker(); if(w){ if(!mzWkBusy[k]){ mzWkBusy[k]=1; w.postMessage(want); } return; }
   setTimeout(()=>{ if(state==='race'||state==='count') return; try{ mzGet(want.no, want.mode); }catch(_){} }, 900);
 }
 function mzRnd(seed){ let a=seed|0; return ()=>{ a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
@@ -45339,10 +45394,10 @@ function mzCarve6(seed, C){
   // growing tree over the wedge (as mzCarve: ring-wise steps RING_W times likelier); a shared ring is one room
   const vis=new Uint8Array(NC), st=[M.ent]; vis[M.ent]=1;
   const ringOf=k=>{ const L=[]; for(let j=0;j<N[k]/S;j++) L.push(id(k,j)); return L; };
-  while(st.length){ const c=st[st.length-1]; let tw=0; const cand=[];
+  while(st.length){ const si=(C.PRIM && R()<C.PRIM) ? Math.floor(R()*st.length) : st.length-1, c=st[si]; let tw=0; const cand=[];   // (growing tree: now and then from an older cell, so the passages branch)
     for(const cc of shared(c)?ringOf(ck[c]):[c]) for(const e of adj[cc]){ const o=M.other(e,cc); if(vis[M.wedge0(o)] || (shared(cc)&&shared(o)&&E[e].kind===0)) continue;
       const w=E[e].kind===0?C.RING_W:1; cand.push(e,w,cc); tw+=w; }
-    if(!cand.length){ st.pop(); continue; }
+    if(!cand.length){ st.splice(si,1); continue; }
     let x=R()*tw, pick=0; for(let i=0;i<cand.length;i+=3){ x-=cand[i+1]; if(x<=0){ pick=i; break; } }
     const e=cand[pick], o=M.wedge0(M.other(e,cand[pick+2])); setOpen(e,true);
     if(shared(o)) for(const q of ringOf(ck[o])) vis[q]=1; else vis[o]=1; st.push(o);
@@ -45380,10 +45435,18 @@ function mzCellRoute(M, mul){
   if(!M._cxz){ const q=new Float64Array(NC*2); for(let c=0;c<NC;c++){ const s=M.span(c), a=(s[0]+s[1])/2; q[2*c]=cr[ck[c]]*Math.cos(a); q[2*c+1]=cr[ck[c]]*Math.sin(a); } M._cxz=q; }   // (cell centres)
   const Q=M._cxz;
   D[ent]=0;
-  for(;;){ let u=-1, bd=1e18; for(let i=0;i<NC;i++) if(!done[i]&&D[i]<bd){ bd=D[i]; u=i; } if(u<0) break; done[u]=1;
+  // a binary heap of (distance, cell), smallest cell first among equals: the same order a scan for the
+  // nearest unfinished cell takes, so the same routes, in a fraction of the time on a big board
+  const hd=[], hc=[]; const less=(i,j)=>hd[i]<hd[j]||(hd[i]===hd[j]&&hc[i]<hc[j]);
+  const swap=(i,j)=>{ let t=hd[i]; hd[i]=hd[j]; hd[j]=t; t=hc[i]; hc[i]=hc[j]; hc[j]=t; };
+  const push=(d,c)=>{ hd.push(d); hc.push(c); let i=hd.length-1; while(i>0){ const p=(i-1)>>1; if(less(i,p)){ swap(i,p); i=p; } else break; } };
+  const pop=()=>{ const c=hc[0], n=hd.length-1; hd[0]=hd[n]; hc[0]=hc[n]; hd.pop(); hc.pop(); let i=0;
+    for(;;){ const l=2*i+1, r=l+1; let m=i; if(l<hd.length&&less(l,m)) m=l; if(r<hd.length&&less(r,m)) m=r; if(m===i) break; swap(i,m); i=m; } return c; };
+  push(0,ent);
+  while(hd.length){ const dtop=hd[0], u=pop(); if(done[u] || dtop!==D[u]) continue; done[u]=1;
     const ux=Q[2*u], uz=Q[2*u+1];
     for(const e of adj[u]){ if(!E[e].open) continue; const v=M.other(e,u); const w=Math.hypot(ux-Q[2*v],uz-Q[2*v+1])*(mul&&mul[e]?mul[e]:1);
-      if(D[u]+w<D[v]){ D[v]=D[u]+w; prv[v]=u; pe[v]=e; } } }
+      if(D[u]+w<D[v]){ D[v]=D[u]+w; prv[v]=u; pe[v]=e; push(D[v],v); } } }
   let best=-1; for(const g of goals) if(best<0||D[g]<D[best]) best=g;
   const path=[], edges=[]; for(let c=best;c>=0;c=prv[c]){ path.push(c); if(pe[c]>=0) edges.push(pe[c]); }
   return {L:D[best]<1e17?D[best]:1e18, path:path.reverse(), edges};
@@ -45590,8 +45653,11 @@ function mzLayout(M){
     for(let i=0;i<=n;i++){ const t=i/n, v=okS(t); if(v && s0<0) s0=i; if((!v || i===n) && s0>=0){ const e=v?n:i; let ta=s0/n, tb=e/n;
         if(s0>0) ta=edge((s0-1)/n, ta); if(!v) tb=edge((e-1)/n, tb);
         if((tb-ta)*L>=1.2){ const p0=pt(ta), p1=pt(tb); W.push({t:1, x0:p0[0], z0:p0[1], x1:p1[0], z1:p1[1], hw, ring, kind}); } s0=-1; } } };
-  for(let k=0;k<=K;k++){ let a0=0; for(let i=0;i<720;i++){ const t=i/720*MZ_TAU; if(!ok(B(k)*Math.cos(t),B(k)*Math.sin(t))){ a0=t; break; } }   // (start where the circle is open, so no wall is cut in two at angle 0)
-    keepArc(0,0,B(k),a0,a0+MZ_TAU,k,'ring'); }
+  const SY=M.sym||1;
+  for(let k=0;k<=K;k++){ let a0=0, open=false; for(let i=0;i<720;i++){ const t=i/720*MZ_TAU; if(!ok(B(k)*Math.cos(t),B(k)*Math.sin(t))){ a0=t; open=true; break; } }   // (start where the circle is open, so no wall is cut in two at angle 0)
+    if(SY>1 && open){ const w0=W.length; keepArc(0,0,B(k),a0,a0+MZ_TAU/SY,k,'ring'); const w1=W.length;   // six gates: one wedge's stretch of the ring, turned round into the other five (the same, exactly)
+      for(let r=1;r<SY;r++) for(let i=w0;i<w1;i++){ const q=W[i]; W.push(Object.assign({}, q, {a0:q.a0+r*MZ_TAU/SY, a1:q.a1+r*MZ_TAU/SY})); } }
+    else keepArc(0,0,B(k),a0,a0+MZ_TAU,k,'ring'); }
   const capOf=(x,z,dir,r,ring)=>keepArc(x,z,r,dir-Math.PI/2,dir+Math.PI/2,ring,'cap');
   for(const bd of BL){ const off=bd.w+hw;
     if(bd.kind==='bend') keepArc(bd.cx,bd.cz,bd.R+off,bd.a0,bd.a1,bd.ring,'bend');
@@ -45851,9 +45917,36 @@ function mzMake(seed, mode){
    straight out in display space (these shaders do their own fog, against the haze). */
 const MZ_PAL=[[0.00,0xffd36a],[0.12,0xffb54f],[0.24,0xff8d6e],[0.38,0xff72a6],[0.55,0xcf6cf2],[0.72,0x9874ff],[0.87,0x6d8dff],[1.00,0x5cb2ff]];
 const MZ_HAZE=0x4b3370;            // the haze the maze recedes into (display space): lighter than the floor, darker than the walls
+/* each maze course's look. Ariadne's is the one written into the code below (no substitutions);
+   Penelope's swaps the palette, the haze and the rig, and a handful of colour constants in the shaders
+   (string substitutions: the same shaders, the same cost, only the numbers differ): jade and teal at
+   the rim through sea green and coral to the egg's gold, under a deep sea-green sky. */
+const MZ_LOOKS={
+  ariadne:{ pal:MZ_PAL, haze:MZ_HAZE, bg:0x0b0918, rig:null, radarRim:[143,161,232], sub:[] },
+  penelope:{
+    pal:[[0.00,0xffd36a],[0.12,0xffb95e],[0.26,0xff9468],[0.40,0xff7c72],[0.55,0xa6e8b4],[0.70,0x52d9a6],[0.85,0x29c3b2],[1.00,0x36c4e0]],
+    haze:0x1f565c, bg:0x05161b,
+    rig:{hemi:[0x86dccd,0x10302f,0.66], sun:[0xffd6a8,0.74], rim:[0x86f0e4,0.60], fill:[0xff9a84,0.32], flesh:[0xffb070,0.22]},
+    radarRim:[98,214,190],
+    sub:[
+      ['vec3(0.42,0.20,0.78),0.45','vec3(0.10,0.44,0.46),0.45'],          // wall: light gone deep into the jelly, toward sea green
+      ['mix(vec3(0.42,0.46,0.85),sat,0.5)','mix(vec3(0.34,0.74,0.76),sat,0.5)'],   // wall: the cool side, lit by the haze
+      ['mix(vec3(0.028,0.024,0.072), vec3(0.070,0.026,0.070), warm)','mix(vec3(0.010,0.040,0.046), vec3(0.064,0.036,0.032), warm)'],   // floor
+      ['mix(vec3(0.24,0.20,0.55), vec3(0.55,0.22,0.36), warm)','mix(vec3(0.12,0.42,0.44), vec3(0.62,0.32,0.26), warm)'],
+      ['c+=vec3(0.30,0.21,0.46)*fres*0.55;','c+=vec3(0.14,0.38,0.40)*fres*0.55;'],
+      ['mix(vec3(0.10,0.10,0.26),vec3(0.30,0.18,0.08),warm)','mix(vec3(0.04,0.20,0.22),vec3(0.30,0.18,0.08),warm)'],
+      ['mix(vec3(0.42,0.36,0.85),vec3(1.0,0.72,0.38),warm)*beat','mix(vec3(0.28,0.78,0.72),vec3(1.0,0.66,0.44),warm)*beat'],
+      ['mix(uHaze*1.12, vec3(0.16,0.09,0.25),','mix(uHaze*1.12, vec3(0.05,0.17,0.18),'],   // sky
+      ['mix(c, vec3(0.05,0.032,0.10),','mix(c, vec3(0.010,0.048,0.058),'],
+      ['c+=vec3(0.30,0.18,0.42)*(cl.g*0.20','c+=vec3(0.12,0.36,0.36)*(cl.g*0.20'],
+      ['vC=mix(vec3(1.0,0.80,0.52),vec3(0.62,0.70,1.0),','vC=mix(vec3(1.0,0.78,0.60),vec3(0.56,1.0,0.88),'],   // motes
+    ] },
+};
+let MZ_LK=MZ_LOOKS.ariadne;         // the look being built (mzBuildTrack sets it from the course)
+function mzLk(src){ for(const q of MZ_LK.sub) src=src.split(q[0]).join(q[1]); return src; }
 function mzTint(u, out){   // u: 0 at the egg .. 1 at the rim -> display-space colour
-  u=Math.max(0,Math.min(1,u)); let i=1; while(i<MZ_PAL.length-1 && u>MZ_PAL[i][0]) i++;
-  const a=MZ_PAL[i-1], b=MZ_PAL[i], t=(u-a[0])/(b[0]-a[0]);
+  const PAL=MZ_LK.pal; u=Math.max(0,Math.min(1,u)); let i=1; while(i<PAL.length-1 && u>PAL[i][0]) i++;
+  const a=PAL[i-1], b=PAL[i], t=(u-a[0])/(b[0]-a[0]);
   const ca=a[1], cb=b[1], o=out||{r:0,g:0,b:0};
   o.r=((ca>>16&255)+(((cb>>16&255)-(ca>>16&255))*t))/255; o.g=((ca>>8&255)+(((cb>>8&255)-(ca>>8&255))*t))/255; o.b=((ca&255)+(((cb&255)-(ca&255))*t))/255;
   return o;
@@ -45872,6 +45965,7 @@ vec3 mzFogMix(vec3 c, float depth){ return mix(c, uFog, smoothstep(uFogR.x, uFog
 `;
 function mzShaderMat(o){
   const p=Object.assign({}, o); p.uniforms=Object.assign({uT:MAZE.U.uT, uFog:MAZE.U.uFog, uFogR:MAZE.U.uFogR}, o.uniforms||{});
+  if(p.vertexShader) p.vertexShader=mzLk(p.vertexShader); if(p.fragmentShader) p.fragmentShader=mzLk(p.fragmentShader);   // (the course's look)
   return new T.ShaderMaterial(p);
 }
 /* one tileable 256x256 texture every shader shares: R = cell dome (1 at a cell's heart), G = cell
@@ -46193,7 +46287,7 @@ function mzSkyMat(){
   return new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
     uniforms:{uT:MAZE.U.uT, uEgg:{value:new T.Vector3()}, uHaze:MAZE.U.uFog, uCell:{value:mzCellTex()}},
     vertexShader:`varying vec3 vD; void main(){ vD=normalize((modelMatrix*vec4(position,1.0)).xyz-cameraPosition); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`uniform float uT; uniform vec3 uEgg; uniform vec3 uHaze; uniform sampler2D uCell; varying vec3 vD;
+    fragmentShader:mzLk(`uniform float uT; uniform vec3 uEgg; uniform vec3 uHaze; uniform sampler2D uCell; varying vec3 vD;
       void main(){ vec3 d=normalize(vD); float y=d.y;
         vec3 c=mix(uHaze*1.12, vec3(0.16,0.09,0.25), smoothstep(0.0,0.24,y));
         c=mix(c, vec3(0.05,0.032,0.10), smoothstep(0.22,0.85,y));
@@ -46209,7 +46303,7 @@ function mzSkyMat(){
         float ang=atan(dot(d,ey),dot(d,ex));
         float rays=(0.5+0.5*sin(ang*7.0+uT*0.05+sin(ang*3.0)*2.0))*(0.5+0.5*sin(ang*11.0-uT*0.031+1.7));
         c+=vec3(1.0,0.72,0.46)*smoothstep(0.15,0.75,rays)*pow(g,3.0)*smoothstep(-0.02,0.10,y)*(1.0-smoothstep(0.10,0.42,y))*0.06;
-        gl_FragColor=vec4(c,1.0); }` });
+        gl_FragColor=vec4(c,1.0); }`) });
 }
 function mzMoteMat(){
   return mzShaderMat({ transparent:true, depthWrite:false, blending:T.AdditiveBlending,
@@ -46360,11 +46454,12 @@ function mzTrailMat(hex){
 function mzBuildTrack(idx){
   // the maze: the one the race was handed (the multiplayer start, "Same maze"), else the one planned
   // for the next race (picked ahead, so the menu preview behind the deck is the maze you will race)
-  const plan=mzSeedNext||mzPlan(); mzSeedNext=null;
+  const t=TRACKS[idx], plan=mzSeedNext||mzPlan(t); mzSeedNext=null; plan.mode=mzModeOf(t);   // (a course's start is its own)
   const M=mzGet(plan.no, plan.mode); MAZE=M; MZC=M.C; mzGateGrid(M);
   const C=M.C; M.ext=C.R0+C.K*C.P+C.ANTE_D+90;
   M.myGate=mzSlotGate(M, mzMySlot(), mzFieldSize());   // (your own gate: the countdown camera's road, the route the tests drive)
-  M.U={uT:{value:0}, uFog:{value:new T.Color(MZ_HAZE)}, uFogR:{value:new T.Vector2(140,860)}};
+  MZ_LK=MZ_LOOKS[t.look]||MZ_LOOKS.ariadne;   // the course's own look (palette, haze, rig, shader colours)
+  M.U={uT:{value:0}, uFog:{value:new T.Color(MZ_LK.haze)}, uFogR:{value:new T.Vector2(140,860)}};
   STEPS=0;
   // ---- SAMP: the shortest route, ~10 units a sample (countdown camera, kart idx, test placement) ----
   SAMP.length=0;
@@ -46377,8 +46472,8 @@ function mzBuildTrack(idx){
     STEPS=SAMP.length; }
   innerSign=1;
   // shared state, set here as every course sets its own: the karts' fog matches the haze
-  scene.fog.near=140; scene.fog.far=860; scene.fog.color.setHex(MZ_HAZE).convertSRGBToLinear();
-  scene.background.setHex(0x0b0918);
+  scene.fog.near=140; scene.fog.far=860; scene.fog.color.setHex(MZ_LK.haze).convertSRGBToLinear();
+  scene.background.setHex(MZ_LK.bg);
   groundPlane.visible=false;
   // the rig the racers are lit by: lilac from above, warm from the egg's side, a cool rim
   hemi.color.setHex(0x9a88e0); hemi.groundColor.setHex(0x2a1636); hemi.intensity=0.66;
@@ -46386,6 +46481,10 @@ function mzBuildTrack(idx){
   rim.color.setHex(0x8cb8ff);  rim.intensity=0.60; rim.position.set(-120,60,160);
   fill.color.setHex(0xe68ac0); fill.intensity=0.30; fill.position.set(140,30,-80);
   flesh.color.setHex(0xffb070);flesh.intensity=0.22; flesh.position.set(0,-30,0);
+  if(MZ_LK.rig){ const g=MZ_LK.rig;   // (another course's rig: the same lights, its own colours)
+    hemi.color.setHex(g.hemi[0]); hemi.groundColor.setHex(g.hemi[1]); hemi.intensity=g.hemi[2];
+    sun.color.setHex(g.sun[0]); sun.intensity=g.sun[1]; rim.color.setHex(g.rim[0]); rim.intensity=g.rim[1];
+    fill.color.setHex(g.fill[0]); fill.intensity=g.fill[1]; flesh.color.setHex(g.flesh[0]); flesh.intensity=g.flesh[1]; }
   // ---- the sky ----
   const skyM=mzSkyMat(); skyDome=new T.Mesh(new T.SphereGeometry(1200,32,16), skyM); skyDome.frustumCulled=false; skyDome.renderOrder=-10; trackGroup.add(skyDome);
   // ---- the floor ----
@@ -46986,6 +47085,15 @@ function mzEggGuard(noLook){
 }
 // the course card: rings and a gate, not a road outline
 function mzCourseArt(t){
+  if(t && t.look==='penelope'){   // Penelope's card: the six-fold weave — rings broken into six turning arcs, a gate in every wedge
+    const ink='hsl(165 70% 68%)'; let w='';
+    for(let k=0;k<5;k++){ const r=11+k*7.2, off=k*23;
+      for(let q=0;q<6;q++){ const a0=(q*60+off+8)*Math.PI/180, a1=(q*60+off+44)*Math.PI/180;
+        w+=`<path d="M${(50+r*Math.cos(a0)).toFixed(1)} ${(50+r*Math.sin(a0)).toFixed(1)} A${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${(50+r*Math.cos(a1)).toFixed(1)} ${(50+r*Math.sin(a1)).toFixed(1)}" fill="none" stroke="${ink}" stroke-width="2.3" stroke-linecap="round" opacity="${(0.55+k*0.09).toFixed(2)}"/>`; } }
+    for(let q=0;q<6;q++){ const a=(q*60+30)*Math.PI/180; w+=`<circle cx="${(50+46*Math.cos(a)).toFixed(1)}" cy="${(50+46*Math.sin(a)).toFixed(1)}" r="2.6" fill="#ff8f78"/>`; }
+    const svg=`<svg class="tp" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${w}<circle cx="50" cy="50" r="5" fill="#ffd07c"/></svg>`;
+    return {svg, plate:'radial-gradient(120% 95% at 50% 50%,#1f5a58,#0b1f24)', ac:'#ff9a7e', ix:'hsl(165 70% 72%)'};
+  }
   const ink='hsl(250 85% 80%)';
   let rings=''; for(let k=0;k<6;k++){ const r=10+k*7; const g=(k*67)%360; rings+=`<path d="M${(50+r*Math.cos(g*Math.PI/180)).toFixed(1)} ${(50+r*Math.sin(g*Math.PI/180)).toFixed(1)} A${r} ${r} 0 1 1 ${(50+r*Math.cos((g-40)*Math.PI/180)).toFixed(1)} ${(50+r*Math.sin((g-40)*Math.PI/180)).toFixed(1)}" fill="none" stroke="${ink}" stroke-width="2.4" stroke-linecap="round" opacity="${(0.55+k*0.08).toFixed(2)}"/>`; }
   const svg=`<svg class="tp" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${rings}<circle cx="50" cy="50" r="5" fill="#ffd07c"/></svg>`;
@@ -62296,12 +62404,12 @@ let mzMapCache=null;     // {M, small, big, ext} for the maze they were drawn fr
 function mzMapDraw(M, S, ext, lw){
   const cv=document.createElement('canvas'); cv.width=cv.height=S; const g=cv.getContext('2d'), C=M.C, sc=(S/2)/ext;
   const X=x=>S/2+x*sc, Z=z=>S/2+z*sc;
-  const rim=[143,161,232], egg=[255,208,124];
+  const rim=MZ_LK.radarRim, egg=[255,208,124];
   const tint=k=>{ const t=1-Math.min(1,k/M.K); return `rgb(${rim.map((v,i)=>Math.round(v+(egg[i]-v)*t)).join(',')})`; };
   g.lineCap='round'; g.lineWidth=lw;
   for(const w of M.walls){
     if(w.kind==='egg' || w.kind==='island') continue;
-    g.strokeStyle=w.kind==='ante'?'rgba(143,161,232,0.7)':tint(Math.min(w.ring,M.K)); g.beginPath();
+    g.strokeStyle=w.kind==='ante'?'rgba('+rim.join(',')+',0.7)':tint(Math.min(w.ring,M.K)); g.beginPath();
     mzTraceWall(g,w,X,Z,sc);
     g.stroke();
   }
@@ -62954,7 +63062,7 @@ function netRecv(m){
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
       selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
-      mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:m.maze.mode==='six'?'six':'one'}:null;   // the host's maze, exactly
+      mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:mzModeOf(TRACKS[m.track])}:null;   // the host's maze, exactly (its start: the course's own)
       netBeginRace();
       break;
     case 's': {                               // a human's own kart
@@ -63175,7 +63283,7 @@ function netHostStart(){
   }
   NET.lineup=lineup;
   // the maze travels with the grid: its number and start mode (the host's choice), so every screen builds the same one
-  const maze=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzSeedNext||mzPlan()) : undefined;
+  const maze=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzSeedNext||mzPlan(TRACKS[selTrack])) : undefined;
   netSend({t:'start', track:selTrack, seed:maze?mzSeedOf(maze.no):undefined, maze:maze?{no:maze.no, mode:maze.mode}:undefined, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
   netBeginRace();
 }
@@ -63670,7 +63778,7 @@ function endRace(){
     // best-time tracking (per track, persists across sessions) — every race counts for something
     const bt=$('besttime');
     if(me.finished && isFinite(me.finishT)){
-      const key='sr_best_'+TRACKS[selTrack].name+(MAZE&&MAZE.mode==='six'?'_six':'');   // (the six-gate race is its own record)
+      const key='sr_best_'+TRACKS[selTrack].name;
       const prev=parseFloat(localStorage.getItem(key));
       if(!prev || me.finishT<prev){
         localStorage.setItem(key, me.finishT);
@@ -63689,7 +63797,7 @@ function endRace(){
     }
   }
   mzFinishUI();
-  if(MAZE && !gpActive && !(NET.on && NET.auth && !NET.host)){ const nx=mzPlan(); mzPrefetch(nx);   // the next maze, made while the results are read
+  if(MAZE && !gpActive && !(NET.on && NET.auth && !NET.host)){ const nx=mzPlan(TRACKS[selTrack]); mzPrefetch(nx);   // the next maze, made while the results are read
     if(NET.on && NET.auth && NET.host) netSend({t:'mzpre', maze:{no:nx.no, mode:nx.mode}}); }   // (the room's screens make it too)
   $('finish').classList.remove('hidden');
   // networked: a last snapshot (and the host's last batch, with the AI's times) so the finish
@@ -63783,9 +63891,8 @@ countdown = function(){
   // the labyrinth: this race's maze is the one planned (or handed over: the host's, "Same maze");
   // it becomes the last one raced and the next race plans a fresh one
   const mzRace=!!(TRACKS[selTrack]&&TRACKS[selTrack].maze);
-  if(mzRace){ if(!mzSeedNext) mzSeedNext=mzPlan(); mzLast={no:mzSeedNext.no, mode:mzSeedNext.mode}; mzNext=null;
-    try{ localStorage.setItem('sr_mzlast',JSON.stringify(mzLast)); }catch(_){} }
-  $('cdmaze').textContent=mzRace?mzLabel(mzLast):'';
+  if(mzRace){ const tc=TRACKS[selTrack]; if(!mzSeedNext) mzSeedNext=mzPlan(tc); mzSeedNext.mode=mzModeOf(tc); mzSetLast(tc,mzSeedNext); mzForget(tc); }
+  $('cdmaze').textContent=mzRace?mzLabel(mzLastOf(TRACKS[selTrack])):'';
   buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
   // every race starts on its course's record, if it has one (unless a station is somehow still playing, in
@@ -64113,9 +64220,9 @@ function setupJoystick(){
 // Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
 function paintSummary(){
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
-    if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? (p=>'maze #'+p.no+' · '+(p.mode==='six'?'six gates':'one gate')+' · run to the egg')(mzPlan()) : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
+    if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? (p=>'maze #'+p.no+' · '+(p.mode==='six'?'six gates':'one gate')+' · run to the egg')(mzPlan(TRACKS[selTrack])) : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
   const el=$('picksum'); if(!el||!chosenType) return;
-  const mp=TRACKS[selTrack].maze?mzPlan():null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
+  const mp=TRACKS[selTrack].maze?mzPlan(TRACKS[selTrack]):null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
   el.textContent=TRACKS[selTrack].name+(mp?' #'+mp.no+(mp.mode==='six'?' · six gates':''):'')+' · '+chosenType.name+' · '+difficulty;
 }
 function paintRacer(){
@@ -64169,7 +64276,7 @@ function courseArt(t){
   return {svg, plate:`radial-gradient(120% 95% at 28% 16%,${c1},${c2})`, ac:light?'#6df2d0':hs(hue,.85,.72), ix:light?hs(hue,.5,.2):hs(hue,.85,.78)};
 }
 // ---- track picker (start screen): a swipeable strip of "slides", the centred one is the pick ----
-const TRACK_FIRST=['Felicity','Namie','Rosalie','Ophelia','Eve','Stacey','Ariadne'];   // the strip opens on these, and a first visit starts on the first
+const TRACK_FIRST=['Felicity','Namie','Rosalie','Ophelia','Eve','Stacey','Ariadne','Penelope'];   // the strip opens on these, and a first visit starts on the first
 function setupTrackPick(){
   const wrap=$('trackpick'); if(!wrap) return;
   wrap.innerHTML='';
@@ -64249,7 +64356,7 @@ function setupDifficulty(){
   const set=o=>{ sh.classList.toggle('hidden',!o); g.setAttribute('aria-expanded',o?'true':'false'); };
   g.onclick=()=>set(sh.classList.contains('hidden'));
   // closing it: if Ariadne's maze changed, the preview behind the deck becomes the maze you will race
-  const close=()=>{ set(false); if(state==='menu' && TRACKS[selTrack] && TRACKS[selTrack].maze && MAZE){ const p=mzPlan(); if(MAZE.no!==p.no || MAZE.mode!==p.mode){ buildTrack(selTrack); buildRacers(); } } };
+  const close=()=>{ set(false); if(state==='menu' && TRACKS[selTrack] && TRACKS[selTrack].maze && MAZE){ const p=mzPlan(TRACKS[selTrack]); if(MAZE.no!==p.no || MAZE.mode!==p.mode){ buildTrack(selTrack); buildRacers(); } } };
   $('sheetdone').onclick=close;
   $('sheetback').onclick=close;
 })();
@@ -64394,16 +64501,14 @@ setupFullscreen();
     try{ localStorage.setItem('sr_mazeradar',String(mazeRadar)); }catch(_){}
     paint(); };
   paint(); })();
-// ---- Ariadne's start (one gate / six gates / either) and maze (a new one every race / the original) ----
+// ---- the maze courses (Ariadne, Penelope): a new maze every race, the course's last one kept, or the original ----
 (function setupMazeBtns(){
-  const a=$('mzstartbtn'), b=$('mzmazebtn'); if(!a||!b) return;
-  const SL={one:'1 gate', six:'6 gates', rand:'random'};   // (Ariadne's: the labyrinth)
-  const paint=()=>{ a.textContent='Maze start: '+SL[mzStartPref]; a.classList.toggle('on',mzStartPref!=='one');
-    b.textContent='Mazes: '+(mzMazePref==='orig'?'the original':mzMazePref==='keep'&&mzLast?'keep #'+mzLast.no:'new each race'); b.classList.toggle('on',mzMazePref!=='new'); };
-  const changed=()=>{ mzNext=null; paint(); paintSummary(); };
-  a.onclick=()=>{ mzStartPref={one:'six', six:'rand', rand:'one'}[mzStartPref]; try{ localStorage.setItem('sr_mzstart',mzStartPref); }catch(_){} changed(); };
-  b.onclick=()=>{ mzMazePref=mzMazePref==='new'?(mzLast?'keep':'orig'):mzMazePref==='keep'?'orig':'new'; try{ localStorage.setItem('sr_mzmaze',mzMazePref); }catch(_){} changed(); };
-  window.addEventListener('pageshow',paint); document.getElementById('gearbtn').addEventListener('click',paint);   // (the last maze changes as you race)
+  const b=$('mzmazebtn'); if(!b) return;
+  const paint=()=>{ const t=mzCourseOf(), last=t?mzLastOf(t):null;
+    b.textContent='Mazes: '+(mzMazePref==='orig'?'the original':mzMazePref==='keep'?(last?'keep #'+last.no:'keep the last'):'new each race'); b.classList.toggle('on',mzMazePref!=='new'); };
+  b.onclick=()=>{ mzMazePref=mzMazePref==='new'?'keep':mzMazePref==='keep'?'orig':'new'; try{ localStorage.setItem('sr_mzmaze',mzMazePref); }catch(_){}
+    for(const k in mzNextBy) delete mzNextBy[k]; paint(); paintSummary(); };
+  window.addEventListener('pageshow',paint); document.getElementById('gearbtn').addEventListener('click',paint);   // (the last maze changes as you race, and with the course)
   paint(); })();
 // in-race "car radio" seek knobs — tap either one to step to the prev/next station,
 // dashboard-style: a quick tuning static burst + glow, then a frequency-readout toast.
@@ -64448,8 +64553,8 @@ $('selback').onclick=()=>{
 $('againbtn').onclick=()=>{ gpActive=false;
   if(NET.on && NET.auth){ if(NET.host) netHostStart(); return; }   // Rematch: same room, same grid; clients follow the host's 'start'
   if(NET.on) netLeave(); countdown(); };
-$('samemazebtn').onclick=()=>{ gpActive=false; if(!mzLast) return;   // the maze just raced, once more
-  mzSeedNext={no:mzLast.no, mode:mzLast.mode};
+$('samemazebtn').onclick=()=>{ gpActive=false; const last=mzLastOf(TRACKS[selTrack]); if(!last) return;   // the maze just raced, once more
+  mzSeedNext={no:last.no, mode:last.mode};
   if(NET.on && NET.auth){ if(NET.host) netHostStart(); else mzSeedNext=null; return; }
   if(NET.on) netLeave(); countdown(); };
 $('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); state='menu'; pendingGP=false; showSelect(); };
@@ -64784,6 +64889,7 @@ $('start').classList.remove('hidden');
 state='menu';
 buildTrack(selTrack);        // build the default circuit
 buildRacers();               // show grid behind menu
+setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
 requestAnimationFrame(frame);
 
 /* Read-only multiplayer diagnostics, deliberately kept in the shipped build. The WebRTC
