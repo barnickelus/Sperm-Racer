@@ -676,6 +676,10 @@
   #fbtns{display:flex!important;flex-wrap:wrap;gap:8px;width:min(420px,92vw);max-width:none!important;}
   #fbtns .go{margin:0;flex:1 1 calc(33% - 8px);min-height:48px;padding:10px 8px;letter-spacing:.1em;font-size:12px;white-space:nowrap;}
   #fbtns #againbtn,#fbtns #nextgpbtn{flex:1 1 100%;min-height:58px;font-size:14px;letter-spacing:.2em;}
+  /* the labyrinth: "New maze" and "Same maze" share the first row */
+  #fbtns.maze #againbtn,#fbtns.maze #samemazebtn{flex:1 1 calc(50% - 8px);min-height:58px;font-size:13px;letter-spacing:.14em;}
+  #cdmaze{margin:6px 0 0;min-height:1em;text-shadow:0 2px 12px rgba(2,12,16,.9);}
+  #cdmaze:empty{display:none;}
   @media (max-height:700px) and (orientation:portrait){
     #finish .board .row{padding:6px 14px;font-size:13px;}
     #finish h1{font-size:clamp(34px,10vw,64px);}
@@ -691,7 +695,7 @@
     #besttime{margin:6px 0 10px!important;}
     #fbtns{width:100%;align-self:start;}
     #fbtns .go{min-height:44px;}
-    #fbtns #againbtn,#fbtns #nextgpbtn{min-height:52px;}
+    #fbtns #againbtn,#fbtns #nextgpbtn,#fbtns.maze #samemazebtn{min-height:52px;}
   }
   /* lobby on a landscape phone: heading rows full width, the buttons wrap into a compact row */
   @media (orientation:landscape) and (max-height:500px){
@@ -858,6 +862,8 @@
         <button class="go alt tile on" id="musicbtn">Music: ON</button>
         <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
         <button class="go alt tile on" id="mazeradarbtn">Maze radar: Whole maze</button>
+        <button class="go alt tile" id="mzstartbtn">Maze start: 1 gate</button>
+        <button class="go alt tile" id="mzmazebtn">Mazes: new each race</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="fsbtn">Fullscreen</button>
       </div>
@@ -910,7 +916,7 @@
   <button class="go alt" id="mpback" style="margin-top:10px">Back</button>
 </div>
 
-<div class="screen hidden" id="cd"><div id="count">3</div></div>
+<div class="screen hidden" id="cd"><div id="count">3</div><div class="tag" id="cdmaze"></div></div>
 
 <div class="screen hidden" id="finish">
   <div class="tag" id="ftag">race complete</div>
@@ -919,6 +925,7 @@
   <div id="besttime" style="font-size:12px;letter-spacing:.1em;color:var(--ink);margin:2px 0 14px;min-height:1.4em;"></div>
   <div id="fbtns" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:560px">
     <button class="go" id="againbtn">Race again</button>
+    <button class="go alt" id="samemazebtn" style="display:none">Same maze</button>
     <button class="go alt" id="changebtn">Change racer</button>
     <button class="go alt" id="gpbtn">Grand Prix</button>
     <button class="go" id="nextgpbtn" style="display:none">Next circuit</button>
@@ -45151,9 +45158,11 @@ function edenTick(E, tsec){
 
    THE KIT IS THE GENERATOR. Everything about the maze — its rings, walls, gates, dead-end
    loops, the start antechamber, the route the standings are measured along — comes out of
-   mzMake(seed). Phase 1 races one fixed seed (the course's `seed`), but nothing below assumes
-   it: a race simply builds from whatever seed it is handed (mzSeedNext, which the multiplayer
-   start message carries), so a seed per race later is a one-line change in mzPickSeed().
+   mzMake(seed, mode). Every race gets a fresh maze: a maze NUMBER (#1..#9999; #0 is the
+   original, the course's own `seed`) picked ahead by mzPlan(), so the menu preview, the deck,
+   the countdown and the race all show the same one; the multiplayer start message carries the
+   host's number and start mode (mzSeedNext), so every screen builds the same maze. Two starts:
+   ONE GATE (the maze below) and SIX GATES (MZ6, mzCarve6: one wedge repeated six times).
 
    Layout: concentric RING corridors (ring 1 hugs the egg chamber, ring K is the rim), each cut
    into cells about a corridor wide (a ring doubles its cell count whenever its cells would
@@ -45194,14 +45203,63 @@ const MZ={
   NOSE_L:16,    // ...over this much of the wall (a gentle taper, never a step)
   CORNER_R:10,  // where two walls meet at an angle the corner is rounded to this radius (centre line)
 };
+/* START MODE B — SIX GATES. The same board, rings and lanes, but the maze is ONE 60° wedge carved
+   once and repeated six times round the circle (rotational symmetry), with an entrance gate and an
+   antechamber in every wedge. Ring 1 is shared — its walls across the ring are all open — so the
+   six ways in meet round the egg plaza. Carving works on the wedge (a cell stands for its six
+   copies; a step across the wedge's edge lands in the next wedge, so a way can wind round the
+   circle) and every wall it opens or keeps is opened or kept in all six wedges, so every gate is
+   exactly as far from the egg as every other. A maze split six ways gives each racer a sixth of
+   the corridors: a shortest route never passes two copies of the same cell (from both it would be
+   the same distance to the egg), so it is at most a sixth of the maze long — on this board about
+   2,300-2,600 units against the one-gate maze's 10,000+. The six-gate race is a sprint (its own
+   length window); a longer one needs a bigger board (MZ6.K: 12 rings give about 3,900). */
+const MZ6=Object.assign({}, MZ, {
+  SYM:6,        // wedges
+  N1:6,         // ring 1: one cell per wedge (the rings then double to 12 and 24: every count a multiple of six)
+  SHARE:1,      // rings 1..SHARE are open all the way round (the wedges meet there)
+  LMIN:2300, LMAX:3600,   // shortest route from a gate (antechamber front to the egg): a sprint, about 20-45 s
+  BRAID:0.65, ALT_OVER:0.62, ALT_LEN:1.7,
+  BOX_Q:2,      // item boxes along each gate's route (and one off it per wedge)
+});
 const MZ_TAU=Math.PI*2;
 let MAZE=null;                      // the labyrinth being raced (null on every other course)
-let mzSeedNext=null;                // the seed the next build uses (multiplayer start); null = the course's own
-function mzPickSeed(t){ return (t&&t.seed!=null) ? t.seed : MZ_SEED_DEFAULT; }   // phase 2: a fresh seed per race here
+let mzSeedNext=null;                // the maze the next build uses ({no, mode}: the multiplayer start, "Same maze"); null = a fresh one
+function mzPickSeed(t){ return (t&&t.seed!=null) ? t.seed : MZ_SEED_DEFAULT; }   // the course's own seed: maze #0, the original
+// a maze NUMBER (what the player sees: "Maze #4821") and its seed: #0 is the original maze (the
+// course's own seed), and the sweeps' seeds are mazes #0..#1999
+const MZ_NO_MAX=9999;
+function mzSeedOf(no){ return (MZ_SEED_DEFAULT+Math.imul(no|0,7919))|0; }
+let MZC=MZ;                         // the board being raced (MZ, or MZ6 for six gates): the floor's terraces and the ring tints read it
+// what the player chose (lab settings): the start ('one', 'six' or 'rand') and the maze ('new' every race,
+// 'keep': the last one raced, again and again, or 'orig': maze #0)
+let mzStartPref='one', mzMazePref='new';
+try{ const a=localStorage.getItem('sr_mzstart'); if(a==='one'||a==='six'||a==='rand') mzStartPref=a; const b=localStorage.getItem('sr_mzmaze'); if(b==='new'||b==='keep'||b==='orig') mzMazePref=b; }catch(_){}
+let mzNext=null;                    // the maze the next race will use, picked ahead ({no, mode}) so the menu preview, the deck and the race agree
+let mzLast=null;                    // the maze last raced ("Same maze")
+try{ const v=JSON.parse(localStorage.getItem('sr_mzlast')||'null'); if(v && v.no>=0 && v.no<=MZ_NO_MAX && (v.mode==='one'||v.mode==='six')) mzLast={no:v.no|0, mode:v.mode}; }catch(_){}
+function mzRand(n){ try{ const a=new Uint32Array(1); crypto.getRandomValues(a); return a[0]%n; }catch(_){ return Math.floor(Math.random()*n); } }   // (not Math.random: picking a maze never shifts a race's own draws)
+function mzPlan(){
+  if(!mzNext) mzNext={no: mzMazePref==='orig' ? 0 : (mzMazePref==='keep' && mzLast) ? mzLast.no : 1+mzRand(MZ_NO_MAX), mode: mzStartPref==='rand' ? (mzRand(2)?'six':'one') : mzStartPref};
+  return mzNext;
+}
+function mzLabel(p){ return p ? 'Maze #'+p.no+(p.mode==='six'?' · six gates':'') : ''; }
+// the last two mazes made are kept: the menu preview (or a quiet moment on the results screen)
+// makes the next race's maze, so the race itself only builds its meshes, and "Same maze" is ready too
+let mzCacheM=null, mzCacheM2=null;
+function mzGet(no, mode){
+  for(const M of [mzCacheM, mzCacheM2]) if(M && M.no===no && M.mode===mode) return M;
+  const M=mzMake(mzSeedOf(no), mode); M.no=no; mzCacheM2=mzCacheM; mzCacheM=M; return M;
+}
+// make a maze ahead, off the race's own start: a moment after the results go up (not mid-race)
+function mzPrefetch(p){
+  if(!p) return; const want={no:p.no, mode:p.mode};
+  setTimeout(()=>{ if(state==='race'||state==='count') return; try{ mzGet(want.no, want.mode); }catch(_){} }, 900);
+}
 function mzRnd(seed){ let a=seed|0; return ()=>{ a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 // the floor terraces up toward the egg: each ring is level, the step up lies across its inner wall
 function mzFloorY(rho){
-  const C=MZ, u=(rho-C.R0)/C.P;                       // ring coordinate: ring k spans [k-1,k]
+  const C=MZC, u=(rho-C.R0)/C.P;                       // ring coordinate: ring k spans [k-1,k]
   if(u<=0) return C.HC; if(u>=C.K) return 0;
   const v=u-0.5, n=Math.floor(v), f=v-n, s=f<0.3?0:f>0.7?1:((f-0.3)/0.4)*((f-0.3)/0.4)*(3-2*((f-0.3)/0.4));
   const step=Math.max(0,Math.min(C.K-1,n+s));
@@ -45250,14 +45308,81 @@ function mzCarve(seed, C){
   }
   return M;
 }
+// the six-gate carve: the wedge carved once (its cells stand for their six copies), every wall
+// opened in all six wedges at once
+function mzCarve6(seed, C){
+  const R0=C.R0, P=C.P, K=C.K, S=C.SYM, R=mzRnd(seed);
+  const N=[0], base=[0], cr=[0]; let n=C.N1, tot=0;
+  for(let k=1;k<=K;k++){ const c=R0+(k-0.5)*P; if(k>1 && MZ_TAU*(c-P/2)/n>C.DBL*P) n*=2; N[k]=n; base[k]=tot; tot+=n; cr[k]=c; }
+  const NC=tot, ck=new Int16Array(NC), cj=new Int16Array(NC);
+  for(let k=1;k<=K;k++) for(let j=0;j<N[k];j++){ ck[base[k]+j]=k; cj[base[k]+j]=j; }
+  const id=(k,j)=>base[k]+((j%N[k])+N[k])%N[k];
+  const E=[], adj=[]; for(let c=0;c<NC;c++) adj.push([]);
+  const key=new Map();
+  const addE=(a,b,kind)=>{ E.push({a,b,kind,open:false}); adj[a].push(E.length-1); adj[b].push(E.length-1); key.set(Math.min(a,b)*65536+Math.max(a,b), E.length-1); };
+  for(let k=1;k<=K;k++) for(let j=0;j<N[k];j++){
+    addE(id(k,j),id(k,j+1),0);
+    if(k<K){ if(N[k+1]===N[k]) addE(id(k,j),id(k+1,j),1); else { addE(id(k,j),id(k+1,2*j),1); addE(id(k,j),id(k+1,2*j+1),1); } }
+  }
+  const M={seed, C, K, N, base, cr, NC, ck, cj, id, E, adj, sym:S};
+  M.other=(e,c)=>E[e].a===c?E[e].b:E[e].a;
+  M.span=c=>{ const w=MZ_TAU/N[ck[c]]; return [cj[c]*w, (cj[c]+1)*w]; };
+  M.rot=(c,r)=>id(ck[c], cj[c]+r*N[ck[c]]/S);                       // a cell turned r wedges round
+  M.wedge0=c=>id(ck[c], cj[c]%(N[ck[c]]/S));                         // its copy in wedge 0
+  const eid=(a,b)=>key.get(Math.min(a,b)*65536+Math.max(a,b));
+  const setOpen=(e,v)=>{ for(let r=0;r<S;r++) E[eid(M.rot(E[e].a,r),M.rot(E[e].b,r))].open=v; };
+  // the shared rings: open all the way round
+  const shared=c=>ck[c]<=C.SHARE;
+  for(let k=1;k<=C.SHARE;k++) for(let j=0;j<N[k];j++) E[eid(id(k,j),id(k,j+1))].open=true;
+  // the gate: a rim cell of the wedge; its six copies are the six ways in
+  M.ent=id(K,Math.floor(R()*N[K]/S)); M.ents=[]; for(let r=0;r<S;r++) M.ents.push(M.rot(M.ent,r));
+  // growing tree over the wedge (as mzCarve: ring-wise steps RING_W times likelier); a shared ring is one room
+  const vis=new Uint8Array(NC), st=[M.ent]; vis[M.ent]=1;
+  const ringOf=k=>{ const L=[]; for(let j=0;j<N[k]/S;j++) L.push(id(k,j)); return L; };
+  while(st.length){ const c=st[st.length-1]; let tw=0; const cand=[];
+    for(const cc of shared(c)?ringOf(ck[c]):[c]) for(const e of adj[cc]){ const o=M.other(e,cc); if(vis[M.wedge0(o)] || (shared(cc)&&shared(o)&&E[e].kind===0)) continue;
+      const w=E[e].kind===0?C.RING_W:1; cand.push(e,w,cc); tw+=w; }
+    if(!cand.length){ st.pop(); continue; }
+    let x=R()*tw, pick=0; for(let i=0;i<cand.length;i+=3){ x-=cand[i+1]; if(x<=0){ pick=i; break; } }
+    const e=cand[pick], o=M.wedge0(M.other(e,cand[pick+2])); setOpen(e,true);
+    if(shared(o)) for(const q of ringOf(ck[o])) vis[q]=1; else vis[o]=1; st.push(o);
+  }
+  // the egg's gates: one per wedge, in ring 1
+  const g0=id(1,Math.floor(R()*N[1]/S)); M.goals=[]; for(let r=0;r<S;r++) M.goals.push(M.rot(g0,r));
+  M.deg=c=>{ let d=(M.ents.indexOf(c)>=0?1:0)+(M.goals.indexOf(c)>=0?1:0); for(const e of adj[c]) if(E[e].open) d++; return d; };
+  // braid (each wall with its five copies), keeping the shortest route inside the window
+  const dead=[]; for(let c=0;c<NC;c++) if(c===M.wedge0(c) && M.deg(c)===1) dead.push(c);
+  for(let i=dead.length-1;i>0;i--){ const j=Math.floor(R()*(i+1)); const t=dead[i]; dead[i]=dead[j]; dead[j]=t; }
+  let L=mzCellRoute(M).L;
+  for(const c of dead){ if(R()>=C.BRAID || M.deg(c)!==1) continue;
+    const cl=adj[c].filter(e=>!E[e].open);
+    for(let i=cl.length-1;i>0;i--){ const j=Math.floor(R()*(i+1)); const t=cl[i]; cl[i]=cl[j]; cl[j]=t; }
+    cl.sort((a,b)=>(M.deg(M.other(a,c))===1?0:1)-(M.deg(M.other(b,c))===1?0:1));
+    for(const e of cl){ setOpen(e,true); const L2=mzCellRoute(M).L; if(L2>=C.LMIN || L2>=L){ L=L2; break; } setOpen(e,false); }
+  }
+  // a second way in: a sixth of a maze seldom has one left after the braid (the route is near the
+  // length window's floor, so nearly every new opening is a shortcut). Walls along the route are
+  // tried (each with its copies) until one opens a real second way without cutting the route short.
+  let alt=mzAlt(M);
+  if(alt.share>C.ALT_OVER || alt.ratio>C.ALT_LEN){
+    const on=new Set(alt.r0.path), cand=[];
+    for(const c of alt.r0.path) for(const e of adj[c]) if(!E[e].open && cand.indexOf(e)<0) cand.push(e);
+    for(let i=cand.length-1;i>0;i--){ const j=Math.floor(R()*(i+1)); const t=cand[i]; cand[i]=cand[j]; cand[j]=t; }
+    for(const e of cand){ setOpen(e,true); const L2=mzCellRoute(M).L;
+      if(L2>=C.LMIN || L2>=L){ alt=mzAlt(M); if(alt.share<=C.ALT_OVER && alt.ratio<=C.ALT_LEN){ L=L2; break; } }
+      setOpen(e,false); }
+  }
+  return M;
+}
 // cell-centre graph: shortest route entrance -> egg (with optional edge weight multiplier)
 function mzCellRoute(M, mul){
   const {NC,ck,cr,E,adj,ent,goals}=M, D=new Float64Array(NC).fill(1e18), prv=new Int32Array(NC).fill(-1), pe=new Int32Array(NC).fill(-1), done=new Uint8Array(NC);
-  const cx=c=>{ const s=M.span(c), a=(s[0]+s[1])/2; return [cr[ck[c]]*Math.cos(a), cr[ck[c]]*Math.sin(a)]; };
+  if(!M._cxz){ const q=new Float64Array(NC*2); for(let c=0;c<NC;c++){ const s=M.span(c), a=(s[0]+s[1])/2; q[2*c]=cr[ck[c]]*Math.cos(a); q[2*c+1]=cr[ck[c]]*Math.sin(a); } M._cxz=q; }   // (cell centres)
+  const Q=M._cxz;
   D[ent]=0;
   for(;;){ let u=-1, bd=1e18; for(let i=0;i<NC;i++) if(!done[i]&&D[i]<bd){ bd=D[i]; u=i; } if(u<0) break; done[u]=1;
-    const pu=cx(u);
-    for(const e of adj[u]){ if(!E[e].open) continue; const v=M.other(e,u); const pv=cx(v); const w=Math.hypot(pu[0]-pv[0],pu[1]-pv[1])*(mul&&mul[e]?mul[e]:1);
+    const ux=Q[2*u], uz=Q[2*u+1];
+    for(const e of adj[u]){ if(!E[e].open) continue; const v=M.other(e,u); const w=Math.hypot(ux-Q[2*v],uz-Q[2*v+1])*(mul&&mul[e]?mul[e]:1);
       if(D[u]+w<D[v]){ D[v]=D[u]+w; prv[v]=u; pe[v]=e; } } }
   let best=-1; for(const g of goals) if(best<0||D[g]<D[best]) best=g;
   const path=[], edges=[]; for(let c=best;c>=0;c=prv[c]){ path.push(c); if(pe[c]>=0) edges.push(pe[c]); }
@@ -45274,48 +45399,93 @@ function mzSolve(M){
     else { const o=ck[e.a]<ck[e.b]?e.b:e.a, i=o===e.a?e.b:e.a, s=M.span(o), th=(s[0]+s[1])/2, r=B(ck[i]);
       add(r*Math.cos(th), r*Math.sin(th), i, o, 1, ei, th, r); } }
   for(const g of goals){ const s=M.span(g), th=(s[0]+s[1])/2; add(R0*Math.cos(th), R0*Math.sin(th), g, EGG, 2, -1, th, R0); }
-  { const s=M.span(ent), th=(s[0]+s[1])/2; add(B(K)*Math.cos(th), B(K)*Math.sin(th), ent, ANTE, 3, -1, th, B(K)); M.entTh=th; }
+  M.entPs=[]; M.antes=[];   // every way in (one, or six): its portal on the rim, its antechamber
+  for(const en of (M.ents||[ent])){ const s=M.span(en), th=(s[0]+s[1])/2; add(B(K)*Math.cos(th), B(K)*Math.sin(th), en, ANTE, 3, -1, th, B(K)); M.entPs.push(PT.length-1);
+    M.antes.push({th, ux:Math.cos(th), uz:Math.sin(th), tx:-Math.sin(th), tz:Math.cos(th), r:B(K), gate:M.antes.length}); }
+  M.entTh=M.antes[0].th;
   const NP=PT.length, D=new Float64Array(NP).fill(1e18), done=new Uint8Array(NP), nx=new Int32Array(NP).fill(-1);
   for(let i=0;i<NP;i++) if(PT[i].kind===2) D[i]=R0-C.FIN_R;
   for(;;){ let u=-1, bd=1e18; for(let i=0;i<NP;i++) if(!done[i]&&D[i]<bd){ bd=D[i]; u=i; } if(u<0) break; done[u]=1;
     for(const c of [PT[u].a, PT[u].b]){ if(c>=NC) continue; for(const v of cellP[c]){ if(v===u) continue; const w=Math.hypot(PT[u].x-PT[v].x, PT[u].z-PT[v].z);
       if(D[u]+w<D[v]){ D[v]=D[u]+w; nx[v]=u; } } } }
   M.PT=PT; M.cellP=cellP; M.D=D; M.EGG=EGG; M.ANTE=ANTE; M.NP=NP;
-  M.entP=cellP[ANTE][0];
-  M.ante={th:M.entTh, ux:Math.cos(M.entTh), uz:Math.sin(M.entTh), tx:-Math.sin(M.entTh), tz:Math.cos(M.entTh), r:B(K)};
+  M.entP=M.entPs[0];
+  M.ante=M.antes[0];
   M.L=D[M.entP]+50;                       // from the front of the grid
   M.Rstart=D[M.entP]+C.ANTE_D;            // remaining distance that counts as no progress at all
   M.dead=[]; for(let c=0;c<NC;c++) if(cellP[c].length===1) M.dead.push(c);
-  // the shortest route as a polyline: antechamber front, portals downhill, the egg
-  const pts=[[M.ante.ux*(B(K)+50), M.ante.uz*(B(K)+50)]];
-  for(let p=M.entP; p>=0; p=nx[p]){ pts.push([PT[p].x, PT[p].z]); if(PT[p].kind===2){ const a=PT[p].th; pts.push([Math.cos(a)*C.FIN_R, Math.sin(a)*C.FIN_R]); break; } }
-  M.route=pts;
+  // the shortest route from each gate as a polyline: antechamber front, portals downhill, the egg
+  M.routes=M.entPs.map((p0,g)=>{ const A=M.antes[g], pts=[[A.ux*(B(K)+50), A.uz*(B(K)+50)]];
+    for(let p=p0; p>=0; p=nx[p]){ pts.push([PT[p].x, PT[p].z]); if(PT[p].kind===2){ const a=PT[p].th; pts.push([Math.cos(a)*C.FIN_R, Math.sin(a)*C.FIN_R]); break; } }
+    return pts; });
+  M.route=M.routes[0];
   return M;
 }
 /* ---- validation: solvable, length window, a second way in, clearances, every dead end looped ---- */
-function mzValidate(M){
+// the second way in: the shortest route's passages made 25x dearer, how much of the best way round
+// still runs along them (share) and how much longer it is (ratio)
+function mzAlt(M){
+  const r0=mzCellRoute(M), mul={}; for(const e of r0.edges) mul[e]=25; const r1=mzCellRoute(M,mul);
+  const on=new Set(r0.edges); let sh=0, tl=0; const cx=c=>{ const s=M.span(c), a=(s[0]+s[1])/2; return [M.cr[M.ck[c]]*Math.cos(a), M.cr[M.ck[c]]*Math.sin(a)]; };
+  for(const e of r1.edges){ const a=cx(M.E[e].a), b=cx(M.E[e].b), w=Math.hypot(a[0]-b[0],a[1]-b[1]); tl+=w; if(on.has(e)) sh+=w; }
+  return {share:tl?sh/tl:1, ratio:r0.L>0?tl/r0.L:9, r0};
+}
+// the checks that need only the cell graph (cheap: a seed whose graph fails them is never laid out)
+function mzCheckGraph(M){
   const C=M.C, err=[];
   if(!(M.D[M.entP]<1e17)) err.push('unsolvable');
+  // six gates: solvable from every one, and every one exactly as far from the egg (and every wall opened in all six wedges)
+  if(M.entPs.length>1){ const L0=M.D[M.entP]; M.gateL=M.entPs.map(p=>M.D[p]);
+    M.entPs.forEach((p,g)=>{ if(!(M.D[p]<1e17)) err.push('unsolvable from gate '+g); else if(Math.abs(M.D[p]-L0)>1e-6*L0) err.push('gate '+g+' route '+M.D[p].toFixed(3)+' vs '+L0.toFixed(3)); });
+    let same=true; for(const e of M.E){ for(let r=1;r<M.sym && same;r++){ const a=M.rot(e.a,r), b=M.rot(e.b,r); let o=null; for(const x of M.adj[a]) if(M.other(x,a)===b){ o=M.E[x].open; break; } if(o!==e.open) same=false; } if(!same) break; }
+    if(!same) err.push('wedges differ'); }
   if(M.L<C.LMIN||M.L>C.LMAX) err.push('route length '+Math.round(M.L)+' outside '+C.LMIN+'..'+C.LMAX);
-  // every cell reachable from the gate
-  { const seen=new Uint8Array(M.NC), q=[M.ent]; seen[M.ent]=1; for(let h=0;h<q.length;h++){ const c=q[h]; for(const e of M.adj[c]) if(M.E[e].open){ const o=M.other(e,c); if(!seen[o]){ seen[o]=1; q.push(o); } } }
+  // every cell reachable from the gates
+  { const seen=new Uint8Array(M.NC), q=[]; for(const en of (M.ents||[M.ent])){ seen[en]=1; q.push(en); } for(let h=0;h<q.length;h++){ const c=q[h]; for(const e of M.adj[c]) if(M.E[e].open){ const o=M.other(e,c); if(!seen[o]){ seen[o]=1; q.push(o); } } }
     if(q.length!==M.NC) err.push('unreachable cells '+(M.NC-q.length)); }
   // a second route: penalise the shortest one's passages and route again
-  { const r0=mzCellRoute(M), mul={}; for(const e of r0.edges) mul[e]=25; const r1=mzCellRoute(M,mul);
-    const on=new Set(r0.edges); let sh=0, tl=0; const cx=c=>{ const s=M.span(c), a=(s[0]+s[1])/2; return [M.cr[M.ck[c]]*Math.cos(a), M.cr[M.ck[c]]*Math.sin(a)]; };
-    for(const e of r1.edges){ const a=cx(M.E[e].a), b=cx(M.E[e].b), w=Math.hypot(a[0]-b[0],a[1]-b[1]); tl+=w; if(on.has(e)) sh+=w; }
-    M.alt={share:tl?sh/tl:1, ratio:r0.L>0?tl/r0.L:9};
-    if(M.alt.share>C.ALT_OVER || M.alt.ratio>C.ALT_LEN) err.push('no second way in (share '+M.alt.share.toFixed(2)+', x'+M.alt.ratio.toFixed(2)+')'); }
+  M.alt=mzAlt(M);
+  if(M.alt.share>C.ALT_OVER || M.alt.ratio>C.ALT_LEN) err.push('no second way in (share '+M.alt.share.toFixed(2)+', x'+M.alt.ratio.toFixed(2)+')');
+  return err;
+}
+function mzValidate(M){
+  const C=M.C, err=mzCheckGraph(M);
   // clearances (the geometry is built from these, so the numbers are the proof)
   const clear=C.P-C.T; if(clear<3*2*C.KR+8) err.push('corridor too narrow '+clear);
   // turnaround loop: island + a lane a racer fits round, with room for two in it
   if(M.bandErr && M.bandErr.length) err.push(M.bandErr[0]+(M.bandErr.length>1?' (+'+(M.bandErr.length-1)+')':''));
   if(M.loops && M.loops.length!==M.dead.length) err.push('dead ends without loops '+(M.dead.length-M.loops.length));
   // the grid: twelve slots inside the antechamber, clear of the walls and of each other
-  if(M.grid){ const s=M.grid; for(let i=0;i<s.length;i++){ for(let j=i+1;j<s.length;j++) if(Math.hypot(s[i].x-s[j].x,s[i].z-s[j].z)<9) err.push('grid slots '+i+','+j+' overlap');
+  for(const s of (M.grids||[M.grid])){ if(!s) continue; for(let i=0;i<s.length;i++){ for(let j=i+1;j<s.length;j++) if(Math.hypot(s[i].x-s[j].x,s[i].z-s[j].z)<9) err.push('grid slots '+i+','+j+' overlap');
       if(M.wallDist && M.wallDist(s[i].x,s[i].z)<C.KR+3) err.push('grid slot '+i+' on a wall'); } }
+  // no pinch: nowhere a kart can drive do two walls face each other closer than a gate is wide
+  if(M.walls && M.grd){ const p=mzPinch(M); if(p) err.push('pinch '+p.w.toFixed(1)+' at '+Math.round(p.x)+','+Math.round(p.z)); }
   M.valid=!err.length; M.errors=err;
   return M.valid;
+}
+// the narrowest passage between two walls that face each other: from every 3 units along both
+// faces of every wall, straight across the lane to the wall opposite (on a lane only; the egg
+// and the round ends of a dead end, where a wall curves round on itself, do not count)
+function mzPinch(M){
+  const C=M.C, lim=C.GATE_W-0.5, W=M.walls; let worst=null;
+  const onLane=(x,z)=>{ const L=mzHashList(M.bh,x,z); let m=1e9; if(L) for(let i=0;i<L.length;i++){ const d=mzBandDist(M.bands[L[i]],x,z); if(d<m) m=d; } return m; };   // (mzBandSD without the normals)
+  for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2) continue;
+    const L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0), n=Math.max(1,Math.ceil(L/(w.kind==='ring'&&!w.fl?3:1.25)));   // (finer round the short curved pieces: a pinch there is short)
+    for(let k=0;k<=n;k++){ const s=L*k/n; let x,z,nx,nz;
+      if(w.t===0){ const a=w.a0+s/w.R; nx=Math.cos(a); nz=Math.sin(a); x=w.cx+w.R*nx; z=w.cz+w.R*nz; }
+      else { const tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1); x=w.x0+tx*s; z=w.z0+tz*s; nx=tz; nz=-tx; }
+      const h=(w.fl?mzHalfW(w,s):w.hw)+0.4;
+      for(const sg of [1,-1]){ const ox=nx*sg, oz=nz*sg, px=x+ox*h, pz=z+oz*h, kx=px+ox*C.KR, kz=pz+oz*C.KR;   // (a kart touching this face)
+        if(mzNear(M,px+ox*lim/2,pz+oz*lim/2)>=lim/2-0.3) continue;                  // (half a gate out from it, still clear: no wall facing it nearer than a gate)
+        if(onLane(kx,kz)>0) continue;                                                // (this face looks away from the lanes)
+        if(mzNear(M,kx,kz)<C.KR-0.45) continue;                                      // (no kart fits there: a corner)
+        let t=0, hit=false; for(let it=0;it<40 && t<lim;it++){ const d=mzNear(M,kx+ox*t,kz+oz*t); if(d<0.05){ hit=true; break; } t+=Math.max(d,0.25); }
+        if(!hit || C.KR+t>=lim) continue;
+        const hx=MZ_Q.nx, hz=MZ_Q.nz; if(hx*ox+hz*oz>-0.7) continue;                 // (a wall it glances, not one facing it)
+        let hi=-1, hd=1e9; const L2=mzCellList(M,kx+ox*t,kz+oz*t); if(L2) for(const j of L2){ const d=mzPrimDist(W[j],kx+ox*t,kz+oz*t); if(d<hd){ hd=d; hi=j; } }
+        if(hi===i || hi<0 || W[hi].kind==='egg' || W[hi].kind==='island') continue;
+        const width=C.KR+t+0.4; if(width<lim && (!worst || width<worst.w)) worst={w:width, x:kx+ox*t/2, z:kz+oz*t/2}; } } }
+  return worst;
 }
 /* ---- layout: every wall as a primitive (arc / segment / disc), dead-end loops, the antechamber,
    the grid, item boxes and pads. Walls are ridges of half-width T/2 round their centre line. ---- */
@@ -45331,7 +45501,7 @@ function mzLayout(M){
   for(let k=0;k<=K;k++){
     const r=B(k), sk=k===0?1:k===K?K:k+1, n=N[sk], w=MZ_TAU/n, hg=Math.asin(Math.min(0.95,(P/2)/r)), gaps=[];   // (fin tips a pitch apart: the opening is a corridor wide)
     for(let j=0;j<n;j++){ const s=id(sk,j); let open=false, kind='spoke';
-      if(k===0){ open=goals.indexOf(s)>=0; kind='egg'; } else if(k===K){ open=s===ent; kind='rim'; }
+      if(k===0){ open=goals.indexOf(s)>=0; kind='egg'; } else if(k===K){ open=(M.ents||[ent]).indexOf(s)>=0; kind='rim'; }
       else for(const e of adj[s]) if(E[e].kind===1 && ck[M.other(e,s)]===k && E[e].open){ open=true; break; }
       if(open){ const m=(j+0.5)*w, q={k, th:m, r, hg, kind, ring:k, a0:m-hg, a1:m+hg, s0:j*w, s1:(j+1)*w}; gaps.push(q); M.gates.push(q); } }
     GK.push(gaps);
@@ -45373,16 +45543,16 @@ function mzLayout(M){
     if(deadSet.has(c)){ let x,z,fx,fz,e0=null;
       if(room){ const g=gs[0], t=g.t; x=rc*Math.cos(t); z=rc*Math.sin(t); const sg=g.inside?-1:1; fx=Math.cos(t)*sg; fz=Math.sin(t)*sg; }
       else { const end=open0?hi:lo, sg=open0?1:-1; x=rc*Math.cos(end); z=rc*Math.sin(end); fx=-Math.sin(end)*sg; fz=Math.cos(end)*sg; e0=end; }
-      const L={cell:c, x, z, fx, fz, ring:k, room, reward:null}; const roll=R();
+      const L={cell:c, x, z, fx, fz, ring:k, room, reward:null}; const roll=M.sym>1 ? mzRnd(M.seed^0x10C5^Math.imul(M.wedge0(c)+1,0x9E3779B1))() : R();   // (six gates: the same reward in all six copies)
       if(roll<0.42){ L.reward='box'; M.boxes.push({x:x-fx*6, z:z-fz*6, loop:true}); }
       else if(roll<0.72){ L.reward='pad'; M.pads.push({x:x-fx*16, z:z-fz*16, dx:-fx, dz:-fz, r:9}); }
       M.loops.push(L); }
   }
   // the egg plaza (a disc of free floor) and the antechamber: a corridor out of the rim gate into a round-ended room
   band({t:2, cx:0, cz:0, R:R0-hw, w:0, zone:[M.EGG], kind:'plaza', ring:0});
-  const A=M.ante, at=(sv,v)=>[A.ux*(A.r+sv)+A.tx*v, A.uz*(A.r+sv)+A.tz*v];
-  const rimG=M.gates.find(q=>q.kind==='rim');
-  { const j0=rimG?Math.hypot(rimG.jx,rimG.jz)-A.r:0, f0=at(j0,0), f1=at(102,0), r1=at(120,0);
+  const atA=(A,sv,v)=>[A.ux*(A.r+sv)+A.tx*v, A.uz*(A.r+sv)+A.tz*v], A=M.ante, at=(sv,v)=>atA(A,sv,v);
+  for(const An of M.antes){ const rimG=M.gates.find(q=>q.kind==='rim' && Math.abs(adiff(q.th,An.th))<1e-6);
+    const j0=rimG?Math.hypot(rimG.jx,rimG.jz)-An.r:0, f0=atA(An,j0,0), f1=atA(An,102,0), r1=atA(An,120,0);
     band({t:1, x0:f0[0], z0:f0[1], x1:f1[0], z1:f1[1], w:WB, zone:[M.ANTE], kind:'ante', ring:K+1});
     band({t:1, x0:f1[0], z0:f1[1], x1:r1[0], z1:r1[1], w:C.ANTE_W, zone:[M.ANTE], kind:'ante', ring:K+1}); }
   M.bands=BL;
@@ -45403,21 +45573,21 @@ function mzLayout(M){
   // ---- the walls: every ring circle, the outside of every bend, the round end of every band;
   // kept wherever they stand just outside the free floor (a wall's width from it), nowhere else ----
   const BH=mzHash(BL, M.C.R0+K*P+C.ANTE_D+60, 16, hw+C.T+4); M.bh=BH;
-  const near=(x,z)=>{ const L=mzHashList(BH,x,z); let m=1e9; if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(BL[L[i]],x,z); if(d<m) m=d; } return m; };
+  const near=(x,z)=>{ const L=mzHashList(BH,x,z); let m=1e9; if(L) for(let i=0;i<L.length;i++){ const d=mzBandDist(BL[L[i]],x,z); if(d<m) m=d; } return m; };
   const ok=(x,z)=>{ const m=near(x,z); return m>=hw-0.05 && m<=hw+0.15; };
   const keepArc=(cx,cz,r,a0,a1,ring,kind)=>{   // split an arc into the stretches that are valid wall
-    const n=Math.max(4,Math.ceil((a1-a0)*r/0.5)), da=(a1-a0)/n; let s0=-1;
-    const pt=t=>[cx+r*Math.cos(t), cz+r*Math.sin(t)], edge=(t0,t1)=>{ const v0=ok(...pt(t0)); for(let i=0;i<12;i++){ const m=(t0+t1)/2; if(ok(...pt(m))===v0) t0=m; else t1=m; } return (t0+t1)/2; };
+    const n=Math.max(4,Math.ceil((a1-a0)*r/1.0)), da=(a1-a0)/n; let s0=-1;
+    const okA=t=>ok(cx+r*Math.cos(t), cz+r*Math.sin(t)), edge=(t0,t1)=>{ const v0=okA(t0); for(let i=0;i<20;i++){ const m=(t0+t1)/2; if(okA(m)===v0) t0=m; else t1=m; } return (t0+t1)/2; };
     const full=a1-a0>=MZ_TAU-1e-6; let allOk=true;
-    for(let i=0;i<=n;i++){ const t=a0+da*i, v=ok(...pt(t)); if(!v) allOk=false;
+    for(let i=0;i<=n;i++){ const t=a0+da*i, v=okA(t); if(!v) allOk=false;
       if(v && s0<0) s0=i; if((!v || i===n) && s0>=0){ const e=v?n:i; let ta=a0+da*s0, tb=a0+da*e;
         if(s0>0) ta=edge(a0+da*(s0-1), ta); if(!v) tb=edge(a0+da*(e-1), tb);
         if((tb-ta)*r>=1.2) W.push({t:0, cx, cz, R:r, a0:ta, a1:tb, hw, ring, kind}); s0=-1; } }
     if(full && allOk){ W.length-=1; W.push({t:0, cx, cz, R:r, a0:0, a1:MZ_TAU, hw, ring, kind}); }   // (an unbroken ring)
   };
-  const keepSeg=(x0,z0,x1,z1,ring,kind)=>{ const L=Math.hypot(x1-x0,z1-z0), n=Math.max(2,Math.ceil(L/0.5)); let s0=-1;
-    const pt=t=>[x0+(x1-x0)*t, z0+(z1-z0)*t], edge=(t0,t1)=>{ const v0=ok(...pt(t0)); for(let i=0;i<12;i++){ const m=(t0+t1)/2; if(ok(...pt(m))===v0) t0=m; else t1=m; } return (t0+t1)/2; };
-    for(let i=0;i<=n;i++){ const t=i/n, v=ok(...pt(t)); if(v && s0<0) s0=i; if((!v || i===n) && s0>=0){ const e=v?n:i; let ta=s0/n, tb=e/n;
+  const keepSeg=(x0,z0,x1,z1,ring,kind)=>{ const L=Math.hypot(x1-x0,z1-z0), n=Math.max(2,Math.ceil(L/1.0)); let s0=-1;
+    const pt=t=>[x0+(x1-x0)*t, z0+(z1-z0)*t], okS=t=>ok(x0+(x1-x0)*t, z0+(z1-z0)*t), edge=(t0,t1)=>{ const v0=okS(t0); for(let i=0;i<20;i++){ const m=(t0+t1)/2; if(okS(m)===v0) t0=m; else t1=m; } return (t0+t1)/2; };
+    for(let i=0;i<=n;i++){ const t=i/n, v=okS(t); if(v && s0<0) s0=i; if((!v || i===n) && s0>=0){ const e=v?n:i; let ta=s0/n, tb=e/n;
         if(s0>0) ta=edge((s0-1)/n, ta); if(!v) tb=edge((e-1)/n, tb);
         if((tb-ta)*L>=1.2){ const p0=pt(ta), p1=pt(tb); W.push({t:1, x0:p0[0], z0:p0[1], x1:p1[0], z1:p1[1], hw, ring, kind}); } s0=-1; } } };
   for(let k=0;k<=K;k++){ let a0=0; for(let i=0;i<720;i++){ const t=i/720*MZ_TAU; if(!ok(B(k)*Math.cos(t),B(k)*Math.sin(t))){ a0=t; break; } }   // (start where the circle is open, so no wall is cut in two at angle 0)
@@ -45442,12 +45612,23 @@ function mzLayout(M){
       const L=bi.t===0?(bi.a1-bi.a0)*bi.R:Math.hypot(bi.x1-bi.x0,bi.z1-bi.z0), n=Math.max(2,Math.ceil(L/2));
       for(let s2=0;s2<=n;s2++){ let x,z; if(bi.t===0){ const t=bi.a0+(bi.a1-bi.a0)*s2/n; x=bi.cx+bi.R*Math.cos(t); z=bi.cz+bi.R*Math.sin(t); } else { x=bi.x0+(bi.x1-bi.x0)*s2/n; z=bi.z0+(bi.z1-bi.z0)*s2/n; }
         const HL=mzHashList(BH,x,z); if(!HL) continue;
-        for(let h=0;h<HL.length;h++){ const j=HL[h]; if(j===i) continue; const bj=BL[j]; if(mzPrimDist(bj,x,z)<bi.w+C.T-0.05 && !linked(bi.zone,bj.zone)){ M.bandErr.push('lanes '+bi.kind+'/'+bj.kind+' meet across a wall'); s2=n+1; break; } } } } }
+        for(let h=0;h<HL.length;h++){ const j=HL[h]; if(j===i) continue; const bj=BL[j]; if(mzBandDist(bj,x,z)<bi.w+C.T-0.05 && !linked(bi.zone,bj.zone)){ M.bandErr.push('lanes '+bi.kind+'/'+bj.kind+' meet across a wall'); s2=n+1; break; } } } } }
   // the grid: three abreast, rows 22 apart, facing the gate (room for fifteen)
   M.grid=[]; const head=Math.atan2(-A.ux,-A.uz);
   for(let i=0;i<15;i++){ const row=Math.floor(i/3), col=i%3; const p=at(52+22*row,(col-1)*17); M.grid.push({x:p[0], z:p[1], head}); }
+  // six gates: each antechamber's own grid — one kart on the middle line, two side by side, then rows behind
+  if(M.antes.length>1){ M.grids=M.antes.map((An,g)=>{ const hd=Math.atan2(-An.ux,-An.uz), L=[];
+      for(const [sv,v] of [[52,0],[52,-13],[52,13],[74,0],[74,-13],[74,13]]){ const p=atA(An,sv,v); L.push({x:p[0], z:p[1], head:hd, gate:g}); } return L; });
+    M.grid=M.grids[0]; }
   // item boxes on the corridors as well: along the shortest route, and in cells off it
-  { const pts=M.route; let tot=0; const cum=[0]; for(let i=1;i<pts.length;i++){ tot+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]); cum.push(tot); }
+  if(M.sym>1){   // six gates: the same boxes in every wedge (a few along each gate's own route, one off it), turned round
+    const Rb=mzRnd(M.seed^0xB0C5), pts=M.route, Q=C.BOX_Q, one=[]; let tot=0; const cum=[0]; for(let i=1;i<pts.length;i++){ tot+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]); cum.push(tot); }
+    for(let q=1;q<=Q;q++){ const d=tot*q/(Q+1.4)+60; let i=1; while(i<pts.length-1&&cum[i]<d) i++; const t=(d-cum[i-1])/Math.max(1e-6,cum[i]-cum[i-1]);
+      one.push([pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t, pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t]); }
+    const on=new Set(); for(let r=0;r<M.sym;r++) for(const c of mzCellRoute(M).path) on.add(M.rot(c,r));
+    for(let tries=0;tries<200;tries++){ const c=M.wedge0(Math.floor(Rb()*M.NC)); if(on.has(c)||M.dead.indexOf(c)>=0||ck[c]<3) continue; const s=M.span(c), a=(s[0]+s[1])/2; one.push([cr[ck[c]]*Math.cos(a), cr[ck[c]]*Math.sin(a)]); break; }
+    for(let r=0;r<M.sym;r++){ const a=r*MZ_TAU/M.sym, ca=Math.cos(a), sa=Math.sin(a); for(const [x,z] of one) M.boxes.push({x:x*ca-z*sa, z:x*sa+z*ca, loop:false}); } }
+  else { const pts=M.route; let tot=0; const cum=[0]; for(let i=1;i<pts.length;i++){ tot+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]); cum.push(tot); }
     for(let q=1;q<=6;q++){ const d=tot*q/7.5+60; let i=1; while(i<pts.length-1&&cum[i]<d) i++; const t=(d-cum[i-1])/Math.max(1e-6,cum[i]-cum[i-1]);
       M.boxes.push({x:pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t, z:pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t, loop:false}); }
     const on=new Set(mzCellRoute(M).path); let n=0;
@@ -45491,7 +45672,7 @@ function mzFillets(W, rr0){
   // same way back from the joint, so the joint is a smooth Y
   const n0=W.length;
   for(let a=0;a<ends.length;a++){ if(used.has(a)) continue; const A=ends[a], wi=W[A[0]]; if(A[0]>=n0) continue;
-    let j=-1; for(let k=0;k<n0;k++){ if(k===A[0]) continue; const wk=W[k]; if(wk.t===2) continue; const d=mzPrimDist(wk,A[2],A[3])+wk.hw; if(d<0.6){ j=k; break; } }
+    let j=-1; for(let k=0;k<n0;k++){ if(k===A[0]) continue; const wk=W[k]; if(wk.t===2 || !mzMaybeNear(wk,A[2],A[3],0.6-wk.hw)) continue; const d=mzPrimDist(wk,A[2],A[3])+wk.hw; if(d<0.6){ j=k; break; } }
     if(j<0) continue; const wj=W[j]; mzPrimDist(wj,A[2],A[3]);
     let tx,tz; if(wj.t===0){ const an=Math.atan2(A[3]-wj.cz,A[2]-wj.cx); tx=-Math.sin(an); tz=Math.cos(an); } else { const L=Math.hypot(wj.x1-wj.x0,wj.z1-wj.z0)||1; tx=(wj.x1-wj.x0)/L; tz=(wj.z1-wj.z0)/L; }
     const near=(w,x,z)=>{ mzPrimDist(w,x,z); return [MZ_Q.d+w.hw, MZ_Q.nx, MZ_Q.nz]; };
@@ -45512,6 +45693,14 @@ function mzFillets(W, rr0){
     used.add(a);
   }
 }
+// could (x,z) be nearer than thr to this wall's surface? (a cheap test first: the whole circle an arc
+// lies on, the box round a segment; no bulbs yet when the layout asks)
+function mzMaybeNear(w,x,z,thr){
+  const lim=thr+w.hw+1e-6;
+  if(w.t===0) return Math.abs(Math.hypot(x-w.cx,z-w.cz)-w.R)<lim;
+  if(w.t===2) return Math.hypot(x-w.cx,z-w.cz)-w.R<thr+1e-6;
+  return x>Math.min(w.x0,w.x1)-lim && x<Math.max(w.x0,w.x1)+lim && z>Math.min(w.z0,w.z1)-lim && z<Math.max(w.z0,w.z1)+lim;
+}
 // every free wall end (the side of a gate, a lone fin) swells into a round bulb, its tip where the
 // wall end was (so no gate gets narrower): a kart that meets it rolls round it instead of
 // catching on a thin edge. The same shape is the collision (mzPrimDist) and the mesh (mzWallGeos).
@@ -45523,7 +45712,7 @@ function mzNoses(W, C, M){
       if(w.t===0){ const a=e?w.a1:w.a0, sg=e?1:-1; px=w.cx+w.R*Math.cos(a); pz=w.cz+w.R*Math.sin(a); ux=-Math.sin(a)*sg; uz=Math.cos(a)*sg; }
       else { const dx=(w.x1-w.x0)/(L||1), dz=(w.z1-w.z0)/(L||1); px=e?w.x1:w.x0; pz=e?w.z1:w.z0; ux=e?dx:-dx; uz=e?dz:-dz; }
       const tx=px+ux*w.hw, tz=pz+uz*w.hw; let buried=false;
-      for(let j=0;j<W.length;j++) if(j!==i && mzPrimDist(W[j],tx,tz)<0.25){ buried=true; break; }
+      for(let j=0;j<W.length;j++) if(j!==i && mzMaybeNear(W[j],tx,tz,0.25) && mzPrimDist(W[j],tx,tz)<0.25){ buried=true; break; }
       if(!buried) ends.push(i,e,L); } }
   for(let n=0;n<ends.length;n+=3){ const w=W[ends[n]], e=ends[n+1], L=ends[n+2], cut=RN-w.hw;
     if(L<cut*2+RN+4) continue;   // (too short to carry a bulb)
@@ -45552,6 +45741,17 @@ function mzHash(list, ext, G, inf){
     else { const RR=w.R+inf; for(let x=-RR;x<=RR;x+=G/2) for(let z=-RR;z<=RR;z+=G/2) if(x*x+z*z<RR*RR) mark(w.cx+x,w.cz+z,i,G); } });
   const EMPTY=[]; for(let k=0;k<cells.length;k++) if(!cells[k]) cells[k]=EMPTY;
   return {G,ext,n,cells};
+}
+// a lane band's signed distance alone (mzPrimDist without the normal, the bulbs or the trig): the
+// layout asks it tens of thousands of times
+function mzBandDist(w,x,z){
+  if(w.t===2) return Math.hypot(x-w.cx,z-w.cz)-w.R;
+  if(w.t===0){ const dx=x-w.cx, dz=z-w.cz; let a=Math.atan2(dz,dx)-w.a0; a-=MZ_TAU*Math.floor(a/MZ_TAU); const sp=w.a1-w.a0;
+    if(a<=sp) return Math.abs(Math.hypot(dx,dz)-w.R)-w.hw;
+    if(w._e0x===undefined){ w._e0x=w.cx+w.R*Math.cos(w.a0); w._e0z=w.cz+w.R*Math.sin(w.a0); w._e1x=w.cx+w.R*Math.cos(w.a1); w._e1z=w.cz+w.R*Math.sin(w.a1); }
+    return ((a-sp)<(MZ_TAU-a) ? Math.hypot(x-w._e1x,z-w._e1z) : Math.hypot(x-w._e0x,z-w._e0z))-w.hw; }
+  const vx=w.x1-w.x0, vz=w.z1-w.z0; let t=((x-w.x0)*vx+(z-w.z0)*vz)/((vx*vx+vz*vz)||1); t=t<0?0:t>1?1:t;
+  return Math.hypot(x-w.x0-vx*t, z-w.z0-vz*t)-w.hw;
 }
 // how far outside the free floor (the union of the lanes) a point is: negative on a lane
 function mzBandSD(M,x,z){ const L=mzHashList(M.bh,x,z); let m=1e9; if(L) for(let i=0;i<L.length;i++){ const d=mzPrimDist(M.bands[L[i]],x,z); if(d<m) m=d; } return m; }
@@ -45614,20 +45814,25 @@ function mzRemainAt(M,x,z,c){
   return best;
 }
 /* ---- one seed in, one validated maze out: a seed whose maze fails steps on to its next
-   attempt (deterministically, so every peer lands on the same maze) ---- */
-function mzMake(seed){
+   attempt (deterministically, so every peer lands on the same maze). The cell graph is checked
+   first (a millisecond); only a graph that passes is laid out (the costly part), so a fresh
+   maze every race builds in about one layout. mode: 'one' (one gate) or 'six' (six gates). ---- */
+function mzMake(seed, mode){
+  const six=mode==='six', C=six?MZ6:MZ;
   let best=null;
-  for(let a=0;a<MZ.TRIES;a++){
+  for(let a=0;a<C.TRIES;a++){
     const s=(seed+Math.imul(a,0x9E3779B1))|0;
-    const M=mzSolve(mzCarve(s, MZ)); mzLayout(M); mzValidate(M); M.attempt=a; M.baseSeed=seed;
-    if(M.valid) return M;
+    const M=mzSolve(six?mzCarve6(s, C):mzCarve(s, C)); M.attempt=a; M.baseSeed=seed; M.mode=six?'six':'one'; M.sym=M.sym||1;
+    const pre=mzCheckGraph(M);
+    if(!pre.length){ mzLayout(M); mzValidate(M); if(M.valid) return M; }
+    else { M.valid=false; M.errors=pre; }
     // the carve is a spanning tree from the gate and braiding only opens walls, so every maze
     // has a way to the egg; even so, a fallback is only ever taken from the solvable ones
     const ok=M.D[M.entP]<1e17;
     if(ok && (!best || M.errors.length<best.errors.length)) best=M;
   }
-  if(best) return best;   // nothing passed: race the closest solvable one (srNet.maze reports why)
-  const F=mzSolve(mzCarve(seed|0, MZ)); mzLayout(F); mzValidate(F); F.attempt=-1; F.baseSeed=seed; return F;
+  if(best){ if(!best.walls){ mzLayout(best); mzValidate(best); } return best; }   // nothing passed: race the closest solvable one (srNet.maze reports why)
+  const F=mzSolve(six?mzCarve6(seed|0, C):mzCarve(seed|0, C)); F.mode=six?'six':'one'; F.sym=F.sym||1; mzLayout(F); mzValidate(F); F.attempt=-1; F.baseSeed=seed; return F;
 }
 /* ================= THE LOOK =================
    The maze is the egg's own protective layers, and it is ALIVE. Value plan, darkest to lightest:
@@ -45653,7 +45858,7 @@ function mzTint(u, out){   // u: 0 at the egg .. 1 at the rim -> display-space c
   o.r=((ca>>16&255)+(((cb>>16&255)-(ca>>16&255))*t))/255; o.g=((ca>>8&255)+(((cb>>8&255)-(ca>>8&255))*t))/255; o.b=((ca&255)+(((cb&255)-(ca&255))*t))/255;
   return o;
 }
-function mzRingU(ring){ return ring<=0 ? 0 : Math.min(1,(ring-0.5)/MZ.K); }
+function mzRingU(ring){ return ring<=0 ? 0 : Math.min(1,(ring-0.5)/MZC.K); }
 const MZ_GLSL_COMMON=`
 uniform float uT; uniform vec3 uFog; uniform vec2 uFogR;
 // the heartbeat's light wave: one pulse launched 'ago' seconds back, rolling out from the egg at
@@ -45852,14 +46057,12 @@ function mzWallGeos(M){
     const mid=pts[pts.length>>1], B=buf[sectorOf(mid.x,mid.z)];
     mzTint(mzRingU(ring), col);
     const ph=R()*100, row=MZ_PROF.length;
-    const rings=[];   // each: list of [x,y,z,nx,ny,nz,h]
     let u=u0||0;
     const sec=(x,z,tx,tz,uu,pt)=>{ const nx=tz, nz=-tx;            // across the wall
       // (the organic swell in thickness fades out toward a bulb, so the bulb you see is the bulb you hit)
       const th=1+(0.22*Math.sin(uu*0.07+ph)+0.10*Math.sin(uu*0.23+ph*2.0))*(pt.k==null?1:pt.k), hh=C.H*(1+0.07*Math.sin(uu*0.05+ph*1.3)), hwp=pt.h||hw;
       const y0=mzFloorY(Math.hypot(x,z))-0.6;
       const out=[]; for(const q of MZ_PROF){ const ox=q[0]*hwp*th; out.push([x+nx*ox, y0+q[1]*(hh+0.6), z+nz*ox, nx*q[2], q[3], nz*q[2], q[1], uu]); } return out; };
-    for(let i=0;i<pts.length;i++){ if(i>0) u+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].z-pts[i-1].z); rings.push(sec(pts[i].x,pts[i].z,pts[i].tx,pts[i].tz,u,pts[i])); }
     // noses: the profile swung round the end point
     const nose=(pt,sgn,first)=>{ const out=[]; const base=sec(pt.x,pt.z,pt.tx,pt.tz,first?(u0||0):u,pt);
       for(let s=1;s<=5;s++){ const a=s/5*Math.PI/2; const ca=Math.cos(a), sa=Math.sin(a);
@@ -45868,12 +46071,18 @@ function mzWallGeos(M){
           const nx=pt.tz*Math.sign(al||1)*ca+pt.tx*sgn*sa, nz=-pt.tx*Math.sign(al||1)*ca+pt.tz*sgn*sa;
           return [x,v[1],z, nx*Math.hypot(v[3],v[5]), v[4], nz*Math.hypot(v[3],v[5]), v[6], v[7]]; })); }
       return out; };
-    let all=rings;
-    if(caps&&caps[0]) all=nose(pts[0],-1,true).reverse().concat(all);
-    if(caps&&caps[1]) all=all.concat(nose(pts[pts.length-1],1,false));
-    const v0=B.p.length/3;
-    for(const rg of all) for(const v of rg){ B.p.push(v[0],v[1],v[2]); B.n.push(v[3],v[4],v[5]); B.c.push(col.r,col.g,col.b); B.uh.push(v[7],v[6]); }
-    for(let i=0;i<all.length-1;i++) for(let j=0;j<row-1;j++){ const a=v0+i*row+j, b=a+row; B.i.push(a,b,a+1, b,b+1,a+1); }
+    const v0=B.p.length/3; let nr=0;
+    const emit=rg=>{ for(const v of rg){ B.p.push(v[0],v[1],v[2]); B.n.push(v[3],v[4],v[5]); B.c.push(col.r,col.g,col.b); B.uh.push(v[7],v[6]); } nr++; };
+    if(caps&&caps[0]) nose(pts[0],-1,true).reverse().forEach(emit);
+    // the sections themselves, written straight into the buffers (the same numbers sec() makes, without a list per vertex)
+    for(let i=0;i<pts.length;i++){ const pt=pts[i]; if(i>0) u+=Math.hypot(pt.x-pts[i-1].x, pt.z-pts[i-1].z);
+      const x=pt.x, z=pt.z, nx=pt.tz, nz=-pt.tx, uu=u;
+      const th=1+(0.22*Math.sin(uu*0.07+ph)+0.10*Math.sin(uu*0.23+ph*2.0))*(pt.k==null?1:pt.k), hh=C.H*(1+0.07*Math.sin(uu*0.05+ph*1.3)), hwp=pt.h||hw;
+      const y0=mzFloorY(Math.hypot(x,z))-0.6;
+      for(const q of MZ_PROF){ const ox=q[0]*hwp*th; B.p.push(x+nx*ox, y0+q[1]*(hh+0.6), z+nz*ox); B.n.push(nx*q[2], q[3], nz*q[2]); B.c.push(col.r,col.g,col.b); B.uh.push(uu,q[1]); }
+      nr++; }
+    if(caps&&caps[1]) nose(pts[pts.length-1],1,false).forEach(emit);
+    for(let i=0;i<nr-1;i++) for(let j=0;j<row-1;j++){ const a=v0+i*row+j, b=a+row; B.i.push(a,b,a+1, b,b+1,a+1); }
   };
   M.frondSpots=[];
   for(const w of M.walls){
@@ -45926,7 +46135,7 @@ function mzGlowTex(M){
   const pool=(x,z,r,u,a,m)=>{ const gr=g.createRadialGradient(X(x),Z(z),0,X(x),Z(z),r*k); gr.addColorStop(0,css(u,a,m||1.1)); gr.addColorStop(0.5,css(u,a*0.35,m||1.1)); gr.addColorStop(1,css(u,0)); g.fillStyle=gr; g.beginPath(); g.arc(X(x),Z(z),r*k,0,MZ_TAU); g.fill(); };
   for(const q of M.gates){ pool(q.r*Math.cos(q.th), q.r*Math.sin(q.th), 26, mzRingU(q.ring), 0.60); }
   for(const L of M.loops){ pool(L.x, L.z, 19, mzRingU(L.ring), 0.55); }
-  { const A=M.ante, x=A.ux*(A.r+90), z=A.uz*(A.r+90); pool(x,z,110,1,0.30); }
+  for(const A of M.antes){ const x=A.ux*(A.r+90), z=A.uz*(A.r+90); pool(x,z,110,1,0.30); }
   const t=new T.CanvasTexture(cv); t.minFilter=T.LinearMipmapLinearFilter; t.anisotropy=2; return t;
 }
 // the walls as the wet floor sees them (each in its own colour): the reflection march reads this
@@ -45974,6 +46183,7 @@ function shMergeSafe(geos){   // merge non-indexed copies of a few small geometr
 function mzInst(geo, mat, list, setter){
   const im=new T.InstancedMesh(geo, mat, Math.max(1,list.length)); const d=new T.Object3D(), c=new T.Color();
   list.forEach((q,i)=>{ setter(q,d,c); d.updateMatrix(); im.setMatrixAt(i,d.matrix); im.setColorAt(i,c); });
+  if(!im.instanceColor) im.setColorAt(0,c.setRGB(0,0,0));   // (an empty list — a maze with no dead ends — still needs the attribute its shader reads)
   im.count=list.length; im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true; return im;
 }
 /* the sky: we are inside something vast and soft. Deep plum overhead with the faint walls of
@@ -46148,15 +46358,17 @@ function mzTrailMat(hex){
 }
 /* ================= BUILD ================= */
 function mzBuildTrack(idx){
-  const t=TRACKS[idx], seed=mzSeedNext!=null ? mzSeedNext : mzPickSeed(t);
-  mzSeedNext=null;
-  const M=mzMake(seed); MAZE=M; mzGateGrid(M);
+  // the maze: the one the race was handed (the multiplayer start, "Same maze"), else the one planned
+  // for the next race (picked ahead, so the menu preview behind the deck is the maze you will race)
+  const plan=mzSeedNext||mzPlan(); mzSeedNext=null;
+  const M=mzGet(plan.no, plan.mode); MAZE=M; MZC=M.C; mzGateGrid(M);
   const C=M.C; M.ext=C.R0+C.K*C.P+C.ANTE_D+90;
+  M.myGate=mzSlotGate(M, mzMySlot(), mzFieldSize());   // (your own gate: the countdown camera's road, the route the tests drive)
   M.U={uT:{value:0}, uFog:{value:new T.Color(MZ_HAZE)}, uFogR:{value:new T.Vector2(140,860)}};
   STEPS=0;
   // ---- SAMP: the shortest route, ~10 units a sample (countdown camera, kart idx, test placement) ----
   SAMP.length=0;
-  { const R=M.route, P=[]; for(let i=0;i<R.length-1;i++){ const a=R[i], b=R[i+1], L=Math.hypot(b[0]-a[0],b[1]-a[1]), n=Math.max(1,Math.ceil(L/10));
+  { const R=M.routes[M.myGate]||M.route, P=[]; for(let i=0;i<R.length-1;i++){ const a=R[i], b=R[i+1], L=Math.hypot(b[0]-a[0],b[1]-a[1]), n=Math.max(1,Math.ceil(L/10));
       for(let s=0;s<n;s++) P.push([a[0]+(b[0]-a[0])*s/n, a[1]+(b[1]-a[1])*s/n]); }
     P.push(R[R.length-1]);
     for(let i=0;i<P.length;i++){ const a=P[Math.max(0,i-1)], b=P[Math.min(P.length-1,i+1)], L=Math.hypot(b[0]-a[0],b[1]-a[1])||1;
@@ -46262,7 +46474,7 @@ function mzBuildTrack(idx){
   // ---- beyond the rim: soft cells rooted in the floor, receding into the haze (three depths) ----
   { const R=mzRnd(M.seed^0xBAC4), list=[];
     for(let i=0;i<48;i++){ const layer=i<16?0:i<32?1:2, a=R()*MZ_TAU, r=M.ext+40+layer*170+R()*150, s=(26+R()*40)*(1+layer*0.5);
-      if(Math.abs(Math.atan2(Math.sin(a-C.ANG_IN),Math.cos(a-C.ANG_IN)))<0.22 && layer===0) continue;   // keep the antechamber's view open
+      if(layer===0 && (M.sym>1?M.antes.map(A=>A.th):[C.ANG_IN]).some(th=>Math.abs(Math.atan2(Math.sin(a-th),Math.cos(a-th)))<0.22)) continue;   // keep the antechambers' view open
       list.push({x:Math.cos(a)*r, z:Math.sin(a)*r, s, sy:0.55+R()*0.5, u:0.55+R()*0.45}); }
     trackGroup.add(mzInst(new T.IcosahedronGeometry(1,2), mzDomeMat(), list, (q,d,c)=>{ d.position.set(q.x,-q.s*0.22,q.z); d.scale.set(q.s,q.s*q.sy,q.s); mzTint(q.u,tc); c.setRGB(tc.r,tc.g,tc.b); })); }
   // ---- and high in the haze: floating cells, drifting ----
@@ -46285,6 +46497,23 @@ function mzBuildTrack(idx){
   M.trails=null; M.beatPh=0;
   TRACK_PULSE.maze=M;
   eggAnim=0; mapBounds=null;
+}
+/* ---- the start. One gate: the antechamber grid, three abreast. Six gates: the field split evenly
+   over the gates — six karts one at each gate, twelve two at each (side by side), fewer spread as
+   evenly round the circle as they go. A slot is a kart's place in the lineup (the same on every
+   screen in a networked race). ---- */
+function mzFieldSize(){ if(NET.on && NET.lineup && NET.lineup.length) return NET.fillAI ? Math.max(6,NET.lineup.length) : NET.lineup.length; return 6; }
+function mzMySlot(){ if(NET.on && NET.lineup){ const p=NET.lineup.find(q=>q.id===NET.self); if(p) return p.k|0; } return 0; }
+function mzSlotGate(M, s, n){
+  const S=M.sym||1; if(S<=1) return 0;
+  const row=Math.floor(s/S), inRow=Math.min(S, n-row*S), i=s-row*S;
+  return inRow>=S ? i : Math.round(i*S/inRow)%S;
+}
+function mzStartSlot(M, s, n){
+  if((M.sym||1)<=1) return M.grid[Math.min(s,M.grid.length-1)];
+  const g=mzSlotGate(M,s,n), at=[]; for(let q=0;q<Math.max(n,s+1);q++) if(mzSlotGate(M,q,Math.max(n,s+1))===g) at.push(q);
+  const seats=at.length===1?[0]:at.length===2?[1,2]:[1,2,3,4,5,0], i=Math.min(at.indexOf(s),seats.length-1);
+  return M.grids[g][seats[Math.max(0,i)]];
 }
 // floor height at a point (the antechamber and the rim apron are level)
 function mzFloorAt(x,z){ const r=Math.hypot(x,z); return r<MZ.R0?MZ.HC:mzFloorY(r); }
@@ -46624,7 +46853,8 @@ function mzRescue(r,dt){
   let c=mzLocate(M,r.x,r.z), x, z;
   const far=Math.hypot(r.x,r.z)>M.ext-20;
   if(c===M.EGG && !far){ if(q.t<lim) return; const a=Math.atan2(r.z,r.x); x=(MZ.FIN_R+10)*Math.cos(a); z=(MZ.FIN_R+10)*Math.sin(a); }
-  else if(c===M.ANTE || far){ const g=M.grid[1]; x=g.x; z=g.z; c=M.ANTE; }
+  else if(c===M.ANTE || far){ let A=M.antes[0], bd=-2; for(const An of M.antes){ const d=(r.x*An.ux+r.z*An.uz)/(Math.hypot(r.x,r.z)||1); if(d>bd){ bd=d; A=An; } }   // (its own antechamber: the nearest)
+    const g=M.grids?M.grids[A.gate][0]:M.grid[1]; x=g.x; z=g.z; c=M.ANTE; }
   else { const s=M.span(c), rr=M.cr[M.ck[c]], rb=M.bands.find(b=>b.kind==='ring'&&b.cell===c);   // the middle of the cell's own lane
     let a=(s[0]+s[1])/2; if(rb){ const m=(rb.a0+rb.a1)/2; a=m; } x=rr*Math.cos(a); z=rr*Math.sin(a);
     const L=M.loops.find(l=>l.cell===c); if(L){ x=L.x-L.fx*8; z=L.z-L.fz*8; } }   // (a dead end: just short of its round end)
@@ -46643,6 +46873,7 @@ function mzChoose(r,S,c,entry){
   const M=MAZE;
   if(c===M.EGG) return -1;
   const L=M.cellP[c]; if(L.length===1) return L[0];          // a dead end: back the way it came (via the loop)
+  if(c===M.ANTE){ let b=L[0], bd=1e18; for(const pi of L){ const p=M.PT[pi], d=Math.hypot(p.x-r.x,p.z-r.z); if(d<bd){ bd=d; b=pi; } } return b; }   // (six gates: in through its own)
   const cand=[]; for(const pi of L) if(pi!==entry && M.PT[pi].kind!==3) cand.push(pi);
   const cost=pi=>{ const p=M.PT[pi]; return M.D[pi]+Math.hypot(p.x-r.x,p.z-r.z)*0.2; };
   cand.sort((a,b)=>cost(a)-cost(b));
@@ -46738,10 +46969,20 @@ function mzCamGuard(me){
     if(y<wt && mzNear(M,x,z)<0.8){ const req=hy+(wt-hy)/t; if(req>need) need=req; } }
   if(need>p.y+1e-3){ p.y=Math.min(need, hy+30); moved=true; }
   // the egg (an ellipsoid, 1.25 tall)
-  const er=MZ.EGG_R*(TRACK_PULSE.egg?TRACK_PULSE.egg.scale.x:1)+4;
-  _mzV.set(p.x/er, (p.y-M.eggY)/(er*1.25), p.z/er); const e=_mzV.length();
-  if(e<1){ const k=1/Math.max(e,1e-3); p.x*=k; p.z*=k; if(Math.abs(p.x)+Math.abs(p.z)<1e-3) p.x=er; moved=true; }
+  if(mzEggGuard(true)) moved=true;
   if(moved) camera.lookAt(_camLook);
+}
+// the lens out of the egg: pushed out round it (sideways), true when it moved (look: aim it again here)
+function mzEggGuard(noLook){
+  const M=MAZE, p=camera.position; if(!M) return false;
+  const er=MZ.EGG_R*(TRACK_PULSE.egg?Math.max(1,TRACK_PULSE.egg.scale.x):1)+4;
+  _mzV.set(p.x/er, (p.y-M.eggY)/(er*1.25), p.z/er); const e=_mzV.length();
+  if(e>=1) return false;
+  // straight out sideways, onto its surface at the lens's own height (never down under its belly)
+  const dy=(p.y-M.eggY)/(er*1.25), want=er*Math.sqrt(Math.max(0,1-dy*dy))+0.01, h=Math.hypot(p.x,p.z);
+  if(h<1e-3){ p.x=want; p.z=0; } else { p.x*=want/h; p.z*=want/h; }
+  if(!noLook) camera.lookAt(_camLook);
+  return true;
 }
 // the course card: rings and a gate, not a road outline
 function mzCourseArt(t){
@@ -61820,6 +62061,7 @@ function updateCamera(dt){
     if(_camPush.lengthSq()>1e-6){
       camera.position.add(_camPush); camera.lookAt(_camLook);
       if(_camRoll) camera.rotateZ(_camRoll);
+      if(MAZE) mzEggGuard();   // the maze: a push out from a rival never puts the lens inside the egg (they all arrive there)
       _camPushed.copy(camera.position); _camPushOn=true;
     }
   } else _camPush.set(0,0,0);
@@ -62705,11 +62947,14 @@ function netRecv(m){
       if(NET.host) netBroadcastRoster();
       netRenderLobby();
       break;
+    case 'mzpre':                             // the host's next maze: make it now, while the results are up
+      if(!NET.host && m.maze && m.maze.no>=0) mzPrefetch({no:m.maze.no|0, mode:m.maze.mode==='six'?'six':'one'});
+      break;
     case 'start':
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
       selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
-      mzSeedNext=(m.seed!=null)?m.seed:null;   // the host's maze, exactly
+      mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:m.maze.mode==='six'?'six':'one'}:null;   // the host's maze, exactly
       netBeginRace();
       break;
     case 's': {                               // a human's own kart
@@ -62929,8 +63174,9 @@ function netHostStart(){
     while(lineup.length<6 && pool.length){ const t=pool.shift(); lineup.push({id:null, ai:true, typeId:t.id, name:t.name, k:lineup.length}); }
   }
   NET.lineup=lineup;
-  const seed=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzPickSeed(TRACKS[selTrack])) : undefined;   // the maze's seed travels with the grid
-  netSend({t:'start', track:selTrack, seed, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
+  // the maze travels with the grid: its number and start mode (the host's choice), so every screen builds the same one
+  const maze=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzSeedNext||mzPlan()) : undefined;
+  netSend({t:'start', track:selTrack, seed:maze?mzSeedOf(maze.no):undefined, maze:maze?{no:maze.no, mode:maze.mode}:undefined, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self});
   netBeginRace();
 }
 function netBeginRace(){
@@ -63234,6 +63480,16 @@ function netRaceDoneUI(){
     if(gp) gp.style.display='none';
   } else { ab.disabled=false; ab.style.opacity=''; ab.textContent='Race again';
            if(gp && !gpActive && state==='done') gp.style.display=''; }   // the host left us on the results screen
+  mzFinishUI();
+}
+// the results screen on the labyrinth: "New maze" (a fresh one) beside "Same maze" (this one again;
+// in a networked race only the host picks)
+function mzFinishUI(){
+  const ab=$('againbtn'), sb=$('samemazebtn'), fb=$('fbtns'); if(!ab||!sb) return;
+  const on=!!MAZE && !gpActive && state==='done' && !(NET.on && NET.auth && !NET.host);
+  sb.style.display=on?'':'none'; if(fb) fb.classList.toggle('maze',on);
+  if(on) ab.textContent=(NET.on && NET.auth)?'Rematch · new maze':'New maze';
+  else if(!(NET.on && NET.auth)) ab.textContent='Race again';
 }
 function netInviteURL(){
   return location.origin+location.pathname+'?room='+NET.room
@@ -63373,7 +63629,7 @@ function endRace(){
   document.body.classList.remove('final-lap');   // stop the red pulse on the results screen
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   const me=racers.find(r=>r.you);
-  const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT);
+  const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));   // (a dead heat — six gates make mirror-image runs — in the same order on every screen)
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
   $('besttime').textContent='';   // cleared each finish; only the single-race branch repopulates it
@@ -63404,7 +63660,7 @@ function endRace(){
     }
   } else {
     $('fhead').textContent=ord(me.place)+' place';
-    $('ftag').textContent=me.place===1?'specimen dominant':'race complete';
+    $('ftag').textContent=(MAZE?mzLabel({no:MAZE.no, mode:MAZE.mode})+' · ':'')+(me.place===1?'specimen dominant':'race complete');   // the labyrinth: which maze it was
     ranked.forEach((r,i)=>{
       const row=document.createElement('div'); row.className='row'+(r.you?' you':'');
       row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${r.name}</span><b>${fmt(r.finishT)}</b>`;
@@ -63414,7 +63670,7 @@ function endRace(){
     // best-time tracking (per track, persists across sessions) — every race counts for something
     const bt=$('besttime');
     if(me.finished && isFinite(me.finishT)){
-      const key='sr_best_'+TRACKS[selTrack].name;
+      const key='sr_best_'+TRACKS[selTrack].name+(MAZE&&MAZE.mode==='six'?'_six':'');   // (the six-gate race is its own record)
       const prev=parseFloat(localStorage.getItem(key));
       if(!prev || me.finishT<prev){
         localStorage.setItem(key, me.finishT);
@@ -63432,6 +63688,9 @@ function endRace(){
         bt.textContent=(bt.textContent?bt.textContent+'  ':'')+'🔓 New racers unlocked!'; }
     }
   }
+  mzFinishUI();
+  if(MAZE && !gpActive && !(NET.on && NET.auth && !NET.host)){ const nx=mzPlan(); mzPrefetch(nx);   // the next maze, made while the results are read
+    if(NET.on && NET.auth && NET.host) netSend({t:'mzpre', maze:{no:nx.no, mode:nx.mode}}); }   // (the room's screens make it too)
   $('finish').classList.remove('hidden');
   // networked: a last snapshot (and the host's last batch, with the AI's times) so the finish
   // is on record everywhere, then the room STAYS OPEN for a rematch — see netRaceDoneUI
@@ -63521,6 +63780,12 @@ const _origCountdown = countdown;
 countdown = function(){
   if(state==='count') return;   // double-tap on Lock in: one build, one tick chain
   initAudio();
+  // the labyrinth: this race's maze is the one planned (or handed over: the host's, "Same maze");
+  // it becomes the last one raced and the next race plans a fresh one
+  const mzRace=!!(TRACKS[selTrack]&&TRACKS[selTrack].maze);
+  if(mzRace){ if(!mzSeedNext) mzSeedNext=mzPlan(); mzLast={no:mzSeedNext.no, mode:mzSeedNext.mode}; mzNext=null;
+    try{ localStorage.setItem('sr_mzlast',JSON.stringify(mzLast)); }catch(_){} }
+  $('cdmaze').textContent=mzRace?mzLabel(mzLast):'';
   buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
   // every race starts on its course's record, if it has one (unless a station is somehow still playing, in
@@ -63732,7 +63997,7 @@ buildRacers = function(){
     // (same expression placeOnTrack solves once the race is running)
     const gSurf=sg.p.y + Math.sin(sg.bank||0)*lane;
     pos.y=gSurf+HOVER_H;
-    const mzG=MAZE?MAZE.grid[Math.min(k,MAZE.grid.length-1)]:null;   // the maze: its antechamber grid, three abreast
+    const mzG=MAZE?mzStartSlot(MAZE, (MAZE.sym>1&&np)?np.k:k, lineup.length):null;   // the maze: its antechamber grid, three abreast (six gates: the field split over them)
     if(mzG) pos.set(mzG.x,HOVER_H,mzG.z);
     obj.position.copy(pos);
     scene.add(obj);
@@ -63848,9 +64113,10 @@ function setupJoystick(){
 // Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
 function paintSummary(){
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
-    if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? 'one run to the egg · item boxes · hold the drift' : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
+    if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? (p=>'maze #'+p.no+' · '+(p.mode==='six'?'six gates':'one gate')+' · run to the egg')(mzPlan()) : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
   const el=$('picksum'); if(!el||!chosenType) return;
-  el.textContent=TRACKS[selTrack].name+' · '+chosenType.name+' · '+difficulty;
+  const mp=TRACKS[selTrack].maze?mzPlan():null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
+  el.textContent=TRACKS[selTrack].name+(mp?' #'+mp.no+(mp.mode==='six'?' · six gates':''):'')+' · '+chosenType.name+' · '+difficulty;
 }
 function paintRacer(){
   const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
@@ -63982,8 +64248,10 @@ function setupDifficulty(){
   const sh=$('sheet'), g=$('gearbtn'); if(!sh||!g) return;
   const set=o=>{ sh.classList.toggle('hidden',!o); g.setAttribute('aria-expanded',o?'true':'false'); };
   g.onclick=()=>set(sh.classList.contains('hidden'));
-  $('sheetdone').onclick=()=>set(false);
-  $('sheetback').onclick=()=>set(false);
+  // closing it: if Ariadne's maze changed, the preview behind the deck becomes the maze you will race
+  const close=()=>{ set(false); if(state==='menu' && TRACKS[selTrack] && TRACKS[selTrack].maze && MAZE){ const p=mzPlan(); if(MAZE.no!==p.no || MAZE.mode!==p.mode){ buildTrack(selTrack); buildRacers(); } } };
+  $('sheetdone').onclick=close;
+  $('sheetback').onclick=close;
 })();
 
 // ---- camera view option (chase / close chase / first person) ----
@@ -64126,6 +64394,17 @@ setupFullscreen();
     try{ localStorage.setItem('sr_mazeradar',String(mazeRadar)); }catch(_){}
     paint(); };
   paint(); })();
+// ---- Ariadne's start (one gate / six gates / either) and maze (a new one every race / the original) ----
+(function setupMazeBtns(){
+  const a=$('mzstartbtn'), b=$('mzmazebtn'); if(!a||!b) return;
+  const SL={one:'1 gate', six:'6 gates', rand:'random'};   // (Ariadne's: the labyrinth)
+  const paint=()=>{ a.textContent='Maze start: '+SL[mzStartPref]; a.classList.toggle('on',mzStartPref!=='one');
+    b.textContent='Mazes: '+(mzMazePref==='orig'?'the original':mzMazePref==='keep'&&mzLast?'keep #'+mzLast.no:'new each race'); b.classList.toggle('on',mzMazePref!=='new'); };
+  const changed=()=>{ mzNext=null; paint(); paintSummary(); };
+  a.onclick=()=>{ mzStartPref={one:'six', six:'rand', rand:'one'}[mzStartPref]; try{ localStorage.setItem('sr_mzstart',mzStartPref); }catch(_){} changed(); };
+  b.onclick=()=>{ mzMazePref=mzMazePref==='new'?(mzLast?'keep':'orig'):mzMazePref==='keep'?'orig':'new'; try{ localStorage.setItem('sr_mzmaze',mzMazePref); }catch(_){} changed(); };
+  window.addEventListener('pageshow',paint); document.getElementById('gearbtn').addEventListener('click',paint);   // (the last maze changes as you race)
+  paint(); })();
 // in-race "car radio" seek knobs — tap either one to step to the prev/next station,
 // dashboard-style: a quick tuning static burst + glow, then a frequency-readout toast.
 // Two physical knobs instead of one forward-only toggle, so it's actually adjustable
@@ -64168,6 +64447,10 @@ $('selback').onclick=()=>{
   pendingGP=false; $('select').classList.add('hidden'); $('start').classList.remove('hidden'); };
 $('againbtn').onclick=()=>{ gpActive=false;
   if(NET.on && NET.auth){ if(NET.host) netHostStart(); return; }   // Rematch: same room, same grid; clients follow the host's 'start'
+  if(NET.on) netLeave(); countdown(); };
+$('samemazebtn').onclick=()=>{ gpActive=false; if(!mzLast) return;   // the maze just raced, once more
+  mzSeedNext={no:mzLast.no, mode:mzLast.mode};
+  if(NET.on && NET.auth){ if(NET.host) netHostStart(); else mzSeedNext=null; return; }
   if(NET.on) netLeave(); countdown(); };
 $('changebtn').onclick=()=>{ gpActive=false; if(NET.on) netLeave(); stopMusic(); state='menu'; pendingGP=false; showSelect(); };
 $('gpbtn').onclick=()=>{ initAudio(); startGP(); };
@@ -64534,7 +64817,8 @@ window.srNet={
         tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null, swing:curStyle.swing||0},
       mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
   // the labyrinth being raced (null on every other course): its seed, whether it validated, and where everyone is in it
-  get maze(){ if(!MAZE) return null; return {seed:MAZE.baseSeed, attempt:MAZE.attempt, valid:MAZE.valid, errors:MAZE.errors.slice(),
+  get maze(){ if(!MAZE) return null; return {no:MAZE.no, mode:MAZE.mode, entrances:MAZE.entPs.length, myGate:MAZE.myGate, gateRoutes:MAZE.entPs.map(p=>+MAZE.D[p].toFixed(3)),
+    seed:MAZE.baseSeed, attempt:MAZE.attempt, valid:MAZE.valid, errors:MAZE.errors.slice(),
     route:Math.round(MAZE.L), cells:MAZE.NC, deadEnds:MAZE.dead.length, gates:MAZE.gates.length, boxes:MAZE.boxes.length, pads:MAZE.pads.length,
     alt:MAZE.alt?{share:+MAZE.alt.share.toFixed(2), ratio:+MAZE.alt.ratio.toFixed(2)}:null,
     karts:racers.map(r=>({name:r.name, you:!!r.you, cell:r._mzCell, remain:Math.round(r._mzR||0), skill:+(r.skill||1).toFixed(3)}))}; },
