@@ -44821,6 +44821,7 @@ function mzValidate(M){
 // and the round ends of a dead end, where a wall curves round on itself, do not count)
 function mzPinch(M){
   const C=M.C, lim=C.GATE_W-0.5, W=M.walls; let worst=null;
+  const onLane=(x,z)=>{ const L=mzHashList(M.bh,x,z); let m=1e9; if(L) for(let i=0;i<L.length;i++){ const d=mzBandDist(M.bands[L[i]],x,z); if(d<m) m=d; } return m; };   // (mzBandSD without the normals)
   for(let i=0;i<W.length;i++){ const w=W[i]; if(w.t===2) continue;
     const L=w.t===0?(w.a1-w.a0)*w.R:Math.hypot(w.x1-w.x0,w.z1-w.z0), n=Math.max(1,Math.ceil(L/(w.kind==='ring'&&!w.fl?3:1.25)));   // (finer round the short curved pieces: a pinch there is short)
     for(let k=0;k<=n;k++){ const s=L*k/n; let x,z,nx,nz;
@@ -44828,8 +44829,8 @@ function mzPinch(M){
       else { const tx=(w.x1-w.x0)/(L||1), tz=(w.z1-w.z0)/(L||1); x=w.x0+tx*s; z=w.z0+tz*s; nx=tz; nz=-tx; }
       const h=(w.fl?mzHalfW(w,s):w.hw)+0.4;
       for(const sg of [1,-1]){ const ox=nx*sg, oz=nz*sg, px=x+ox*h, pz=z+oz*h, kx=px+ox*C.KR, kz=pz+oz*C.KR;   // (a kart touching this face)
-        if(mzBandSD(M,kx,kz)>0) continue;                                            // (this face looks away from the lanes)
         if(mzNear(M,px+ox*lim/2,pz+oz*lim/2)>=lim/2-0.3) continue;                  // (half a gate out from it, still clear: no wall facing it nearer than a gate)
+        if(onLane(kx,kz)>0) continue;                                                // (this face looks away from the lanes)
         if(mzNear(M,kx,kz)<C.KR-0.45) continue;                                      // (no kart fits there: a corner)
         let t=0, hit=false; for(let it=0;it<40 && t<lim;it++){ const d=mzNear(M,kx+ox*t,kz+oz*t); if(d<0.05){ hit=true; break; } t+=Math.max(d,0.25); }
         if(!hit || C.KR+t>=lim) continue;
