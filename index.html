@@ -44747,8 +44747,8 @@ function mzLayout(M){
   { const byFin=new Map(); for(const bd of M.bends){ const L=byFin.get(bd.fin)||[]; L.push(bd); byFin.set(bd.fin,L); }
     for(const [f,L] of byFin){ const q=L[0].gate, o=f===q.fm?q.fp:q.fm, aJ=Math.atan2(o.z-f.z,o.x-f.x); let lo=1e9, hi=-1e9;
       for(const bd of L){ for(const a of [bd.a0,bd.a1]){ const r=adiff(a,aJ); lo=Math.min(lo,r); hi=Math.max(hi,r); } }
-      M.turns.push({x:f.x, z:f.z, a0:aJ+lo, a1:aJ+hi, r0:C.NOSE_R+3, r1:C.NOSE_R+12, kind:'bend', ring:q.k}); }
-    for(const L of M.loops){ const fa=Math.atan2(L.fz,L.fx); M.turns.push({x:L.x, z:L.z, a0:fa-Math.PI/2, a1:fa+Math.PI/2, r0:8, r1:17, kind:'end', ring:L.ring}); }
+      M.turns.push({x:f.x, z:f.z, a0:aJ+lo, a1:aJ+hi, r0:C.NOSE_R+3, r1:C.NOSE_R+14, reach:40, line:[C.NOSE_R+8,30], kind:'bend', ring:q.k}); }
+    for(const L of M.loops){ const fa=Math.atan2(L.fz,L.fx); M.turns.push({x:L.x, z:L.z, a0:fa-Math.PI/2, a1:fa+Math.PI/2, r0:7, r1:17, reach:28, line:[10,20], kind:'end', ring:L.ring}); }
     for(const bd of BL){ if(bd.kind!=='ring' || bd.room || bd.a1-bd.a0>=MZ_TAU-1e-6) continue; const len=(bd.a1-bd.a0)*bd.R;
       for(let e=0;e<2;e++){ if(!(e?bd.free1:bd.free0)) continue; const end=e?bd.a1:bd.a0, sg=e?1:-1;
         for(let n=1;n<=3;n++){ const d=2+22*n; if(d>len-10) break; const t=end-sg*d/bd.R;
@@ -45747,6 +45747,7 @@ function mzCrossesWall(M,ax,az,bx,bz){
 const MZA={
   on:true,          // contact is a slide (false: the walls only push out)
   assist:true,      // the corner assist below (false: none)
+  pads:true,        // the turn pads (false: they neither help nor light)
   SLIDE_TURN:11,     // a kart touching a wall swings its nose along it at this rate (1/s, more for a squarer hit)
   SLIDE_MIN:0.16,    // ...and keeps at least this share of its speed even square on (it slides away along the wall)
   END_KEEP:0.62,     // nosing into a wall's round end keeps at least this share, deflected round it
@@ -45760,9 +45761,9 @@ const MZA={
   CENTRE_D:6,        // a kart this close to a corridor wall (clearance), running along it, is eased off it...
   CENTRE_V:5,        // ...at up to this many units/s
   FAST:0.45,         // at top speed every assist is this much weaker
-  PAD_V0:62, PAD_V1:128,   // turn pads: GREEN is a drift at this speed...
+  PAD_V0:45, PAD_V1:90,    // turn pads: GREEN is a drift at this speed (faster, a drift cannot hold a turn round a wall end this tight)...
   PAD_A:0.45,        // ...running round the curve: heading within this of its line (rad), not cutting across
-  PAD_HOLD:5,        // green: the line held round the curve (rate, 1/s) ...
+  PAD_HOLD:8,        // green: the line held round the curve (rate, 1/s) ...
   PAD_TURN:3.2,      // ...the nose eased round with it (rate, 1/s)
   PAD_AIM:0.10,      // ...a touch turned in (rad), so the drift does not run wide
   PAD_YEL:0.4,       // yellow: that much of the green help
@@ -45848,10 +45849,10 @@ function mzEase(r,dt){
 // ---- turn pads ----
 const MZ_PAD_IDLE=[[0.10,0.32,0.13],[0.34,0.27,0.05],[0.34,0.08,0.06]];   // unlit: faint green / amber / red kerb
 const MZ_PAD_LIT=[null,[1.0,0.16,0.10],[1.0,0.78,0.10],[0.22,1.0,0.36]];   // lit: red, yellow, green
-function mzTurnGrid(M){ M.tgrd=mzHash(M.turns.map(t=>({t:2, cx:t.x, cz:t.z, R:t.r1+10})), M.grd.ext, 16, 2); }
+function mzTurnGrid(M){ M.tgrd=mzHash(M.turns.map(t=>({t:2, cx:t.x, cz:t.z, R:t.reach})), M.grd.ext, 16, 2); }
 function mzTurnAt(M,x,z){
   const L=mzHashList(M.tgrd,x,z); if(!L) return -1; let best=-1, bd=1e9;
-  for(let i=0;i<L.length;i++){ const Tn=M.turns[L[i]], dx=x-Tn.x, dz=z-Tn.z, d=Math.hypot(dx,dz); if(d<Tn.r0-3 || d>Tn.r1+8) continue;
+  for(let i=0;i<L.length;i++){ const Tn=M.turns[L[i]], dx=x-Tn.x, dz=z-Tn.z, d=Math.hypot(dx,dz); if(d<Tn.r0-3 || d>Tn.reach) continue;
     let rel=Math.atan2(dz,dx)-Tn.a0; rel-=Math.floor(rel/MZ_TAU)*MZ_TAU; if(rel>Tn.a1-Tn.a0+0.25 && rel<MZ_TAU-0.25) continue;
     if(d<bd){ bd=d; best=L[i]; } }
   return best;
@@ -45861,25 +45862,29 @@ function mzTurnAt(M,x,z){
 // out; YELLOW (partly right) gets a part of that help; RED (too fast or slow, cutting across, drifting the
 // wrong way) none, and a drift that is all wrong scrubs a little speed. Driving straight past: unlit.
 function mzTurnPads(r,dt){
-  const M=MAZE; let zi=r.spd>0?mzTurnAt(M,r.x,r.z):-1; const prev=r._mzZone==null?-1:r._mzZone;
+  const M=MAZE; let zi=r.spd>0 && MZA.pads?mzTurnAt(M,r.x,r.z):-1; const prev=r._mzZone==null?-1:r._mzZone;
   let Tn=null, ux=0, uz=0, rho=0, side=0, along=0, rad=0;
   if(zi>=0){ Tn=M.turns[zi]; const dx=r.x-Tn.x, dz=r.z-Tn.z; rho=Math.hypot(dx,dz)||1e-3; ux=dx/rho; uz=dz/rho;
     const hx=Math.sin(r.head), hz=Math.cos(r.head); along=hx*-uz+hz*ux; rad=hx*ux+hz*uz;
     side=(-ux*hz+uz*hx)>=0?1:-1;   // the turn's centre is on this side (+1 left: where steering + turns)
-    const st=r._st||0, intent=(r.drift===1 && r.driftDir===side) || st*side>0.25;
-    if(!intent || rho>Tn.r1+6) zi=-1; }
+    const st=r._mzIn||0, intent=st*side>0.2 && (r.drift!==1 || r.driftDir===side);   // (steering into the turn; a drift the other way, or steering out, is not taking it)
+    if(!intent) zi=-1; }
   if(zi!==prev){
     if(prev>=0 && r._mzPadS===3 && (r._mzPadG||0)>=MZA.PAD_PAY){ r.boostT=Math.max(r.boostT,MZA.PAD_BOOST); r._mzPadB=(r._mzPadB||0)+1; burst(r.x,r.y+1,r.z,0x66ff88,10,40,0.35,3); if(r.you && SFX.boost) SFX.boost(); }
     r._mzZone=zi; r._mzPadG=0; r._mzPadS=0; r._mzPadR=-1; r._mzPadV=0; }
   if(zi<0) return;
-  const s=along>=0?1:-1, cut=Math.abs(Math.atan2(rad, Math.abs(along))), v=r.spd, dr=r.drift===1 && r.driftDir===side;
+  // (the angle: the heading's lean in toward the turn's centre off its curve — a little out is running
+  // wide, a lot in is cutting straight at the wall end)
+  const s=along>=0?1:-1, lean=Math.atan2(-rad, Math.abs(along)), v=r.spd, dr=r.drift===1 && r.driftDir===side;
+  const aOk=lean>=-MZA.PAD_A*0.8 && lean<=MZA.PAD_A*1.6, aPart=lean>=-MZA.PAD_A*1.4 && lean<=MZA.PAD_A*2.3;
   let st=1;
-  if(dr && v>=MZA.PAD_V0 && v<=MZA.PAD_V1 && cut<=MZA.PAD_A) st=3;
-  else if((dr && v>=MZA.PAD_V0-20 && v<=MZA.PAD_V1+15 && cut<=MZA.PAD_A+0.3) || (!r.drift && v>=MZA.PAD_V0 && v<=MZA.PAD_V1 && cut<=MZA.PAD_A)) st=2;
+  const v1=Tn.kind==='end'?MZA.PAD_V1-8:MZA.PAD_V1;   // (a dead end's U is a little tighter)
+  if(dr && v>=MZA.PAD_V0 && v<=v1 && aOk) st=3;
+  else if((dr && v>=MZA.PAD_V0-20 && v<=v1+18 && aPart) || (!r.drift && v>=MZA.PAD_V0 && aOk)) st=2;   // (a clean line without a drift: partly right)
   r._mzPadS=st; Tn.hitS=st; Tn.hitT=0.4; if(r.you){ Tn.youS=st; Tn.youT=0.4; }
   (r._mzPadC||(r._mzPadC=[0,0,0,0]))[st]+=dt;   // (a tally for the tests)
-  if(st>=2){ const k=st===3?1:MZA.PAD_YEL, tx=-uz, tz=ux;
-    if(r._mzPadR<0){ r._mzPadR=Math.max(Tn.r0,Math.min(Tn.r1+6,rho)); r._mzPadV=v; }
+  if(st===3 || (st===2 && r.drift===1)){ const k=st===3?1:MZA.PAD_YEL, tx=-uz, tz=ux;   // (help is for a drift: a grip line through is only shown)
+    if(r._mzPadR<0){ r._mzPadR=Math.max(Tn.line[0],Math.min(Tn.line[1],rho)); r._mzPadV=v; }   // (the line: where it came in, drawn into the turn's drift lane)
     const m=(r._mzPadR-rho)*Math.min(1,MZA.PAD_HOLD*k*dt); r.x+=ux*m; r.z+=uz*m;   // the line held round the curve
     const ca=Math.cos(MZA.PAD_AIM), sa=Math.sin(MZA.PAD_AIM), wx=tx*s*ca-ux*sa, wz=tz*s*ca-uz*sa;
     r.head+=angDiff(Math.atan2(wx,wz), r.head)*Math.min(1,MZA.PAD_TURN*k*dt);
@@ -59808,6 +59813,7 @@ function updateRacer(r,dt){
   r.spd=Math.max(MAZE?-72:-50,Math.min(BOOSTV,r.spd));
 
   // turning (speed-scaled); drift sharpens & charges
+  if(MAZE) r._mzIn=steer;                  // (the driver's own steering, before a drift takes it over: the turn pads read it)
   const vfrac=Math.min(1,Math.abs(r.spd)/MAXV);
   // Turn authority used to fall to HALF at low speed, which is backwards from how a kart
   // reads: you expect to be able to point it when crawling, and you expect it to settle
