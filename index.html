@@ -862,8 +862,8 @@
         <button class="go alt tile on" id="musicbtn">Music: ON</button>
         <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
         <button class="go alt tile on" id="mazeradarbtn">Maze radar: Whole maze</button>
-        <button class="go alt tile" id="mzstartbtn">Ariadne start: One gate</button>
-        <button class="go alt tile" id="mzmazebtn">Ariadne maze: New every race</button>
+        <button class="go alt tile" id="mzstartbtn">Maze start: 1 gate</button>
+        <button class="go alt tile" id="mzmazebtn">Mazes: new each race</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="fsbtn">Fullscreen</button>
       </div>
@@ -44511,9 +44511,11 @@ function edenTick(E, tsec){
 
    THE KIT IS THE GENERATOR. Everything about the maze — its rings, walls, gates, dead-end
    loops, the start antechamber, the route the standings are measured along — comes out of
-   mzMake(seed). Phase 1 races one fixed seed (the course's `seed`), but nothing below assumes
-   it: a race simply builds from whatever seed it is handed (mzSeedNext, which the multiplayer
-   start message carries), so a seed per race later is a one-line change in mzPickSeed().
+   mzMake(seed, mode). Every race gets a fresh maze: a maze NUMBER (#1..#9999; #0 is the
+   original, the course's own `seed`) picked ahead by mzPlan(), so the menu preview, the deck,
+   the countdown and the race all show the same one; the multiplayer start message carries the
+   host's number and start mode (mzSeedNext), so every screen builds the same maze. Two starts:
+   ONE GATE (the maze below) and SIX GATES (MZ6, mzCarve6: one wedge repeated six times).
 
    Layout: concentric RING corridors (ring 1 hugs the egg chamber, ring K is the rim), each cut
    into cells about a corridor wide (a ring doubles its cell count whenever its cells would
@@ -44582,23 +44584,30 @@ function mzPickSeed(t){ return (t&&t.seed!=null) ? t.seed : MZ_SEED_DEFAULT; }  
 const MZ_NO_MAX=9999;
 function mzSeedOf(no){ return (MZ_SEED_DEFAULT+Math.imul(no|0,7919))|0; }
 let MZC=MZ;                         // the board being raced (MZ, or MZ6 for six gates): the floor's terraces and the ring tints read it
-// what the player chose (lab settings): the start ('one', 'six' or 'rand') and the maze ('new' every race, or 'orig': maze #0)
+// what the player chose (lab settings): the start ('one', 'six' or 'rand') and the maze ('new' every race,
+// 'keep': the last one raced, again and again, or 'orig': maze #0)
 let mzStartPref='one', mzMazePref='new';
-try{ const a=localStorage.getItem('sr_mzstart'); if(a==='one'||a==='six'||a==='rand') mzStartPref=a; const b=localStorage.getItem('sr_mzmaze'); if(b==='new'||b==='orig') mzMazePref=b; }catch(_){}
+try{ const a=localStorage.getItem('sr_mzstart'); if(a==='one'||a==='six'||a==='rand') mzStartPref=a; const b=localStorage.getItem('sr_mzmaze'); if(b==='new'||b==='keep'||b==='orig') mzMazePref=b; }catch(_){}
 let mzNext=null;                    // the maze the next race will use, picked ahead ({no, mode}) so the menu preview, the deck and the race agree
 let mzLast=null;                    // the maze last raced ("Same maze")
 try{ const v=JSON.parse(localStorage.getItem('sr_mzlast')||'null'); if(v && v.no>=0 && v.no<=MZ_NO_MAX && (v.mode==='one'||v.mode==='six')) mzLast={no:v.no|0, mode:v.mode}; }catch(_){}
 function mzRand(n){ try{ const a=new Uint32Array(1); crypto.getRandomValues(a); return a[0]%n; }catch(_){ return Math.floor(Math.random()*n); } }   // (not Math.random: picking a maze never shifts a race's own draws)
 function mzPlan(){
-  if(!mzNext) mzNext={no: mzMazePref==='orig' ? 0 : 1+mzRand(MZ_NO_MAX), mode: mzStartPref==='rand' ? (mzRand(2)?'six':'one') : mzStartPref};
+  if(!mzNext) mzNext={no: mzMazePref==='orig' ? 0 : (mzMazePref==='keep' && mzLast) ? mzLast.no : 1+mzRand(MZ_NO_MAX), mode: mzStartPref==='rand' ? (mzRand(2)?'six':'one') : mzStartPref};
   return mzNext;
 }
 function mzLabel(p){ return p ? 'Maze #'+p.no+(p.mode==='six'?' · six gates':'') : ''; }
-// one maze kept made: the menu preview builds the race's maze, so the race itself only builds its meshes
-let mzCacheM=null;
+// the last two mazes made are kept: the menu preview (or a quiet moment on the results screen)
+// makes the next race's maze, so the race itself only builds its meshes, and "Same maze" is ready too
+let mzCacheM=null, mzCacheM2=null;
 function mzGet(no, mode){
-  if(mzCacheM && mzCacheM.no===no && mzCacheM.mode===mode) return mzCacheM;
-  const M=mzMake(mzSeedOf(no), mode); M.no=no; mzCacheM=M; return M;
+  for(const M of [mzCacheM, mzCacheM2]) if(M && M.no===no && M.mode===mode) return M;
+  const M=mzMake(mzSeedOf(no), mode); M.no=no; mzCacheM2=mzCacheM; mzCacheM=M; return M;
+}
+// make a maze ahead, off the race's own start: a moment after the results go up (not mid-race)
+function mzPrefetch(p){
+  if(!p) return; const want={no:p.no, mode:p.mode};
+  setTimeout(()=>{ if(state==='race'||state==='count') return; try{ mzGet(want.no, want.mode); }catch(_){} }, 900);
 }
 function mzRnd(seed){ let a=seed|0; return ()=>{ a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 // the floor terraces up toward the egg: each ring is level, the step up lies across its inner wall
@@ -62254,6 +62263,9 @@ function netRecv(m){
       if(NET.host) netBroadcastRoster();
       netRenderLobby();
       break;
+    case 'mzpre':                             // the host's next maze: make it now, while the results are up
+      if(!NET.host && m.maze && m.maze.no>=0) mzPrefetch({no:m.maze.no|0, mode:m.maze.mode==='six'?'six':'one'});
+      break;
     case 'start':
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
@@ -62993,6 +63005,8 @@ function endRace(){
     }
   }
   mzFinishUI();
+  if(MAZE && !gpActive && !(NET.on && NET.auth && !NET.host)){ const nx=mzPlan(); mzPrefetch(nx);   // the next maze, made while the results are read
+    if(NET.on && NET.auth && NET.host) netSend({t:'mzpre', maze:{no:nx.no, mode:nx.mode}}); }   // (the room's screens make it too)
   $('finish').classList.remove('hidden');
   // networked: a last snapshot (and the host's last batch, with the AI's times) so the finish
   // is on record everywhere, then the room STAYS OPEN for a rematch — see netRaceDoneUI
@@ -63417,7 +63431,8 @@ function paintSummary(){
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
     if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? (p=>'maze #'+p.no+' · '+(p.mode==='six'?'six gates':'one gate')+' · run to the egg')(mzPlan()) : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
   const el=$('picksum'); if(!el||!chosenType) return;
-  el.textContent=TRACKS[selTrack].name+' · '+chosenType.name+' · '+difficulty;
+  const mp=TRACKS[selTrack].maze?mzPlan():null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
+  el.textContent=TRACKS[selTrack].name+(mp?' #'+mp.no+(mp.mode==='six'?' · six gates':''):'')+' · '+chosenType.name+' · '+difficulty;
 }
 function paintRacer(){
   const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
@@ -63698,12 +63713,13 @@ setupFullscreen();
 // ---- Ariadne's start (one gate / six gates / either) and maze (a new one every race / the original) ----
 (function setupMazeBtns(){
   const a=$('mzstartbtn'), b=$('mzmazebtn'); if(!a||!b) return;
-  const SL={one:'One gate', six:'Six gates', rand:'Random'}, ML={new:'New every race', orig:'The original'};
-  const paint=()=>{ a.textContent='Ariadne start: '+SL[mzStartPref]; a.classList.toggle('on',mzStartPref!=='one');
-    b.textContent='Ariadne maze: '+ML[mzMazePref]; b.classList.toggle('on',mzMazePref!=='new'); };
+  const SL={one:'1 gate', six:'6 gates', rand:'random'};   // (Ariadne's: the labyrinth)
+  const paint=()=>{ a.textContent='Maze start: '+SL[mzStartPref]; a.classList.toggle('on',mzStartPref!=='one');
+    b.textContent='Mazes: '+(mzMazePref==='orig'?'the original':mzMazePref==='keep'&&mzLast?'keep #'+mzLast.no:'new each race'); b.classList.toggle('on',mzMazePref!=='new'); };
   const changed=()=>{ mzNext=null; paint(); paintSummary(); };
   a.onclick=()=>{ mzStartPref={one:'six', six:'rand', rand:'one'}[mzStartPref]; try{ localStorage.setItem('sr_mzstart',mzStartPref); }catch(_){} changed(); };
-  b.onclick=()=>{ mzMazePref=mzMazePref==='new'?'orig':'new'; try{ localStorage.setItem('sr_mzmaze',mzMazePref); }catch(_){} changed(); };
+  b.onclick=()=>{ mzMazePref=mzMazePref==='new'?(mzLast?'keep':'orig'):mzMazePref==='keep'?'orig':'new'; try{ localStorage.setItem('sr_mzmaze',mzMazePref); }catch(_){} changed(); };
+  window.addEventListener('pageshow',paint); document.getElementById('gearbtn').addEventListener('click',paint);   // (the last maze changes as you race)
   paint(); })();
 // in-race "car radio" seek knobs — tap either one to step to the prev/next station,
 // dashboard-style: a quick tuning static burst + glow, then a frequency-readout toast.
