@@ -35982,6 +35982,44 @@ const TC_HOR=0xb4b0e2;                         // the haze the land fades toward
 const TC_SUN=new T.Vector3(-0.93,0.05,0.37).normalize();   // low in the south-west, over the sea from the straight
 const TC_SEA_Y=-10;                            // under the lowest banked edge of the deck (-7.3)
 const TC_T={value:0};
+/* THE PULSE: on every bar of her song the sun sends out a wave of light, and the card's colour
+   fields light up in its path one segment at a time, each as a crisp step (0.12 s in the colour
+   one step warmer, then two steps down through its own colour brightened, then gone: a test
+   card switching, not a glow; see tcLit). In order (s after the downbeat): the sun's rings take
+   the bars' colours (0), the sunburst's rays shoot out in three steps (0-0.06), the sky's bands
+   light band by band from the sun outward, the whole band at once (0.10-0.43), each drip runs
+   down after its band and the sun's road on the sea walks toward the viewer row by row (0.14-
+   0.5); then at course level a straight front comes in off the sea from the sun and crosses
+   the island in strips (0.46-1.16): the ripples, the windbreaks' bars, the huts (in the bars'
+   order), the stair (step by step, climbing), umbrellas, balls, boards, the lantern, the gate's
+   bars and the wave's lit inside (ring by ring, foot to lip). Ink, white and the shoulders'
+   grey never light, so the drawing holds; between waves nothing differs from the still. The
+   phrase (every fourth bar) is the full wave, the bars between it softer. All on two shared
+   uniforms (tcPulseTick) and one float attribute on the props; no draw call added. */
+const TC_PW={value:new T.Vector4(9,0,9,0)};       // the latest two waves: age (s) and strength of each
+const TC_PA={value:new T.Vector4(0.93,-0.37,0,1/3000)};   // the course-level front: the axis away from the sun (xz), where it starts, 1/speed (set by tcGround)
+const TC_PULSE=`
+  uniform vec4 uPW; uniform vec4 uPA;
+  float tcPl(float a){ return a<0.0?0.0: a<0.12?1.0: a<0.24?0.50: a<0.38?0.25: 0.0; }
+  float tcPulse(float arr){ return uPW.y*tcPl(uPW.x-arr)+uPW.w*tcPl(uPW.z-arr); }
+  float tcArrW(vec2 xz){ return floor((0.46+max(0.0,dot(xz,uPA.xy)-uPA.z)*uPA.w)/0.035)*0.035; }
+  // LIT, kept to the card's own colours: while the wave is on a segment (its first step, 0.12 s)
+  // it takes the colour one step warmer — a band of the sky the band below
+  // it, the sun's colours running outward through the card; then it falls back through its own
+  // colour brightened in its own hue, never toward white (sRGB, as the domes write it)
+  vec3 tcLift(vec3 c, float L){ return min(c*(1.0+0.35*L), vec3(1.0)); }
+  vec3 tcLit(vec3 c, vec3 cw, float L){ return L>0.55 ? min(cw*(1.0+0.12*L), vec3(1.0)) : tcLift(c, L); }
+  // ...and on the props (linear colour, no band to borrow): the hue turned toward the sun's yellow
+  // and the value full, the way the card's 75% bars switch to 100%
+  vec3 tcHsv(vec3 c){ vec4 K=vec4(0.0,-1.0/3.0,2.0/3.0,-1.0); vec4 p=mix(vec4(c.bg,K.wz),vec4(c.gb,K.xy),step(c.b,c.g));
+    vec4 q=mix(vec4(p.xyw,c.r),vec4(c.r,p.yzx),step(p.x,c.r)); float d=q.x-min(q.w,q.y);
+    return vec3(abs(q.z+(q.w-q.y)/(6.0*d+1e-10)), d/(q.x+1e-10), q.x); }
+  vec3 tcLitL(vec3 c, float L){
+    if(L<=0.55) return min(c*(1.0+0.8*L), vec3(1.0));
+    vec3 h=tcHsv(c); float d=fract(0.6667-h.x)-0.5; h.x=fract(h.x+clamp(d,-0.10,0.10));
+    vec3 k=clamp(abs(fract(h.xxx+vec3(1.0,0.6667,0.3333))*6.0-3.0)-1.0,0.0,1.0);
+    return mix(vec3(1.0),k,h.y); }`;
+const tcArrJ=(x,z)=>{ const A=TC_PA.value; return Math.floor((0.46+Math.max(0,x*A.x+z*A.y-A.z)*A.w)/0.035)*0.035; };
 const TC_CANVAS={};
 let TC_F=null;                                  // this build's field (ground oracle); set by tcGround
 const tcLin=h=>new T.Color(h).convertSRGBToLinear();
@@ -36037,8 +36075,9 @@ function tcFlat(name, o){
   o=o||{};
   const mat=new T.MeshBasicMaterial(Object.assign({color:0xffffff}, o.mat||{}));
   mat.onBeforeCompile=sh=>{
-    sh.uniforms.uT=TC_T;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;')
+    sh.uniforms.uT=TC_T; if(o.pulse){ sh.uniforms.uPW=TC_PW; sh.uniforms.uPA=TC_PA; }
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+(o.pulse?'\nattribute float aPA; varying float vPA;':''))
+      .replace('#include <begin_vertex>','#include <begin_vertex>\n'+(o.pulse?'vPA=aPA;':''))
       .replace('#include <begin_vertex>','#include <begin_vertex>\n'+(o.sway?TC_SWAY:''))
       .replace('#include <project_vertex>',`#include <project_vertex>
         { vec3 tn=normal; vec4 tw=vec4(transformed,1.0);
@@ -36047,8 +36086,11 @@ function tcFlat(name, o){
           #endif
           vTN=normalize(mat3(modelMatrix)*tn); vTW=(modelMatrix*tw).xyz; }`);
     if(o.flat===false) return;
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+(o.hatch?TC_GLSL:''))
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+(o.hatch?TC_GLSL:'')+(o.pulse?TC_PULSE+'\nvarying float vPA;':''))
       .replace('#include <color_fragment>',`#include <color_fragment>
+        ${o.pulse?`// the pulse lights the bars' colours only (ink and white hold)
+        { vec3 dc=diffuseColor.rgb; float sat=max(max(dc.r,dc.g),dc.b)-min(min(dc.r,dc.g),dc.b);
+          diffuseColor.rgb=tcLitL(dc, tcPulse(vPA)*smoothstep(0.26,0.32,sat)); }`:''}
         { vec3 tn=normalize(vTN); if(!gl_FrontFacing) tn=-tn; float k=dot(tn, vec3(-0.56,0.62,0.55));
           ${o.hatch?`// hatch: the shade is drawn, not tinted — a step down and ink hatching over it, single in
           // the half shade and crossed in the deep, on the surface in world space
@@ -36059,7 +36101,7 @@ function tcFlat(name, o){
           diffuseColor.rgb=mix(diffuseColor.rgb, ${arcL3(TC_INK)}, max(h1,h2));`
           :`diffuseColor.rgb*= tn.y>0.72 ? 1.0 : (k>0.10 ? 0.95 : (k>-0.35 ? 0.82 : 0.72));`} }`);
   };
-  mat.customProgramCacheKey=()=>'tc-'+name+(o.sway?'-s':'')+(o.flat===false?'-n':'')+(o.hatch?'-h':'');
+  mat.customProgramCacheKey=()=>'tc-'+name+(o.sway?'-s':'')+(o.flat===false?'-n':'')+(o.hatch?'-h':'')+(o.pulse?'-p':'');
   return mat;
 }
 /* The keyline: the fill's own geometry, welded, drawn back-faced in ink and pushed out along
@@ -36118,23 +36160,25 @@ function tcBatch(geo, list, mat, chunk, hull){
 let TC_STATIC=[];
 function tcStatic(geo, list){ if(list.length) TC_STATIC.push([geo, list]); }
 function tcFlushStatic(){
-  const P=[], N=[], C=[], M=new T.Matrix4(), NM=new T.Matrix3(), q=new T.Quaternion(), e=new T.Euler(), pv=new T.Vector3(), sv=new T.Vector3(), v=new T.Vector3(), c=new T.Color(), vc=new T.Color();
+  const P=[], N=[], C=[], PA=[], M=new T.Matrix4(), NM=new T.Matrix3(), q=new T.Quaternion(), e=new T.Euler(), pv=new T.Vector3(), sv=new T.Vector3(), v=new T.Vector3(), c=new T.Color(), vc=new T.Color();
   for(const [geo0, list] of TC_STATIC){
     const geo=geo0.index?geo0.toNonIndexed():geo0; if(!geo.attributes.normal) geo.computeVertexNormals();
     const pos=geo.attributes.position, nor=geo.attributes.normal, col=geo.attributes.color;
     for(const r of list){
       pv.set(r.x,r.y,r.z); if(r.q) q.copy(r.q); else q.setFromEuler(e.set(r.rx||0, r.ry||0, r.rz||0, r.o||'XYZ'));
       sv.set(r.s, r.sy!=null?r.sy:r.s, r.sz!=null?r.sz:r.s); M.compose(pv,q,sv); NM.getNormalMatrix(M);
-      c.copy(tcLin(r.c==null?0xffffff:r.c));
-      for(let i=0;i<pos.count;i++){ v.fromBufferAttribute(pos,i).applyMatrix4(M); P.push(v.x,v.y,v.z);
+      c.copy(tcLin(r.c==null?0xffffff:r.c)); const pa=r.pa!=null?r.pa:tcArrJ(r.x,r.z);   // (when the pulse reaches it)
+      for(let i=0;i<pos.count;i++){ v.fromBufferAttribute(pos,i).applyMatrix4(M); P.push(v.x,v.y,v.z); PA.push(pa);
         v.fromBufferAttribute(nor,i).applyMatrix3(NM).normalize(); N.push(v.x,v.y,v.z);
         if(col){ vc.fromBufferAttribute(col,i); C.push(vc.r*c.r, vc.g*c.g, vc.b*c.b); } else C.push(c.r,c.g,c.b); } } }
   TC_STATIC=[];
   if(!P.length) return;
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('normal',new T.Float32BufferAttribute(N,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+  g.setAttribute('aPA',new T.Float32BufferAttribute(PA,1));
   g.computeBoundingSphere();
-  trackGroup.add(new T.Mesh(g, tcFlat('static',{hatch:true, mat:{vertexColors:true, side:T.DoubleSide}})));
-  trackGroup.add(new T.Mesh(hanaHullGeo(g), tcHull('static')));
+  trackGroup.add(new T.Mesh(g, tcFlat('static',{hatch:true, pulse:true, mat:{vertexColors:true, side:T.DoubleSide}})));
+  const hg=hanaHullGeo(g); hg.deleteAttribute('aPA');
+  trackGroup.add(new T.Mesh(hg, tcHull('static')));
 }
 
 /* THE SKY: the sunset in the card's colours (TC_BANDS). Bands by height, arched over the sun
@@ -36152,12 +36196,16 @@ function tcFlushStatic(){
 function tcSky(){
   const S=TC_SUN, G=arcG3;
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, extensions:{derivatives:true},
-    uniforms:{ uT:TC_T, uSun:{value:S.clone()} },
+    uniforms:{ uT:TC_T, uSun:{value:S.clone()}, uPW:TC_PW, uPA:TC_PA },
     vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
       varying vec3 vP; uniform float uT; uniform vec3 uSun;
       ${TC_GLSL}
       ${TC_BANDS}
+      ${TC_PULSE}
+      // the pulse reaches a band of the sky a step after the one below it (the bands arch over
+      // the sun, so band by band is outward from it): the whole band at once, a test card switching
+      float tcArrB(float b, float th){ return 0.10+b*0.065; }
       float cloud(vec2 p, float r){
         float d=length(p-vec2(-0.86*r,-0.04*r))-0.60*r;
         d=min(d,length(p-vec2(-0.12*r,0.26*r))-0.84*r);
@@ -36197,12 +36245,16 @@ function tcSky(){
         float ang=atan(dot(d,s2),dot(d,s1)), ra=(ang/6.2831853+0.5)*32.0, ri=floor(ra), fr=fract(ra);
         float rayR=0.27+0.10*tcH(vec2(ri,3.3)), odd=step(0.5,mod(ri,2.0));
         float inRay=odd*step(th,rayR)*step(0.13,th);
-        vec3 c=tcBandC(b-inRay);
+        vec3 c=tcBandC(b-inRay), cw=tcBandC(inRay>0.5 ? b-2.0 : max(b-1.0,0.0));   // (the yellow band holds its colour: white there would flash the horizon)
+        // (the pulse: the rays shoot out from the sun in three steps, then the bands light in turn)
+        float arr=inRay>0.5 ? 0.03*floor((th-0.13)/0.08) : tcArrB(b,th);
         // THE MELT: the band above runs down into this one in drips (none inside the burst)
         float far=step(0.46,th);
         float dA=(b<4.5)?mix(1.0,drip(b,yA,tb,ua,ce),far):1.0;
         float dB=(b>0.5)?mix(1.0,drip(b-1.0,-yB,tb,ua,ce),far):1.0;
-        if(dA<0.0) c=tcBandC(b+1.0);
+        // (a drip lights after its band, running down in three steps)
+        if(dA<0.0){ c=tcBandC(b+1.0); cw=tcBandC(b); arr=tcArrB(b+1.0,th)+0.05+0.045*floor(clamp(yA/(0.92*tb),0.0,0.999)*3.0); }
+        c=tcLit(c, cw, tcPulse(arr));
         // the edges: brush lines, thick and thin along their length, broken where a drip runs out
         float lwA=0.0012+0.0046*n1p(ua*20.0+b*5.3,20.0), lwB=0.0012+0.0046*n1p(ua*20.0+(b-1.0)*5.3,20.0);
         float ink=(1.0-smoothstep(lwA,lwA+aa,abs(yA)))*smoothstep(-aa,aa,dA);
@@ -36246,11 +36298,13 @@ function tcSky(){
             c=mix(c, mc, 1.0-smoothstep(mr, mr+aa, ml)); } }
         // THE SUN: a white disc in rings of ink and white, the outer ring broken into dashes that
         // turn once in four minutes
+        // (as a wave leaves, its rings ring out in the bars: yellow, red, magenta from the middle)
+        float sl=step(0.45,tcPulse(0.0));
         float dash=step(0.45,fract(ang/6.2831853*20.0+uT*0.004));
-        c=mix(c, ${G(TC_INK)}, dash*(1.0-smoothstep(0.0042,0.0042+aa,abs(th-0.121))));
-        c=mix(c, ${G(TC_INK)}, 1.0-smoothstep(0.106, 0.106+aa, th));
+        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[2])},sl), dash*(1.0-smoothstep(0.0042,0.0042+aa,abs(th-0.121))));
+        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[1])},sl), 1.0-smoothstep(0.106, 0.106+aa, th));
         c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.096, 0.096+aa, th));
-        c=mix(c, ${G(TC_INK)}, 1.0-smoothstep(0.086, 0.086+aa, th));
+        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[0])},sl), 1.0-smoothstep(0.086, 0.086+aa, th));
         c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.072, 0.072+aa, th));
         gl_FragColor=vec4(c,1.0);
       }`});
@@ -36408,13 +36462,14 @@ function tcSea(F){
   for(let k=0;k<NX*NZ;k++){ const v=Math.min(255,Math.round(D[k])); data[k*4]=v; data[k*4+1]=v; data[k*4+2]=v; data[k*4+3]=255; }
   const tex=new T.DataTexture(data, NX, NZ, T.RGBAFormat); tex.magFilter=tex.minFilter=T.LinearFilter; tex.needsUpdate=true;
   const mat=new T.ShaderMaterial({ fog:false, extensions:{derivatives:true},
-    uniforms:{ uT:TC_T, uSD:{value:tex}, uBox:{value:new T.Vector4(x0-CS*0.5, z0-CS*0.5, NX*CS, NZ*CS)}, uSun:{value:TC_SUN.clone()} },
+    uniforms:{ uT:TC_T, uSD:{value:tex}, uBox:{value:new T.Vector4(x0-CS*0.5, z0-CS*0.5, NX*CS, NZ*CS)}, uSun:{value:TC_SUN.clone()}, uPW:TC_PW, uPA:TC_PA },
     vertexShader:`varying vec3 vW; void main(){ vW=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.0); }`,
     fragmentShader:`
       varying vec3 vW; uniform float uT; uniform sampler2D uSD; uniform vec4 uBox; uniform vec3 uSun;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
       ${TC_GLSL}
       ${TC_BANDS}
+      ${TC_PULSE}
       void main(){
         vec2 uv=(vW.xz-uBox.xy)/uBox.zw;
         float sd=255.0;
@@ -36425,27 +36480,28 @@ function tcSea(F){
         // down, as a painter keys a reflection warmer than the sky above it)
         vec3 V=normalize(vW-cameraPosition), Rf=vec3(V.x,-V.y,V.z);
         float rel=asin(clamp(-V.y,0.0,1.0)), raz=atan(V.z,V.x), rth=acos(clamp(dot(Rf,uSun),-1.0,1.0));
-        vec3 rc=tcBandC(tcBand(max(rel*0.55,0.002),raz,rth,uT));
+        float rb=tcBand(max(rel*0.55,0.002),raz,rth,uT); vec3 rc=tcBandC(rb);
         // far out, where the ripples are too fine to draw, it lies in long broken strokes along
         // the horizon on rows of even screen height that drift a little
         { float rq=rel/0.016, row=floor(rq), fr=fract(rq), fw=fwidth(rq);
           float da=fract(raz/6.2831853*17.0+h21(vec2(row,5.0))*3.0+uT*0.006*(h21(vec2(row,6.0))-0.5));
           float on=(1.0-smoothstep(0.40,0.40+fw,fr))*smoothstep(0.04,0.04+fw,fr)*step(0.38+0.30*h21(vec2(row,7.0)),da);
           on*=(1.0-smoothstep(0.30,0.60,fw))*(1.0-smoothstep(0.035,0.075,rel))*smoothstep(26.0,60.0,sd);
-          c=mix(c, rc, on); }
+          c=mix(c, tcLit(rc, tcBandC(rb-1.0), tcPulse(0.15+rb*0.065)), on); }   // (lit as the band it mirrors is)
         // ripples, rolling in: lines of constant distance from the shore, broken into strokes,
         // brush-weighted (fat at the shore, thinning out to sea, swelling along each line); white
         // foam at the shore, and further out each line carries the colour of the sky it reflects
         // (far off only every third line is drawn, a little heavier, so the lagoon still reads as
         // water from the dunes; a line keeps its number as it rolls in, so nothing pops)
         float q=(sd+uT*2.4)/15.0+0.06*sin(vW.x*0.021+vW.z*0.013);
+        float Lw=tcPulse(tcArrW(vW.xz));                       // (the course-level front, in strips)
         float lod=smoothstep(260.0,520.0,D), q3=step(0.5,mod(floor(q),3.0));
         float fq=fwidth(q)*(1.0-0.62*lod);
-        float rw=mix(0.15,0.06,smoothstep(4.0,120.0,sd))*(0.55+0.9*tcN(vW.xz/38.0+vec2(floor(q)*2.9,0.0)))*(1.0+0.8*lod);
+        float rw=mix(0.15,0.06,smoothstep(4.0,120.0,sd))*(0.55+0.9*tcN(vW.xz/38.0+vec2(floor(q)*2.9,0.0)))*(1.0+0.8*lod)*(1.0+0.4*Lw);
         float rl=1.0-smoothstep(rw, rw+fwidth(q)*1.2, abs(fract(q)-0.5));
         float gap=step(0.22, fract((vW.x*0.7+vW.z*0.7)/90.0+h21(vec2(floor(q),2.0))));
         rl*=gap*(1.0-smoothstep(150.0,230.0,sd))*(1.0-smoothstep(0.18,0.40,fq))*step(3.5,sd)*(1.0-q3*lod);
-        c=mix(c, mix(${arcG3(TC_WHITE)}, rc, smoothstep(22.0,52.0,sd)), rl);
+        c=mix(c, mix(${arcG3(TC_WHITE)}, tcLit(rc, tcBandC(rb-1.0), Lw), smoothstep(22.0,52.0,sd)), rl);
         // the foam at the edge, scalloped
         float fe=sd-1.6*sin(vW.x*0.11+uT*0.6)-1.2*sin(vW.z*0.13-uT*0.45);
         float fw=fwidth(sd)+0.05;
@@ -36457,11 +36513,12 @@ function tcSea(F){
           float da=abs(vd.x*sn.y-vd.y*sn.x);
           // rows even in screen height (the angle below the horizon), so they hold up at grazing distances
           float rq=atan(max(cameraPosition.y-vW.y,1.0)/D)/0.021, row=floor(rq), fr=fract(rq), fr2=fwidth(rq);
-          float wd=(0.030+0.050*smoothstep(1200.0,80.0,D))*(0.30+0.70*h21(vec2(row,3.0)));
+          float Lr=tcPulse(0.14+row*0.03);                   // (the wave walks down the sun's road toward the viewer, row by row)
+          float wd=(0.030+0.050*smoothstep(1200.0,80.0,D))*(0.30+0.70*h21(vec2(row,3.0)))*(1.0+0.7*Lr);
           float on=(1.0-smoothstep(0.40, 0.40+fr2, fr))*smoothstep(0.0, fr2+0.02, fr)*(1.0-smoothstep(wd*0.92, wd, da));
           on*=smoothstep(70.0,150.0,D)*(1.0-smoothstep(0.35,0.7,fr2));
           float k=da/wd;
-          vec3 sc=k<0.38? ${arcG3(TC_WHITE)} : k<0.70 ? ${arcG3(TC_SKY[0])} : ${arcG3(TC_SKY[1])};
+          vec3 sc=k<0.38? ${arcG3(TC_WHITE)} : tcLift(k<0.70 ? ${arcG3(TC_SKY[0])} : ${arcG3(TC_SKY[1])}, Lr);
           c=mix(c, sc, on*step(0.0,fac-0.2));
         }
         gl_FragColor=vec4(c,1.0);
@@ -36472,6 +36529,10 @@ function tcSea(F){
 }
 function tcGround(inS, tunIdx){
   TC_STATIC=[];
+  // the pulse's course-level front: in off the sea from the sun, over the island in 0.7 s
+  { const l=Math.hypot(TC_SUN.x,TC_SUN.z), ax=-TC_SUN.x/l, az=-TC_SUN.z/l; let lo=1e9, hi=-1e9;
+    for(const s of SAMP){ const d=s.p.x*ax+s.p.z*az; lo=Math.min(lo,d); hi=Math.max(hi,d); }
+    TC_PA.value.set(ax, az, lo-120, 0.70/(hi-lo+240)); }
   TC_F=tcField(inS, tunIdx);
   tcTerrain(TC_F); tcSea(TC_F);
   return TC_F;
@@ -36533,21 +36594,30 @@ function tcDeck(inS, tunIdx){
   const wg=new T.BufferGeometry(); wg.setAttribute('position',new T.Float32BufferAttribute(W,3)); wg.setAttribute('color',new T.Float32BufferAttribute(WC,3)); wg.setIndex(WI);
   trackGroup.add(new T.Mesh(wg, new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide})));
   // windbreaks: laterals are HORIZONTAL, as the physics measures its walls
-  const P=[], C=[], h=3.4, SEQ=[1,2,3,4,5,6];
+  const P=[], C=[], PA=[], h=3.4, SEQ=[1,2,3,4,5,6];
   for(const [side,l0,l1] of [[-inS,29.3,32.3],[inS,49.3,52.3]]){
     for(let i=0;i<STEPS;i++){ if(inT2(i)) continue;
       const A=SAMP[i], B=SAMP[(i+1)%STEPS], k=(i/3)|0;
       col.copy(tcLin(k%2?TC_INK:TC_BARS[SEQ[(k>>1)%6]]));
       const a0=at(A,side*l0), a1=at(A,side*l1), b0=at(B,side*l0), b1=at(B,side*l1);
       const ta=Math.max(a0.y,a1.y)+h, tb=Math.max(b0.y,b1.y)+h;
-      const q=(p0,p1,p2,p3,f)=>{ for(const v of [p0,p1,p2, p0,p2,p3]){ P.push(v[0],v[1],v[2]); C.push(col.r*f,col.g*f,col.b*f); } };
+      const S3=SAMP[(k*3)%STEPS], pa=tcArrJ(S3.p.x+S3.n.x*side*l0, S3.p.z+S3.n.z*side*l0);   // (one arrival per stripe)
+      const q=(p0,p1,p2,p3,f)=>{ for(const v of [p0,p1,p2, p0,p2,p3]){ P.push(v[0],v[1],v[2]); C.push(col.r*f,col.g*f,col.b*f); PA.push(pa); } };
       q([a0.x,a0.y-1,a0.z],[b0.x,b0.y-1,b0.z],[b0.x,tb,b0.z],[a0.x,ta,a0.z],0.90);
       q([a0.x,ta,a0.z],[b0.x,tb,b0.z],[b1.x,tb,b1.z],[a1.x,ta,a1.z],1.0);
       q([a1.x,ta,a1.z],[b1.x,tb,b1.z],[b1.x,b1.y-1,b1.z],[a1.x,a1.y-1,a1.z],0.78);
       if(inT2(i+1)||inT2(i-1)){ const e=inT2(i+1)?[b0,b1,tb]:[a0,a1,ta];
         q([e[0].x,e[0].y-1,e[0].z],[e[0].x,e[2],e[0].z],[e[1].x,e[2],e[1].z],[e[1].x,e[1].y-1,e[1].z],0.85); } } }
   const pg=new T.BufferGeometry(); pg.setAttribute('position',new T.Float32BufferAttribute(P,3)); pg.setAttribute('color',new T.Float32BufferAttribute(C,3));
-  trackGroup.add(new T.Mesh(pg, new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide})));
+  pg.setAttribute('aPA',new T.Float32BufferAttribute(PA,1));
+  // the pulse lights the bars' stripes as the front crosses them, stripe by stripe (the ink ones hold)
+  const pm=new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide});
+  pm.onBeforeCompile=sh=>{ sh.uniforms.uPW=TC_PW; sh.uniforms.uPA=TC_PA;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute float aPA; varying float vPA;').replace('#include <begin_vertex>','#include <begin_vertex>\n vPA=aPA;');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vPA;'+TC_PULSE)
+      .replace('#include <color_fragment>','#include <color_fragment>\n { vec3 dc=diffuseColor.rgb; diffuseColor.rgb=tcLitL(dc, tcPulse(vPA)*step(0.3,max(max(dc.r,dc.g),dc.b)-min(min(dc.r,dc.g),dc.b))); }'); };
+  pm.customProgramCacheKey=()=>'tc-wind';
+  trackGroup.add(new T.Mesh(pg, pm));
 }
 
 // clearance of a ground point from every leg of the deck: the deck ends at 35 outside and
@@ -36576,7 +36646,7 @@ function tcGate(inS){
   const bot=deck+22+Math.abs(Math.sin(s.bank||0))*62, top=bot+14;
   for(const lat of [Lo,Li]){ const p=at(lat,0), g=F.footAt(p.x,p.z,3)-2, h=top+2-g; P.push({x:p.x,y:g+h/2,z:p.z,s:4.5,sy:h,sz:4.5,ry,c:TC_INK}); }
   for(let b=0;b<7;b++){ const lat=mid-span/2+span*(b+0.5)/7;
-    const p=at(lat,(bot+top)/2); L.push({x:p.x,y:p.y,z:p.z,s:span/7,sy:top-bot,sz:3.4,ry,c:TC_BARS[6-b]}); }
+    const p=at(lat,(bot+top)/2); L.push({x:p.x,y:p.y,z:p.z,s:span/7,sy:top-bot,sz:3.4,ry,c:TC_BARS[6-b],pa:tcArrJ(s.p.x,s.p.z)+b*0.03}); }
   tcStatic(new T.BoxGeometry(1,1,1), L.concat(P));
 }
 
@@ -36639,10 +36709,11 @@ function tcTunnel(tunIdx, inS){
     return [v[0]+(o[0]-v[0])*f, v[1]+(o[1]-v[1])*f, v[2]+(o[2]-v[2])*f, f, v[3]]; })),3,null);
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aW',new T.Float32BufferAttribute(A,3)); g.setIndex(I);
   const B=TC_BARS, G=arcG3;
-  const mat=new T.ShaderMaterial({ side:T.DoubleSide, fog:false, extensions:{derivatives:true}, uniforms:{ uT:TC_T },
-    vertexShader:`attribute vec3 aW; varying vec3 vA; void main(){ vA=aW; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`varying vec3 vA; uniform float uT;
+  const mat=new T.ShaderMaterial({ side:T.DoubleSide, fog:false, extensions:{derivatives:true}, uniforms:{ uT:TC_T, uPW:TC_PW, uPA:TC_PA },
+    vertexShader:`attribute vec3 aW; varying vec3 vA; varying vec2 vX; void main(){ vA=aW; vX=(modelMatrix*vec4(position,1.0)).xz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`varying vec3 vA; varying vec2 vX; uniform float uT;
       ${TC_GLSL}
+      ${TC_PULSE}
       void main(){
         float a=vA.x, side=vA.y, s=vA.z; vec3 c;
         float fa=fwidth(a)+1e-4;
@@ -36658,6 +36729,8 @@ function tcTunnel(tunIdx, inS){
           // inside: the bars as light through the water, inked at each change
           float b=a+0.025*sin(s*0.045-uT*0.3);
           c= b<0.20? ${G(B[6])} : b<0.40? ${G(B[2])} : b<0.60? ${G(B[3])} : b<0.80? ${G(TC_SKY[0])} : ${G(TC_WHITE)};
+          vec3 cw= b<0.20? ${G(B[2])} : b<0.40? ${G(B[3])} : b<0.60? ${G(TC_SKY[0])} : ${G(TC_WHITE)};
+          c=tcLit(c, cw, tcPulse(tcArrW(vX)+0.03*floor(clamp(b,0.0,0.99)*5.0)));   // (the pulse: ring by ring as the front runs through, foot to lip)
           float e=min(min(abs(b-0.20),abs(b-0.40)),min(abs(b-0.60),abs(b-0.80)));
           c=mix(c, ${G(TC_INK)}, 1.0-smoothstep(0.004, 0.004+fa, e));
           // flow lines: ink strokes sweeping up the face and over, on an uneven stride
@@ -36852,7 +36925,7 @@ function tcScenery(inS, tunIdx){
     const P=seat(u, side, out, span/2+2, DD/2+4, (x,z,s)=>Math.atan2(-s.n.x*side,-s.n.z*side), out+200); if(!P) return;
     const ry=P.ry, ca=Math.cos(ry), sa=Math.sin(ry);
     for(let b=0;b<7;b++){ const lx=(b-3)*(W+3), x=P.x+lx*ca, z=P.z-lx*sa, g=F.footAt(x,z,W*0.5)-2.5, h=HH+2.5+(b%3)*0.0;
-      bodies.push({x, y:g, z, s:W, sy:h, sz:DD, ry, c:TC_BARS[b]});
+      bodies.push({x, y:g, z, s:W, sy:h, sz:DD, ry, c:TC_BARS[b], pa:tcArrJ(P.x,P.z)+b*0.035});
       roofs.push({x, y:g+h, z, s:W, sy:W*0.55, sz:DD, ry, c:TC_WHITE});
       doors.push({x:x+sa*(DD/2+0.15), y:g+2.5, z:z+ca*(DD/2+0.15), s:W*0.34, sy:HH*0.58, sz:0.4, ry, c:TC_INK}); } };
   hutRow(0.985,-inS,52); hutRow(0.235,inS,74); hutRow(0.47,-inS,60); hutRow(0.86,inS,84); hutRow(0.60,inS,80);
@@ -36957,7 +37030,7 @@ function tcScenery(inS, tunIdx){
                   {x, y:top+16, z, s:r0*1.6, sy:6, sz:r0*1.6, c:TC_WHITE});
       const thAt=k=>k/per*Math.PI*2+0.6, yAt=k=>y0+36+k*rise;
       for(let k=0;k<n;k++){ const th=thAt(k), rc=(r0+r1)/2;
-        stairB.push({x:x+Math.cos(th)*rc, y:yAt(k), z:z+Math.sin(th)*rc, s:r1-r0+2, sy:8, sz:34, ry:-th, c:TC_BARS[k%7]});
+        stairB.push({x:x+Math.cos(th)*rc, y:yAt(k), z:z+Math.sin(th)*rc, s:r1-r0+2, sy:8, sz:34, ry:-th, c:TC_BARS[k%7], pa:tcArrJ(x,z)+k*0.02});
         stairB.push({x:x+Math.cos(th)*(r1-3), y:yAt(k)+10, z:z+Math.sin(th)*(r1-3), s:1.6, sy:13, sz:1.6, ry:-th, c:TC_INK}); }   // balusters
       // the handrail: an ink helix over the steps' outer ends, the line that says spiral stair from anywhere
       { const RP=[], M=n*6, R=r1-3, rr=1.6, ring=[];
@@ -37069,8 +37142,34 @@ function tcScenery(inS, tunIdx){
 // (no Object3D at module level: its constructor draws a UUID from Math.random, which would
 // shift every random texture the page draws after this point, on every course)
 const _tcM=new T.Matrix4(), _tcP=new T.Vector3(), _tcQ=new T.Quaternion(), _tcE=new T.Euler(), _tcS=new T.Vector3();
+/* The pulse's clock: a wave leaves the sun on every bar's downbeat of whatever produced station
+   is playing — her own "Please Stand By" by default, 144 bpm, so one every 1.67 s — and the
+   full wave on the phrase (every fourth bar of the song's form, where its crashes fall; the
+   counted bar is folded back through the song's loop so the phrase stays on the form). The
+   station's scheduler runs ahead of the speakers, so its audio clock is mapped onto ours,
+   output latency included, as ftBeat does (re-read twice a second). With the music off, or a
+   classic grid station, a steady clock at her tempo. Softer for prefers-reduced-motion. */
+const TC_BAR0=4*60/144;
+let _tcOff=0, _tcOffT=-9, _tcOffE=null;
+const _tcRM=(typeof matchMedia==='function')?matchMedia('(prefers-reduced-motion: reduce)'):null;
+function tcPulseTick(now){
+  const eng=(musicOn && actx && curStyle) ? curStyle.engine : null, h=eng ? producedStations[eng] : null;
+  let bl=TC_BAR0, b=now/TC_BAR0, fold=null;
+  if(h && h.running && h.ctx===actx && h.stepDur>0){
+    if(now-_tcOffT>0.5 || now<_tcOffT || _tcOffE!==eng){ _tcOffT=now; _tcOffE=eng;
+      const ts=actx.getOutputTimestamp ? actx.getOutputTimestamp() : null;
+      _tcOff=(ts && ts.performanceTime>0) ? ts.performanceTime/1000-ts.contextTime : now-actx.currentTime+Math.min(0.2, actx.outputLatency||actx.baseLatency||0); }
+    bl=16*h.stepDur; b=(now-_tcOff-h.barT)/bl+h.bar; fold=h.song; }
+  const bar=Math.floor(b), age=(b-bar)*bl, k=(_tcRM&&_tcRM.matches) ? 0.45 : 1;
+  TC_PW.value.set(age, tcBarAmp(bar,fold)*k, age+bl, tcBarAmp(bar-1,fold)*k);
+}
+function tcBarAmp(n, song){   // 1 on the phrase, 0.6 between
+  const L=song&&song.bars, F=(song&&song.loopFrom)||0;
+  if(L && n>=L && L>F) n=F+(n-F)%(L-F);
+  return ((n%4)+4)%4===0 ? 1.0 : 0.6; }
 function tcTick(P, t){
   TC_T.value=t;
+  tcPulseTick(t);
   if(P.gulls){ const {m,L}=P.gulls;
     L.forEach((g,i)=>{ const a=g.a-g.ph+t*g.w; _tcP.set(g.cx+Math.cos(a)*g.r, g.y, g.cz+Math.sin(a)*g.r);
       _tcQ.setFromEuler(_tcE.set(0,-a,g.rz)); _tcS.setScalar(g.s); m.setMatrixAt(i,_tcM.compose(_tcP,_tcQ,_tcS)); });
