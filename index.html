@@ -36019,6 +36019,8 @@ const TC_PULSE=`
     vec3 h=tcHsv(c); float d=fract(0.6667-h.x)-0.5; h.x=fract(h.x+clamp(d,-0.10,0.10));
     vec3 k=clamp(abs(fract(h.xxx+vec3(1.0,0.6667,0.3333))*6.0-3.0)-1.0,0.0,1.0);
     return mix(vec3(1.0),k,h.y); }`;
+// (sky and sea: the warmer colour is a band's, looked up only while the wave is on it)
+const TC_PULSE_B=`vec3 tcLitB(vec3 c, float bw, float L){ return L>0.55 ? min(tcBandC(bw)*(1.0+0.12*L), vec3(1.0)) : tcLift(c, L); }`;
 const tcArrJ=(x,z)=>{ const A=TC_PA.value; return Math.floor((0.46+Math.max(0,x*A.x+z*A.y-A.z)*A.w)/0.035)*0.035; };
 const TC_CANVAS={};
 let TC_F=null;                                  // this build's field (ground oracle); set by tcGround
@@ -36203,6 +36205,7 @@ function tcSky(){
       ${TC_GLSL}
       ${TC_BANDS}
       ${TC_PULSE}
+      ${TC_PULSE_B}
       // the pulse reaches a band of the sky a step after the one below it (the bands arch over
       // the sun, so band by band is outward from it): the whole band at once, a test card switching
       float tcArrB(float b, float th){ return 0.10+b*0.065; }
@@ -36245,7 +36248,7 @@ function tcSky(){
         float ang=atan(dot(d,s2),dot(d,s1)), ra=(ang/6.2831853+0.5)*32.0, ri=floor(ra), fr=fract(ra);
         float rayR=0.27+0.10*tcH(vec2(ri,3.3)), odd=step(0.5,mod(ri,2.0));
         float inRay=odd*step(th,rayR)*step(0.13,th);
-        vec3 c=tcBandC(b-inRay), cw=tcBandC(inRay>0.5 ? b-2.0 : max(b-1.0,0.0));   // (the yellow band holds its colour: white there would flash the horizon)
+        vec3 c=tcBandC(b-inRay); float bw=inRay>0.5 ? b-2.0 : max(b-1.0,0.0);   // (the yellow band holds its colour: white there would flash the horizon)
         // (the pulse: the rays shoot out from the sun in three steps, then the bands light in turn)
         float arr=inRay>0.5 ? 0.03*floor((th-0.13)/0.08) : tcArrB(b,th);
         // THE MELT: the band above runs down into this one in drips (none inside the burst)
@@ -36253,8 +36256,8 @@ function tcSky(){
         float dA=(b<4.5)?mix(1.0,drip(b,yA,tb,ua,ce),far):1.0;
         float dB=(b>0.5)?mix(1.0,drip(b-1.0,-yB,tb,ua,ce),far):1.0;
         // (a drip lights after its band, running down in three steps)
-        if(dA<0.0){ c=tcBandC(b+1.0); cw=tcBandC(b); arr=tcArrB(b+1.0,th)+0.05+0.045*floor(clamp(yA/(0.92*tb),0.0,0.999)*3.0); }
-        c=tcLit(c, cw, tcPulse(arr));
+        if(dA<0.0){ c=tcBandC(b+1.0); bw=b; arr=tcArrB(b+1.0,th)+0.05+0.045*floor(clamp(yA/(0.92*tb),0.0,0.999)*3.0); }
+        c=tcLitB(c, bw, tcPulse(arr));
         // the edges: brush lines, thick and thin along their length, broken where a drip runs out
         float lwA=0.0012+0.0046*n1p(ua*20.0+b*5.3,20.0), lwB=0.0012+0.0046*n1p(ua*20.0+(b-1.0)*5.3,20.0);
         float ink=(1.0-smoothstep(lwA,lwA+aa,abs(yA)))*smoothstep(-aa,aa,dA);
@@ -36470,6 +36473,7 @@ function tcSea(F){
       ${TC_GLSL}
       ${TC_BANDS}
       ${TC_PULSE}
+      ${TC_PULSE_B}
       void main(){
         vec2 uv=(vW.xz-uBox.xy)/uBox.zw;
         float sd=255.0;
@@ -36487,7 +36491,7 @@ function tcSea(F){
           float da=fract(raz/6.2831853*17.0+h21(vec2(row,5.0))*3.0+uT*0.006*(h21(vec2(row,6.0))-0.5));
           float on=(1.0-smoothstep(0.40,0.40+fw,fr))*smoothstep(0.04,0.04+fw,fr)*step(0.38+0.30*h21(vec2(row,7.0)),da);
           on*=(1.0-smoothstep(0.30,0.60,fw))*(1.0-smoothstep(0.035,0.075,rel))*smoothstep(26.0,60.0,sd);
-          c=mix(c, tcLit(rc, tcBandC(rb-1.0), tcPulse(0.15+rb*0.065)), on); }   // (lit as the band it mirrors is)
+          c=mix(c, tcLitB(rc, rb-1.0, tcPulse(0.15+rb*0.065)), on); }   // (lit as the band it mirrors is)
         // ripples, rolling in: lines of constant distance from the shore, broken into strokes,
         // brush-weighted (fat at the shore, thinning out to sea, swelling along each line); white
         // foam at the shore, and further out each line carries the colour of the sky it reflects
@@ -36501,7 +36505,7 @@ function tcSea(F){
         float rl=1.0-smoothstep(rw, rw+fwidth(q)*1.2, abs(fract(q)-0.5));
         float gap=step(0.22, fract((vW.x*0.7+vW.z*0.7)/90.0+h21(vec2(floor(q),2.0))));
         rl*=gap*(1.0-smoothstep(150.0,230.0,sd))*(1.0-smoothstep(0.18,0.40,fq))*step(3.5,sd)*(1.0-q3*lod);
-        c=mix(c, mix(${arcG3(TC_WHITE)}, tcLit(rc, tcBandC(rb-1.0), Lw), smoothstep(22.0,52.0,sd)), rl);
+        c=mix(c, mix(${arcG3(TC_WHITE)}, tcLitB(rc, rb-1.0, Lw), smoothstep(22.0,52.0,sd)), rl);
         // the foam at the edge, scalloped
         float fe=sd-1.6*sin(vW.x*0.11+uT*0.6)-1.2*sin(vW.z*0.13-uT*0.45);
         float fw=fwidth(sd)+0.05;
