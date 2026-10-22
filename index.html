@@ -36002,7 +36002,10 @@ const TC_PULSE=`
   uniform vec4 uPW; uniform vec4 uPA;
   float tcPl(float a){ return a<0.0?0.0: a<0.12?1.0: a<0.24?0.50: a<0.38?0.25: 0.0; }
   float tcPulse(float arr){ return uPW.y*tcPl(uPW.x-arr)+uPW.w*tcPl(uPW.z-arr); }
-  float tcArrW(vec2 xz){ return floor((0.46+max(0.0,dot(xz,uPA.xy)-uPA.z)*uPA.w)/0.035)*0.035; }
+  // (is either wave anywhere in [t0,t1) of its run: the same for every pixel, so a shader skips the
+  // pulse for the rest of the bar at no cost)
+  bool tcOn(float t0, float t1){ return (uPW.y>0.0 && uPW.x>=t0 && uPW.x<t1) || (uPW.w>0.0 && uPW.z>=t0 && uPW.z<t1); }
+  float tcArrW(vec2 xz){ return floor(min(0.46+max(0.0,dot(xz,uPA.xy)-uPA.z)*uPA.w, 1.18)/0.035)*0.035; }
   // LIT, kept to the card's own colours: while the wave is on a segment (its first step, 0.12 s)
   // it takes the colour one step warmer — a band of the sky the band below
   // it, the sun's colours running outward through the card; then it falls back through its own
@@ -36021,7 +36024,7 @@ const TC_PULSE=`
     return mix(vec3(1.0),k,h.y); }`;
 // (sky and sea: the warmer colour is a band's, looked up only while the wave is on it)
 const TC_PULSE_B=`vec3 tcLitB(vec3 c, float bw, float L){ return L>0.55 ? min(tcBandC(bw)*(1.0+0.12*L), vec3(1.0)) : tcLift(c, L); }`;
-const tcArrJ=(x,z)=>{ const A=TC_PA.value; return Math.floor((0.46+Math.max(0,x*A.x+z*A.y-A.z)*A.w)/0.035)*0.035; };
+const tcArrJ=(x,z)=>{ const A=TC_PA.value; return Math.floor(Math.min(0.46+Math.max(0,x*A.x+z*A.y-A.z)*A.w, 1.18)/0.035)*0.035; };
 const TC_CANVAS={};
 let TC_F=null;                                  // this build's field (ground oracle); set by tcGround
 const tcLin=h=>new T.Color(h).convertSRGBToLinear();
@@ -36257,7 +36260,7 @@ function tcSky(){
         float dB=(b>0.5)?mix(1.0,drip(b-1.0,-yB,tb,ua,ce),far):1.0;
         // (a drip lights after its band, running down in three steps)
         if(dA<0.0){ c=tcBandC(b+1.0); bw=b; arr=tcArrB(b+1.0,th)+0.05+0.045*floor(clamp(yA/(0.92*tb),0.0,0.999)*3.0); }
-        c=tcLitB(c, bw, tcPulse(arr));
+        if(tcOn(0.0,0.96)) c=tcLitB(c, bw, tcPulse(arr));
         // the edges: brush lines, thick and thin along their length, broken where a drip runs out
         float lwA=0.0012+0.0046*n1p(ua*20.0+b*5.3,20.0), lwB=0.0012+0.0046*n1p(ua*20.0+(b-1.0)*5.3,20.0);
         float ink=(1.0-smoothstep(lwA,lwA+aa,abs(yA)))*smoothstep(-aa,aa,dA);
@@ -36491,14 +36494,15 @@ function tcSea(F){
           float da=fract(raz/6.2831853*17.0+h21(vec2(row,5.0))*3.0+uT*0.006*(h21(vec2(row,6.0))-0.5));
           float on=(1.0-smoothstep(0.40,0.40+fw,fr))*smoothstep(0.04,0.04+fw,fr)*step(0.38+0.30*h21(vec2(row,7.0)),da);
           on*=(1.0-smoothstep(0.30,0.60,fw))*(1.0-smoothstep(0.035,0.075,rel))*smoothstep(26.0,60.0,sd);
-          c=mix(c, tcLitB(rc, rb-1.0, tcPulse(0.15+rb*0.065)), on); }   // (lit as the band it mirrors is)
+          vec3 hc=rc; if(tcOn(0.15,0.86)) hc=tcLitB(rc, rb-1.0, tcPulse(0.15+rb*0.065));
+          c=mix(c, hc, on); }   // (lit as the band it mirrors is)
         // ripples, rolling in: lines of constant distance from the shore, broken into strokes,
         // brush-weighted (fat at the shore, thinning out to sea, swelling along each line); white
         // foam at the shore, and further out each line carries the colour of the sky it reflects
         // (far off only every third line is drawn, a little heavier, so the lagoon still reads as
         // water from the dunes; a line keeps its number as it rolls in, so nothing pops)
         float q=(sd+uT*2.4)/15.0+0.06*sin(vW.x*0.021+vW.z*0.013);
-        float Lw=tcPulse(tcArrW(vW.xz));                       // (the course-level front, in strips)
+        float Lw=(sd<232.0 && tcOn(0.45,1.56)) ? tcPulse(tcArrW(vW.xz)) : 0.0;                       // (the course-level front, in strips)
         float lod=smoothstep(260.0,520.0,D), q3=step(0.5,mod(floor(q),3.0));
         float fq=fwidth(q)*(1.0-0.62*lod);
         float rw=mix(0.15,0.06,smoothstep(4.0,120.0,sd))*(0.55+0.9*tcN(vW.xz/38.0+vec2(floor(q)*2.9,0.0)))*(1.0+0.8*lod)*(1.0+0.4*Lw);
