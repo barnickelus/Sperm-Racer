@@ -61230,9 +61230,14 @@ function whipFx(atk,vic){
   const big=atk.you||vic.you;                      // bigger, punchier version when it's YOUR fight
   // an ordinary racer's tail is still swinging (whipLashStart): its sparks, flash, kick and sound wait
   // for the crack (the sparks drawn now all the same); a dragon's tail is already passing through
-  const wl=wlPending(atk);
+  let wl=wlPending(atk);
+  // a hit heard of before its lash (a remote kart's, over the network): the tail plays now and lands it at its crack
+  if(!wl && !isDragonRacer(atk) && !(atk._wl && atk._wl.t>=0)) wl=whipLashStart(atk,vic,true);
   if(wl){ wlQueue(wl,mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4); wl.hit=vic; wl.big=big; }
-  else burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
+  else {
+    burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
+    if(vic.obj && (big || camera.position.distanceToSquared(vic.obj.position)<260*260)){ _wkV3.set(mx,my,mz); wlImpact(vic,_wkV3); }   // a dragon's tail passing through, or a lash that has already cracked
+  }
   if(big){
     hitStopT=Math.max(hitStopT,0.06);               // a tiny freeze — whip should feel like a HIT, not a nudge
     if(!wl && !wlRM()){ kickShake(0.75); flashFx(0.25,'#ffe08a'); }
@@ -61515,13 +61520,19 @@ function wlCrack(r,o,w,near){
     const vo=v.obj, vs=vo.scale.x||1; _wkV.copy(w.tip).sub(vo.position); _wkV.y=0; const L=_wkV.length()||1;
     _wkV.multiplyScalar(Math.min(L,3.2*vs)/L).add(vo.position); _wkV.y=vo.position.y+2.8*vs;
     wlFlush(w,_wkV.x,_wkV.y,_wkV.z,Math.sin(v.head)*v.spd*0.6,Math.cos(v.head)*v.spd*0.6);
-    if(near){ wlL(vo,_wkV,_wkV2); wlStar(v,_wkV2,0xffc94a,6.5*vs,0.18); wlRing(v,_wkV2,0xffd25a,8*vs*(rm?0.7:1),0.34); wlDizzy(v); }
+    if(near) wlImpact(v,_wkV);
     if(w.big && !rm){ kickShake(0.75); flashFx(0.25,'#ffe08a'); }
     if(!rm) w.hold=0.045;
   } else {
     if(w.qn) wlFlush(w,w.tip.x,w.tip.y,w.tip.z,Math.sin(r.head)*r.spd*0.8,Math.cos(r.head)*r.spd*0.8);
     if(r.you && !rm) kickShake(0.15);
   }
+}
+// the victim's side of a hit at world point wp: a flash and a ring that ride along with it, and dizzy stars
+function wlImpact(v,wp){
+  if(!_wlFx) wlFxInit();
+  const vo=v.obj, vs=vo.scale.x||1; wlL(vo,wp,_wkV2);
+  wlStar(v,_wkV2,0xffc94a,6.5*vs,0.18); wlRing(v,_wkV2,0xffd25a,8*vs*(wlRM()?0.7:1),0.34); wlDizzy(v);
 }
 // a dragon's crack (its own rig plays the lash): the same ring, flash and pop at its tip
 function wlDragonCrack(r,o,wp,hit){
