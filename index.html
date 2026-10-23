@@ -61392,7 +61392,7 @@ function wlStage(w){
 }
 // ---- the pooled effects: shock rings, star flashes, comic pops, smear ribbons, dizzy stars ----
 const _wkV=new T.Vector3(), _wkV2=new T.Vector3(), _wkV3=new T.Vector3(), _wkQ=new T.Quaternion();
-let _wlFx=null, _wlSeed=97;
+let _wlFx=null, _wlSeed=97, _wlTan=0.6;
 function wlRnd(){ return (_wlSeed=(_wlSeed*16807)%2147483647)/2147483647; }   // its own dice: the game's Math.random is left alone
 // a point riding along with a racer: lp in its model space -> out in the world
 function wlW(o,lp,out){ return out.copy(lp).multiply(o.scale).applyQuaternion(o.quaternion).add(o.position); }
@@ -61453,6 +61453,7 @@ function wlSparks(r,wp,n,col,size){   // a spray off the tip, carried along with
 function wlFxTick(dt){
   const F=_wlFx; if(!F) return;
   const rm=wlRM(), cq=camera.quaternion, cp=camera.position;
+  _wlTan=Math.tan((camera.fov||60)*Math.PI/360);
   for(const e of F.ring){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life;
     if(u>=1 || !e.r){ e.m.visible=false; continue; }
     wlW(e.r.obj,e.lp,e.m.position); e.m.quaternion.copy(cq);
@@ -61464,7 +61465,7 @@ function wlFxTick(dt){
     if(u>=1 || !e.r){ e.m.visible=false; continue; }
     const o=e.r.obj; wlW(o,e.lp,e.m.position); const d=Math.sqrt(cp.distanceToSquared(e.m.position));
     const pop=rm ? 1 : (e.t<0.09 ? Math.sin(e.t/0.09*Math.PI*0.5)*1.3 : 1+0.3*Math.exp(-(e.t-0.09)*16)*Math.cos((e.t-0.09)*30));
-    const sz=(2.2+d*0.06)*e.k*pop; e.m.scale.set(sz,sz*0.5,1); e.m.position.y+=sz*0.3+e.t*2.2;
+    const sz=d*_wlTan*0.5*e.k*pop; e.m.scale.set(sz,sz*0.5,1); e.m.position.y+=sz*0.4+d*_wlTan*0.08*e.t;   // a fixed share of the screen's height, whatever the distance
     e.m.material.rotation=rm?0:e.rot; e.m.material.opacity=1-ldSmooth(0.6,1,u); }
   for(const e of F.diz){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life, v=e.r;
     if(u>=1 || !v){ e.m.visible=false; continue; }
@@ -61480,7 +61481,7 @@ function wlFxTick(dt){
       wlW(o,_wkV.set(s[(i%RB)*3],s[(i%RB)*3+1],s[(i%RB)*3+2]),_wkV);
       wlW(o,_wkV2.set(s[(i1%RB)*3],s[(i1%RB)*3+1],s[(i1%RB)*3+2]),_wkV2); wlW(o,_wkV3.set(s[(i0%RB)*3],s[(i0%RB)*3+1],s[(i0%RB)*3+2]),_wkV3);
       _wkV2.sub(_wkV3); _wkV3.copy(cp).sub(_wkV); _wkV2.cross(_wkV3); const L=_wkV2.length();
-      const wd=(n<2||L<1e-6) ? 0 : 1.5*(o.scale.x||1)*(k/(RB-1))*Math.max(0,Math.min(1,b.fade))/L;
+      const wd=(n<2||L<1e-6) ? 0 : 2.2*(o.scale.x||1)*(k/(RB-1))*Math.max(0,Math.min(1,b.fade))/L;
       P[k*6]=_wkV.x+_wkV2.x*wd; P[k*6+1]=_wkV.y+_wkV2.y*wd; P[k*6+2]=_wkV.z+_wkV2.z*wd;
       P[k*6+3]=_wkV.x-_wkV2.x*wd; P[k*6+4]=_wkV.y-_wkV2.y*wd; P[k*6+5]=_wkV.z-_wkV2.z*wd; }
     b.m.geometry.attributes.position.needsUpdate=true; b.m.material.opacity=0.9*Math.max(0,Math.min(1,b.fade)); }
@@ -61512,7 +61513,7 @@ function wlCrack(r,o,w,near){
     const vo=v.obj, vs=vo.scale.x||1; _wkV.copy(w.tip).sub(vo.position); _wkV.y=0; const L=_wkV.length()||1;
     _wkV.multiplyScalar(Math.min(L,3.2*vs)/L).add(vo.position); _wkV.y=vo.position.y+2.8*vs;
     wlFlush(w,_wkV.x,_wkV.y,_wkV.z,Math.sin(v.head)*v.spd*0.6,Math.cos(v.head)*v.spd*0.6);
-    if(near){ wlL(vo,_wkV,_wkV2); wlStar(v,_wkV2,0xffe08a,10*vs,0.22); wlRing(v,_wkV2,0xffd25a,8*vs*(rm?0.7:1),0.34); wlDizzy(v); }
+    if(near){ wlL(vo,_wkV,_wkV2); wlStar(v,_wkV2,0xffc94a,6.5*vs,0.18); wlRing(v,_wkV2,0xffd25a,8*vs*(rm?0.7:1),0.34); wlDizzy(v); }
     if(w.big && !rm){ kickShake(0.75); flashFx(0.25,'#ffe08a'); }
     if(!rm) w.hold=0.045;
   } else {
