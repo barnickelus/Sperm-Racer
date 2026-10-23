@@ -999,8 +999,8 @@ function beep(freq,dur,type,vol){
   g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
   o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+dur+0.03);
 }
-function noiseBurst(dur,vol,freq){
-  if(!actx)return; const t=actx.currentTime;
+function noiseBurst(dur,vol,freq,dl){
+  if(!actx)return; const t=actx.currentTime+(dl||0);   // dl: start that many seconds from now (the whip's crack)
   const buf=actx.createBuffer(1, (actx.sampleRate*dur)|0, actx.sampleRate);
   const d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length);
   const n=actx.createBufferSource(); n.buffer=buf;
@@ -1033,10 +1033,10 @@ const SFX={
   turbo(){ beep(620,0.09,'square',0.2); setTimeout(()=>beep(960,0.1,'square',0.18),50); },
   count(go){ beep(go?900:440, go?0.3:0.16, 'square', 0.35); },
   finish(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'triangle',0.3), i*130)); },
-  whip(){ if(!actx)return; const t=actx.currentTime; const o=actx.createOscillator(),g=actx.createGain();
+  whip(dl){ if(!actx)return; const t=actx.currentTime+(dl||0); const o=actx.createOscillator(),g=actx.createGain();   // dl: scheduled for the tail's crack
     o.type='sawtooth'; o.frequency.setValueAtTime(1200,t); o.frequency.exponentialRampToValueAtTime(180,t+0.16);
     g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.18);
-    o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400); },
+    o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.2); noiseBurst(0.12,0.16,2400,dl); },
   lap(){ beep(700,0.08,'sine',0.18); },
   bump(){ noiseBurst(0.18,0.12,900); beep(180,0.1,'triangle',0.16); },
   finalLap(){ beep(660,0.12,'triangle',0.26); setTimeout(()=>beep(990,0.18,'triangle',0.28),110); },
@@ -50413,11 +50413,21 @@ function tailStyleFor(id){
 // per-racer values staged by syncObjects just before wiggleTail (no allocation in the hot path)
 const _TW={bias:0, hop:0, sh:0, pg:1};   // pg: mood gain on every vertical lift (droop when beaten, bounce when smug)
 let _tox=0, _toy=0;
+// the tail lash (see whipLashStart): while _WL.on, tailOffset adds the lash chain sampled at t on top of the
+// swim; _wlx/_wlz/_wla are that sample's sideways part, how far the bent chain pulls the ring forward, and
+// its heading. All 0 (and _WL.on false) outside a lash, so every tail poses exactly as it always did.
+const WL_N=24, _WL={on:false, s:1, x:new Float32Array(WL_N+1), y:new Float32Array(WL_N+1), z:new Float32Array(WL_N+1), a:new Float32Array(WL_N+1)};
+let _wlx=0, _wlz=0, _wla=0;
+function wlAdd(t){
+  const f=Math.max(0,Math.min(WL_N-1e-6,t*WL_N)), i=f|0, k=f-i, S=_WL.s, X=_WL.x, Y=_WL.y, Z=_WL.z, A=_WL.a;
+  _wlx=(X[i]+(X[i+1]-X[i])*k)*S; _wlz=(Z[i]+(Z[i+1]-Z[i])*k)*S; _wla=A[i]+(A[i+1]-A[i])*k;
+  _tox+=_wlx; _toy+=(Y[i]+(Y[i+1]-Y[i])*k)*S;
+}
 const TAIL_SLOPE=0.5;   // max lateral slope (dx/dz) the styled swims may reach; ~27 degrees. From the chase camera a 45-degree swing reads as bent wire, not a swim
 // x and y offset of the spine at fraction t, `lag` radians behind the head; st=null is the
 // plain sine, bit-for-bit what the tail always did
 function tailOffset(lag, t, phase, amp, st){
-  if(!st){ _tox=Math.sin(phase - lag)*amp*t*t; _toy=0; return; }
+  if(!st){ _tox=Math.sin(phase - lag)*amp*t*t; _toy=0; if(_WL.on) wlAdd(t); return; }
   const tp=st.p===2?t*t:Math.pow(t,st.p), a=phase - lag*st.w;
   let sn=Math.sin(a);
   if(st.h3) sn=(sn + st.h3*Math.sin(3*a-1))/(1+st.h3*0.5);
@@ -50431,10 +50441,12 @@ function tailOffset(lag, t, phase, amp, st){
   if(t>0.05){ const cap=TAIL_SLOPE*21/Math.max(0.05,lag*st.w/t); v=v*cap/Math.sqrt(v*v+cap*cap); }   // soft-limit the lateral reach
   _tox=sn*v + _TW.bias*tp;
   _toy=((st.ya? st.ya*(0.5+0.5*Math.sin(st.yf*a+st.yph)) : 0) + _TW.hop)*tp*_TW.pg;
+  if(_WL.on) wlAdd(t);
 }
 function wiggleTail(g, phase, amp, lift, st){
   lift=lift||0; st=st||null;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
-  const jt=g.userData.juanTail; if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
+  const jt=g.userData.juanTail; _WL.s=jt ? 0.5 : g.userData.tailData ? 1 : 0.95;   // the lash is built for the 21-long tube: the 20-long ring tails and Juan's cone take it to scale
+  if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -50444,7 +50456,7 @@ function wiggleTail(g, phase, amp, lift, st){
     const {mesh,rings,dummy}=bt; let i=0;
     for(const rg of rings){
       tailOffset(rg.ph, rg.t, phase, amp, st);
-      const sway=_tox, zy=_toy, z=-2 - rg.t*20;
+      const sway=_tox, zy=_toy, z=-2 - rg.t*20 + _wlz;
       for(let j=0;j<rg.n;j++){
         const u=j/rg.n*Math.PI*2+(rg.a0||0);
         dummy.position.set(sway+Math.cos(u)*rg.r, 3.2+lift*rg.t*rg.t+zy+Math.sin(u)*rg.r+(rg.dy||0), z);
@@ -50463,7 +50475,7 @@ function wiggleTail(g, phase, amp, lift, st){
     for(let i=0;i<R;i++){
       const t=i/(R-1);
       tailOffset(i*0.55*(20/R), t, phase, amp, st); cx[i]=_tox; cy[i]=_toy;
-      cz[i]=-2 - t*20;
+      cz[i]=-2 - t*20 + _wlz;
       cr[i]=1.5*(1-t)*(1-t)+0.28;
     }
     let p=0;
@@ -50488,11 +50500,11 @@ function wiggleTail(g, phase, amp, lift, st){
     let i=0;
     for(const r of rings){
       tailOffset(r.ph, r.t, phase, amp, st);
-      const sway=_tox, zy=_toy, z=-2 - r.t*20;
+      const sway=_tox, zy=_toy, z=-2 - r.t*20 + _wlz, ry=(sway-_wlx)*0.12 - _wla;   // a lash turns each cube with the chain's heading
       for(const o of r.offs){
         dummy.position.set(sway+o[0], 3.2+lift*r.t*r.t+zy+o[1], z);
         dummy.scale.set(o[2],o[2],o[2]);
-        dummy.rotation.set(0, sway*0.12, 0);
+        dummy.rotation.set(0, ry, 0);
         dummy.updateMatrix(); mesh.setMatrixAt(i++,dummy.matrix);
       }
     }
@@ -50508,12 +50520,14 @@ function wiggleTail(g, phase, amp, lift, st){
     tailOffset(i*0.5, t, phase, amp, st);
     const cx=_tox, oy=_toy;                     // more sway toward the tip
     const sy=tailS?tailS(t)*_TW.pg:0;           // Chad's tail carries a fixed upward S
-    const cz=ringZ[i], r=ringR[i], ro=r+TAIL_OUTLINE_W;
+    const cz=ringZ[i]+_wlz, r=ringR[i], ro=r+TAIL_OUTLINE_W;
+    // mid-lash each ring turns square to the bent chain (1 and 0 the rest of the time: the same numbers as ever)
+    const ca=_WL.on?Math.cos(_wla):1, sa=_WL.on?Math.sin(_wla):0;
     for(let j=0;j<=sides;j++){
-      const ang=j/sides*Math.PI*2, c=Math.cos(ang), s=Math.sin(ang);
+      const ang=j/sides*Math.PI*2, c=Math.cos(ang)*ca, s=Math.sin(ang), cs=Math.cos(ang)*sa;
       pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
       pos[p]=y+lift*t*t+sy+oy+s*r;  outlinePos[p]=y+lift*t*t+sy+oy+s*ro;  p++;
-      pos[p]=cz;     outlinePos[p]=cz;      p++;
+      pos[p]=cz+cs*r;     outlinePos[p]=cz+cs*ro;      p++;
     }
   }
   geo.attributes.position.needsUpdate=true;
@@ -53389,9 +53403,9 @@ function dragonFx(o, r, dr, an, dt){
           vz:(Math.random()-0.5)*10, s0:(k?3.2:1.6)*sc, s1:(k?7:0.2)*sc, grav:k?-4:30, op:k?0.45:0.95});
       }
     }
-    if(s>=0.24 && !Wh.snd){ Wh.snd=true; if(r.you && typeof SFX!=='undefined') SFX.whip(); }
+    if(s>=0.52 && !Wh.snd){ Wh.snd=true; if(r.you && typeof SFX!=='undefined') SFX.whip(); }   // the sound with the crack, not the wind-up
     if(s>=0.52 && !Wh.crack){ Wh.crack=true;   // the crack at the tip
-      dragonAt(b,1); _ldW.copy(_ldV).applyMatrix4(M);
+      dragonAt(b,1); _ldW.copy(_ldV).applyMatrix4(M); wlDragonCrack(r,o,_ldW,Wh.hit.length>0);
       if(ryu){ burst(_ldW.x,_ldW.y,_ldW.z,0xbfe9ff,16,50,0.7,3*sc); burst(_ldW.x,_ldW.y,_ldW.z,0xffffff,6,30,0.4,2*sc); }
       else { burst(_ldW.x,_ldW.y,_ldW.z,0xff9a3a,14,55,0.55,2.4*sc); burst(_ldW.x,_ldW.y,_ldW.z,0x8a8078,8,24,0.9,6*sc); }
       if(r.you && typeof kickShake==='function') kickShake(0.35);
@@ -54001,9 +54015,9 @@ function irieFx(o, r, dr, an, dt){
       dragonAt(b,0.95); _ldW.copy(_ldV).applyMatrix4(M);
       emit(_ldW.x,_ldW.y,_ldW.z,{color:IRIE_COLS[(Math.random()*3)|0], life:0.6, vx:(Math.random()-0.5)*12, vy:5+Math.random()*9,
         vz:(Math.random()-0.5)*12, s0:1.6*sc, s1:0.3*sc, grav:26, op:0.95}); }
-    if(s>=0.24 && !Wh.snd){ Wh.snd=true; if(r.you && typeof SFX!=='undefined') SFX.whip(); }
+    if(s>=0.52 && !Wh.snd){ Wh.snd=true; if(r.you && typeof SFX!=='undefined') SFX.whip(); }   // the sound with the drop, not the wind-up
     if(s>=0.52 && !Wh.crack){ Wh.crack=true;       // the drop: rings ripple out across the road
-      dragonAt(b,1); _ldW.copy(_ldV).applyMatrix4(M);
+      dragonAt(b,1); _ldW.copy(_ldV).applyMatrix4(M); wlDragonCrack(r,o,_ldW,Wh.hit.length>0);
       const gy=(r.surfY!=null?r.surfY+0.4:_ldW.y-2.5);
       for(let k=0;k<3;k++) irieRing(o,r,dr,_ldW.x,gy+k*0.05,_ldW.z,IRIE_COLS[k],1.5*sc,(12+5*k)*sc,0.75+0.1*k,k*0.09);
       irieRing(o,r,dr,_ldW.x,_ldW.y,_ldW.z,0xfff2c0,0.8*sc,6*sc,0.35,0);
@@ -58905,11 +58919,12 @@ function juanTailMesh(tex){
 function juanWiggle(g, jt, phase, amp, lift, st){
   const {mesh, rings}=jt, pos=mesh.geometry.attributes.position.array, nor=mesh.geometry.attributes.normal.array, k=0.42, n=rings.length;
   const ox=jt.ox||(jt.ox=new Float32Array(n)), oy=jt.oy||(jt.oy=new Float32Array(n));
-  for(let i=0;i<n;i++){ tailOffset(rings[i].ph, rings[i].t, phase, amp*k, st); ox[i]=_tox; oy[i]=_toy*k+lift*0.45*rings[i].t*rings[i].t; }
+  const oz=jt.oz||(jt.oz=new Float32Array(n));
+  for(let i=0;i<n;i++){ tailOffset(rings[i].ph, rings[i].t, phase, amp*k, st); ox[i]=_tox; oy[i]=_toy*k+lift*0.45*rings[i].t*rings[i].t; oz[i]=_wlz; }
   for(let i=0;i<n;i++){ const R=rings[i], a=Math.max(0,i-1), b=Math.min(n-1,i+1), dz=(rings[b].z-rings[a].z)||-1;
     const yaw=Math.atan((ox[b]-ox[a])/dz), cy=Math.cos(yaw), sy=Math.sin(yaw), tp=(rings[a].r-rings[b].r)/Math.abs(dz), nl=1/Math.sqrt(1+tp*tp);
     for(let j=0;j<=JN_TS;j++){ const an=Math.PI*1.5+j/JN_TS*Math.PI*2, ca=Math.cos(an), sa=Math.sin(an), lx=ca*R.r, ly=sa*R.r, p=(i*(JN_TS+1)+j)*3;
-      pos[p]=ox[i]+lx*cy; pos[p+1]=R.y+oy[i]+ly; pos[p+2]=R.z-lx*sy;
+      pos[p]=ox[i]+lx*cy; pos[p+1]=R.y+oy[i]+ly; pos[p+2]=R.z+oz[i]-lx*sy;
       nor[p]=(ca*cy-tp*sy)*nl; nor[p+1]=sa*nl; nor[p+2]=(-ca*sy-tp*cy)*nl; } }   // tip direction is (-sy, 0, -cy)
   mesh.geometry.attributes.position.needsUpdate=true; mesh.geometry.attributes.normal.needsUpdate=true;
 }
@@ -61213,10 +61228,15 @@ function doWhip(atk,vic){
 function whipFx(atk,vic){
   const mx=(atk.x+vic.x)/2, my=(atk.y+vic.y)/2+3, mz=(atk.z+vic.z)/2;
   const big=atk.you||vic.you;                      // bigger, punchier version when it's YOUR fight
-  burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
+  // an ordinary racer's tail is still swinging (whipLashStart): its sparks, flash, kick and sound wait
+  // for the crack (the sparks drawn now all the same); a dragon's tail is already passing through
+  const wl=wlPending(atk);
+  if(wl){ wlQueue(wl,mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4); wl.hit=vic; wl.big=big; }
+  else burst(mx,my,mz,0xffe08a,big?22:12,big?60:46,big?0.6:0.45,big?5:4);
   if(big){
     hitStopT=Math.max(hitStopT,0.06);               // a tiny freeze — whip should feel like a HIT, not a nudge
-    kickShake(0.75); flashFx(0.25,'#ffe08a'); SFX.whip();
+    if(!wl && !wlRM()){ kickShake(0.75); flashFx(0.25,'#ffe08a'); }
+    SFX.whip(wlSndDelay(atk));
     if(atk.you){
       // rivalry memory: paying back the racer who last whipped YOU is its own moment
       if(atk._lastAtk===vic){ showToast('REVENGE!','t-red'); kickShake(1.0); atk._lastAtk=null; }
@@ -61258,11 +61278,13 @@ function whipStart(r, lock){
     return;
   }
   const v=(lock && !lock.finished && lock.spinT<=0 && Math.hypot(lock.x-r.x,lock.z-r.z)<13) ? lock : null;
+  whipLashStart(r,v);                             // the tail plays the move (the look only: see whipLashStart)
   if(v) doWhip(r,v);
-  else {                                          // a whip at thin air: a swish off the tail
-    const hx=Math.sin(r.head), hz=Math.cos(r.head);
-    burst(r.x-hx*10, r.y+2.5, r.z-hz*10, 0xffe08a, r.you?8:4, 30, 0.35, 3);
-    if(r.you){ SFX.whip(); kickShake(0.15); }
+  else {                                          // a whip at thin air: a swish off the tail, shown at its crack
+    const hx=Math.sin(r.head), hz=Math.cos(r.head), wl=wlPending(r);
+    if(wl) wlQueue(wl, r.x-hx*10, r.y+2.5, r.z-hz*10, 0xffe08a, r.you?8:4, 30, 0.35, 3);
+    else burst(r.x-hx*10, r.y+2.5, r.z-hz*10, 0xffe08a, r.you?8:4, 30, 0.35, 3);
+    if(r.you){ SFX.whip(wlSndDelay(r)); if(!wl) kickShake(0.15); }
   }
 }
 // a dragon's strike: hit whoever the tail sweeps through (a generous reach round each
@@ -61281,6 +61303,229 @@ function whipTick(r){
       if(Math.hypot(o.x-cw[i*3], o.z-cw[i*3+2])<base+3*sc*(1-i/b.N) && Math.abs(o.y-cw[i*3+1])<12*sc) hit=true;
     if(hit){ w.hit.push(o); doWhip(r,o); }
   }
+}
+/* ---- THE TAIL LASH: how a whip LOOKS. Presentation only -----------------------------------------
+ * The move itself is untouched: whipStart still settles a hit the instant the whip is thrown
+ * (doWhip), with the same range, cooldown, 'ready' rule and network messages, and draws the same
+ * Math.random numbers in the same order (the hit's sparks are drawn then and only SHOWN at the crack,
+ * wlQueue; the sound is started then and scheduled on the audio clock for the crack). This layer
+ * plays the move on the tail of every ordinary racer — yours, the AI's and a remote kart's (from its
+ * snapshot counter) alike; a dragon throws its own full-body lash (updateDragon) and only borrows the
+ * crack's ring and pop here:
+ *   0     -> .075 s  ANTICIPATION: the tail cocks away from the strike and rises, the body turns away;
+ *   .075  -> .195 s  the LASH: a wave runs from the base to the tip, each link .07 s behind the base,
+ *                    so the tip arrives last and fastest and overshoots; the body twists into it;
+ *   .195 s           the CRACK at the tip: shock ring, star flash, sparks, a comic pop and the sound.
+ *                    On a hit the impact lands on the victim here too (flash, ring, the hit's sparks,
+ *                    dizzy stars) with the attacker's camera kick, and the tail holds a beat (45 ms);
+ *   -> .62 s         the SETTLE: a damped wobble back into the swim.
+ * A smear ribbon trails the tip through the lash. Everything is pooled and built on the first whip.
+ * Reduced motion: a smaller lash, no hold, no shake or screen flash, and the pops only fade. */
+const WL_DUR=0.62, WL_WIND=0.075, WL_HIT=0.125, WL_LAG=0.07, WL_CRACK=WL_HIT+WL_LAG, WL_LEN=21, WL_TH=0.95, WL_LY=2.6;
+const WL_RM=(typeof matchMedia==='function')?matchMedia('(prefers-reduced-motion: reduce)'):null;
+function wlRM(){ return !!(WL_RM && WL_RM.matches); }
+// one link's heading as a share of the full strike, at that link's own time s: cock away, lash across to
+// an overshoot (1.22), then a damped wobble that leaves at rest
+function wlAng(s){
+  if(s<=0) return 0;
+  if(s<WL_WIND){ const u=s/WL_WIND; return -0.42*u*u*(3-2*u); }
+  if(s<WL_HIT){ const u=(s-WL_WIND)/(WL_HIT-WL_WIND); return -0.42+1.64*u*u*(3-2*u); }
+  const q=s-WL_HIT; return 1.22*Math.exp(-7*q)*(Math.cos(15*q)+7/15*Math.sin(15*q));
+}
+function wlLift(s){   // the tail rises as it cocks and slams down through the strike
+  if(s<=0) return 0;
+  if(s<WL_WIND) return ldSmooth(0,WL_WIND,s);
+  return 1-0.9*ldSmooth(WL_WIND,WL_HIT+0.03,s)-0.1*ldSmooth(WL_HIT+0.03,0.4,s);
+}
+function wlLean(s){   // the body: turns away with the wind-up, then twists into the strike and back
+  return 0.45*ldSmooth(0,WL_WIND,s)*(1-ldSmooth(WL_WIND,WL_HIT,s)) - ldSmooth(WL_WIND,WL_HIT+0.02,s)*(1-ldSmooth(0.24,0.5,s));
+}
+// which way the tail goes: at the victim, else the nearest rival, else out of a slide, else alternate.
+// Reads only; whipSide (the dragons') keeps its own alternation.
+function wlSide(r,vic){
+  const fx=Math.sin(r.head), fz=Math.cos(r.head); let o=vic||null, best=34;
+  if(!o) for(const q of racers){ if(q===r||q.finished) continue; const d=Math.hypot(q.x-r.x,q.z-r.z); if(d<best){ best=d; o=q; } }
+  if(o){ const c=(o.x-r.x)*fz-(o.z-r.z)*fx; if(Math.abs(c)>0.3) return c>=0?1:-1; }
+  if(Math.abs(r.slip||0)>0.05) return r.slip>0?-1:1;
+  return r._wlAlt=-(r._wlAlt||-1);
+}
+function whipLashStart(r, vic, fromNet){
+  if(!r || !r.obj || r.obj.userData.dragonRig) return null;
+  let w=r._wl;
+  if(!w) w=r._wl={t:-1, side:1, hold:0, crack:false, hit:null, big:false, qn:0, q:new Float32Array(22*5),
+    qx:0, qy:0, qz:0, qc:0xffe08a, tip:new T.Vector3(), lt:new T.Vector3(), rib:null};
+  else if(w.t>=0 && (fromNet || w.t<WL_WIND+0.04)) return w;   // already playing (a snapshot counter and the start itself): one move
+  w.t=0; w.hold=0; w.crack=false; w.hit=null; w.big=false; w.qn=0; w.rib=null;
+  w.side=wlSide(r,vic);
+  return w;
+}
+function wlPending(r){ const w=r && r._wl; return (w && w.t>=0 && !w.crack) ? w : null; }
+// seconds from now until this racer's crack (the hit-stop freezes the tail too), 0 when no lash is coming
+function wlSndDelay(r){ const w=wlPending(r); return w ? Math.max(0,WL_CRACK-w.t)+Math.max(0,hitStopT) : 0; }
+// burst()'s exact draws, in burst()'s order, kept to be emitted at the crack instead of now
+function wlQueue(w,x,y,z,color,n,spread,life,size){
+  const q=w.q; w.qn=n; w.qx=x; w.qy=y; w.qz=z; w.qc=color;
+  for(let k=0;k<n;k++){
+    const a=Math.random()*Math.PI*2, e=Math.random()*Math.PI-Math.PI/2;
+    const sp=spread*(0.4+Math.random()*0.6), j=k*5;
+    q[j]=Math.cos(a)*Math.cos(e)*sp; q[j+1]=Math.abs(Math.sin(e))*sp*0.8+8; q[j+2]=Math.sin(a)*Math.cos(e)*sp;
+    q[j+3]=life*(0.6+Math.random()*0.6); q[j+4]=size*(0.7+Math.random()*0.6);
+  }
+}
+function wlFlush(w,x,y,z,vx,vz){
+  const q=w.q; for(let k=0;k<w.qn;k++){ const j=k*5;
+    emit(x,y,z,{color:w.qc, life:q[j+3], vx:q[j]+vx, vy:q[j+1], vz:q[j+2]+vz, s0:q[j+4], s1:0, grav:30}); }
+  w.qn=0;
+}
+// the bend for this frame: a chain of fixed-length links (the tail keeps its length), sampled into _WL
+// for tailOffset. Returns the share of the swim to keep under it.
+function wlStage(w){
+  const rm=wlRM(), th=WL_TH*(rm?0.6:1), ly=WL_LY*(rm?0.6:1), fw=1-ldSmooth(0.42,WL_DUR,w.t), ds=WL_LEN/WL_N;
+  const X=_WL.x, Y=_WL.y, Z=_WL.z, A=_WL.a; let x=0, dz=0;
+  for(let k=0;k<=WL_N;k++){
+    const u=k/WL_N, a=w.side*th*(0.25+0.75*u)*wlAng(w.t-WL_LAG*u)*fw;
+    X[k]=x; Z[k]=dz; A[k]=a; Y[k]=ly*u*Math.sqrt(u)*wlLift(w.t-WL_LAG*0.5*u)*fw;
+    x+=Math.sin(a)*ds; dz+=(1-Math.cos(a))*ds;
+  }
+  _WL.on=true;
+  return 1-0.85*ldSmooth(0,0.05,w.t)*(1-ldSmooth(0.3,WL_DUR,w.t));
+}
+// ---- the pooled effects: shock rings, star flashes, comic pops, smear ribbons, dizzy stars ----
+const _wkV=new T.Vector3(), _wkV2=new T.Vector3(), _wkV3=new T.Vector3(), _wkQ=new T.Quaternion();
+let _wlFx=null, _wlSeed=97;
+function wlRnd(){ return (_wlSeed=(_wlSeed*16807)%2147483647)/2147483647; }   // its own dice: the game's Math.random is left alone
+// a point riding along with a racer: lp in its model space -> out in the world
+function wlW(o,lp,out){ return out.copy(lp).multiply(o.scale).applyQuaternion(o.quaternion).add(o.position); }
+function wlL(o,wp,out){ _wkQ.copy(o.quaternion).invert(); return out.copy(wp).sub(o.position).applyQuaternion(_wkQ).divide(o.scale); }
+function wlTex(draw,w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h); return new T.CanvasTexture(c); }
+function wlComic(kind){   // "CRACK!" in a pop-art burst, "THWIP!" on a white swoosh, in the comic emotes' ink
+  return wlTex((x,W,H)=>{
+    const INK='#16131d', TAU=Math.PI*2; let sd=kind==='crack'?7:13; const j=a=>((sd=(sd*16807)%2147483647)/2147483647*2-1)*a;
+    x.lineJoin='miter'; x.miterLimit=4;
+    const shape=pts=>{ x.beginPath(); pts.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1])); x.closePath(); };
+    const ink=(col,lw)=>{ x.lineWidth=lw; x.strokeStyle=INK; x.shadowColor=INK; x.shadowOffsetX=4; x.shadowOffsetY=6; x.stroke(); x.shadowColor='rgba(0,0,0,0)'; x.fillStyle=col; x.fill(); };
+    const pts=[];
+    if(kind==='crack'){ for(let i=0;i<28;i++){ const a=i/28*TAU, k=(i%2?0.62:1)*(1+j(0.1)); pts.push([W/2+Math.cos(a)*W*0.47*k, H/2+Math.sin(a)*H*0.46*k]); } shape(pts); ink('#ffe23c',10);
+      shape(pts.map(p=>[W/2+(p[0]-W/2)*0.78, H/2+(p[1]-H/2)*0.74])); x.fillStyle='#ff9a1a'; x.globalAlpha=0.55; x.fill(); x.globalAlpha=1; }
+    else { for(let i=0;i<20;i++){ const a=i/20*TAU; pts.push([W/2+Math.cos(a)*W*0.44*(1+j(0.03)), H/2+Math.sin(a)*H*0.3*(1+j(0.03))]); } shape(pts); x.lineJoin='round'; ink('#fffdf2',9);
+      x.lineCap='round'; x.lineWidth=7; x.strokeStyle=INK; for(const [y0,l] of [[0.3,0.12],[0.5,0.18],[0.7,0.12]]){ x.beginPath(); x.moveTo(W*0.02,H*y0); x.lineTo(W*(0.02+l),H*y0); x.stroke(); } }
+    const t=kind==='crack'?'CRACK!':'THWIP!', fs=kind==='crack'?H*0.5:H*0.42;
+    x.font='900 '+fs.toFixed(0)+'px '+EM_WALL_FONT; x.textAlign='center'; x.textBaseline='middle';
+    const mw=x.measureText(t).width, sx=Math.min(1,W*0.8/mw);
+    x.save(); x.translate(W/2,H/2+fs*0.04); x.rotate(kind==='crack'?-0.07:0.05); x.transform(1,0,-0.17,1,0,0); x.scale(sx,1);
+    x.lineJoin='round'; x.lineWidth=fs*0.2; x.strokeStyle=INK; x.fillStyle=INK; x.strokeText(t,5,6); x.fillText(t,5,6);
+    x.strokeText(t,0,0); x.fillStyle=kind==='crack'?'#ea2a2e':'#2bb3ea'; x.fillText(t,0,0); x.restore();
+  },256,128);
+}
+function wlFxInit(){
+  const F=_wlFx={ring:[], star:[], pop:[], rib:[], diz:[]};
+  const starT=wlTex((x,W)=>{ const c=W/2, g=x.createRadialGradient(c,c,0,c,c,c); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.2,'rgba(255,255,255,0.8)'); g.addColorStop(0.5,'rgba(255,255,255,0.12)'); g.addColorStop(1,'rgba(255,255,255,0)');
+    x.fillStyle=g; x.fillRect(0,0,W,W); x.fillStyle='#fff'; x.beginPath();
+    for(let i=0;i<16;i++){ const a=i/16*Math.PI*2-Math.PI/2, k=i%4===0?0.98:(i%2?0.1:0.42); x.lineTo(c+Math.cos(a)*c*k, c+Math.sin(a)*c*k); } x.closePath(); x.fill(); },64,64);
+  const ribT=wlTex((x,W,H)=>{ const g=x.createLinearGradient(0,0,W,0); g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(0.7,'rgba(255,255,255,0.55)'); g.addColorStop(1,'rgba(255,255,255,1)');
+    x.fillStyle=g; x.fillRect(0,0,W,H); x.globalCompositeOperation='destination-in'; const v=x.createLinearGradient(0,0,0,H);
+    v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(0.5,'rgba(0,0,0,1)'); v.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=v; x.fillRect(0,0,W,H); },64,16);
+  F.tex={crack:wlComic('crack'), thwip:wlComic('thwip')};
+  const add=m=>{ m.visible=false; m.frustumCulled=false; scene.add(m); return m; };
+  const ringG=new T.RingGeometry(0.72,1,40,1);
+  for(let i=0;i<6;i++) F.ring.push({m:add(new T.Mesh(ringG,new T.MeshBasicMaterial({color:0xffffff,transparent:true,depthWrite:false,side:T.DoubleSide,blending:T.AdditiveBlending,fog:false}))), t:9, life:1, lp:new T.Vector3()});
+  for(let i=0;i<6;i++) F.star.push({m:add(new T.Sprite(new T.SpriteMaterial({map:starT,transparent:true,depthWrite:false,blending:T.AdditiveBlending,fog:false}))), t:9, life:1, lp:new T.Vector3()});
+  for(let i=0;i<3;i++){ const s=add(new T.Sprite(new T.SpriteMaterial({map:F.tex.crack,transparent:true,depthTest:false,depthWrite:false,fog:false}))); s.renderOrder=999; F.pop.push({m:s, t:9, life:1, lp:new T.Vector3()}); }
+  for(let i=0;i<4;i++){ const RB=12, g=new T.BufferGeometry(), uv=new Float32Array(RB*4), idx=[];
+    for(let k=0;k<RB;k++){ uv[k*4]=k/(RB-1); uv[k*4+1]=0; uv[k*4+2]=k/(RB-1); uv[k*4+3]=1; }
+    for(let k=0;k<RB-1;k++){ const a=k*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
+    g.setAttribute('position',new T.BufferAttribute(new Float32Array(RB*6),3)); g.setAttribute('uv',new T.BufferAttribute(uv,2)); g.setIndex(idx);
+    F.rib.push({m:add(new T.Mesh(g,new T.MeshBasicMaterial({map:ribT,color:0xfff4c8,transparent:true,depthWrite:false,side:T.DoubleSide,blending:T.AdditiveBlending,fog:false}))),
+      RB, n:0, s:new Float32Array(RB*3), w:null, fade:0}); }
+  for(let i=0;i<3;i++){ const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(new Float32Array(9),3));
+    F.diz.push({m:add(new T.Points(g,new T.PointsMaterial({map:starT,color:0xffe46a,size:3.2,transparent:true,depthWrite:false,blending:T.AdditiveBlending,fog:false}))), t:9, life:0.8}); }
+}
+function wlTake(list){ let b=list[0]; for(const e of list){ if(e.t>=e.life) return e; if(e.t>b.t) b=e; } return b; }   // a free one, else the oldest
+function wlRing(r,lp,col,s1,life){ const e=wlTake(_wlFx.ring); e.r=r; e.lp.copy(lp); e.t=0; e.life=life; e.s1=s1; e.m.material.color.setHex(col); e.m.visible=true; }
+function wlStar(r,lp,col,s1,life){ const e=wlTake(_wlFx.star); e.r=r; e.lp.copy(lp); e.t=0; e.life=life; e.s1=s1; e.m.material.color.setHex(col); e.m.visible=true; }
+function wlPop(r,lp,kind,k){ const e=wlTake(_wlFx.pop); e.r=r; e.lp.copy(lp); e.t=0; e.life=0.62; e.k=k; e.rot=(wlRnd()-0.5)*0.3; e.m.material.map=_wlFx.tex[kind]; e.m.visible=true; }
+function wlDizzy(v){ const e=wlTake(_wlFx.diz); e.r=v; e.t=0; e.ph=wlRnd()*6.3; e.m.visible=true; }
+function wlSparks(r,wp,n,col,size){   // a spray off the tip, carried along with the kart
+  const vx=Math.sin(r.head)*r.spd*0.8, vz=Math.cos(r.head)*r.spd*0.8;
+  for(let k=0;k<n;k++){ const a=wlRnd()*Math.PI*2, sp=18+wlRnd()*26;
+    emit(wp.x,wp.y,wp.z,{color:k&1?0xffffff:col, life:0.22+wlRnd()*0.16, vx:vx+Math.cos(a)*sp, vy:4+wlRnd()*14, vz:vz+Math.sin(a)*sp, s0:size*(0.7+wlRnd()*0.6), s1:0, grav:24}); }
+}
+function wlFxTick(dt){
+  const F=_wlFx; if(!F) return;
+  const rm=wlRM(), cq=camera.quaternion, cp=camera.position;
+  for(const e of F.ring){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life;
+    if(u>=1 || !e.r){ e.m.visible=false; continue; }
+    wlW(e.r.obj,e.lp,e.m.position); e.m.quaternion.copy(cq);
+    e.m.scale.setScalar(e.s1*(0.18+0.82*(1-Math.pow(1-u,3)))); e.m.material.opacity=Math.pow(1-u,1.6); }
+  for(const e of F.star){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life;
+    if(u>=1 || !e.r){ e.m.visible=false; continue; }
+    wlW(e.r.obj,e.lp,e.m.position); e.m.scale.setScalar(e.s1*(u<0.25?u/0.25:1-0.6*(u-0.25)/0.75)); e.m.material.rotation=u*0.8; e.m.material.opacity=1-u*u; }
+  for(const e of F.pop){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life;
+    if(u>=1 || !e.r){ e.m.visible=false; continue; }
+    const o=e.r.obj; wlW(o,e.lp,e.m.position); const d=Math.sqrt(cp.distanceToSquared(e.m.position));
+    const pop=rm ? 1 : (e.t<0.09 ? Math.sin(e.t/0.09*Math.PI*0.5)*1.3 : 1+0.3*Math.exp(-(e.t-0.09)*16)*Math.cos((e.t-0.09)*30));
+    const sz=(2.2+d*0.06)*e.k*pop; e.m.scale.set(sz,sz*0.5,1); e.m.position.y+=sz*0.3+e.t*2.2;
+    e.m.material.rotation=rm?0:e.rot; e.m.material.opacity=1-ldSmooth(0.6,1,u); }
+  for(const e of F.diz){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life, v=e.r;
+    if(u>=1 || !v){ e.m.visible=false; continue; }
+    const o=v.obj, sc=o.scale.y||1, p=e.m.geometry.attributes.position.array, R=2.6*sc, h=o.position.y+7.2*sc+Math.sin(e.t*7)*0.3;
+    for(let k=0;k<3;k++){ const a=e.ph+e.t*(rm?4:9)+k*2.094; p[k*3]=o.position.x+Math.cos(a)*R; p[k*3+1]=h+Math.sin(a*2)*0.35; p[k*3+2]=o.position.z+Math.sin(a)*R; }
+    e.m.geometry.attributes.position.needsUpdate=true; e.m.material.size=3.2*sc*(1-0.3*u); e.m.material.opacity=1-ldSmooth(0.6,1,u); }
+  for(const b of F.rib){ if(!b.m.visible) continue;
+    if(b.w && (b.w.rib!==b || b.w.t<0 || b.w.t>=WL_CRACK+0.06)) b.w=null;
+    if(!b.w){ b.fade-=dt*7; if(b.fade<=0 || !b.r){ b.m.visible=false; b.n=0; continue; } }
+    // samples live in the racer's own space, so the smear swings with the kart rather than streaming off behind it
+    const o=b.r.obj, P=b.m.geometry.attributes.position.array, n=b.n, RB=b.RB, s=b.s;
+    for(let k=0;k<RB;k++){ const i=Math.max(0,Math.min(n-1, n-RB+k)), i0=Math.max(Math.max(0,n-RB),i-1), i1=Math.min(n-1,i+1);
+      wlW(o,_wkV.set(s[(i%RB)*3],s[(i%RB)*3+1],s[(i%RB)*3+2]),_wkV);
+      wlW(o,_wkV2.set(s[(i1%RB)*3],s[(i1%RB)*3+1],s[(i1%RB)*3+2]),_wkV2); wlW(o,_wkV3.set(s[(i0%RB)*3],s[(i0%RB)*3+1],s[(i0%RB)*3+2]),_wkV3);
+      _wkV2.sub(_wkV3); _wkV3.copy(cp).sub(_wkV); _wkV2.cross(_wkV3); const L=_wkV2.length();
+      const wd=(n<2||L<1e-6) ? 0 : 1.5*(o.scale.x||1)*(k/(RB-1))*Math.max(0,Math.min(1,b.fade))/L;
+      P[k*6]=_wkV.x+_wkV2.x*wd; P[k*6+1]=_wkV.y+_wkV2.y*wd; P[k*6+2]=_wkV.z+_wkV2.z*wd;
+      P[k*6+3]=_wkV.x-_wkV2.x*wd; P[k*6+4]=_wkV.y-_wkV2.y*wd; P[k*6+5]=_wkV.z-_wkV2.z*wd; }
+    b.m.geometry.attributes.position.needsUpdate=true; b.m.material.opacity=0.9*Math.max(0,Math.min(1,b.fade)); }
+}
+// per frame, after the tail is posed: where the tip is, the smear, and the crack
+function wlTipFx(r,o,w){
+  const S=_WL.s; w.lt.set(_tox, 3.2+_toy+(r._tailLift||0), -2-WL_LEN*S+_wlz);   // the last ring posed is the tip
+  wlW(o,w.lt,w.tip);
+  const near=r.you || (w.hit && w.hit.you) || camera.position.distanceToSquared(w.tip)<260*260;
+  if(near && w.t>=WL_WIND*0.5 && w.t<WL_CRACK+0.06){
+    if(!_wlFx) wlFxInit();
+    if(!w.rib){ let b=null; for(const e of _wlFx.rib) if(!e.m.visible){ b=e; break; }
+      if(b){ w.rib=b; b.w=w; b.r=r; b.n=0; b.fade=1; b.m.visible=true; } }
+    const b=w.rib; if(b && b.w===w){ const i=(b.n%b.RB)*3; b.s[i]=w.lt.x; b.s[i+1]=w.lt.y; b.s[i+2]=w.lt.z; b.n++; }
+  }
+  if(!w.crack && w.t>=WL_CRACK){ w.crack=true; wlCrack(r,o,w,near); }
+}
+function wlCrack(r,o,w,near){
+  const rm=wlRM(), v=w.hit, sc=o.scale.x||1;
+  if(near){
+    if(!_wlFx) wlFxInit();
+    wlRing(r,w.lt,v?0xfff0a8:0xe8f6ff,(v?7:5)*sc*(rm?0.7:1),0.28);
+    wlStar(r,w.lt,0xfff6d8,(v?7:5)*sc,0.17);
+    wlSparks(r,w.tip,v?8:5,0xffe08a,1.6*sc);
+    if(r.you || (v && v.you) || camera.position.distanceToSquared(w.tip)<110*110) wlPop(r,w.lt,v?'crack':'thwip',v?1.15:0.8);
+  }
+  if(v && v.obj){
+    // the impact, on the near side of the victim, facing the tip
+    const vo=v.obj, vs=vo.scale.x||1; _wkV.copy(w.tip).sub(vo.position); _wkV.y=0; const L=_wkV.length()||1;
+    _wkV.multiplyScalar(Math.min(L,3.2*vs)/L).add(vo.position); _wkV.y=vo.position.y+2.8*vs;
+    wlFlush(w,_wkV.x,_wkV.y,_wkV.z,Math.sin(v.head)*v.spd*0.6,Math.cos(v.head)*v.spd*0.6);
+    if(near){ wlL(vo,_wkV,_wkV2); wlStar(v,_wkV2,0xffe08a,10*vs,0.22); wlRing(v,_wkV2,0xffd25a,8*vs*(rm?0.7:1),0.34); wlDizzy(v); }
+    if(w.big && !rm){ kickShake(0.75); flashFx(0.25,'#ffe08a'); }
+    if(!rm) w.hold=0.045;
+  } else {
+    if(w.qn) wlFlush(w,w.tip.x,w.tip.y,w.tip.z,Math.sin(r.head)*r.spd*0.8,Math.cos(r.head)*r.spd*0.8);
+    if(r.you && !rm) kickShake(0.15);
+  }
+}
+// a dragon's crack (its own rig plays the lash): the same ring, flash and pop at its tip
+function wlDragonCrack(r,o,wp,hit){
+  if(!_wlFx) wlFxInit();
+  const sc=o.scale.x||1; wlL(o,wp,_wkV2);
+  wlRing(r,_wkV2,hit?0xfff0a8:0xe8f6ff,(hit?9:7)*sc*(wlRM()?0.7:1),0.3); wlStar(r,_wkV2,0xfff6d8,7*sc,0.17);
+  if(r.you || camera.position.distanceToSquared(wp)<110*110) wlPop(r,_wkV2,hit?'crack':'thwip',hit?1.15:0.8);
 }
 function collide(){
   whipReady=false; whipTarget=null;
@@ -61898,6 +62143,7 @@ function emoteTick(dt){
 }
 function syncObjects(dt,now){
   emoteTick(dt);
+  wlFxTick(dt);
   for(const r of racers){
     const o=r.obj;
     const lift = r.hop>0?Math.sin((0.32-r.hop)/0.32*Math.PI)*3:0;
@@ -61944,8 +62190,12 @@ function syncObjects(dt,now){
     // "everyone checking out the competition" look, and the alongside-a-rival glance. An
     // earlier collision fix capped it to ~14 degrees to stop a dragon's body fanning across
     // a neighbour's slot, but dragons never used this value, so the cap only muted everyone else.
-    const headAngle=r.head + r.slip + (lk ? lk.tw : 0);   // the body keeps its line; the look is the NECK's (below). Dragons turn their own heads
-    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0);   // bank and countdown lean stay on the body
+    // a tail lash (whipLashStart) runs on this frame's clock; the body turns away with its wind-up and twists into the strike
+    const wl=(!o.userData.dragonRig && r._wl && r._wl.t>=0) ? r._wl : null;
+    if(wl){ if(wl.hold>0) wl.hold-=dt; else wl.t+=dt; if(wl.t>=WL_DUR) wl.t=-1; }
+    const wle=(wl && wl.t>=0) ? wl.side*wlLean(wl.t)*(wlRM()?0.5:1) : 0;
+    const headAngle=r.head + r.slip + (lk ? lk.tw : 0) + 0.17*wle;   // the body keeps its line; the look is the NECK's (below). Dragons turn their own heads
+    const rollAngle=-r.slip*0.5 - (r._bank||0)*0.85 + (state==='count' ? (r._cdLean||0) : 0) + 0.08*wle;   // bank and countdown lean stay on the body
     if(lk){   // squash-and-stretch and the alarmed hop: the silhouette is what the chase camera sees
       const ms=r._ms||1, p=lk.pp; o.scale.set(ms*(1-0.5*p), ms*(1+p), ms*(1-0.5*p));
       if(lk.hy>0 && !r.air) o.position.y+=lk.hy;
@@ -62015,7 +62265,9 @@ function syncObjects(dt,now){
       _TW.bias=ts.lean*amp + ts.sweep*r._tsw*4 + (lm ? lm.fs*2.5*lm.fl*lm.fl : 0); _TW.sh=ts.sh+ts.shv*tsf+(lm ? 0.8*lm.w : 0);
       _TW.hop=ts.hop ? ts.hop*hpm*Math.abs(Math.sin(tph*ts.hf)) : 0; _TW.pg=pgm;
     }
+    const wlOn=!!(wl && wl.t>=0); if(wlOn) amp*=wlStage(wl);   // the lash bends the chain; the swim mostly steps aside for it
     wiggleTail(r.obj, tph, amp, r._tailLift, ts);
+    if(wlOn){ wlTipFx(r,o,wl); _WL.on=false; _wlx=_wlz=_wla=0; }
     // boost flush on head + halo — brighten the character's OWN stored base emissive
     // (captured in makeCell after every typeId skin-tone override) rather than recomputing
     // a fresh color from r.hue every frame, which used to silently overwrite any
@@ -63514,8 +63766,9 @@ function netApplySnap(r, dt){
   if(!(r.spinT>0)) r._hzCD=Math.max(0,(r._hzCD||0)-dt);
   // a whip thrown on their machine: play the lash here. Its hit is the host's call, and the
   // host is already running the real strike on this kart when the counter arrives (see 'whip').
-  if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen && isDragonRacer(r) && !r._wh)
-    r._wh={t:0, side:whipSide(r), hit:[], lock:null, net:true};
+  if(s.wh!==undefined){ if(r._whipSeen!==undefined && s.wh!==r._whipSeen){
+      if(!isDragonRacer(r)) whipLashStart(r,null,true);   // an ordinary tail: just the look of the lash
+      else if(!r._wh) r._wh={t:0, side:whipSide(r), hit:[], lock:null, net:true}; }
     r._whipSeen=s.wh; }
   netNoteFinish(r,s);
 }
