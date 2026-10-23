@@ -64885,9 +64885,31 @@ function setupJoystick(){
 // (the joystick now feeds an analog `padSteer` straight into updateRacer above,
 //  so there's no double-applied steering and small finger moves stay gentle)
 
+// what a course card says (display only): its vibe in a few words, laps or "to the egg", how long the race is, NEW, your best
+const COURSE_VIBE={Ophelia:'sunny valley',Seraphina:'big flowing loop',Delilah:'figure-8 crossover',Bianca:'tall narrow loop',Eve:'night-garden run',Valentina:'mountain & freefall',
+  Pixie:'8-bit blocks',Trixie:'arcade blocks',Vera:'neon wireframe',Clara:'plasticine clay',Tessa:'mosaic tiles',Felicia:'wool & felt',Felicity:'woven loom',Iris:'painted desert',
+  Lily:'giant garden',Perla:'glossy beads',Marina:'swimming pool',Sienna:'misty harbour',Paige:'folded paper',Aurora:'felt at dawn',Namie:'flower fields',Stacey:'TV test card',
+  Rosalie:'boardwalk & pier',Ariadne:'a new maze each race',Penelope:'six-gate maze'};
+const COURSE_NEW=['Stacey','Ariadne','Penelope'];
+function courseLenWord(t){   // the whole race, laps x the lap's length along its control points, against the rest of the roster
+  const P=t.ctrl||[]; let L=0; for(let i=1;i<P.length;i++) L+=Math.hypot(P[i][0]-P[i-1][0],P[i][2]-P[i-1][2]);
+  if(t.loop!==false&&P.length>1) L+=Math.hypot(P[0][0]-P[P.length-1][0],P[0][2]-P[P.length-1][2]);
+  const D=L*(t.loop===false?1:(t.laps||LAPS)); return D<8500?'short race':D<12500?'medium race':'long race';
+}
+function courseFacts(t){
+  const vibe=COURSE_VIBE[t.name]||'';
+  if(t.maze){ const p=mzPlan(t); return {vibe, card:'maze', chips:['maze #'+p.no+(p.mode==='six'?' \u00b7 six gates':' \u00b7 one gate'),'to the egg']}; }
+  if(t.loop===false) return {vibe, card:'egg run', chips:['run to the egg',courseLenWord(t)]};
+  const n=t.laps||LAPS; return {vibe, card:n+' laps', chips:[n+' laps',courseLenWord(t)]};
+}
+function bestOf(t){ let v=0; try{ v=parseFloat(localStorage.getItem('sr_best_'+t.name))||0; }catch(_){} return v; }
+function bestFmt(s){ return Math.floor(s/60)+':'+(s%60).toFixed(1).padStart(4,'0'); }
+function bestShort(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }   // a card has room for m:ss
 // ---- launch deck: course carousel, racer tile, pick summary, settings sheet ----
 // Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
+let paintCapHook=null;   // the course strip's caption repaints with the summary (a maze's number changes with "Mazes: ...")
 function paintSummary(){
+  if(paintCapHook) paintCapHook();
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
     if(dl) dl.textContent=(TRACKS[selTrack]&&TRACKS[selTrack].maze) ? (p=>'maze #'+p.no+' · '+(p.mode==='six'?'six gates':'one gate')+' · run to the egg')(mzPlan(TRACKS[selTrack])) : (['zero','one','two','three','four','five','six','seven','eight'][n]||n)+' laps · item boxes · hold the drift'; }
   const el=$('picksum'); if(!el||!chosenType) return;
@@ -64946,26 +64968,6 @@ function courseArt(t){
 }
 // ---- track picker (start screen): a swipeable strip of "slides", the centred one is the pick ----
 const TRACK_FIRST=['Felicity','Namie','Rosalie','Ophelia','Eve','Stacey','Ariadne','Penelope'];   // the strip opens on these, and a first visit starts on the first
-// what a course card says (display only): its vibe in a few words, laps or "to the egg", how long the race is, NEW, your best
-const COURSE_VIBE={Ophelia:'sunny valley',Seraphina:'big flowing loop',Delilah:'figure-8 crossover',Bianca:'tall narrow loop',Eve:'night-garden run',Valentina:'mountain & freefall',
-  Pixie:'8-bit blocks',Trixie:'arcade blocks',Vera:'neon wireframe',Clara:'plasticine clay',Tessa:'mosaic tiles',Felicia:'wool & felt',Felicity:'woven loom',Iris:'painted desert',
-  Lily:'giant garden',Perla:'glossy beads',Marina:'swimming pool',Sienna:'misty harbour',Paige:'folded paper',Aurora:'felt at dawn',Namie:'flower fields',Stacey:'TV test card',
-  Rosalie:'boardwalk & pier',Ariadne:'a new maze each race',Penelope:'six-gate maze'};
-const COURSE_NEW=['Stacey','Ariadne','Penelope'];
-function courseLenWord(t){   // the whole race, laps x the lap's length along its control points, against the rest of the roster
-  const P=t.ctrl||[]; let L=0; for(let i=1;i<P.length;i++) L+=Math.hypot(P[i][0]-P[i-1][0],P[i][2]-P[i-1][2]);
-  if(t.loop!==false&&P.length>1) L+=Math.hypot(P[0][0]-P[P.length-1][0],P[0][2]-P[P.length-1][2]);
-  const D=L*(t.loop===false?1:(t.laps||LAPS)); return D<8500?'short race':D<12500?'medium race':'long race';
-}
-function courseFacts(t){
-  const vibe=COURSE_VIBE[t.name]||'';
-  if(t.maze){ const p=mzPlan(t); return {vibe, card:'maze', chips:['maze #'+p.no+(p.mode==='six'?' \u00b7 six gates':' \u00b7 one gate'),'to the egg']}; }
-  if(t.loop===false) return {vibe, card:'egg run', chips:['run to the egg',courseLenWord(t)]};
-  const n=t.laps||LAPS; return {vibe, card:n+' laps', chips:[n+' laps',courseLenWord(t)]};
-}
-function bestOf(t){ let v=0; try{ v=parseFloat(localStorage.getItem('sr_best_'+t.name))||0; }catch(_){} return v; }
-function bestFmt(s){ return Math.floor(s/60)+':'+(s%60).toFixed(1).padStart(4,'0'); }
-function bestShort(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }   // a card has room for m:ss
 function setupTrackPick(){
   const wrap=$('trackpick'); if(!wrap) return;
   wrap.innerHTML='';
@@ -65008,6 +65010,7 @@ function setupTrackPick(){
   const refreshBest=()=>cards.forEach((c,k)=>{ const bt=bestOf(TRACKS[k]), tm=c.querySelector('.tm'); c.classList.toggle('best',!!bt); if(tm) tm.dataset.t=bt?'\u2605 '+bestShort(bt):c.dataset.f; });
   const crw=$('crwrap');
   if(crw){ $('crcount').textContent=TRACKS.length+' courses'; $('crsw').textContent=(isTouch?'swipe':'scroll')+' \u203a'; }
+  paintCapHook=()=>{ if(shown>=0) paintCap(shown,true); };
   const mark=i=>{ lastMark=i; if(i===shown) return; shown=i; if(crw) crw.classList.toggle('atstart',posOf(i)===0); cards.forEach((c,k)=>c.classList.toggle('on',k===i)); $('courseno').textContent=String(posOf(i)+1).padStart(2,'0')+' / '+TRACKS.length; paintCap(i); };
   function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
     const left=c.offsetLeft+c.offsetWidth/2-wrap.clientWidth/2;
@@ -65036,7 +65039,10 @@ function setupTrackPick(){
   $('courseprev').onclick=()=>toCard(ord[Math.max(0,posOf(nearest())-1)],true);
   $('coursenext').onclick=()=>toCard(ord[Math.min(ord.length-1,posOf(nearest())+1)],true);
   // whenever the home screen (re)appears, show what is actually selected (a Grand Prix or a lobby may have moved selTrack)
-  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ shown=-1; mark(selTrack); toCard(selTrack,false); paintSummary(); paintCap(selTrack,true); refreshBest(); } })
+  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ shown=-1; mark(selTrack); toCard(selTrack,false); paintSummary(); } })
+    .observe($('start'),{attributes:true,attributeFilter:['class']});
+  // ...and its caption and best times (a race just set one, a maze's number moved on)
+  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ shown=-1; mark(selTrack); paintCap(selTrack,true); refreshBest(); } })
     .observe($('start'),{attributes:true,attributeFilter:['class']});
   mark(selTrack); toCard(selTrack,false); paintSummary();
 }
