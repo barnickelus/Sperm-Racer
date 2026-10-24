@@ -728,56 +728,132 @@
   }
   @media (prefers-reduced-motion:reduce){ button.dk-go,#start.firstrun button.dk-go::before,#start.firstrun .go-ico,.go-gloss::after,#circuitbtn[data-live]::after,.cr-hint span{animation:none;} #start.firstrun button.dk-go::before{display:none;} .scope .ticks{animation:none;} .mcard,.modal,.pop{animation:none;} }
 
-  /* ================= PICK YOUR SPERM ================= */
-  #select{align-items:stretch;justify-content:flex-start;overflow:hidden;touch-action:none;text-align:left;
-    padding:max(14px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));}
-  .sel-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;width:100%;max-width:760px;margin:0 auto 6px;}
+  /* ================= PICK YOUR SPERM =================
+     A stage and a roster. The stage (left on a landscape screen, a strip across the top in portrait) holds a window onto the
+     shared WebGL canvas, where the selected racer's own in-game model turns on a small turntable (the SEL3D module), then its name,
+     blurb and a few real readouts; Lock in sits under it. The roster is a vertically scrolling grid of the same portrait cards.
+     While the stage is live the screen has no background of its own: the canvas is the backdrop (same colours as the fallback below),
+     so the window can be a true hole through to the 3D. No backdrop-filter anywhere here: it would re-blur the canvas every frame. */
+  #select{display:grid;align-items:stretch;justify-content:stretch;text-align:left;overflow:hidden;touch-action:none;
+    --edge:rgba(109,242,208,.26); --pane:linear-gradient(180deg,rgba(18,64,72,.64),rgba(6,29,36,.82)); --gx:clamp(12px,2vw,22px); --gy:clamp(8px,1.5dvh,14px); --cw:150px;
+    padding:max(12px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));
+    gap:var(--gy) var(--gx);
+    grid-template-columns:minmax(0,clamp(290px,42%,560px)) minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr) auto;
+    grid-template-areas:"stage head" "stage roster" "foot roster";
+    background:linear-gradient(180deg,#072028,#041218);backdrop-filter:none;-webkit-backdrop-filter:none;}
+  #select.live{background:none;}
+  body.sel-up #vignette{opacity:.22;}   /* the in-race edge vignette would dim the stage window and the buttons at the screen's edges */
+  .sel-head{grid-area:head;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;min-width:0;}
   .sel-head .tag{margin:0 0 4px;}
-  .sel-head h1{font-size:clamp(22px,5.4vw,46px);}
+  #select .sel-head h1{font-size:clamp(22px,3.2vw,38px);letter-spacing:.07em;font-weight:800;line-height:1.05;}
   .sel-count{font-size:11px;letter-spacing:.2em;color:var(--signal);font-variant-numeric:tabular-nums;padding-bottom:4px;white-space:nowrap;}
-  #select .sel-blurb{margin:0 auto 8px;max-width:760px;width:100%;}
-  #grid-frame{position:relative;flex:1 1 auto;min-height:0;width:100%;max-width:760px;margin:0 auto;}
-  #sperm-scroll{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-width:none;}
+  /* the stage */
+  .sel-stage{grid-area:stage;display:flex;flex-direction:column;gap:var(--gy);min-height:0;min-width:0;--hue:28;}
+  .st-win{position:relative;flex:1 1 0;min-height:0;border:1px solid var(--edge);overflow:hidden;touch-action:none;cursor:grab;
+    box-shadow:inset 0 0 46px -14px hsl(var(--hue) 70% 50% / .45);}
+  .st-win.drag{cursor:grabbing;}
+  .st-ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;
+    background:radial-gradient(72% 62% at 50% 46%,hsl(var(--hue) 52% 28%),hsl(var(--hue) 50% 11%) 72%,#05161c);transition:opacity .3s ease;}
+  .st-ph.gone{opacity:0;}
+  .st-ph .opsvg{width:auto;height:86%;max-width:92%;margin:0;filter:drop-shadow(0 10px 14px rgba(0,0,0,.55));}
+  .st-ph.locked .opsvg{filter:brightness(0) opacity(.9) drop-shadow(0 0 14px hsl(var(--hue) 60% 55% / .55));}
+  .st-ph .st-q{position:absolute;left:0;right:0;top:50%;transform:translateY(-58%);text-align:center;font-size:clamp(52px,12dvh,110px);font-weight:800;color:hsl(var(--hue) 70% 78%);text-shadow:0 0 28px hsl(var(--hue) 80% 55% / .7);line-height:1;}
+  .st-ph .st-lk{position:absolute;left:10px;right:10px;bottom:10px;text-align:center;font-size:12px;letter-spacing:.04em;color:var(--signal);background:rgba(3,12,15,.82);border:1px solid var(--edge);padding:7px 8px;line-height:1.35;}
+  .st-ph.pop .opsvg{animation:phPop .55s ease;}
+  @keyframes phPop{0%{transform:scale(1)}30%{transform:scale(1.08) rotate(-3deg)}60%{transform:scale(.97) rotate(2deg)}100%{transform:none}}
+  .st-win .br{position:absolute;width:16px;height:16px;border:2px solid var(--signal);opacity:.9;pointer-events:none;}
+  .st-win .tl{left:-1px;top:-1px;border-right:0;border-bottom:0;} .st-win .tr{right:-1px;top:-1px;border-left:0;border-bottom:0;}
+  .st-win .bl{left:-1px;bottom:-1px;border-right:0;border-top:0;} .st-win .brr{right:-1px;bottom:-1px;border-left:0;border-top:0;}
+  .st-hint{position:absolute;left:12px;top:9px;max-width:calc(100% - 24px);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#b9d6cf;text-shadow:0 1px 6px #000,0 0 3px #000;pointer-events:none;transition:opacity .4s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .st-win.used .st-hint{opacity:0;}
+  .st-hint .hs{display:none;}
+  .st-tog{position:absolute;right:2px;bottom:0;min-width:44px;min-height:44px;padding:0 10px 10px;display:flex;align-items:flex-end;gap:6px;background:none;border:0;
+    font:inherit;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);cursor:pointer;text-shadow:0 1px 6px #000,0 0 3px #000;}
+  .st-tog b{color:var(--signal);font-weight:800;} .st-tog[aria-pressed=false] b{color:#ff9bb4;}
+  .st-bark{position:absolute;left:50%;top:12%;max-width:88%;transform:translateX(-50%) scale(.7);opacity:0;padding:6px 13px;border-radius:13px;background:var(--bone);color:#06322b;
+    font-size:13px;font-weight:800;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 8px 20px -6px rgba(0,0,0,.7);}
+  .st-bark.on{animation:barkPop 1.7s ease forwards;}
+  @keyframes barkPop{0%{opacity:0;transform:translateX(-50%) scale(.7)}12%{opacity:1;transform:translateX(-50%) scale(1.06)}20%{transform:translateX(-50%) scale(1)}82%{opacity:1}100%{opacity:0;transform:translateX(-50%) translateY(-6px) scale(1)}}
+  .st-info{flex:none;display:flex;flex-direction:column;gap:3px;min-width:0;--hue:inherit;}
+  .st-step{display:flex;align-items:center;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--signal);}
+  /* the info block is always the same height whichever racer is shown (name on one line, the blurb in a fixed number of lines, readouts that keep their row when empty), so picking never resizes the window */
+  .st-name{font-size:clamp(16px,2vw,24px);letter-spacing:.05em;line-height:1.2;color:var(--bone);text-shadow:0 0 22px hsl(var(--hue) 80% 55% / .55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .st-desc{--dl:3;font-size:12px;line-height:1.4;letter-spacing:.02em;color:#cfe9e3;height:calc(1.4em*var(--dl));display:-webkit-box;-webkit-line-clamp:var(--dl);-webkit-box-orient:vertical;overflow:hidden;}
+  .st-read{display:grid;gap:4px;margin-top:3px;min-width:0;}
+  .rd{display:flex;align-items:baseline;gap:10px;min-width:0;padding:4px 10px;border-radius:10px;border:1px solid var(--edge);background:var(--pane);font-size:11px;line-height:1.35;}
+  .rd .rk{flex:none;width:46px;letter-spacing:.18em;text-transform:uppercase;color:var(--signal);}
+  .rd .rv{min-width:0;color:var(--bone);letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rd .rv i{font-style:normal;margin-right:4px;}
+  .rd.none{visibility:hidden;}
+  /* the roster */
+  #grid-frame{grid-area:roster;position:relative;min-height:0;min-width:0;border:1px solid var(--edge);border-radius:16px;background:var(--pane);overflow:hidden;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 14px 30px -18px rgba(0,0,0,.8);}
+  #sperm-scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-width:none;overscroll-behavior:contain;padding:10px;}
   #sperm-scroll::-webkit-scrollbar{display:none;}
-  #sperm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;width:100%;margin:0 0 10px;}
+  #sperm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--cw),1fr));gap:10px;width:100%;margin:0;padding-bottom:30px;}
   #scrollHint{position:absolute;left:0;right:0;bottom:0;height:40px;pointer-events:none;z-index:5;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;
-    background:linear-gradient(to bottom,rgba(5,22,28,0),rgba(5,22,28,.92) 80%);color:var(--signal);font-size:10px;letter-spacing:.16em;text-transform:uppercase;opacity:0;transition:opacity .2s;}
+    background:linear-gradient(to bottom,rgba(5,22,28,0),rgba(5,22,28,.94) 80%);color:var(--signal);font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:0;transition:opacity .2s;}
   #scrollHint .h-h{display:none;}
-  .sel-foot{display:flex;gap:10px;width:100%;max-width:760px;margin:12px auto 0;flex:none;}
+  .sel-foot{grid-area:foot;display:flex;gap:10px;min-width:0;}
   .sel-foot .go{margin:0;min-height:54px;}
   #selback{flex:none;width:60px;padding:0;border-radius:30px;display:flex;align-items:center;justify-content:center;}
-  #racebtn{flex:1;padding:0 20px;}
-  .opcard{background:rgba(6,28,34,.7);border:2px solid var(--dim);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .1s;min-height:188px;
-    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;}
-  .opcard.sel{border-color:var(--signal);box-shadow:0 0 0 1px var(--signal),0 0 22px -4px var(--signal);}
-  .opcard .opname{color:var(--bone);font-size:15px;}
-  .opcard .opdesc{font-size:11.5px;color:var(--bone);margin-top:3px;line-height:1.3;opacity:.92;}
-  /* phones (either orientation): the roster is a swipeable two-row carousel instead of a long
-     vertical scroll — the selected card scrolls to centre, Lock in stays under the thumb */
-  @media (max-width:700px),(max-height:500px){
-    #select{padding-top:max(10px,env(safe-area-inset-top));}
-    .sel-blurb{display:none;}
-    .sel-head h1{font-size:clamp(20px,5.6vw,30px);}
-    #sperm-scroll{overflow-x:auto;overflow-y:hidden;touch-action:pan-x;scroll-snap-type:x proximity;scroll-padding-inline:2px;}
-    #sperm-grid{--cw:clamp(148px,43vw,210px);grid-template-columns:none;grid-auto-flow:column;grid-template-rows:repeat(2,minmax(0,1fr));grid-auto-columns:var(--cw);
-      gap:10px;height:100%;width:max-content;margin:0;padding-right:40px;}
-    .opcard{min-height:0;padding:10px 8px;scroll-snap-align:start;}
-    .opsvg{height:clamp(66px,13dvh,128px);width:auto;margin-bottom:2px;}
-    .opcard .opname{font-size:14px;}
-    .opcard .opdesc{font-size:11px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}
-    #scrollHint{left:auto;right:0;top:0;bottom:0;width:38px;height:auto;align-items:center;justify-content:flex-end;padding:0 8px 0 0;font-size:26px;
-      background:linear-gradient(to right,rgba(5,22,28,0),rgba(5,22,28,.9));}
-    #scrollHint .h-v{display:none;} #scrollHint .h-h{display:inline;}
+  #racebtn{flex:1;min-width:0;padding:0 14px;white-space:nowrap;}
+  #racebtn:disabled{cursor:default;}
+  /* the cards: a portrait plate (the cel-shaded art on its warm backdrop) over the name; the blurb lives on the stage */
+  .opcard{--ah:clamp(80px,13dvh,128px);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:4px;
+    min-height:0;padding:6px 6px 8px;border-radius:13px;border:1px solid var(--edge);background:rgba(7,32,40,.8);cursor:pointer;text-align:center;
+    transition:border-color .12s,box-shadow .12s,transform .08s;}
+  .opcard::before{inset:6px 6px auto 6px;height:var(--ah);border-radius:9px;}
+  .opcard:active{transform:scale(.98);}
+  .opcard .opsvg{width:100%;height:var(--ah);margin:0;}
+  .opcard.sel{border-color:var(--signal);box-shadow:0 0 0 1px var(--signal),0 0 20px -4px var(--signal);}
+  .opcard .opname{font-size:12.5px;line-height:1.2;color:var(--bone);letter-spacing:.02em;padding:0 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;}
+  .opcard .opdesc{display:none;}
+  .opcard.locked .opdesc{margin-bottom:0;}
+  .opcard .oplock{position:absolute;inset:6px 6px auto auto;z-index:2;width:30px;height:30px;padding:0;border:0;border-radius:50%;background:rgba(3,12,15,.82);font-size:0;display:flex;align-items:center;justify-content:center;}
+  .opcard .oplock::before{content:"\1F512";font-size:14px;}
+  /* portrait (a phone held upright, a tablet on its end): the stage is a strip across the top, the roster scrolls below it, Lock in is pinned at the bottom */
+  @media (orientation:portrait){
+    #select{--cw:104px;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"head" "stage" "roster" "foot";gap:var(--gy);}
+    .sel-head{align-items:center;min-height:30px;} .sel-head .tag{display:none;}
+    #select .sel-head h1{font-size:clamp(18px,5.2vw,30px);}
+    .sel-stage{height:clamp(250px,37dvh,480px);}
+    .st-desc{--dl:2;font-size:11.5px;line-height:1.35;height:calc(1.35em*var(--dl));}
+    .st-step{display:none;}
+    .st-name{font-size:clamp(17px,5vw,24px);}
+    .st-read{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;}
+    .rd{gap:6px;padding:3px 8px;} .rd .rk{display:none;} .rd.shout{display:none;}
   }
-  @media (orientation:landscape) and (max-height:500px){
-    #select{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom));}
-    .sel-head{margin-bottom:4px;} .sel-head .tag{display:none;} .sel-head h1{font-size:20px;}
-    #grid-frame{max-width:none;} .sel-head,.sel-foot{max-width:none;}
-    #sperm-grid{--cw:clamp(138px,19vw,190px);gap:8px;}
-    .opcard{padding:7px 6px;}
-    .opsvg{height:clamp(52px,17dvh,84px);}
-    .opcard .opname{font-size:12.5px;} .opcard .opdesc{font-size:10px;line-height:1.25;-webkit-line-clamp:3;margin-top:1px;}
-    .sel-foot{margin-top:8px;} .sel-foot .go{min-height:48px;}
+  @media (orientation:portrait) and (min-width:600px){
+    #select{--cw:150px;}
+    .sel-stage{flex-direction:row;gap:var(--gx);height:clamp(300px,34dvh,460px);}
+    .st-win{flex:0 0 54%;}
+    .st-info{flex:1;justify-content:center;gap:5px;}
+    .st-step{display:flex;}
+    .st-name{font-size:clamp(18px,2.6vw,24px);}
+    .st-desc{--dl:5;font-size:12.5px;line-height:1.4;height:calc(1.4em*var(--dl));}
+    .st-read{grid-template-columns:minmax(0,1fr);} .rd.shout{display:flex;} .rd{gap:10px;padding:4px 10px;} .rd .rk{display:block;width:46px;letter-spacing:.18em;}
+  }
+  /* wide screens: bigger cards, the blurb back on them */
+  @media (orientation:landscape) and (min-width:1000px) and (min-height:560px){
+    #select{--cw:158px;}
+    .opcard .oplock{inset:auto 0 0 0;width:auto;height:auto;border-radius:0;padding:5px 6px;font-size:11px;line-height:1.3;border-top:1px solid rgba(109,242,208,.3);display:block;}
+    .opcard .oplock::before{content:none;}
+    .opcard.locked{padding-bottom:42px;}
+  }
+  /* short landscape (a phone on its side): a narrow stage column, the title shrinks to a line, the readouts go */
+  @media (orientation:landscape) and (max-height:560px){
+    #select{--gy:6px;--gx:12px;--cw:112px;--ah:clamp(60px,16dvh,96px);grid-template-columns:minmax(0,clamp(230px,35%,330px)) minmax(0,1fr);
+      padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom));}
+    .sel-head{align-items:center;min-height:28px;} .sel-head .tag{display:none;}
+    #select .sel-head h1{font-size:18px;}
+    .st-step,.st-read{display:none;}
+    .st-name{font-size:15px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;height:2.4em;} .st-desc{--dl:2;font-size:11px;line-height:1.3;height:calc(1.3em*var(--dl));}
+    .st-hint .hl{display:none;} .st-hint .hs{display:inline;}
+    #racebtn{font-size:13px;letter-spacing:.1em;padding:0 8px;}
+    .sel-foot .go{min-height:48px;}
+    #sperm-scroll{padding:8px;} #sperm-grid{gap:8px;}
   }
   /* ================= IN-RACE HUD ON PHONES =================
      Play first: the chase view stays clear. Everything is smaller and more transparent, the
@@ -1160,16 +1236,32 @@
   </div>
 </div>
 
-<!-- CHARACTER SELECT - Pick your stereotype sperm warrior -->
+<!-- CHARACTER SELECT - Pick your stereotype sperm warrior.
+     The stage (#stwin) is a window onto the shared WebGL canvas: the selected racer's own in-game model is drawn into its
+     rectangle by the SEL3D module (built only once this screen is opened). Until it is ready, or when 3D is off, #stph shows the card art. -->
 <div class="screen hidden" id="select">
   <div class="sel-head">
     <div><div class="tag">choose your specimen</div><h1>PICK YOUR SPERM</h1></div>
     <span class="sel-count" id="selcount"></span>
   </div>
-  <p class="sel-blurb">Each one got their own flavor. Grand Line energy, nakama. Tap one to lock in.</p>
-  <!-- grid-frame's box is fixed by flex layout (flex:1 in a non-scrolling #select column), so its
-       bottom edge never moves — that's what keeps scrollHint from ever overlapping the cards or
-       the race button below, no matter how far #sperm-scroll is scrolled. -->
+  <section class="sel-stage" id="selstage" aria-label="Selected racer">
+    <div class="st-win" id="stwin" role="img" aria-label="Preview of the selected racer. Drag to turn it, tap to make it show off.">
+      <div class="st-ph" id="stph" aria-hidden="true"></div>
+      <i class="br tl"></i><i class="br tr"></i><i class="br bl"></i><i class="br brr"></i>
+      <div class="st-bark" id="stbark" aria-hidden="true"></div>
+      <span class="st-hint" id="sthint"><span class="hl">drag to turn &middot; tap to show off</span><span class="hs">drag &middot; tap</span></span>
+      <button type="button" class="st-tog" id="sttog" aria-pressed="false" title="Show the live 3D racer here, or the flat card art"><span>3D preview</span><b>off</b></button>
+    </div>
+    <div class="st-info" id="stinfo">
+      <small class="st-step"><i class="stp">1</i>your racer</small>
+      <b class="st-name" id="stname"></b>
+      <div class="st-desc" id="stdesc"></div>
+      <div class="st-read" id="stread"></div>
+    </div>
+  </section>
+  <!-- grid-frame's box is fixed by layout (a grid row of a non-scrolling #select), so its
+       bottom edge never moves, and that is what keeps scrollHint from ever overlapping the cards or
+       the race button, no matter how far #sperm-scroll is scrolled. -->
   <div id="grid-frame">
     <div id="sperm-scroll">
       <div id="sperm-grid">
@@ -63426,6 +63518,7 @@ let last=performance.now();
 const MENU_RES=0.6; let menuLo=false, menuTick=0;
 function menuRes(on){ if(on===menuLo) return; menuLo=on; renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*(on?MENU_RES:1)); }
 function frame(now){
+  if(SEL3D.vis){ last=now; SEL3D.frame(now); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
   const dt=Math.min(0.033,(now-last)/1000); last=now;
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
     hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
@@ -64955,6 +65048,7 @@ function setupSelect(keepPick){
     card.onclick = () => {
       if(locked){
         card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+        SEL3D.peek(t);
         return;
       }
       if(selectedEl) selectedEl.classList.remove('sel');
@@ -64963,7 +65057,7 @@ function setupSelect(keepPick){
       selectedEl = card;
       $('racebtn').disabled = false;
       $('racebtn').style.opacity = '1';
-      paintRacer(); revealPick(true);
+      paintRacer(); revealPick(true); SEL3D.pick(t);
       try{ localStorage.setItem('sr_racer',t.id); }catch(_){}
       if(window.netAnnouncePick) netAnnouncePick();
     };
@@ -65003,6 +65097,7 @@ function setupSelect(keepPick){
 const _origCountdown = countdown;
 countdown = function(){
   if(state==='count') return;   // double-tap on Lock in: one build, one tick chain
+  SEL3D.drop();   // the select stage's models go before the track and the grid are built
   initAudio();
   // the labyrinth: this race's maze is the one planned (or handed over: the host's, "Same maze");
   // it becomes the last one raced and the next race plans a fresh one
@@ -65376,10 +65471,11 @@ function paintRacer(){
 }
 // bring the locked-in racer into view when the roster opens (and keep a tapped card centred)
 function revealPick(smooth){
-  const sc=$('sperm-scroll'), c=document.querySelector('#sperm-grid .opcard.sel'); if(!sc||!c||!sc.clientWidth) return;
-  if(sc.scrollWidth-sc.clientWidth<=4) return;                       // wrapping grid on tablets/desktop
-  const left=Math.max(0,c.offsetLeft-(sc.clientWidth-c.offsetWidth)/2);
-  if(smooth&&sc.scrollTo) sc.scrollTo({left,behavior:'smooth'}); else sc.scrollLeft=left;
+  const sc=$('sperm-scroll'), c=document.querySelector('#sperm-grid .opcard.sel'); if(!sc||!c||!sc.clientHeight) return;
+  const top=c.offsetTop, bot=top+c.offsetHeight;
+  if(smooth && top>=sc.scrollTop+6 && bot<=sc.scrollTop+sc.clientHeight-6) return;          // a tapped card that is already in view stays put
+  const y=Math.max(0,top-(sc.clientHeight-c.offsetHeight)/2);
+  if(smooth&&sc.scrollTo) sc.scrollTo({top:y,behavior:'smooth'}); else sc.scrollTop=y;
 }
 function showSelect(ret){
   selReturn=ret||null;   // 'cup': the Circuit Cup's chooser sent us, and Lock in / Back return to it
@@ -65389,6 +65485,432 @@ function showSelect(ret){
   updateScrollHint();
   revealPick(false); updateScrollHint();
 }
+/* ============== SELECT STAGE (SEL3D): the selected racer, live and in 3D ==============
+ * The select screen's left panel (top strip in portrait) is a window onto the SAME WebGL canvas the race uses: while the screen is
+ * up, frame() hands the canvas to this module, which fills it with the screen's backdrop and draws the selected racer's own
+ * in-game model (makeCell, the same builder, looks and rig the race uses) into the window's rectangle, on a small studio set
+ * (warm key, cool rim, a pool of light in the racer's hue). There is no second renderer.
+ *
+ * It costs nothing until it is used: no model, texture or scene exists before the select screen is first opened, and then only the
+ * selected racer is built, on demand and asynchronously (the card art is the stage's placeholder, shown instantly; the build runs
+ * after a frame has painted, so a tap on a card or on Lock in is never held up by it). A tiny LRU keeps the last few models;
+ * leaving the screen frees them (at once when a race starts, after a grace period otherwise). It draws only while the screen
+ * and the tab are visible, at most 30 fps, at the window's CSS size x min(devicePixelRatio, 2), and the course preview behind the
+ * screen is not rendered at all meanwhile. Reduced motion: no turntable, no idle motion, frames only while you touch it.
+ *
+ * Self-protection: if the first build is slow for this device (over 400 ms, weighted for the few racers that are heavy by
+ * design) or the stage cannot hold 8 fps, it switches itself off for the session and remembers it (localStorage sr_sel3d=0); the
+ * stage then shows the card art, large. The "3D preview" toggle on the stage overrides it either way (1 = forced on, never
+ * auto-disabled; 0 = off). A locked racer is never built: a dark silhouette and the lock text stand in for it.
+ *
+ * Per-frame animation mirrors the parts of syncObjects() that matter to a racer standing still on the grid: the social look
+ * (blinks, mood), neck, tail, mouth/eyes, and every per-character hook (ud.tick, sway, scarf, dragon rig). A tap runs the racer's
+ * own celebration (celebT), which is what the character hooks answer to (Juan's hat tip, the grin/wink/WOO). */
+const SEL3D=(function(){
+  const LSK='sr_sel3d', N=36, FOVY=26, PHI=0.62, SWEEP=1.15, MARGIN=0.92, CACHE=3, HOLD_MS=20000, PTS=1500;
+  const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
+  const HEAVY={kingVox:5, mosaic:4, juan:4};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
+  const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
+  const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
+  const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), hint=$('sthint'), stage=$('selstage');
+  const nameEl=$('stname'), descEl=$('stdesc'), readEl=$('stread'), stepEl=document.querySelector('#stinfo .st-step');
+  let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':'auto'; }catch(_){}
+  let vis=false, live=false, S=null, cur=null, want=null, peeking=null;
+  let pendT=0, pendR=0, relT=0, peekT=0, barkT=0, errored=false, hintMsg='', moT=0;
+  const cache=[];                                         // LRU of entries, most recent last
+  const rect={x:0,y:0,w:2,h:2}; let needMeasure=true, ro=null;
+  let ang=PHI, angV=0, swing=0, drag=null, lastIn=-9, lastDraw=0, tsec=0, saved=null;
+  const fr={n:0, t:[], warm:0, judged:false};              // frame-time sampling after the latest build
+  const stats={mode:'auto', builds:0, lastBuildMs:0, lastTotalMs:0, fallback:null, draws:0};
+  const _aim=new T.Vector3(), esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let sd=0, sxc=0, syc=0, snap=true, redraw=true;                      // smoothed camera distance and aim shift
+
+  // ---------- the set ----------
+  function mkTex(w,h,paint){ const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); paint(x,w,h);
+    const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.minFilter=T.LinearFilter; t.generateMipmaps=false; t.userData={ctx:x,w,h}; return t; }
+  function paintGlow(hue){ const t=S.glowTex, x=t.userData.ctx, w=t.userData.w, h=t.userData.h;
+    const g=x.createRadialGradient(w*.5,h*.5,0,w*.5,h*.5,w*.62);
+    g.addColorStop(0,`hsl(${hue} 52% 26%)`); g.addColorStop(.5,`hsl(${hue} 42% 13%)`); g.addColorStop(1,'#05161c');
+    x.fillStyle=g; x.fillRect(0,0,w,h); t.needsUpdate=true;
+    S.glow.material.color.setHSL(hue/360,0.75,0.55); }
+  function ensureStage(){
+    if(S) return S;
+    const scene=new T.Scene(), cam=new T.PerspectiveCamera(FOVY,1,2,600);
+    // the turntable is the studio turning round a still racer: the camera and the lights ride one rig, so the racer keeps its heading
+    // (the dragons' bodies are a chain in world space: they must not be swung round on the spot) and the light stays where a studio puts it
+    scene.add(new T.HemisphereLight(0xcfeee8,0x1c2e34,0.95));
+    const rig=new T.Group(); rig.position.set(OX,0,OZ); scene.add(rig); rig.add(cam);
+    const key=new T.DirectionalLight(0xfff0d8,0.95); key.position.set(-26,38,48);        // warm key, front left, high
+    const rim=new T.DirectionalLight(0x6df2d0,0.85); rim.position.set(34,22,-44);        // cool rim from behind
+    const fill=new T.DirectionalLight(0xb9c8ff,0.28); fill.position.set(40,6,30);
+    for(const l of [key,rim,fill]){ rig.add(l); l.target.position.set(OX,0,OZ); scene.add(l.target); }
+    const glowTex=mkTex(128,128,()=>{});
+    scene.background=glowTex;
+    const plane=new T.PlaneGeometry(1,1);
+    const shadow=new T.Mesh(plane,new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:.95}));
+    const glow=new T.Mesh(plane,new T.MeshBasicMaterial({map:TEX_GLOW,color:0x6df2d0,transparent:true,depthWrite:false,blending:T.AdditiveBlending,opacity:.6}));
+    shadow.rotation.x=glow.rotation.x=-Math.PI/2; glow.position.set(OX,-HOVER_H-0.02,OZ); shadow.position.set(OX,-HOVER_H,OZ); glow.renderOrder=-2; shadow.renderOrder=-1;
+    scene.add(glow,shadow);
+    S={scene,cam,rig,glowTex,shadow,glow,plane};
+    return S;
+  }
+  function teardownStage(){
+    if(!S) return;
+    for(const e of cache.splice(0)) killEntry(e);
+    cur=null; S.glowTex.dispose(); S.plane.dispose(); S.shadow.material.dispose(); S.glow.material.dispose();   // (TEX_GLOW / TEX_SHADOW are the game's shared textures: left alone)
+    S=null;
+  }
+
+  // ---------- a racer on the set ----------
+  function mkRacer(t){ return {id:t.id, name:t.name, hue:t.hue, you:false, spd:0, boostT:0, drift:0, driftDir:0, driftCharge:0, hop:0, slip:0, spinT:0, megaT:0, celebT:0, item:null,
+    phase:0, wob:1.3, x:0, y:0, z:0, head:0, idx:0, prog:null, lap:0, total:0, air:false, _li:0, _bank:0, finished:false, place:1, skill:1, _glance:0, flick:0}; }
+  const _stk=[];   // scratch for visibility checks
+  function shown(c,root){ for(let p=c;p&&p!==root.parent;p=p.parent) if(!p.visible) return false; return true; }
+  // sample world-space points of the model's meshes (never its glow / flame sprites) into out[n..], about `cap` of them
+  const _m4=new T.Matrix4();
+  function samplePts(o,out,n,cap){
+    o.updateMatrixWorld(true);
+    const list=[]; let tot=0;
+    o.traverse(c=>{ if(!(c.isMesh||c.isLine||c.isPoints)||!c.geometry||!c.geometry.attributes.position||!shown(c,o)) return;
+      list.push(c); tot+=c.isInstancedMesh?c.count*6:c.geometry.attributes.position.count; });
+    const stride=Math.max(1,Math.ceil(tot/cap)), lim=n+Math.floor(cap*1.2), v=_aim;
+    for(const c of list){
+      if(c.isInstancedMesh){
+        const g=c.geometry; if(!g.boundingSphere) g.computeBoundingSphere();
+        const bs=g.boundingSphere, step=Math.max(1,Math.round(stride));
+        for(let i=0;i<c.count && n+6<=lim;i+=step){
+          c.getMatrixAt(i,_m4); _m4.premultiply(c.matrixWorld);
+          const rr=bs.radius*_m4.getMaxScaleOnAxis(); v.copy(bs.center).applyMatrix4(_m4);
+          for(let a=0;a<6;a++){ const sg=a%2?-1:1, ax=a>>1; out[n*3]=v.x+(ax===0?sg*rr:0); out[n*3+1]=v.y+(ax===1?sg*rr:0); out[n*3+2]=v.z+(ax===2?sg*rr:0); n++; }
+        }
+        continue;
+      }
+      const pa=c.geometry.attributes.position, mw=c.matrixWorld.elements;
+      for(let i=0;i<pa.count && n<lim;i+=stride){
+        const x=pa.getX(i), y=pa.getY(i), z=pa.getZ(i);
+        out[n*3]=mw[0]*x+mw[4]*y+mw[8]*z+mw[12]; out[n*3+1]=mw[1]*x+mw[5]*y+mw[9]*z+mw[13]; out[n*3+2]=mw[2]*x+mw[6]*y+mw[10]*z+mw[14]; n++;
+      }
+    }
+    return n;
+  }
+  function countTris(o){ let tris=0, meshes=0;
+    o.traverse(c=>{ if(!c.isMesh||!c.geometry||!shown(c,o)) return; meshes++; const g=c.geometry, nI=c.isInstancedMesh?c.count:1;
+      tris+=(g.index?g.index.count:(g.attributes.position?g.attributes.position.count:0))/3*nI; });
+    return {tris:Math.round(tris), meshes}; }
+  // the turntable fit: for 36 headings, how far back the camera must stand (and where to aim) for every sampled point to sit inside the window
+  // a squarer or taller window gets a higher camera, so the long thin racer lies along its diagonal (and fills it) instead of across a thin band
+  function elevFor(aspect){ return 0.17+0.36*Math.max(0,Math.min(1,(1.75-aspect)/0.85)); }
+  function buildFit(E){
+    const aspect=rect.w/rect.h, tanY=Math.tan(FOVY*Math.PI/360), tanX=tanY*aspect, elev=elevFor(aspect), se=Math.sin(elev), ce=Math.cos(elev), P=E.pts, n=E.np, cy=E.cy;
+    E.aspect=aspect; E.elev=elev; let dmax=0, dsw=0;
+    for(let k=0;k<N;k++){
+      const th=k/N*TAU, c=Math.cos(th), s=Math.sin(th);
+      let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+      for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se;
+        if(wx<x0)x0=wx; if(wx>x1)x1=wx; if(yy<y0)y0=yy; if(yy>y1)y1=yy; }
+      const xc=(x0+x1)/2, yc=(y0+y1)/2; let d=0;
+      for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se, zc=py*se+wz*ce;
+        const q=zc+Math.max(Math.abs(wx-xc)/(MARGIN*tanX), Math.abs(yy-yc)/(MARGIN*tanY)); if(q>d) d=q; }
+      E.fd[k]=d; E.fx[k]=xc; E.fy[k]=yc; if(d>dmax) dmax=d;
+      let q=th-PHI; q-=Math.round(q/TAU)*TAU; if(Math.abs(q)<=SWEEP+0.2 && d>dsw) dsw=d;
+    }
+    E.dmax=dmax; E.dsw=dsw;      // dsw: the farthest the camera must stand anywhere in the turntable's sweep; it holds that distance, so the zoom never pumps
+  }
+  // build the entry for a racer type: the real model, settled into its standing pose, measured. Synchronous (the caller schedules it)
+  function buildEntry(t){
+    const t0=performance.now(); ensureStage();
+    const o=makeCell(t.hue,t.id), ud=o.userData, r=mkRacer(t); r.obj=o;
+    o.traverse(c=>{ c.frustumCulled=false; });
+    const E={t, id:t.id, o, r, dragon:!!ud.dragonRig, pts:new Float32Array(3*Math.ceil(PTS*1.2)*4), np:0, fd:new Float32Array(N), fx:new Float32Array(N), fy:new Float32Array(N),
+      px:0, pz:0, cy:0, R:10, dmax:50, sc:1, pop:0, outT:-1, tris:0, meshes:0, buildMs:0, bad:false, aspect:0};
+    if(ud.flame) for(const f of ud.flame){ f.scale.setScalar(0); f.material.opacity=0; }
+    S.scene.add(o);
+    const dt=1/30;
+    if(E.dragon){ for(let i=0;i<48;i++) sync(E,dt,i*dt,0); E.np=samplePts(o,E.pts,0,PTS*4); }       // the coil settles first: that pose is what the race grid shows
+    else { let n=0; for(const p of [0,1.6,3.2,4.8]){ sync(E,dt,0,0,p); n=samplePts(o,E.pts,n,PTS); } E.np=n; }                  // four phases of the tail's swim, so it stays in frame
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9; const P=E.pts;
+    for(let i=0;i<E.np;i++){ P[i*3]-=OX; P[i*3+2]-=OZ; }
+    for(let i=0;i<E.np;i++){ const x=P[i*3],y=P[i*3+1],z=P[i*3+2]; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; if(z<z0)z0=z; if(z>z1)z1=z; }
+    E.cy=(y0+y1)/2; E.px=E.dragon?0:(x0+x1)/2; E.pz=E.dragon?0:(z0+z1)/2;
+    let R=4; for(let i=0;i<E.np;i++){ const q=Math.hypot(P[i*3]-E.px,P[i*3+2]-E.pz); if(q>R) R=q; } E.R=R;
+    const c=countTris(o); E.tris=c.tris; E.meshes=c.meshes;
+    S.scene.remove(o);
+    buildFit(E);
+    E.buildMs=performance.now()-t0; stats.builds++; stats.lastBuildMs=E.buildMs;
+    return E;
+  }
+  function killEntry(E){ if(!E) return; if(E.o){ if(E.o.parent) E.o.parent.remove(E.o); disposeObject(E.o); } E.o=null; E.pts=null; }
+  function lru(E){ const i=cache.indexOf(E); if(i>=0) cache.splice(i,1); cache.push(E);
+    while(cache.length>CACHE || (cache.length>1 && cache.reduce((a,e)=>a+e.tris,0)>600000)){ const v=cache.shift(); if(v===cur){ cache.push(v); break; } killEntry(v); } }
+
+  // ---------- per frame: what syncObjects() does for one racer standing on the grid ----------
+  function sync(E,dt,now,heading,phaseOverride){
+    const o=E.o, r=E.r, ud=o.userData, dragon=E.dragon;
+    // the head tracks the camera as the studio turns round it (it is the face people came to see)
+    const a=heading;
+    let rel=a; rel-=Math.floor((rel+Math.PI)/TAU)*TAU;                           // -pi..pi
+    const ar=Math.abs(rel), tr=ar<1.9?1:ar>2.9?0:1-(ar-1.9)/1.0, want=(RMQ.matches?0:-Math.max(-1.15,Math.min(1.15,rel))*0.8*tr);
+    r._glance+=(want-r._glance)*Math.min(1,6*dt);
+    const lk=dragon?null:(socialLook(r,o,dt,false), r._lk);
+    const ms=E.sc;
+    if(dragon) o.scale.setScalar(ms); else if(lk){ const p=lk.pp; o.scale.set(ms*(1-0.5*p), ms*(1+p), ms*(1-0.5*p)); } else o.scale.setScalar(ms);
+    o.rotation.set(0,lk?lk.tw:0,0);
+    o.position.set(OX-E.px*ms, 0, OZ-E.pz*ms);
+    if(lk && lk.hy>0) o.position.y+=lk.hy;
+    if(lk) poseNeck(o, lk.nk + (lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0), lk.tilt+lk.rl, lk.pitch);
+    // tail: the plain grid swim; a tap adds a flick
+    r.phase+= dt*4;
+    r.flick=Math.max(0,r.flick-dt*1.6);
+    const amp=RMQ.matches ? 0.5 : 2.4*(1+1.4*r.flick);
+    wiggleTail(o, phaseOverride!=null?phaseOverride:r.phase, phaseOverride!=null?2.4:amp, 0, null);
+    // mouth, eyes, pupils (the celebration is the finish-line one: grin, wink, WOO, grin)
+    const mo=ud.mouth, mb=ud.mouthBase;
+    if(mo&&mb){
+      let fx=1, fy=1;
+      if(r.celebT>0){ const q=6-r.celebT, big=dragon;
+        if(q<1.4){ fx=1.9; fy=big?1.8:1.3; } else if(q<2.6){ fx=1.7; fy=1.2; } else if(q<3.8){ fx=0.8; fy=big?2.2:1.4; } else { fx=1.9; fy=big?1.8:1.3; } }
+      else if(lk){ fx=lk.mx; fy=lk.my; }
+      const k=Math.min(1,12*dt);
+      mo.scale.x+=(mb.x*fx-mo.scale.x)*k; mo.scale.y+=(mb.y*fy-mo.scale.y)*k;
+      if(lk){ if(ud._mrz0===undefined) ud._mrz0=mo.rotation.z; mo.rotation.z=ud._mrz0+lk.mrz; }
+      mouthClear(o,mo,mb);
+    }
+    const pu=ud.pupils;
+    if(pu){ if(r.celebT>0){ pu[0].rotation.z+=dt*10; pu[1].rotation.z+=dt*10; } else { pu[0].rotation.z=0; pu[1].rotation.z=0; }
+      if(lk) lkPupils(ud,lk); }
+    const ey=ud.eyes;
+    if(ey){ const q=6-r.celebT, wink=r.celebT>0&&q>=1.4&&q<2.6, woo=r.celebT>0&&q>=2.6&&q<3.8;
+      if(lk){ const k=Math.min(1,26*dt); ey[1].scale.y+=(((wink||lk.wk>0)?0.12:lk.lidR*lk.blink)-ey[1].scale.y)*k; ey[0].scale.y+=((woo?1.18:lk.lidL*lk.blink)-ey[0].scale.y)*k; }
+      else { ey[1].scale.y+=((wink?0.12:1)-ey[1].scale.y)*Math.min(1,14*dt); ey[0].scale.y+=((woo?1.18:1)-ey[0].scale.y)*Math.min(1,10*dt); } }
+    // the character's own rig, as in the race
+    if(ud.bandido) updateBandido(o,r,dt);
+    if(ud.bosun) updateBosun(o,r,dt);
+    if(ud.salty) updateSalty(o,r,dt);
+    if(ud.tick) ud.tick(o,r,now);
+    if(ud.sway) updateSway(o,r,now);
+    if(ud.scarf) updateScarf(o,r,now);
+    if(r.celebT>0){ r.celebT-=dt; o.position.y+=Math.abs(Math.sin(now*7))*2.2; o.rotation.y+=Math.sin(now*4.5)*0.35; o.rotation.z+=Math.sin(now*4.5+1)*0.15; }
+    if(dragon) updateDragon(o,r,now,dt);
+    const gl=ud.glow; if(gl){ gl.scale.setScalar(12*(1+Math.sin(now*9)*0.06)); gl.material.opacity=0.6; }
+  }
+
+  // ---------- the stage's DOM ----------
+  function svgFor(id,suf){ let svg=OP_SVG[id]||'';
+    (svg.match(/ id="[^"]+"/g)||[]).forEach(m=>{ const k=m.slice(5,-1); svg=svg.split(' id="'+k+'"').join(' id="'+k+suf+'"').split('url(#'+k+')').join('url(#'+k+suf+')').split('href="#'+k+'"').join('href="#'+k+suf+'"'); });
+    return svg; }
+  function lockText(){ const l=document.querySelector('#sperm-grid .oplock'); return l?l.textContent.trim():'🔒 Finish a Circuit Cup or 3 podiums'; }
+  function setHue(h){ stage.style.setProperty('--hue',h); }
+  function paintInfo(t,locked){
+    setHue(t.hue); nameEl.textContent=t.name; descEl.textContent=t.desc; stepEl.lastChild.textContent=locked?'locked':'your racer';
+    const st=MUSIC_STYLES[t.id], alts=(ALT_MAP[t.id]||[]).length, sg=SIGNATURE_ITEMS[t.id], br=BARKS[t.id];
+    readEl.innerHTML=
+      `<div class="rd radio${st&&st.station?'':' none'}"><span class="rk">radio</span><span class="rv">${st&&st.station?'♪ '+esc(st.station)+(alts?'  +'+alts+' more':''):''}</span></div>`+
+      `<div class="rd item${sg?'':' none'}"><span class="rk">item</span><span class="rv">${sg?'<i>'+esc(sg.icon||'')+'</i>'+esc(sg.name):''}</span></div>`+
+      `<div class="rd shout${br?'':' none'}"><span class="rk">shout</span><span class="rv">${br?'“'+esc(br)+'”':''}</span></div>`;
+    win.setAttribute('aria-label',(locked?'Locked racer: ':'Preview of ')+t.name+(locked||!live?'':'. Drag to turn it, tap to make it show off.'));
+  }
+  function paintPh(t,locked){
+    ph.className='st-ph'+(locked?' locked':''); ph.style.setProperty('--hue',t.hue);
+    ph.innerHTML=(OP_SVG[t.id]?svgFor(t.id,'_s'):'<span style="display:block;width:30%;aspect-ratio:1;border-radius:50%;background:hsl('+t.hue+' 85% 62%)"></span>')+
+      (locked?'<div class="st-q">?</div><div class="st-lk">'+esc(lockText())+'</div>':'');
+  }
+  function paintTog(){ tog.setAttribute('aria-pressed',live?'true':'false'); tog.lastChild.textContent=live?'on':'off';
+    hint.firstChild.textContent=hintMsg||(live?'drag to turn · tap to show off':'tap to show off'); hint.lastChild.textContent=hintMsg?'3D paused':(live?'drag · tap':'tap'); }
+  function say(msg){ const t=BARKS[(cur&&cur.id)||(want&&want.id)]; const b=msg||t; if(!b) return; bark.textContent=b; bark.classList.remove('on'); void bark.offsetWidth; bark.classList.add('on'); }
+  function showOff(){
+    win.classList.add('used'); say();
+    if(live && cur && !cur.bad){ cur.r.celebT=6; cur.r.flick=1; lastIn=tsec; redraw=true; }
+    else { ph.classList.remove('pop'); void ph.offsetWidth; ph.classList.add('pop'); }
+  }
+
+  // ---------- choosing what the stage shows ----------
+  function show(E){   // the entry is ready: put it on the set
+    if(!S||!vis||want!==E.t) return;
+    if(cur && cur!==E) S.scene.remove(cur.o);
+    cur=E; if(!E.o.parent) S.scene.add(E.o);
+    E.sc=RMQ.matches?1:0.55; E.pop=RMQ.matches?1:0; if(RMQ.matches){ ang=PHI; angV=0; } E.r.celebT=0; E.r.flick=0; lru(E);
+    if(E.aspect!==rect.w/rect.h) buildFit(E);
+    const R=Math.max(E.R*1.25,9), sc=R*2.3; S.shadow.scale.set(sc*0.9,sc*0.9,1); S.glow.scale.set(sc*1.15,sc*1.15,1);
+    redraw=true; snap=true; fr.n=0; fr.t.length=0; fr.warm=WARM; fr.judged=false; needMeasure=true;
+    ph.classList.add('gone');
+    if(!RMQ.matches) angV=2.4;      // a little spin as it lands (the sweep takes the angle back to its 3/4 pose)
+  }
+  function build(t){
+    pendT=0; if(!vis||!live||want!==t) return;
+    let E=cache.find(e=>e.t===t);
+    if(!E){
+      if(cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o);
+      const t0=performance.now();
+      try{ E=buildEntry(t); }
+      catch(err){ console.error('select stage: could not build '+t.id+': '+(err&&err.message)); E=null; }
+      if(!E){ ph.classList.remove('gone'); return; }
+      const w=HEAVY[t.id]||1; E.limit=BUILD_MS*w;
+      show(E);
+      stats.lastTotalMs=performance.now()-t0;
+      E.firstDraw=true;
+    } else show(E);
+  }
+  function schedule(t){
+    clearTimeout(pendT); cancelAnimationFrame(pendR);
+    if(!live) return;
+    const E=cache.find(e=>e.t===t);
+    if(E){ build(t); return; }                       // already built: swap in at once
+    pendR=requestAnimationFrame(()=>{ pendT=setTimeout(()=>build(t),24); });    // after this frame has painted
+  }
+  function pick(t){
+    if(!vis) return;
+    if(cur && cur.t===t && !peeking && want===t) return;
+    clearTimeout(peekT); peeking=null; want=t; paintInfo(t,false); paintPh(t,false);
+    if(!live){ return; }
+    if(cur && cur.t!==t){ cur.outT=0; }
+    schedule(t);
+  }
+  function peek(t){      // a locked card was tapped: its silhouette and the lock text, for a moment; the pick is unchanged
+    if(!vis) return;
+    peeking=t; paintInfo(t,true); paintPh(t,true);
+    clearTimeout(peekT); peekT=setTimeout(()=>{ peeking=null; if(want){ paintInfo(want,false); paintPh(want,false); if(live&&cur&&cur.t===want) ph.classList.add('gone'); } },2600);
+  }
+
+  // ---------- rendering ----------
+  function measure(){
+    const cv=renderer.domElement, cr=cv.getBoundingClientRect(), wr=win.getBoundingClientRect();
+    if(!cr.width||!cr.height||!wr.width||!wr.height) return false;
+    const kx=_vw/cr.width, ky=_vh/cr.height;
+    rect.x=(wr.left-cr.left)*kx; rect.w=wr.width*kx; rect.h=wr.height*ky; rect.y=_vh-(wr.bottom-cr.top)*ky;
+    if(S){ S.cam.aspect=rect.w/rect.h; S.cam.updateProjectionMatrix(); if(cur&&cur.aspect!==S.cam.aspect) buildFit(cur); }
+    needMeasure=false; return true;
+  }
+  function grab(){   // take the canvas: full device ratio for the stage, nothing else drawn
+    if(saved) return;
+    saved={ac:renderer.autoClear};
+    let pr=Math.min(devicePixelRatio||1,2); if(_vw*_vh*pr*pr>4.3e6) pr=Math.sqrt(4.3e6/(_vw*_vh));
+    renderer.setPixelRatio(pr); renderer.autoClear=false;
+  }
+  function release(){ // give the canvas back to the course preview
+    if(!saved) return;
+    renderer.autoClear=saved.ac; renderer.setScissorTest(false); renderer.setClearColor(0x1c1218); renderer.setViewport(0,0,_vw,_vh);
+    renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*(menuLo?MENU_RES:1)); saved=null;
+  }
+  function draw(dt){
+    const R=renderer;
+    R.setScissorTest(false); R.setViewport(0,0,_vw,_vh); R.setClearColor(C0,1); R.clear(true,true,false);   // the whole screen's backdrop
+    R.setViewport(rect.x,rect.y,rect.w,rect.h); R.setScissor(rect.x,rect.y,rect.w,rect.h); R.setScissorTest(true);
+    const E=cur;
+    if(E&&E.o&&E.o.parent){
+      // camera for this heading: the fitted distance and aim
+      const f=(((ang%TAU)+TAU)%TAU)/TAU*N, k0=Math.floor(f)%N, k1=(k0+1)%N, u=f-Math.floor(f);
+      const d=(E.fd[k0]+(E.fd[k1]-E.fd[k0])*u), d2=Math.max(d,E.dsw), xc=E.fx[k0]+(E.fx[k1]-E.fx[k0])*u, yc=E.fy[k0]+(E.fy[k1]-E.fy[k0])*u;
+      sd=d2; sxc=xc; syc=yc;      // (the table is already continuous in the heading; smoothing it would only let a fast drag outrun the framing)
+      const se=Math.sin(E.elev), ce=Math.cos(E.elev);
+      const ay=E.cy+syc*ce-0.07*sd*Math.tan(FOVY*Math.PI/360), az=-syc*se;           // the aim, in the rig's frame (the racer's pivot is its origin)
+      S.rig.rotation.y=-ang; S.cam.rotation.set(-E.elev,0,0); S.cam.position.set(sxc, ay+se*sd, az+ce*sd);
+    } else { S.rig.rotation.y=0; S.cam.rotation.set(-0.15,0,0); S.cam.position.set(0,10,60); }
+    R.render(S.scene,S.cam);
+    R.setScissorTest(false);
+  }
+  function judgeFrames(){
+    if(mode!=='auto'||fr.judged||fr.t.length<SAMPLE) return;
+    fr.judged=true; const a=fr.t.slice().sort((x,y)=>x-y), med=a[a.length>>1];
+    if(med>1000/FPS_MIN) fallback('the stage held only '+Math.round(1000/med)+' fps');
+  }
+  function fallback(why){
+    stats.fallback=why; mode='off'; try{ localStorage.setItem(LSK,'0'); }catch(_){}
+    hintMsg='3D preview paused: this device was slow. Tap 3D preview to try it again.';
+    setLive(false);
+  }
+  // one animation frame from the game's loop while the screen is up; always cheap when there is nothing to do
+  function frame(now){
+    const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h){ resize(); needMeasure=true; redraw=true; }
+    if(!live||document.hidden||!S) return;
+    if(now-lastDraw<31) return;                                     // 30 fps at most
+    const E=cur, still=RMQ.matches, animating=!!(E && (E.pop<1 || E.outT>=0 || E.r.celebT>0 || E.r.flick>0 || E.firstDraw || fr.warm>0)) || !!drag || angV!==0;
+    if(still && !animating && !redraw && !needMeasure) return;      // reduced motion: a still pose is drawn once, then left alone
+    const gap=now-lastDraw, dt=Math.min(0.05,gap/1000); lastDraw=now; tsec=now/1000;
+    if(needMeasure){ if(!measure()) return; redraw=true; }
+    // turntable: slow where the face is turned to the camera, quicker past the back; a drag takes over, then eases back
+    if(!drag){
+      if(angV!==0){ ang+=angV*dt; angV*=Math.exp(-2.6*dt); if(Math.abs(angV)<0.01) angV=0; }
+      if(!still){   // the turntable swings through the face-on views, holds at each end and again at the 3/4 pose, then takes the ang back from wherever a drag left it
+        const idle=Math.min(1,Math.max(0,(tsec-lastIn-1.2)/1.6));
+        if(idle>0){ swing+=dt*TAU/12*idle; const sn=Math.sin(swing); let df=PHI+SWEEP*sn*Math.abs(sn)-ang; df-=Math.round(df/TAU)*TAU; ang+=df*Math.min(1,dt*(angV?0:3)*idle); }
+      }
+    }
+    if(E && !E.bad && E.o){
+      if(E.pop<1 && E.outT<0){ E.pop=Math.min(1,E.pop+dt/0.45); const x=E.pop-1; E.sc=E.pop>=1?1:Math.min(1.06,0.55+0.45*(1+2.70158*x*x*x+1.70158*x*x)); }
+      if(E.outT>=0){ E.outT+=dt; E.sc=Math.max(0.5,1-E.outT*3); if(E.outT>0.16) E.outT=-1; }
+      try{ sync(E,dt,tsec,ang); }
+      catch(err){ E.bad=true; console.error('select stage: '+E.id+' failed: '+(err&&err.message)); ph.classList.remove('gone'); }
+    }
+    const t0=performance.now();
+    draw(dt); redraw=false; stats.draws++;
+    if(E && E.firstDraw){ E.firstDraw=false; const ms=performance.now()-t0; E.firstMs=ms; stats.lastTotalMs=E.buildMs+ms;
+      if(mode==='auto' && E.buildMs+ms>E.limit) fallback('building '+E.id+' took '+Math.round(E.buildMs+ms)+' ms'); }
+    if(fr.warm>0) fr.warm--; else if(!fr.judged && gap<400){ fr.t.push(gap); judgeFrames(); }
+  }
+  function setLive(on){
+    live=!!on; selEl.classList.toggle('live',live); stats.mode=mode;
+    if(live){ ensureStage(); grab(); needMeasure=true; if(measure()&&want) paintGlow(want.hue); lastDraw=0; snap=true; redraw=true;
+      if(want){ ph.classList.remove('gone'); schedule(want); } }
+    else { clearTimeout(pendT); cancelAnimationFrame(pendR); release(); if(S&&cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o); cur=null; ph.classList.remove('gone'); }
+    paintTog();
+  }
+
+  // ---------- entering and leaving ----------
+  function enter(){
+    if(vis) return; vis=true; clearTimeout(relT); document.body.classList.add('sel-up');
+    want=chosenType; ang=PHI; angV=0; swing=0; lastIn=-9; hintMsg=mode==='off'&&stats.fallback?'3D preview paused: this device was slow. Tap 3D preview to try it again.':'';
+    paintInfo(want,false); paintPh(want,false); win.classList.remove('used');
+    if(!ro && window.ResizeObserver) ro=new ResizeObserver(()=>{ needMeasure=true; });
+    if(ro) ro.observe(win);
+    live=mode!=='off'; selEl.classList.toggle('live',live);
+    if(live){ ensureStage(); grab(); paintGlow(want.hue); if(measure()){ draw(0.016); } redraw=true; lastDraw=0; snap=true; }   // the backdrop is right on the very first painted frame
+    paintTog();
+    if(live) schedule(want);
+  }
+  function exit(){
+    if(!vis) return; vis=false; live=false; selEl.classList.remove('live'); document.body.classList.remove('sel-up');
+    clearTimeout(pendT); cancelAnimationFrame(pendR); clearTimeout(peekT); peeking=null;
+    if(ro) ro.disconnect();
+    release();
+    if(S&&cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o);
+    cur=null; drag=null; angV=0;
+    clearTimeout(relT); if(state!=='menu') teardownStage(); else relT=setTimeout(()=>{ if(!vis) teardownStage(); },HOLD_MS);
+  }
+  function drop(){   // a race is starting: free the models now, before the track and the grid are built
+    clearTimeout(pendT); cancelAnimationFrame(pendR); clearTimeout(relT);
+    if(S){ if(cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o); cur=null; for(const e of cache.splice(0)) killEntry(e); }
+  }
+  window.addEventListener('resize',()=>{ needMeasure=true; });
+  window.addEventListener('orientationchange',()=>{ needMeasure=true; setTimeout(()=>{ needMeasure=true; },400); });
+  new MutationObserver(()=>{ const up=!selEl.classList.contains('hidden'); if(up&&!vis) enter(); else if(!up&&vis) exit(); }).observe(selEl,{attributes:true,attributeFilter:['class']});
+
+  // ---------- the toggle, and hands on the stage ----------
+  tog.addEventListener('click',e=>{ e.stopPropagation();
+    if(live){ mode='off'; try{ localStorage.setItem(LSK,'0'); }catch(_){} hintMsg=''; setLive(false); }
+    else { mode='on'; try{ localStorage.setItem(LSK,'1'); }catch(_){} stats.fallback=null; hintMsg=''; setLive(true); } });
+  tog.addEventListener('pointerdown',e=>e.stopPropagation());
+  win.addEventListener('pointerdown',e=>{ if(e.target.closest&&e.target.closest('.st-tog')) return;
+    drag={id:e.pointerId, x:e.clientX, t0:performance.now(), moved:0, lt:performance.now()};
+    try{ win.setPointerCapture(e.pointerId); }catch(_){} win.classList.add('drag'); angV=0; lastIn=tsec; redraw=true; });
+  win.addEventListener('pointermove',e=>{ if(!drag||e.pointerId!==drag.id) return;
+    const dx=e.clientX-drag.x, now=performance.now(), dtm=Math.max(8,now-drag.lt); drag.x=e.clientX; drag.lt=now; drag.moved+=Math.abs(dx);
+    if(live && drag.moved>=7){ ang+=dx*0.011; angV=Math.max(-9,Math.min(9,dx*0.011/(dtm/1000)))*0.5+angV*0.5; lastIn=tsec; } });
+  const up=e=>{ if(!drag||(e&&e.pointerId!==drag.id)) return; const d=drag; drag=null; win.classList.remove('drag');
+    try{ win.releasePointerCapture(d.id); }catch(_){}
+    if(d.moved<7 && performance.now()-d.t0<500){ angV=0; showOff(); }
+    else { win.classList.add('used'); if(performance.now()-d.lt>90) angV=0; }
+    lastIn=tsec; redraw=true; };
+  win.addEventListener('pointerup',up); win.addEventListener('pointercancel',up);
+  win.setAttribute('tabindex','0');
+  win.addEventListener('keydown',e=>{ if(e.key==='ArrowLeft'||e.key==='ArrowRight'){ ang+=(e.key==='ArrowLeft'?-0.35:0.35); lastIn=tsec; redraw=true; e.preventDefault(); }
+    else if(e.key==='Enter'||e.key===' '){ showOff(); e.preventDefault(); } });
+
+  return {
+    get vis(){ return vis; }, get live(){ return live; }, get mode(){ return mode; }, get cur(){ return cur; }, get cache(){ return cache; }, stats, rect,
+    frame, pick, peek, drop, enter, exit, buildEntry, killEntry, sync, measure, draw, ensureStage, schedule, paintGlow,
+    get stage(){ return S; }, get ang(){ return ang; }, set ang(v){ ang=v; redraw=true; }, get want(){ return want; }, setLive, showOff,
+  };
+})();
 function courseArt(t){
   if(t.maze) return mzCourseArt(t);
   const n=t.sky||0, r=(n>>16&255)/255, g=(n>>8&255)/255, b=(n&255)/255;
