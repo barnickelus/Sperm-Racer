@@ -759,7 +759,7 @@
   .st-ph .opsvg{width:auto;height:86%;max-width:92%;margin:0;filter:drop-shadow(0 10px 14px rgba(0,0,0,.55));}
   .st-ph.locked .opsvg{filter:brightness(0) opacity(.9) drop-shadow(0 0 14px hsl(var(--hue) 60% 55% / .55));}
   .st-ph .st-q{position:absolute;left:0;right:0;top:50%;transform:translateY(-58%);text-align:center;font-size:clamp(52px,12dvh,110px);font-weight:800;color:hsl(var(--hue) 70% 78%);text-shadow:0 0 28px hsl(var(--hue) 80% 55% / .7);line-height:1;}
-  .st-ph .st-lk{position:absolute;left:10px;right:10px;bottom:10px;text-align:center;font-size:12px;letter-spacing:.04em;color:var(--signal);background:rgba(3,12,15,.82);border:1px solid var(--edge);padding:7px 8px;line-height:1.35;}
+  .st-ph .st-lk{position:absolute;left:10px;right:10px;bottom:46px;text-align:center;font-size:12px;letter-spacing:.04em;color:var(--signal);background:rgba(3,12,15,.82);border:1px solid var(--edge);padding:7px 8px;line-height:1.35;}
   .st-ph.pop .opsvg{animation:phPop .55s ease;}
   @keyframes phPop{0%{transform:scale(1)}30%{transform:scale(1.08) rotate(-3deg)}60%{transform:scale(.97) rotate(2deg)}100%{transform:none}}
   .st-win .br{position:absolute;width:16px;height:16px;border:2px solid var(--signal);opacity:.9;pointer-events:none;}
@@ -849,7 +849,7 @@
     .sel-head{align-items:center;min-height:28px;} .sel-head .tag{display:none;}
     #select .sel-head h1{font-size:18px;}
     .st-step,.st-read{display:none;}
-    .st-name{font-size:15px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;height:2.4em;} .st-desc{--dl:2;font-size:11px;line-height:1.3;height:calc(1.3em*var(--dl));}
+    .st-name{font-size:15px;white-space:normal;display:flex;align-items:flex-end;height:2.4em;line-height:1.2;} .st-desc{--dl:2;font-size:11px;line-height:1.3;height:calc(1.3em*var(--dl));}
     .st-hint .hl{display:none;} .st-hint .hs{display:inline;}
     #racebtn{font-size:13px;letter-spacing:.1em;padding:0 8px;}
     .sel-foot .go{min-height:48px;}
@@ -65048,7 +65048,7 @@ function setupSelect(keepPick){
     card.onclick = () => {
       if(locked){
         card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
-        SEL3D.peek(t);
+        try{ SEL3D.peek(t); }catch(e){ console.error(e); }
         return;
       }
       if(selectedEl) selectedEl.classList.remove('sel');
@@ -65057,7 +65057,7 @@ function setupSelect(keepPick){
       selectedEl = card;
       $('racebtn').disabled = false;
       $('racebtn').style.opacity = '1';
-      paintRacer(); revealPick(true); SEL3D.pick(t);
+      paintRacer(); revealPick(true); try{ SEL3D.pick(t); }catch(e){ console.error(e); }
       try{ localStorage.setItem('sr_racer',t.id); }catch(_){}
       if(window.netAnnouncePick) netAnnouncePick();
     };
@@ -65507,7 +65507,7 @@ function showSelect(ret){
  * (blinks, mood), neck, tail, mouth/eyes, and every per-character hook (ud.tick, sway, scarf, dragon rig). A tap runs the racer's
  * own celebration (celebT), which is what the character hooks answer to (Juan's hat tip, the grin/wink/WOO). */
 const SEL3D=(function(){
-  const LSK='sr_sel3d', N=36, FOVY=26, PHI=0.62, SWEEP=1.15, MARGIN=0.92, CACHE=3, HOLD_MS=20000, PTS=1500;
+  const LSK='sr_sel3d', N=36, FOVY=26, PHI=0.62, SWEEP=1.15, MARGIN=0.92, CACHE=3, HOLD_MS=20000, PTS=1500, ENV=300;
   const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
   const HEAVY={kingVox:5, mosaic:4, juan:4};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
   const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
@@ -65600,39 +65600,81 @@ const SEL3D=(function(){
   // the turntable fit: for 36 headings, how far back the camera must stand (and where to aim) for every sampled point to sit inside the window
   // a squarer or taller window gets a higher camera, so the long thin racer lies along its diagonal (and fills it) instead of across a thin band
   function elevFor(aspect){ return 0.17+0.36*Math.max(0,Math.min(1,(1.75-aspect)/0.85)); }
-  function buildFit(E){
-    const aspect=rect.w/rect.h, tanY=Math.tan(FOVY*Math.PI/360), tanX=tanY*aspect, elev=elevFor(aspect), se=Math.sin(elev), ce=Math.cos(elev), P=E.pts, n=E.np, cy=E.cy;
-    E.aspect=aspect; E.elev=elev; let dmax=0, dsw=0;
+  // one table of fits over the sampled points (the idle set, and with `cel` the celebration set too): for each of the 36 headings the camera
+  // distance d, and where to aim, at which they all sit inside the window
+  function fitSet(E,cel,od,ox,oy,tanX,tanY,se,ce){
+    const cy=E.cy; let dsw=0;
+    const sets=cel&&E.nc?[[E.pts,E.ns],[E.cpts,E.nc]]:[[E.pts,E.ns]];
     for(let k=0;k<N;k++){
       const th=k/N*TAU, c=Math.cos(th), s=Math.sin(th);
       let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
-      for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se;
+      for(const [P,n] of sets) for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se;
         if(wx<x0)x0=wx; if(wx>x1)x1=wx; if(yy<y0)y0=yy; if(yy>y1)y1=yy; }
       const xc=(x0+x1)/2, yc=(y0+y1)/2; let d=0;
-      for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se, zc=py*se+wz*ce;
+      for(const [P,n] of sets) for(let i=0;i<n;i++){ const px=P[i*3]-E.px, py=P[i*3+1]-cy, pz=P[i*3+2]-E.pz, wx=px*c+pz*s, wz=-px*s+pz*c, yy=py*ce-wz*se, zc=py*se+wz*ce;
         const q=zc+Math.max(Math.abs(wx-xc)/(MARGIN*tanX), Math.abs(yy-yc)/(MARGIN*tanY)); if(q>d) d=q; }
-      E.fd[k]=d; E.fx[k]=xc; E.fy[k]=yc; if(d>dmax) dmax=d;
+      od[k]=d; ox[k]=xc; oy[k]=yc;
       let q=th-PHI; q-=Math.round(q/TAU)*TAU; if(Math.abs(q)<=SWEEP+0.2 && d>dsw) dsw=d;
     }
-    E.dmax=dmax; E.dsw=dsw;      // dsw: the farthest the camera must stand anywhere in the turntable's sweep; it holds that distance, so the zoom never pumps
+    return dsw;      // dsw: the farthest the camera must stand anywhere in the turntable's sweep; it holds that distance, so the zoom never pumps
+  }
+  // the idle fit, and (for a rig with a celebration that reaches further) a second one the camera eases out to while the racer shows off
+  function buildFit(E){
+    const aspect=rect.w/rect.h, tanY=Math.tan(FOVY*Math.PI/360), tanX=tanY*aspect, elev=elevFor(aspect), se=Math.sin(elev), ce=Math.cos(elev);
+    E.aspect=aspect; E.elev=elev;
+    E.dsw=fitSet(E,false,E.fd,E.fx,E.fy,tanX,tanY,se,ce);
+    if(E.nc>0){ E.dswc=Math.max(E.dsw,fitSet(E,true,E.gd,E.gx,E.gy,tanX,tanY,se,ce)); E.cel=true; } else { E.dswc=E.dsw; E.cel=false; }
+  }
+  // the fitted camera for a heading (idle, eased toward the celebration fit by E.cz), plus any easing left over from the fit having just grown
+  let fitD=0, fitX=0, fitY=0;
+  function fitAt(E,a){
+    const f=(((a%TAU)+TAU)%TAU)/TAU*N, k0=Math.floor(f)%N, k1=(k0+1)%N, u=f-Math.floor(f);
+    let d=Math.max(E.fd[k0]+(E.fd[k1]-E.fd[k0])*u,E.dsw), xc=E.fx[k0]+(E.fx[k1]-E.fx[k0])*u, yc=E.fy[k0]+(E.fy[k1]-E.fy[k0])*u;
+    if(E.cz>0.001){ const dc=Math.max(E.gd[k0]+(E.gd[k1]-E.gd[k0])*u,E.dswc), k=E.cz; d+=(dc-d)*k; xc+=(E.gx[k0]+(E.gx[k1]-E.gx[k0])*u-xc)*k; yc+=(E.gy[k0]+(E.gy[k1]-E.gy[k0])*u-yc)*k; }
+    fitD=d+E.bd; fitX=xc+E.bx; fitY=yc+E.by;
+  }
+  // a rig's gestures are not all on a schedule the build could sample, so the fit keeps learning: now and then a few points of the live pose are looked at, and any that
+  // reach the window's edge join the set (the idle one, or the celebration's while it plays) and the fit is rebuilt, the camera easing out to it rather than jumping
+  const LIVE=new Float32Array(3*600), _pv=new T.Vector3();
+  function learn(E){
+    const cel=E.r.celebT>0||E.r.flick>0.05, m=samplePts(E.o,LIVE,0,300);
+    let add=0, buf=cel?E.cpts:E.pts, n=cel?E.nc:E.ns;
+    S.cam.updateMatrixWorld(); const cap=(cel?4800:11800);
+    for(let i=0;i<m && n<cap && add<60;i++){
+      _pv.set(LIVE[i*3],LIVE[i*3+1],LIVE[i*3+2]).project(S.cam);
+      if(Math.abs(_pv.x)>0.985||Math.abs(_pv.y)>0.985){ buf[n*3]=LIVE[i*3]-OX+E.px; buf[n*3+1]=LIVE[i*3+1]; buf[n*3+2]=LIVE[i*3+2]-OZ+E.pz; n++; add++; } }
+    if(!add) return;
+    const d0=sd, x0=sxc, y0=syc; if(cel) E.nc=n; else E.ns=n;
+    E.bd=E.bx=E.by=0; buildFit(E); fitAt(E,ang); E.bd=d0-fitD; E.bx=x0-fitX; E.by=y0-fitY; stats.learned=(stats.learned||0)+add;
   }
   // build the entry for a racer type: the real model, settled into its standing pose, measured. Synchronous (the caller schedules it)
   function buildEntry(t){
     const t0=performance.now(); ensureStage();
     const o=makeCell(t.hue,t.id), ud=o.userData, r=mkRacer(t); r.obj=o;
     o.traverse(c=>{ c.frustumCulled=false; });
-    const E={t, id:t.id, o, r, dragon:!!ud.dragonRig, pts:new Float32Array(3*Math.ceil(PTS*1.2)*4), np:0, fd:new Float32Array(N), fx:new Float32Array(N), fy:new Float32Array(N),
-      px:0, pz:0, cy:0, R:10, dmax:50, sc:1, pop:0, outT:-1, tris:0, meshes:0, buildMs:0, bad:false, aspect:0};
+    const E={t, id:t.id, o, r, dragon:!!ud.dragonRig, pts:new Float32Array(3*12000), ns:0, cpts:new Float32Array(3*5000), nc:0, fd:new Float32Array(N), fx:new Float32Array(N), fy:new Float32Array(N),
+      gd:new Float32Array(N), gx:new Float32Array(N), gy:new Float32Array(N), cz:0, dswc:0, cel:false, bd:0, bx:0, by:0, lastLearn:0,
+      px:0, pz:0, cy:0, R:10, dsw:50, sc:1, pop:0, outT:-1, tris:0, meshes:0, buildMs:0, bad:false, aspect:0};
     if(ud.flame) for(const f of ud.flame){ f.scale.setScalar(0); f.material.opacity=0; }
     S.scene.add(o);
     const dt=1/30;
-    if(E.dragon){ for(let i=0;i<48;i++) sync(E,dt,i*dt,0); E.np=samplePts(o,E.pts,0,PTS*4); }       // the coil settles first: that pose is what the race grid shows
-    else { let n=0; for(const p of [0,1.6,3.2,4.8]){ sync(E,dt,0,0,p); n=samplePts(o,E.pts,n,PTS); } E.np=n; }                  // four phases of the tail's swim, so it stays in frame
-    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9; const P=E.pts;
-    for(let i=0;i<E.np;i++){ P[i*3]-=OX; P[i*3+2]-=OZ; }
-    for(let i=0;i<E.np;i++){ const x=P[i*3],y=P[i*3+1],z=P[i*3+2]; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; if(z<z0)z0=z; if(z>z1)z1=z; }
+    if(E.dragon){ for(let i=0;i<48;i++) sync(E,dt,i*dt,0); E.ns=samplePts(o,E.pts,0,PTS*3); }       // the coil settles first: that pose is what the race grid shows
+    else { let n=0; for(const p of [0,1.6,3.2,4.8]){ sync(E,dt,0,0,p); n=samplePts(o,E.pts,n,PTS); } E.ns=n; }                  // four phases of the tail's swim, so it stays in frame
+    // a rig that moves (jabs, hair and scarves, the dragons' waves) gets its idle envelope too, and then its celebration's, in a second set (the camera eases out
+    // to it while a tap's showboat plays); stepped on the real clock so the rigs' own timers carry on
+    if(ud.tick||ud.sway||ud.scarf||ud.bandido||ud.bosun||ud.salty||E.dragon){
+      const c0=performance.now()/1000; let n=E.ns, m=0;
+      for(let k=1;k<=16;k++){ sync(E,0.25,c0+k*0.25,0); if(k%2===0) n=samplePts(o,E.pts,n,ENV); }
+      E.ns=n; r.celebT=6;
+      for(let k=1;k<=24;k++){ sync(E,0.25,c0+4+k*0.25,0); if(k%2===0) m=samplePts(o,E.cpts,m,ENV); }
+      r.celebT=0; r.flick=0; E.nc=m;
+    }
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9; const P=E.pts, Q=E.cpts;
+    for(let i=0;i<E.ns;i++){ P[i*3]-=OX; P[i*3+2]-=OZ; }
+    for(let i=0;i<E.nc;i++){ Q[i*3]-=OX; Q[i*3+2]-=OZ; }
+    for(let i=0;i<E.ns;i++){ const x=P[i*3],y=P[i*3+1],z=P[i*3+2]; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; if(z<z0)z0=z; if(z>z1)z1=z; }
     E.cy=(y0+y1)/2; E.px=E.dragon?0:(x0+x1)/2; E.pz=E.dragon?0:(z0+z1)/2;
-    let R=4; for(let i=0;i<E.np;i++){ const q=Math.hypot(P[i*3]-E.px,P[i*3+2]-E.pz); if(q>R) R=q; } E.R=R;
+    let R=4; for(let i=0;i<E.ns;i++){ const q=Math.hypot(P[i*3]-E.px,P[i*3+2]-E.pz); if(q>R) R=q; } E.R=R;
     const c=countTris(o); E.tris=c.tris; E.meshes=c.meshes;
     S.scene.remove(o);
     buildFit(E);
@@ -65798,9 +65840,7 @@ const SEL3D=(function(){
     const E=cur;
     if(E&&E.o&&E.o.parent){
       // camera for this heading: the fitted distance and aim
-      const f=(((ang%TAU)+TAU)%TAU)/TAU*N, k0=Math.floor(f)%N, k1=(k0+1)%N, u=f-Math.floor(f);
-      const d=(E.fd[k0]+(E.fd[k1]-E.fd[k0])*u), d2=Math.max(d,E.dsw), xc=E.fx[k0]+(E.fx[k1]-E.fx[k0])*u, yc=E.fy[k0]+(E.fy[k1]-E.fy[k0])*u;
-      sd=d2; sxc=xc; syc=yc;      // (the table is already continuous in the heading; smoothing it would only let a fast drag outrun the framing)
+      fitAt(E,ang); sd=fitD; sxc=fitX; syc=fitY;      // (the table is continuous in the heading; smoothing it would only let a fast drag outrun the framing)
       const se=Math.sin(E.elev), ce=Math.cos(E.elev);
       const ay=E.cy+syc*ce-0.07*sd*Math.tan(FOVY*Math.PI/360), az=-syc*se;           // the aim, in the rig's frame (the racer's pivot is its origin)
       S.rig.rotation.y=-ang; S.cam.rotation.set(-E.elev,0,0); S.cam.position.set(sxc, ay+se*sd, az+ce*sd);
@@ -65823,7 +65863,7 @@ const SEL3D=(function(){
     const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h){ resize(); needMeasure=true; redraw=true; }
     if(!live||document.hidden||!S) return;
     if(now-lastDraw<31) return;                                     // 30 fps at most
-    const E=cur, still=RMQ.matches, animating=!!(E && (E.pop<1 || E.outT>=0 || E.r.celebT>0 || E.r.flick>0 || E.firstDraw || fr.warm>0)) || !!drag || angV!==0;
+    const E=cur, still=RMQ.matches, animating=!!(E && (E.pop<1 || E.outT>=0 || E.r.celebT>0 || E.r.flick>0 || E.cz>0 || E.bd!==0 || E.firstDraw || fr.warm>0)) || !!drag || angV!==0;
     if(still && !animating && !redraw && !needMeasure) return;      // reduced motion: a still pose is drawn once, then left alone
     const gap=now-lastDraw, dt=Math.min(0.05,gap/1000); lastDraw=now; tsec=now/1000;
     if(needMeasure){ if(!measure()) return; redraw=true; }
@@ -65838,20 +65878,24 @@ const SEL3D=(function(){
     if(E && !E.bad && E.o){
       if(E.pop<1 && E.outT<0){ E.pop=Math.min(1,E.pop+dt/0.45); const x=E.pop-1; E.sc=E.pop>=1?1:Math.min(1.06,0.55+0.45*(1+2.70158*x*x*x+1.70158*x*x)); }
       if(E.outT>=0){ E.outT+=dt; E.sc=Math.max(0.5,1-E.outT*3); if(E.outT>0.16) E.outT=-1; }
+      if(E.bd||E.bx||E.by){ const k=Math.exp(-8*dt); E.bd*=k; E.bx*=k; E.by*=k; if(Math.abs(E.bd)+Math.abs(E.bx)+Math.abs(E.by)<0.02) E.bd=E.bx=E.by=0; }
+      if(!still && E.pop>=1 && E.outT<0 && E.sc===1 && tsec-E.lastLearn>0.45 && !fr.warm){ E.lastLearn=tsec; learn(E); }
+      if(E.cel){ const want=(E.r.celebT>0||E.r.flick>0.05)?1:0; E.cz+=(want-E.cz)*Math.min(1,dt*(want?5:1.6)); if(E.cz<0.002&&!want) E.cz=0; }
       try{ sync(E,dt,tsec,ang); }
       catch(err){ E.bad=true; console.error('select stage: '+E.id+' failed: '+(err&&err.message)); ph.classList.remove('gone'); }
     }
     const t0=performance.now();
     draw(dt); redraw=false; stats.draws++;
     if(E && E.firstDraw){ E.firstDraw=false; const ms=performance.now()-t0; E.firstMs=ms; stats.lastTotalMs=E.buildMs+ms;
-      if(mode==='auto' && E.buildMs+ms>E.limit) fallback('building '+E.id+' took '+Math.round(E.buildMs+ms)+' ms'); }
+      const cost=E.buildMs+0.5*ms;      // the build, plus half the first draw (shader compile and upload: partly the GPU's, so only half counts)
+      if(mode==='auto' && cost>E.limit) fallback('building '+E.id+' took '+Math.round(cost)+' ms'); }
     if(fr.warm>0) fr.warm--; else if(!fr.judged && gap<400){ fr.t.push(gap); judgeFrames(); }
   }
   function setLive(on){
     live=!!on; selEl.classList.toggle('live',live); stats.mode=mode;
     if(live){ ensureStage(); grab(); needMeasure=true; if(measure()&&want) paintGlow(want.hue); lastDraw=0; snap=true; redraw=true;
       if(want){ ph.classList.remove('gone'); schedule(want); } }
-    else { clearTimeout(pendT); cancelAnimationFrame(pendR); release(); if(S&&cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o); cur=null; ph.classList.remove('gone'); }
+    else { clearTimeout(pendT); cancelAnimationFrame(pendR); release(); if(S){ if(cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o); cur=null; for(const e of cache.splice(0)) killEntry(e); } ph.classList.remove('gone'); }
     paintTog();
   }
 
