@@ -65529,7 +65529,9 @@ const SEL3D=(function(){
   const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
   const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), coach=$('stcoach'), msgEl=$('stmsg'), stage=$('selstage');
   const nameEl=$('stname'), descEl=$('stdesc'), readEl=$('stread');
-  let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':'auto'; }catch(_){}
+  // an automatic fallback lasts this session only (sessionStorage); it sticks (localStorage) only after a
+  // second session also proved slow, so one stall (a first shader compile, a busy moment) can't lose 3D for good
+  let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':(sessionStorage.getItem(LSK)==='0'?'off':'auto'); }catch(_){}
   let vis=false, live=false, S=null, cur=null, want=null, peeking=null;
   let pendT=0, pendR=0, relT=0, peekT=0, hintMsg='';
   const cache=[];                                         // LRU of entries, most recent last
@@ -65906,7 +65908,8 @@ const SEL3D=(function(){
     if(med>1000/FPS_MIN) fallback('the stage held only '+Math.round(1000/med)+' fps');
   }
   function fallback(why){
-    stats.fallback=why; mode='off'; try{ localStorage.setItem(LSK,'0'); }catch(_){}
+    stats.fallback=why; mode='off';
+    try{ sessionStorage.setItem(LSK,'0'); const n=(+localStorage.getItem(LSK+'_trips')||0)+1; localStorage.setItem(LSK+'_trips',String(n)); if(n>=2) localStorage.setItem(LSK,'0'); }catch(_){}
     hintMsg='3D preview paused: this device was slow. Tap the 3D button to try again.';
     setLive(false);
   }
@@ -65988,7 +65991,7 @@ const SEL3D=(function(){
   // ---------- the toggle, and hands on the stage ----------
   tog.addEventListener('click',e=>{ e.stopPropagation();
     if(live){ mode='off'; try{ localStorage.setItem(LSK,'0'); }catch(_){} hintMsg=''; setLive(false); }
-    else { mode='on'; try{ localStorage.setItem(LSK,'1'); }catch(_){} stats.fallback=null; hintMsg=''; setLive(true); } });
+    else { mode='on'; try{ localStorage.setItem(LSK,'1'); localStorage.removeItem(LSK+'_trips'); sessionStorage.removeItem(LSK); }catch(_){} stats.fallback=null; hintMsg=''; setLive(true); } });
   tog.addEventListener('pointerdown',e=>e.stopPropagation());
   // one finger (or the mouse): sideways turns, up and down tilts; two fingers: pinch to zoom a little; a tap shows off. touch-action is off on the
   // stage only, so the card grid beside or below it scrolls as ever
