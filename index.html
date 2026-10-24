@@ -65588,7 +65588,8 @@ const SEL3D=(function(){
     o.updateMatrixWorld(true);
     const list=[], ud=o.userData, fl=ud.flame||[]; let tot=0;
     o.traverse(c=>{
-      if(c.isSprite){ if(c!==ud.glow && !fl.includes(c) && shown(c,o) && n<cap*20){ c.getWorldPosition(_sp); c.getWorldScale(_ss); const h=Math.max(_ss.x,_ss.y)*0.5;   // a sprite that is part of the look (SELL!): its square
+      // a sprite that is part of the look (SELL!) counts as its square; additive sparkles and glows, and faint smoke, are not the racer
+      if(c.isSprite){ if(c!==ud.glow && !fl.includes(c) && c.material && c.material.blending===T.NormalBlending && c.material.opacity>=0.6 && shown(c,o) && n<cap*20){ c.getWorldPosition(_sp); c.getWorldScale(_ss); const h=Math.max(_ss.x,_ss.y)*0.5;
           if(h>0.3) for(let a=0;a<6;a++){ const sg=a%2?-1:1, ax=a>>1; out[n*3]=_sp.x+(ax===0?sg*h:0); out[n*3+1]=_sp.y+(ax===1?sg*h:0); out[n*3+2]=_sp.z+(ax===2?sg*h:0); n++; } } return; }
       if(!(c.isMesh||c.isLine||c.isPoints)||!c.geometry||!c.geometry.attributes.position||!shown(c,o)) return;
       list.push(c); tot+=c.isInstancedMesh?c.count*6:c.geometry.attributes.position.count; });
@@ -65672,8 +65673,10 @@ const SEL3D=(function(){
       if(Math.abs(_pv.x)>0.985||Math.abs(_pv.y)>0.985){ const lz=LIVE[i*3+2]-OZ+E.pz; if(lz<E.zcut) continue;   // (the tail may leave the window: only the front is learned)
         buf[n*3]=LIVE[i*3]-OX+E.px; buf[n*3+1]=LIVE[i*3+1]; buf[n*3+2]=lz; n++; add++; } }
     if(!add) return;
-    const d0=sd, x0=sxc, y0=syc; if(cel) E.nc=n; else E.ns=n;
-    E.bd=E.bx=E.by=0; const had=E.lv.map(L=>!!L); buildFit(E); had.forEach((h,i)=>{ if(h&&!E.lv[i]) levelFit(E,i); }); fitAt(E,ang,pit);
+    const d0=sd, x0=sxc, y0=syc, ns0=E.ns, nc0=E.nc; if(cel) E.nc=n; else E.ns=n;
+    E.bd=E.bx=E.by=0; const had=E.lv.map(L=>!!L); buildFit(E);
+    if(E.lv[1].dsw>E.dsw0*1.5){ E.ns=ns0; E.nc=nc0; buildFit(E); E.noLearn=true; }   // a runaway (something the size of the window keeps reaching its edge): put the fit back and stop learning
+    had.forEach((h,i)=>{ if(h&&!E.lv[i]) levelFit(E,i); }); fitAt(E,ang,pit);
     E.bd=d0/zoom-fitD; E.bx=x0-fitX; E.by=y0-fitY; stats.learned=(stats.learned||0)+add;
   }
   // build the entry for a racer type: the real model, settled into its standing pose, measured. Synchronous (the caller schedules it)
@@ -65715,7 +65718,7 @@ const SEL3D=(function(){
     let R=4; for(let i=0;i<E.ns;i++){ const q=Math.hypot(P[i*3]-E.px,P[i*3+2]-E.pz); if(q>R) R=q; } E.R=R;
     const c=countTris(o); E.tris=c.tris; E.meshes=c.meshes;
     S.scene.remove(o);
-    buildFit(E);
+    buildFit(E); E.dsw0=E.lv[1].dsw;
     E.buildMs=performance.now()-t0; stats.builds++; stats.lastBuildMs=E.buildMs;
     return E;
   }
@@ -65933,7 +65936,7 @@ const SEL3D=(function(){
       if(E.pop<1 && E.outT<0){ E.pop=Math.min(1,E.pop+dt/0.45); const x=E.pop-1; E.sc=E.pop>=1?1:Math.min(1.06,0.55+0.45*(1+2.70158*x*x*x+1.70158*x*x)); }
       if(E.outT>=0){ E.outT+=dt; E.sc=Math.max(0.5,1-E.outT*3); if(E.outT>0.16) E.outT=-1; }
       if(E.bd||E.bx||E.by){ const k=Math.exp(-8*dt); E.bd*=k; E.bx*=k; E.by*=k; if(Math.abs(E.bd)+Math.abs(E.bx)+Math.abs(E.by)<0.02) E.bd=E.bx=E.by=0; }
-      if(!still && E.pop>=1 && E.outT<0 && E.sc===1 && tsec-E.lastLearn>0.45 && !fr.warm){ E.lastLearn=tsec; learn(E); }
+      if(!still && !E.noLearn && E.pop>=1 && E.outT<0 && E.sc===1 && tsec-E.lastLearn>0.45 && !fr.warm){ E.lastLearn=tsec; learn(E); }
       if(E.cel){ const want=(E.r.celebT>0||E.r.flick>0.05)?1:0; E.cz+=(want-E.cz)*Math.min(1,dt*(want?5:1.6)); if(E.cz<0.002&&!want) E.cz=0; }
       try{ sync(E,dt,tsec,ang); }
       catch(err){ E.bad=true; console.error('select stage: '+E.id+' failed: '+(err&&err.message)); ph.classList.remove('gone'); }
