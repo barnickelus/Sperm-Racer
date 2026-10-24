@@ -65509,21 +65509,21 @@ function showSelect(ret){
 const SEL3D=(function(){
   const LSK='sr_sel3d', N=36, FOVY=26, PHI=0.62, SWEEP=1.15, MARGIN=0.92, CACHE=3, HOLD_MS=20000, PTS=1500, ENV=300;
   const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
-  const HEAVY={kingVox:5, mosaic:4, juan:4};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
+  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
   const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
   const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
   const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), hint=$('sthint'), stage=$('selstage');
   const nameEl=$('stname'), descEl=$('stdesc'), readEl=$('stread'), stepEl=document.querySelector('#stinfo .st-step');
   let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':'auto'; }catch(_){}
   let vis=false, live=false, S=null, cur=null, want=null, peeking=null;
-  let pendT=0, pendR=0, relT=0, peekT=0, barkT=0, errored=false, hintMsg='', moT=0;
+  let pendT=0, pendR=0, relT=0, peekT=0, hintMsg='';
   const cache=[];                                         // LRU of entries, most recent last
   const rect={x:0,y:0,w:2,h:2}; let needMeasure=true, ro=null;
   let ang=PHI, angV=0, swing=0, drag=null, lastIn=-9, lastDraw=0, tsec=0, saved=null;
   const fr={n:0, t:[], warm:0, judged:false};              // frame-time sampling after the latest build
   const stats={mode:'auto', builds:0, lastBuildMs:0, lastTotalMs:0, fallback:null, draws:0};
   const _aim=new T.Vector3(), esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  let sd=0, sxc=0, syc=0, snap=true, redraw=true;                      // smoothed camera distance and aim shift
+  let sd=0, sxc=0, syc=0, redraw=true;                      // smoothed camera distance and aim shift
 
   // ---------- the set ----------
   function mkTex(w,h,paint){ const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); paint(x,w,h);
@@ -65773,7 +65773,7 @@ const SEL3D=(function(){
     E.sc=RMQ.matches?1:0.55; E.pop=RMQ.matches?1:0; if(RMQ.matches){ ang=PHI; angV=0; } E.r.celebT=0; E.r.flick=0; lru(E);
     if(E.aspect!==rect.w/rect.h) buildFit(E);
     const R=Math.max(E.R*1.25,9), sc=R*2.3; S.shadow.scale.set(sc*0.9,sc*0.9,1); S.glow.scale.set(sc*1.15,sc*1.15,1);
-    redraw=true; snap=true; fr.n=0; fr.t.length=0; fr.warm=WARM; fr.judged=false; needMeasure=true;
+    redraw=true; fr.n=0; fr.t.length=0; fr.warm=WARM; fr.judged=false; needMeasure=true;
     ph.classList.add('gone');
     if(!RMQ.matches) angV=2.4;      // a little spin as it lands (the sweep takes the angle back to its 3/4 pose)
   }
@@ -65786,7 +65786,7 @@ const SEL3D=(function(){
       try{ E=buildEntry(t); }
       catch(err){ console.error('select stage: could not build '+t.id+': '+(err&&err.message)); E=null; }
       if(!E){ ph.classList.remove('gone'); return; }
-      const w=HEAVY[t.id]||1; E.limit=BUILD_MS*w;
+      const w=HEAVY[t.id]||1; E.limit=BUILD_MS*w*(stats.builds<=1?2:1);      // (the session's first build also pays for the code running cold and the first shader compile: it gets double)
       show(E);
       stats.lastTotalMs=performance.now()-t0;
       E.firstDraw=true;
@@ -65893,7 +65893,7 @@ const SEL3D=(function(){
   }
   function setLive(on){
     live=!!on; selEl.classList.toggle('live',live); stats.mode=mode;
-    if(live){ ensureStage(); grab(); needMeasure=true; if(measure()&&want) paintGlow(want.hue); lastDraw=0; snap=true; redraw=true;
+    if(live){ ensureStage(); grab(); needMeasure=true; if(measure()&&want) paintGlow(want.hue); lastDraw=0; redraw=true;
       if(want){ ph.classList.remove('gone'); schedule(want); } }
     else { clearTimeout(pendT); cancelAnimationFrame(pendR); release(); if(S){ if(cur&&cur.o&&cur.o.parent) S.scene.remove(cur.o); cur=null; for(const e of cache.splice(0)) killEntry(e); } ph.classList.remove('gone'); }
     paintTog();
@@ -65907,7 +65907,7 @@ const SEL3D=(function(){
     if(!ro && window.ResizeObserver) ro=new ResizeObserver(()=>{ needMeasure=true; });
     if(ro) ro.observe(win);
     live=mode!=='off'; selEl.classList.toggle('live',live);
-    if(live){ ensureStage(); grab(); paintGlow(want.hue); if(measure()){ draw(0.016); } redraw=true; lastDraw=0; snap=true; }   // the backdrop is right on the very first painted frame
+    if(live){ ensureStage(); grab(); paintGlow(want.hue); if(measure()){ draw(0.016); } redraw=true; lastDraw=0; }   // the backdrop is right on the very first painted frame
     paintTog();
     if(live) schedule(want);
   }
