@@ -61268,6 +61268,179 @@ function dressNorbert(g, K){
   g.userData.tick=tickFace;
   return true;
 }
+/* ============== KENJI TACHIBANA KIT (id samurai) ==============
+ * The lacquered kabuto, its gold crescent, the laced shikoro and the katana are the samurai build's own (Ukiyo-e Kenji
+ * and Ryū Kenji are re-dressed from that same build and are untouched by this). For plain Kenji the armour is then
+ * merged into a few draws, and he gets a face: warm skin, black hair at the temples under the helmet, level resolute
+ * eyes under strong brows, a composed mouth; the helmet's red silk chin cord tied under his jaw; and a navy kimono with
+ * a white under-collar crossed left over right at the neck and over the shoulders (body parts: they stay on the body
+ * while the head turns). */
+let _kjTex=null;
+function kenjiTextures(){
+  if(_kjTex) return _kjTex;
+  let sd=1868; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const mk=(w,h,draw)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding; return t; };
+  // indigo kimono cloth: a slubby weave
+  const weave=(x,w,h)=>{ x.fillStyle='#18223e'; x.fillRect(0,0,w,h);
+    for(let i=0;i<w*h/7;i++){ x.fillStyle=R()<0.5?'rgba(6,10,24,.35)':'rgba(110,130,180,.1)'; x.fillRect(R()*w,R()*h,1+R()*2.5,1); } };
+  _kjTex={
+    cloth:mk(64,64,(x,w,h)=>weave(x,w,h)),
+    // the kimono round the neck, the front at the middle of the canvas (u = 0.5): the white under-collar in the opening,
+    // the dark collar band (eri) along both edges, the over-panel (his left) crossing down to his right
+    collar:mk(512,64,(x,w,h)=>{ weave(x,w,h); const X=ph=>w/2+ph/(Math.PI*2)*w, eo=v=>0.18-0.8*v, eu=-0.5;
+      x.fillStyle='#f6f4ee'; x.beginPath(); x.moveTo(X(eu),0); x.lineTo(X(eo(0)),0); x.lineTo(X(eo(1)),h); x.lineTo(X(eu),h); x.closePath(); x.fill();
+      x.fillStyle='#0e1426'; x.fillRect(X(eu)-16,0,16,h);
+      x.fillStyle='rgba(255,255,255,.9)'; x.fillRect(X(eu)-2,0,2,h);
+      x.fillStyle='#0e1426'; x.beginPath(); x.moveTo(X(eo(0)),0); x.lineTo(X(eo(0))+18,0); x.lineTo(X(eo(1))+18,h); x.lineTo(X(eo(1)),h); x.closePath(); x.fill();
+      x.strokeStyle='rgba(150,165,200,.35)'; x.lineWidth=1.2; x.beginPath(); x.moveTo(X(eo(0))+17,0); x.lineTo(X(eo(1))+17,h); x.stroke(); }),
+  };
+  _kjTex.cloth.repeat.set(6,1);
+  return _kjTex;
+}
+function dressKenji(g, K){
+  const TX=kenjiTextures(), sway=[]; g.userData.sway=sway;
+  const V=(x,y,z)=>new T.Vector3(x,y,z), HP=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k)), C=vkLin, M=fkM4, FACE=Math.PI/2;
+  const sm=(e0,e1,x)=>{ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); };
+  // --- the armour into a few draws: every static mesh of the kabuto, the wings, the crescent and the katana, one per material
+  K.armour[0].children[0].rotation.x=-0.1;      // the bowl sits lower on his brow than the variants' (its axis tipped back less)
+  { const list=[]; for(const o of K.armour) o.traverse(c=>{ if(c.isMesh) list.push(c); });
+    fkMergeStatic(g, list); for(const o of K.armour) if(o.parent) o.parent.remove(o);
+    delete g.userData.kabutoKit; }
+  const F=fkFace(g, K, {skin:0xeec39c,
+    eye:{x:1.3, y:3.9, R:1.04, iris:0x3a2414, irisHi:0x6a4428, ring:0x140a06, lidUp:1.14, lidLo:0.66, lidRx:0.16, tilt:0.14, lashW:0.09},
+    brow:{col:0x121014, x0:0.36, len:1.55, y:5.0, arch:0.06, tilt:0.2, r:0.21, taper:0.35},
+    nose:{s:1.05}, ears:false, blush:null,
+    mouth:{rest:'line', w:0.92, yT:2.66, yB:2.42, sag:0.04}});
+  const {skinM, inkM}=F;
+  // --- black hair at the temples, under the helmet's sides, down to a point in front of each ear
+  { const hairM=fkToon({color:C(0x15131a), emissive:0x000000, side:T.DoubleSide}), items=[];
+    for(const sx of [-1,1]) items.push([gridGeo(6,6,(u,v)=>{ const ph=FACE+sx*(1.02+0.32*u), th=T.MathUtils.lerp(1.0, 1.55+0.25*(1-Math.abs(u*2-1))-0.1*u, v); return headPt(th, ph, 1.025+0.02*(1-v)); }), null]);
+    g.add(new T.Mesh(vkMerge(items), hairM)); }
+  // --- the chin cord: red silk from under each wing, down along the jaw, knotted under the chin, two short ends hanging
+  { const cordM=fkToon({color:C(0xb01c2c), emissive:0x2a0508}), items=[];
+    for(const sx of [-1,1]){ const pts=[]; for(let i=0;i<=8;i++){ const t=i/8; pts.push(HP(1.62+0.95*t, FACE+sx*(1.12-0.98*Math.pow(t,1.3)), 1.05+0.02*t)); }
+      items.push([new T.TubeGeometry(new T.CatmullRomCurve3(pts),18,0.09,6,false), null]); }
+    const kp=HP(2.62,FACE,1.08); items.push([new T.SphereGeometry(0.24,10,8), M(kp.x,kp.y,kp.z,0,0,0,1.2,0.9,0.9)]);
+    g.add(new T.Mesh(vkMerge(items), cordM));
+    const piv=new T.Group(); piv.position.copy(kp); g.add(piv);
+    const ends=[]; for(const sx of [-1,1]) ends.push([new T.TubeGeometry(new T.CatmullRomCurve3([V(0,0,0.05),V(sx*0.25,-0.5,0.2),V(sx*0.3,-1.0,0.15)]),8,0.075,5,false), null]);
+    piv.add(new T.Mesh(vkMerge(ends), cordM));
+    sway.push({o:piv, bx:0, bz:0, amp:0.12, f:2.6, ph:0.9, drag:0.6, side:0.5}); }
+  // ===== body parts: the kimono, crossed left over right at the neck =====
+  const cTop=ph=>2.3-0.62*sm(-0.7,1,-Math.sin(ph));
+  const cK=(th,ph)=>{ const t0=cTop(ph), v=Math.max(0,Math.min(1,(th-t0)/(2.84-t0))), bk=sm(-0.7,1,-Math.sin(ph));
+    return T.MathUtils.lerp(1.2,1.07,bk*(1-v)*(1-v))+0.05*v+0.015*Math.sin(v*Math.PI); };
+  const clothM=fkToon({map:TX.cloth, emissive:0x05080f, side:T.DoubleSide}), whiteM=fkToon({vertexColors:true, emissive:0x2a2c30, side:T.DoubleSide});
+  // the kimono round the neck: one ring, the crossed collar painted on its front
+  g.add(bodyPart(new T.Mesh(gridGeo(72,8,(u,v)=>{ const ph=FACE-Math.PI+u*Math.PI*2, th=T.MathUtils.lerp(cTop(ph), 2.84, v); return headPt(th, ph, cK(th,ph)); }),
+    fkToon({map:TX.collar, emissive:0x05080f, side:T.DoubleSide}))));
+  // the shoulders round the root of the tail (the chase camera's view), the collar band standing at the nape
+  { const YS=0.96, lathe=pr=>{ const geo=new T.LatheGeometry(pr.map(p=>new T.Vector2(p[0],p[1])),40), q=new T.Matrix4().compose(V(0,HEAD_CY,0), new T.Quaternion().setFromAxisAngle(V(1,0,0),-Math.PI/2), V(1.06,1,YS));
+      geo.applyMatrix4(q); return geo; };
+    g.add(bodyPart(new T.Mesh(lathe([[2.0,2.7],[2.33,3.0],[2.5,3.3],[2.48,4.2],[2.38,5.2],[2.22,5.6],[2.0,5.8],[1.2,5.76]]), clothM)));
+    g.add(bodyPart(new T.Mesh(vkMerge([[lathe([[2.3,2.86],[2.6,3.0],[2.72,3.2],[2.6,3.4]]),null,C(0x10162a)]]), whiteM))); }
+  g.userData.tick=tickFace;
+  return true;
+}
+/* ============== BIRDIE WINGATE KIT (id aviator) ==============
+ * The barnstormer from the card: a brown leather flying helmet with ear flaps and a thick cream sheepskin roll framing
+ * her face, big teal-lensed goggles pushed up on the brow on their strap, auburn curls escaping at the back, freckles
+ * and a sure, open grin under one cocked brow; the turquoise silk scarf wrapped at the throat with its pilot's wings,
+ * knotted behind the jaw and streaming back in two long tails (updateScarf): from the chase camera the read is the
+ * helmet, its cream roll and the scarf. Everything on the head is seated through headPt() on the head ellipsoid; the
+ * scarf wrap and its tails are body parts. */
+let _bwTex=null;
+function birdieTextures(){
+  if(_bwTex) return _bwTex;
+  let sd=1927; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const mk=(w,h,draw,clamp)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=clamp?T.ClampToEdgeWrapping:T.RepeatWrapping; t.encoding=T.sRGBEncoding; return t; };
+  _bwTex={
+    // sheepskin: cream, tight curls
+    fleece:mk(64,32,(x,w,h)=>{ x.fillStyle='#e6d4ae'; x.fillRect(0,0,w,h);
+      for(let i=0;i<160;i++){ const px=R()*w, py=R()*h, r=1.5+R()*2.2; x.strokeStyle=R()<0.6?'rgba(150,118,72,.5)':'rgba(255,248,226,.55)'; x.lineWidth=1.1;
+        x.beginPath(); x.arc(px,py,r,R()*6,R()*6+4); x.stroke(); } }),
+    // the goggle lens: teal glass, darker at the rim, a bright crescent of sky and a glint
+    lens:mk(64,64,(x,w,h)=>{ const g=x.createRadialGradient(26,24,2,32,32,32); g.addColorStop(0,'#9ff0ec'); g.addColorStop(0.55,'#2fb3b8'); g.addColorStop(1,'#11545e');
+      x.fillStyle=g; x.fillRect(0,0,w,h); x.strokeStyle='rgba(255,255,255,.85)'; x.lineWidth=5; x.lineCap='round';
+      x.beginPath(); x.arc(32,32,20,3.6,4.6); x.stroke(); x.fillStyle='#fff'; x.beginPath(); x.arc(42,40,3.2,0,7); x.fill(); }, true),
+  };
+  _bwTex.fleece.repeat.set(24,1);
+  return _bwTex;
+}
+function dressBirdie(g, K){
+  const AT=aviatorTextures(), BT=birdieTextures(), C=vkLin, M=fkM4, FACE=Math.PI/2;
+  const V=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k)), V3=(x,y,z)=>new T.Vector3(x,y,z), nrm=fkNrm;
+  const faceDist=ph=>Math.abs(Math.atan2(Math.sin(ph-FACE),Math.cos(ph-FACE)));   // 0 at the face, PI at the back
+  const F=fkFace(g, K, {skin:0xefc19b,
+    eye:{x:1.28, y:3.86, R:1.06, iris:0x4f5a26, irisHi:0x9a9a48, ring:0x241c0a, lidUp:0.94, lidLo:0.6, lidRx:0.18, tilt:0.02, lash:0x221410, lashW:0.1},
+    brow:{col:0x5a2410, x0:0.42, len:1.42, y:5.02, arch:0.16, tilt:0.02, r:0.15, taper:0.5, cock:0.16},
+    nose:{s:0.95}, ears:false, blush:0xf08a74, blushY:2.95, blushX:1.95,
+    mouth:{rest:'grin', w:1.12, yT:2.8, yB:2.0, sag:0.16, set:{grin:[1.12,2.8,2.0,0.16]}}});
+  const {inkM}=F;
+  const leather=fkPhong({color:0xffffff, map:AT.leather, shininess:30, specular:0x2a2018, side:T.DoubleSide});
+  const darkLeather=fkToon({color:C(0x2e1c12), emissive:0x000000, side:T.DoubleSide});
+  const fleece=fkToon({map:BT.fleece, emissive:0x2a2418});
+  const brass=fkPhong({color:C(0xc8902a), emissive:0x1e1002, shininess:110, specular:0xfff0c0});
+  const silkMat=fkToon({map:AT.silk, emissive:0x04201f, side:T.DoubleSide});
+  const wrapSilk=fkToon({color:C(0x14a3a6), emissive:0x04302f, side:T.DoubleSide});
+  // --- the helmet's lower edge, as a polar angle against distance round from the face: just over the brow, down the
+  // cheeks into rounded ear flaps, a notch behind each ear, lifting clear over the back where the tail leaves the head
+  const EDGE=[[0,0.7],[0.42,0.72],[0.98,2.3],[1.1,2.48],[1.38,2.48],[1.6,1.98],[1.85,2.12],[2.4,2.06],[2.78,1.22],[Math.PI,1.14]];
+  const edgeAt=ph=>{ const d=faceDist(ph);
+    for(let i=1;i<EDGE.length;i++) if(d<=EDGE[i][0]){ const [d0,a]=EDGE[i-1], [d1,b]=EDGE[i]; const t=(d-d0)/(d1-d0), e=t*t*(3-2*t); return a+(b-a)*e; }
+    return EDGE[EDGE.length-1][1]; };
+  const helmet=new T.Mesh(gridGeo(72,16,(u,v)=>{ const ph=u*Math.PI*2; return headPt(v*edgeAt(ph), ph, 1.07+0.02*Math.sin(v*Math.PI)); }), leather);
+  g.add(helmet);
+  // the sheepskin roll round the whole edge (thick: it is what frames her face and draws the helmet from behind),
+  // the centre seam brow to nape, the goggle strap round the helmet
+  { const trim=[]; for(let i=0;i<120;i++){ const ph=i/120*Math.PI*2; trim.push(V(edgeAt(ph),ph,1.08)); }
+    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(trim,true),160,0.31,7,true), fleece));
+    const seam=[]; for(let i=0;i<=10;i++) seam.push(V(0.68*(1-i/10)+0.02,FACE,1.09)); for(let i=0;i<=10;i++) seam.push(V(0.02+1.08*i/10,FACE+Math.PI,1.09));
+    const strapTh=ph=>0.5+(0.98-0.5)*(1-Math.cos(faceDist(ph)))/2;
+    g.add(new T.Mesh(vkMerge([[new T.TubeGeometry(new T.CatmullRomCurve3(seam),30,0.07,5,false), null],
+      [gridGeo(64,1,(u,v)=>{ const ph=u*Math.PI*2; return headPt(strapTh(ph)+(v-0.5)*0.16, ph, 1.1); }), null]]), darkLeather)); }
+  // --- goggles pushed up on the brow: leather cups, brass rims, teal lenses, a bridge
+  { const surf=(x,y,k)=>{ const dx=x/(HEAD_RX*k), dy=(y-HEAD_CY)/(HEAD_RY*k); return V3(x,y,HEAD_RZ*k*Math.sqrt(Math.max(0,1-dx*dx-dy*dy))); };
+    const up=V3(0,1,0), zz=V3(0,0,1), cups=[], rims=[], lenses=[];
+    for(const sx of [-1,1]){ const c=surf(sx*1.25,5.5,1.1), n=nrm(c).add(V3(sx*0.1,-0.25,0.9)).normalize(), qU=new T.Quaternion().setFromUnitVectors(up,n), qZ=new T.Quaternion().setFromUnitVectors(zz,n);   // turned out toward the front
+      cups.push([new T.CylinderGeometry(0.86,0.96,0.42,20), new T.Matrix4().compose(c.clone().addScaledVector(n,0.18), qU, V3(1,1,1))]);
+      rims.push([new T.TorusGeometry(0.8,0.16,8,22), new T.Matrix4().compose(c.clone().addScaledVector(n,0.42), qZ, V3(1,1,1))]);
+      lenses.push([new T.CircleGeometry(0.72,22), new T.Matrix4().compose(c.clone().addScaledVector(n,0.44), qZ, V3(1,1,1))]); }
+    const bc=surf(0,5.66,1.1), bn=nrm(bc).add(V3(0,-0.25,0.9)).normalize();
+    cups.push([new T.BoxGeometry(0.62,0.3,0.26), new T.Matrix4().compose(bc.clone().addScaledVector(bn,0.2), new T.Quaternion().setFromUnitVectors(up,bn), V3(1,1,1))]);
+    for(const sx of [-1,1]) rims.push([new T.SphereGeometry(0.2,8,6), new T.Matrix4().makeTranslation(...headPt(2.05,FACE+sx*1.24,1.085))]);   // the ear-flap snaps
+    g.add(new T.Mesh(vkMerge(cups), darkLeather)); g.add(new T.Mesh(vkMerge(rims), brass));
+    g.add(new T.Mesh(vkMerge(lenses), fkPhong({color:0xffffff, map:BT.lens, emissive:0x0a3036, shininess:140, specular:0xffffff}))); }
+  // --- freckles over the cheeks and the bridge of the nose
+  { const FR=[[1.8,2.62],[2.16,2.42],[2.42,2.74],[2.06,2.9],[2.5,2.36],[1.86,2.22],[0.55,3.4],[0.75,3.2]], items=[], zz=V3(0,0,1);
+    for(const sx of [-1,1]) for(const [x,y] of FR){ const a=faceAnchor(sx*x,y); items.push([new T.CircleGeometry(0.11,8), new T.Matrix4().compose(a.p.clone().addScaledVector(a.n,0.04), new T.Quaternion().setFromUnitVectors(zz,a.n), V3(1,0.85,1))]); }
+    g.add(new T.Mesh(vkMerge(items), fkToon({color:C(0x9a4a26), emissive:0x200800}))); }
+  // --- auburn curls escaping under the back of the helmet, either side of the tail
+  { const items=[]; for(const sx of [-1,1]) for(const [dd,rr,dy] of [[2.3,0.6,0],[2.48,0.66,-0.1],[2.66,0.56,0],[2.84,0.5,0.05]]){ const ph=FACE+sx*dd, th=edgeAt(ph)+0.14, p=V(th,ph,1.0);
+      items.push([new T.SphereGeometry(1,10,8), new T.Matrix4().compose(p.clone().addScaledVector(nrm(p),rr*0.45).add(V3(0,dy,0)), new T.Quaternion(), V3(rr,rr*0.85,rr))]); }
+    g.add(new T.Mesh(vkMerge(items), fkPhong({color:0xffffff, map:fkHairTex('birdie','#8a3416','rgba(60,18,6,.5)','rgba(220,120,60,.45)','rgba(240,150,90,.25)'), shininess:20, specular:0x2a1408}))); }
+  // ===== body parts =====
+  // the scarf: a wrap round the throat, its pilot's wings pinned to the front, a knot behind the left jaw, two free tails
+  g.add(bodyPart(new T.Mesh(gridGeo(48,4,(u,v)=>headPt(2.2+0.38*v, u*Math.PI*2, 1.08+0.06*Math.sin(v*Math.PI))), wrapSilk)));
+  const KPH=-0.55, knotP=V(2.34,KPH,1.14);
+  { const knot=new T.Mesh(new T.SphereGeometry(0.66,12,8), wrapSilk); knot.position.copy(knotP); knot.scale.set(1,0.8,1.1); g.add(bodyPart(knot)); }
+  { const c=V(2.3,FACE,1.13), n=nrm(c), pin=new T.Group(); pin.position.copy(c).addScaledVector(n,0.06); pin.quaternion.setFromUnitVectors(V3(0,0,1),n); g.add(bodyPart(pin));
+    const items=[[new T.CylinderGeometry(0.26,0.26,0.1,14), M(0,0,0,Math.PI/2)]];
+    for(const sx of [-1,1]) for(let k=0;k<3;k++) items.push([new T.BoxGeometry(0.75-k*0.16,0.11,0.06), M(sx*(0.5-k*0.06),0.1-k*0.1,0,0,0,sx*(0.22+k*0.08))]);
+    pin.add(new T.Mesh(vkMerge(items), brass)); }
+  const scarf=[]; g.userData.scarf=scarf;
+  for(const [L,W,dx,ph,roll,off] of [[14,2.5,-0.34,0,0.15,0],[10,2.0,0.06,2.1,-0.35,0.35]]){
+    const N=22, {geo,pos}=makeScarfRibbon(N);
+    const m=new T.Mesh(geo, silkMat); m.frustumCulled=false; g.add(bodyPart(m));
+    scarf.push({geo,pos,N,L,W,dx,ph,roll,base:knotP.clone().add(V3(0,-0.1-off*0.4,-0.25-off))}); }
+  updateScarf(g,{spd:80,slip:0},0);
+  g.userData.tick=tickFace;
+  return true;
+}
 function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
 function makeCellBuild(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
@@ -62081,8 +62254,9 @@ function makeCellBuild(hue, typeId){
       edge.position.y=y-LH*0.5; shk.add(edge);                 // black-lacquered lame edge
     }
     // fukigaeshi: the turned-back wings at the front of the shikoro, each carrying the mon
+    const wings=[];
     for(const sx of [-1,1]){
-      const wing=new T.Group(); g.add(wing);
+      const wing=new T.Group(); g.add(wing); wings.push(wing);
       // hinged off the front end of the top lame, which lands on the cheek at ~(2.5,4.5,2.7)
       wing.position.set(sx*2.98,4.95,2.30); wing.rotation.set(-0.10,sx*0.85,sx*-0.12);
       const plate=new T.Mesh(new T.BoxGeometry(1.35,1.1,0.14), lacquer); wing.add(plate);
@@ -62101,13 +62275,16 @@ function makeCellBuild(hue, typeId){
     const socket=new T.Mesh(new T.BoxGeometry(0.62,0.62,0.22), gold);
     socket.position.set(0,5.72,3.12); socket.rotation.x=-0.62; g.add(socket);
     g.userData.kabutoKit=[cres,socket];         // Ryū Kenji swaps the maedate for antlers
-    // --- set brows: inner ends low, a steady look rather than a scowl
-    const browMat=new T.MeshPhongMaterial({color:0x1c1410, emissive:0x080504});
-    for(const sx of [-1,1]){
-      const b=new T.Mesh(new T.BoxGeometry(1.75,0.36,0.5), browMat);
-      seatOnFace(b, sx*1.32, 5.02, 0.30); b.rotation.z=sx*0.26; b.rotation.x=-0.55; g.add(b);
+    // --- set brows: inner ends low, a steady look rather than a scowl (Ukiyo-e and Ryū Kenji; plain Kenji gets
+    // his whole face from dressKenji below)
+    if(ukiyo||ryu){
+      const browMat=new T.MeshPhongMaterial({color:0x1c1410, emissive:0x080504});
+      for(const sx of [-1,1]){
+        const b=new T.Mesh(new T.BoxGeometry(1.75,0.36,0.5), browMat);
+        seatOnFace(b, sx*1.32, 5.02, 0.30); b.rotation.z=sx*0.26; b.rotation.x=-0.55; g.add(b);
+      }
+      mouth.scale.set(0.82,0.62,1);             // a composed, closed line of a smile
     }
-    mouth.scale.set(0.82,0.62,1);               // a composed, closed line of a smile
     // --- katana in its saya, slung down the left flank with the hilt up over the shoulder
     const kat=new T.Group(); g.add(kat);
     const saya=new T.Mesh(new T.CylinderGeometry(0.30,0.25,6.6,10), lacquer);
@@ -62136,110 +62313,10 @@ function makeCellBuild(hue, typeId){
     const KT=new T.Vector3(-3.85,6.0,-1.0), KB=new T.Vector3(-2.35,1.6,-5.5);
     kat.position.copy(KT);
     kat.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), KT.clone().sub(KB).normalize());
+    if(!ukiyo && !ryu) tailTextured = dressKenji(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh,
+      armour:[unit, ...wings, cres, socket, kat]});   // Kenji Tachibana (KENJI TACHIBANA KIT)
   } else if(typeId === 'aviator'){
-    // Birdie Wingate — barnstormer. Everything is seated on the head ellipsoid through
-    // headPt(), so the helmet, its sheepskin roll, the goggle strap and the scarf wrap all
-    // hug the same surface instead of being stacked by eye.
-    const K=charKitTextures(), AT=aviatorTextures();
-    head.material.color.setHex(0xefc19b); head.material.emissive.setHex(0x3a2214);
-    const leather=new T.MeshPhongMaterial({color:0xffffff, map:AT.leather, shininess:30, side:T.DoubleSide});
-    const darkLeather=new T.MeshPhongMaterial({color:0x2a1a12, emissive:0x080403, shininess:25, side:T.DoubleSide});
-    const fleece=new T.MeshPhongMaterial({color:0xfff6e2, emissive:0x3a3428, shininess:2});
-    const brass=new T.MeshPhongMaterial({color:0x96661a, emissive:0x1e1002, shininess:110});
-    const glass=new T.MeshPhongMaterial({color:0x3f7f98, emissive:0x0a2430, shininess:140, specular:0xffffff});
-    const silkMat=new T.MeshPhongMaterial({color:0xffffff, map:AT.silk, shininess:60, specular:0x6a6458, side:T.DoubleSide});
-    const wrapSilk=new T.MeshPhongMaterial({color:0x14a3a6, emissive:0x04302f, shininess:60, specular:0x6a6458, side:T.DoubleSide});
-    const hairMat=new T.MeshPhongMaterial({color:0x8a3a1a, emissive:0x220a03, shininess:20});
-    const V=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k));
-    const nrm=p=>new T.Vector3(p.x/(HEAD_RX*HEAD_RX),(p.y-HEAD_CY)/(HEAD_RY*HEAD_RY),p.z/(HEAD_RZ*HEAD_RZ)).normalize();
-    const FACE=Math.PI/2;
-    const faceDist=ph=>Math.abs(Math.atan2(Math.sin(ph-FACE),Math.cos(ph-FACE)));   // 0 at the face, PI at the back
-    // --- the helmet's lower edge, as a polar angle against distance round from the face:
-    // high over the brow, dropping down the cheeks into rounded ear flaps, a notch behind
-    // each ear, and lifting clear over the back where the tail leaves the head
-    const EDGE=[[0,0.66],[0.46,0.66],[0.98,2.28],[1.1,2.46],[1.38,2.46],[1.6,1.98],[1.85,2.12],
-                [2.4,2.06],[2.78,1.22],[Math.PI,1.14]];
-    const edgeAt=ph=>{ const d=faceDist(ph);
-      for(let i=1;i<EDGE.length;i++) if(d<=EDGE[i][0]){ const [d0,a]=EDGE[i-1], [d1,b]=EDGE[i];
-        const t=(d-d0)/(d1-d0), e=t*t*(3-2*t); return a+(b-a)*e; }
-      return EDGE[EDGE.length-1][1]; };
-    const helmet=new T.Mesh(gridGeo(72,16,(u,v)=>{ const ph=u*Math.PI*2;
-      return headPt(v*edgeAt(ph), ph, 1.06+0.015*Math.sin(v*Math.PI)); }), leather);
-    g.add(helmet);
-    // sheepskin roll round the whole edge — the cream line that draws the helmet from behind
-    const trimPts=[]; for(let i=0;i<120;i++){ const ph=i/120*Math.PI*2; trimPts.push(V(edgeAt(ph),ph,1.075)); }
-    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(trimPts,true),180,0.25,6,true), fleece));
-    // centre seam from brow to nape
-    const seamPts=[]; for(let i=0;i<=10;i++) seamPts.push(V(0.64*(1-i/10)+0.02,FACE,1.08));
-    for(let i=0;i<=10;i++) seamPts.push(V(0.02+1.08*i/10,FACE+Math.PI,1.08));
-    g.add(new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(seamPts),30,0.07,5,false), darkLeather));
-    // --- goggles pushed up on the brow, on an elastic strap round the helmet
-    const strapTh=ph=>0.44+(0.98-0.44)*(1-Math.cos(faceDist(ph)))/2;
-    g.add(new T.Mesh(gridGeo(64,1,(u,v)=>{ const ph=u*Math.PI*2; return headPt(strapTh(ph)+(v-0.5)*0.13, ph, 1.088); }), darkLeather));
-    const surf=(x,y,k)=>{ const dx=x/(HEAD_RX*k), dy=(y-HEAD_CY)/(HEAD_RY*k);
-      return new T.Vector3(x,y,HEAD_RZ*k*Math.sqrt(Math.max(0,1-dx*dx-dy*dy))); };
-    const up=new T.Vector3(0,1,0), zz=new T.Vector3(0,0,1);
-    for(const sx of [-1,1]){
-      const c=surf(sx*1.18,5.72,1.085), n=nrm(c);
-      const cup=new T.Mesh(new T.CylinderGeometry(0.70,0.80,0.36,18), darkLeather);
-      cup.position.copy(c).addScaledVector(n,0.16); cup.quaternion.setFromUnitVectors(up,n); g.add(cup);
-      const rim=new T.Mesh(new T.TorusGeometry(0.64,0.15,8,20), brass);
-      rim.position.copy(c).addScaledVector(n,0.36); rim.quaternion.setFromUnitVectors(zz,n); g.add(rim);
-      const lens=new T.Mesh(new T.CylinderGeometry(0.58,0.58,0.08,18), glass);
-      lens.position.copy(c).addScaledVector(n,0.36); lens.quaternion.setFromUnitVectors(up,n); g.add(lens);
-    }
-    { const c=surf(0,5.86,1.085), n=nrm(c);
-      const bridge=new T.Mesh(new T.BoxGeometry(0.72,0.30,0.22), darkLeather);
-      bridge.position.copy(c).addScaledVector(n,0.18); bridge.quaternion.setFromUnitVectors(up,n); g.add(bridge); }
-    // --- ear-flap snaps (the chin strap is buckled out of sight under the scarf)
-    for(const sx of [-1,1]){
-      const snap=new T.Mesh(new T.SphereGeometry(0.2,8,6), brass);
-      snap.position.copy(V(2.05,FACE+sx*1.24,1.085)); g.add(snap);
-    }
-    // --- face: auburn brows, the left one cocked; freckles over the cheeks; a sure grin
-    const browMat=new T.MeshPhongMaterial({color:0x4e1e0c, emissive:0x160602});
-    for(const sx of [-1,1]){
-      const b=new T.Mesh(new T.BoxGeometry(1.55,0.30,0.45), browMat);
-      seatOnFace(b, sx*1.35, sx<0?5.22:5.02, 0.28); b.rotation.z=sx<0?0.20:-0.06; b.rotation.x=-0.5; g.add(b);
-    }
-    const FR=[[1.80,2.60],[2.18,2.38],[2.50,2.70],[2.08,2.86],[2.62,2.30],[1.88,2.20]];
-    const freck=new T.InstancedMesh(new T.SphereGeometry(0.15,6,4),
-      new T.MeshPhongMaterial({color:0x9a4a26, emissive:0x200800}), FR.length*2);
-    { const d=new T.Object3D(); let i=0;
-      for(const sx of [-1,1]) for(const [x,y] of FR){ const a=seatOnFace(d, sx*x, y, 0.0);
-        d.quaternion.setFromUnitVectors(zz,a.n); d.scale.set(1,1,0.35); d.updateMatrix(); freck.setMatrixAt(i++,d.matrix); } }
-    g.add(freck);
-    g.remove(mouth);
-    const grin=faceMouth(1.0, 2.62, 2.02, 0.10, K.grin, 0.05);
-    grin.rotation.z=0.07;                                    // a touch lopsided: sure of herself
-    g.add(grin); g.userData.mouth=grin;
-    // --- auburn bob curling out from under the back of the helmet, either side of the tail
-    const CURL=[[0,2.30,0.55],[0,2.46,0.60],[0,2.62,0.52]];
-    const curls=new T.InstancedMesh(new T.SphereGeometry(1,10,8), hairMat, CURL.length*2);
-    { const d=new T.Object3D(); let i=0;
-      for(const sx of [-1,1]) for(const [th0,dd,rr] of CURL){ const ph=FACE+sx*dd;
-        const th=th0||edgeAt(ph)+0.12, p=V(th,ph,1.0);
-        d.position.copy(p).addScaledVector(nrm(p), rr*0.45); d.scale.set(rr,rr*0.85,rr); d.rotation.set(0,0,0);
-        d.updateMatrix(); curls.setMatrixAt(i++,d.matrix); } }
-    g.add(curls);
-    // --- the scarf: a wrap round the neck, a knot behind the left jaw, two free tails
-    g.add(bodyPart(new T.Mesh(gridGeo(48,4,(u,v)=>headPt(2.2+0.36*v, u*Math.PI*2, 1.075+0.05*Math.sin(v*Math.PI))), wrapSilk)));
-    const KPH=-0.55, knotP=V(2.34,KPH,1.13);
-    const knot=new T.Mesh(new T.SphereGeometry(0.62,12,8), wrapSilk);
-    knot.position.copy(knotP); knot.scale.set(1,0.8,1.1); g.add(bodyPart(knot));
-    // pilot's wings pinned to the front of the wrap
-    { const c=V(2.3,FACE,1.12), n=nrm(c);
-      const pin=new T.Group(); pin.position.copy(c).addScaledVector(n,0.06); pin.quaternion.setFromUnitVectors(zz,n); g.add(pin);
-      const disc=new T.Mesh(new T.CylinderGeometry(0.24,0.24,0.10,14), brass); disc.rotation.x=Math.PI/2; pin.add(disc);
-      for(const sx of [-1,1]){ const w=new T.Mesh(new T.BoxGeometry(0.85,0.20,0.06), brass);
-        w.position.set(sx*0.52,0.06,0); w.rotation.z=sx*0.22; pin.add(w); } }
-    const scarf=[]; g.userData.scarf=scarf;
-    for(const [L,W,dx,ph,roll,off] of [[14,2.5,-0.34,0,0.15,0],[10,2.0,0.06,2.1,-0.35,0.35]]){
-      const N=22, {geo,pos}=makeScarfRibbon(N);
-      const m=new T.Mesh(geo, silkMat); m.frustumCulled=false; g.add(bodyPart(m));
-      scarf.push({geo,pos,N,L,W,dx,ph,roll,base:knotP.clone().add(new T.Vector3(0,-0.1-off*0.4,-0.25-off))});
-    }
-    updateScarf(g,{spd:80,slip:0},0);
+    tailTextured = dressBirdie(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});   // Birdie Wingate (BIRDIE WINGATE KIT)
   } else if(typeId === 'french' && !paint){
     tailTextured = dressFrench(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});
   } else if(typeId === 'french'){
