@@ -12,7 +12,19 @@
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <link rel="manifest" href="manifest.webmanifest">
 <title>Race Wars</title>
+<script>
+/* the home screen's style (Horizon by default; Classic in More settings, remembered as sr_home). Horizon's three fonts are
+   self-hosted (fonts/, SIL OFL 1.1) and preloaded only when Horizon is the home that will show, so its first paint is not janky */
+(function(){ var c=false; try{ c=localStorage.getItem('sr_home')==='classic'; }catch(_){}
+  window.__srHome=c?'classic':'horizon';
+  if(!c) ['monoton','space-mono-400','space-mono-700'].forEach(function(n){ var l=document.createElement('link');
+    l.rel='preload'; l.as='font'; l.type='font/woff2'; l.crossOrigin='anonymous'; l.href='fonts/'+n+'.woff2'; document.head.appendChild(l); });
+})();
+</script>
 <style>
+  @font-face{font-family:'Monoton';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/monoton.woff2) format('woff2');}
+  @font-face{font-family:'Space Mono';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/space-mono-400.woff2) format('woff2');}
+  @font-face{font-family:'Space Mono';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/space-mono-700.woff2) format('woff2');}
   :root{ --signal:#6df2d0; --bone:#eafff8; --ink:#8fb7b0; --dim:#2b6e66;
     /* how far a notch / rounded corner / home indicator pushes the HUD past its usual 12px
        margin: max(0, inset - 12), so a device without insets gets exactly the old layout */
@@ -258,7 +270,7 @@
   #loading b{color:var(--signal);}
 
   /* ===== full-screen atmosphere overlays (pure CSS, GPU cheap) ===== */
-  #fx{position:absolute;inset:0;pointer-events:none;z-index:2;}
+  #fx{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden;}   /* (clipped to the screen it covers: the oversized speed-line disc no longer makes the page scrollable) */
   #vignette{position:absolute;inset:0;
     box-shadow:inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5);
     transition:box-shadow .25s ease;}
@@ -733,6 +745,320 @@
   }
   @media (prefers-reduced-motion:reduce){ button.dk-go,#start.firstrun button.dk-go::before,#start.firstrun .go-ico,.go-gloss::after,#circuitbtn[data-live]::after,.cr-hint span{animation:none;} #start.firstrun button.dk-go::before{display:none;} .scope .ticks{animation:none;} .mcard,.modal,.pop{animation:none;} }
 
+  /* ================= HORIZON (the default home deck) =================
+     An early-80s arcade cabinet in black lacquer: a gold neon-tube title over a sunset horizon, numbered choice rows each on its own
+     neon line (red racer, green course, blue difficulty), a gold RACE, and the live course in a CRT bezel. The Classic deck above is
+     one setting away (More: "Home style"), and body.hz is all that switches them. #hzdeck holds only its frame: the live controls
+     are moved into its .hz-slot places while it is on (see setupHomeStyle), so every id and handler is the one Classic uses.
+     The 3D course is drawn into #hzscreen's rectangle of the shared canvas, which clears the rest of the page to --hz-bg; nothing in
+     this block may give #start an opaque background. Type: Monoton (titles) and Space Mono, self-hosted under fonts/ (SIL OFL 1.1). */
+  .hzdeck,.hzn,.hzc,.hzd{display:none;}
+  #start .dk-sec .sec:last-child:nth-child(odd){grid-column:1/-1;}   /* Classic: three modes (the Lab has gone), the last one full width */
+  body.hz{--hz-bg:#0E0806;--hz-ink:#F3E6C8;--hz-grey:#a8957e;--hz-rule:#3A2A22;--hz-red:#FF3B2F;--hz-gold:#FFC94A;--hz-org:#FF8A1E;
+    --hz-green:#3BE07A;--hz-blue:#5b80ff;--hz-violet:#8A4BFF;--hz-mono:'Space Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --hz-neon:Monoton,"Arial Black",Impact,sans-serif;}
+  body.hz #start{display:block;padding:0;background:none;text-align:left;font-family:var(--hz-mono);}
+  body.hz #start>.deck{display:none;}
+  body.hz .hzdeck{position:absolute;inset:0;z-index:0;display:grid;color:var(--hz-ink);font-family:var(--hz-mono);
+    --hz-px:clamp(16px,3.7vw,44px);--hz-py:clamp(12px,3.6vh,32px);--hz-gap:clamp(12px,1.7vw,20px);
+    --tt:clamp(44px,min(10.4vh,7.3vw),92px);--hz-val:clamp(18px,2.9vh,23px);--hz-tile:44px;--hz-race:clamp(28px,4.9vh,40px);
+    --hz-bar:44px;--hz-pip:clamp(96px,16vh,132px);--hz-mode:16px;--hz-rp:9px;
+    grid-template-columns:repeat(12,minmax(0,1fr));grid-template-rows:auto minmax(0,1fr) auto;column-gap:var(--hz-gap);
+    padding:calc(var(--hz-py) + var(--st)) calc(var(--hz-px) + var(--sr)) calc(var(--hz-py) + var(--sb)) calc(var(--hz-px) + var(--sl));}
+  /* a faint warm glow at the top of the cabinet, and CRT scanlines over everything (the live window too) */
+  body.hz .hzdeck::before{content:"";position:absolute;left:0;right:0;top:0;height:150px;z-index:-1;pointer-events:none;
+    background:radial-gradient(60% 150px at 50% 0,rgba(64,34,20,.75),rgba(14,8,6,0) 100%);}
+  body.hz .hzdeck::after{content:"";position:absolute;inset:0;z-index:5;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 3px);}
+  .hz-slot{display:contents;}
+  /* top bar: the wordmark, the quick settings as labelled values, "?"; a red / green / blue neon stripe under it */
+  .hz-top{grid-column:1/-1;grid-row:1;display:flex;align-items:center;gap:6px;min-width:0;min-height:44px;padding-bottom:4px;margin-bottom:clamp(12px,2.4vh,20px);
+    border-bottom:2px solid var(--hz-red);box-shadow:0 5px 0 -1px var(--hz-green),0 10px 0 -1px var(--hz-blue);}
+  .hz-wm{margin-right:auto;font:400 15px/1 var(--hz-neon);letter-spacing:.04em;color:var(--hz-gold);text-shadow:0 0 8px rgba(255,138,30,.7);white-space:nowrap;}
+  .hz-wm i,.hz-title i{font-style:normal;}
+  .hz-wm i{color:var(--hz-red);}
+  #hzdeck #quick{order:1;flex:none;display:flex;gap:0;min-width:0;}
+  #hzdeck #cambtn{order:1;} #hzdeck #musicbtn{order:2;} #hzdeck #fsbtn{order:3;} #hzdeck #tiltbtn{order:4;} #hzdeck #sliderbtn{order:5;} #hzdeck #gearbtn{order:6;}
+  #hzdeck #quick .chip{flex:none;min-width:44px;min-height:44px;padding:0 13px;margin:0;border:0;border-left:1px solid var(--hz-rule);border-radius:0;background:none;box-shadow:none;
+    flex-direction:row;gap:0;color:var(--hz-ink);transition:none;}
+  #hzdeck #quick #cambtn{border-left:0;}
+  #hzdeck #quick .chip:active{transform:none;opacity:.7;}
+  #hzdeck #quick .chip svg,#hzdeck #quick .chip::after{display:none;}
+  #hzdeck #quick .chip .ct{flex-direction:row;align-items:baseline;gap:8px;}
+  #hzdeck #quick .chip .cl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--hz-grey);}
+  #hzdeck #quick .chip .cv{display:block;font-size:13px;font-weight:700;color:var(--hz-ink);}
+  #hzdeck #quick .chip.on .cv{color:var(--hz-gold);}
+  #hzdeck #quick #musicbtn .cv{color:var(--hz-ink);}
+  #hzdeck #quick #musicbtn .cv::before{content:"";display:inline-block;width:7px;height:7px;margin:0 7px 1px 0;border-radius:50%;background:#6b5d50;vertical-align:middle;}
+  #hzdeck #quick #musicbtn.on .cv::before{background:var(--hz-green);box-shadow:0 0 8px var(--hz-green);}
+  #hzdeck #quick .chip.open .cv{color:var(--hz-gold);}
+  #hzdeck #quick #fsbtn .cl,#hzdeck #quick #fsbtn .cv{font-size:0;}
+  #hzdeck #quick #fsbtn .cl::before{content:"Screen";font-size:11px;}
+  #hzdeck #quick #fsbtn .cv::before{content:"Full";font-size:13px;}
+  #hzdeck #quick #fsbtn.isfs .cv::before{content:"Exit full";}
+  #hzdeck #quick #gearbtn .cv{display:none;}
+  #hzdeck #quick #gearbtn .cl{color:var(--hz-ink);}
+  #hzdeck #helpbtn{order:2;flex:none;width:44px;height:44px;margin:0 -6px 0 2px;padding:0;border:0;border-radius:50%;box-shadow:none;color:var(--hz-gold);font:700 14px/1 var(--hz-mono);
+    background:radial-gradient(circle,transparent 12px,var(--hz-gold) 12.5px 14px,transparent 14.5px);}
+  #hzdeck #helpbtn:active{background:radial-gradient(circle,rgba(255,201,74,.25) 12px,var(--hz-gold) 12.5px 14px,transparent 14.5px);}
+  /* left: the title over the horizon, the tagline, the three choice rows, RACE */
+  .hz-l{grid-column:1/6;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;}
+  .hz-hero{position:relative;flex:none;isolation:isolate;overflow:hidden;
+    margin:0 calc(-1*var(--hz-gap)) 0 calc(-1*(var(--hz-px) + var(--sl)));padding:calc(var(--tt)*.19) var(--hz-gap) calc(var(--tt)*.17) calc(var(--hz-px) + var(--sl));}
+  /* the sky: dark, violet dusk, orange, a gold horizon line at 76%; a vertical beam of light; a neon grid floor in perspective */
+  .hz-hero::before{content:"";position:absolute;inset:0;z-index:-2;
+    background:linear-gradient(90deg,transparent calc(50% - 26px),rgba(160,230,255,.22) 50%,transparent calc(50% + 26px)) 0 0/100% 76% no-repeat,
+      linear-gradient(180deg,rgba(255,255,255,0),#fff 60%,#8fe8ff) 50% 0/8px 76% no-repeat,
+      linear-gradient(180deg,var(--hz-bg) 0%,#2a0f1e 38%,#E4572E 70%,#FFC94A 75.6%,#2a0f1e 76.6%,var(--hz-bg) 100%);}
+  .hz-hero::after{content:"";position:absolute;left:-40%;right:-40%;bottom:0;height:23.4%;z-index:-1;transform-origin:50% 0;transform:perspective(160px) rotateX(55deg);
+    background:repeating-linear-gradient(90deg,rgba(255,138,30,.85) 0 2px,transparent 2px 34px),repeating-linear-gradient(0deg,rgba(255,138,30,.85) 0 2px,transparent 2px 22px);}
+  h1.hz-title{position:relative;margin:0;font:400 var(--tt)/1.02 var(--hz-neon);letter-spacing:0;text-transform:none;white-space:nowrap;
+    color:#FFD15A;text-shadow:0 0 5px #FFB534,0 0 16px #FF8A1E,0 0 34px rgba(255,90,30,.65);}
+  .hz-title span{display:block;}
+  .hz-title i{color:var(--hz-red);text-shadow:0 0 10px var(--hz-red);}
+  .hz-tag{flex:none;margin:6px 0 clamp(8px,1.6vh,14px);font-size:14px;line-height:1.4;color:var(--hz-ink);max-width:none;letter-spacing:0;}
+  .hz-row{position:relative;flex:none;display:grid;grid-template-columns:36px minmax(0,1fr);column-gap:6px;align-items:start;
+    padding:var(--hz-rp) 0 calc(var(--hz-rp) + 1px);border-top:2px solid currentColor;box-shadow:0 -7px 9px -7px currentColor;}
+  .hz-row::before{content:"";position:absolute;left:-2px;top:-7px;width:12px;height:12px;box-sizing:border-box;border-radius:50%;border:2px solid currentColor;background:var(--hz-bg);box-shadow:0 0 7px currentColor;}
+  .hz-row.c1{color:var(--hz-red);} .hz-row.c2{color:var(--hz-green);} .hz-row.c3{color:var(--hz-blue);}
+  .hz-row>*{grid-column:2;}
+  .hz-no{grid-column:1;grid-row:1;font:700 12px/18px var(--hz-mono);font-style:normal;color:inherit;}
+  .hz-lb{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0;font-size:11px;line-height:18px;letter-spacing:.07em;text-transform:uppercase;color:var(--hz-grey);white-space:nowrap;}
+  .hz-cn{font-weight:400;} .hz-cn::before{content:"\00b7\00a0";}
+  #hzdeck #courseno{margin:0;color:inherit;letter-spacing:inherit;font-weight:400;}
+  .hz-pf{display:none;color:var(--hz-ink);overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  /* 01: the racer (the tile is the row's text: label, name, one-liner, All), then a strip of the racers' own card portraits */
+  #hzdeck #racerbtn{grid-column:2;grid-row:1;min-height:44px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px;margin:0;padding:0;
+    border:0;border-radius:0;background:none;box-shadow:none;color:var(--hz-ink);text-align:left;cursor:pointer;}
+  #hzdeck #racerbtn:active{transform:none;opacity:.8;}
+  #hzdeck #racerbtn .rt-art{display:none;}
+  #hzdeck #racerbtn .rt-txt{gap:0;}
+  #hzdeck #racerbtn .rt-txt small{font-size:11px;line-height:18px;letter-spacing:.07em;color:var(--hz-grey);white-space:nowrap;}
+  #hzdeck #racerbtn .rt-txt small .stp,#hzdeck #racerbtn .rt-txt small .rl{display:none;}
+  #hzdeck .hzc{display:inline;} #hzdeck .hzc::before{content:"\00a0\00b7\00a0";}
+  #hzdeck #racername{margin-top:2px;font:700 var(--hz-val)/1.15 var(--hz-mono);letter-spacing:-.02em;}
+  #hzdeck .hzd{display:block;margin-top:1px;font-size:12px;line-height:1.4;color:var(--hz-grey);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #hzdeck #racerbtn .rt-chg{min-height:0;padding:0;border:0;border-radius:0;background:none;gap:0;font:700 12px/18px var(--hz-mono);letter-spacing:0;text-transform:none;color:var(--hz-gold);}
+  #hzdeck #racerbtn .rt-chg .rc,#hzdeck #racerbtn .rt-chg i{display:inline;font-size:0;margin:0;}
+  #hzdeck #racerbtn .rt-chg .rc::before{content:"All";font-size:12px;}
+  #hzdeck #racerbtn .rt-chg i::before{content:"\00a0\2192";font-size:12px;}
+  .hz-rk{display:flex;gap:6px;margin-top:8px;min-width:0;overflow:hidden;}
+  .hz-rt{flex:none;width:var(--hz-tile);height:var(--hz-tile);margin:0;padding:0;border:1px solid var(--hz-rule);border-radius:0;cursor:pointer;
+    background:#140C0A no-repeat 50% 1px/112% auto;}
+  .hz-rt.on{outline:2px solid var(--hz-gold);outline-offset:-2px;box-shadow:0 0 12px rgba(255,201,74,.6);}
+  .hz-rt:active{opacity:.75;}
+  .hz-rmore{flex:none;width:var(--hz-tile);height:var(--hz-tile);margin:0;padding:0;border:1px solid var(--hz-rule);background:none;color:var(--hz-gold);font:700 18px/1 var(--hz-mono);cursor:pointer;}
+  /* 02: the course, as the courses' own outlines in small tiles (the same strip and buttons as Classic: the centred one is the pick) */
+  .hz-trk{display:flex;align-items:center;gap:2px;margin-top:6px;min-width:0;}
+  #hzdeck .dk-arrow{flex:none;width:44px;height:44px;margin:0;padding:0 0 2px;border:0;border-radius:0;background:none;box-shadow:none;color:var(--hz-gold);font:700 18px/1 var(--hz-mono);}
+  #hzdeck .dk-arrow:active{background:none;opacity:.6;}
+  #hzdeck #crwrap{flex:1;min-width:0;}
+  #hzdeck .cr-hint{display:none;}
+  /* the pick sits third from the left (two courses back are in view), or in the middle of a strip too short for that: the strip's
+     JS reads the same anchor (setupTrackPick: anc) */
+  #hzdeck .carousel{--cw:var(--hz-tile);--pl:min(calc(50% - var(--cw)/2),calc(2*var(--cw) + 12px));height:calc(var(--hz-tile) + 8px);gap:6px;margin:0;
+    padding:4px max(calc(50% - var(--cw)/2),calc(100% - 3*var(--cw) - 12px)) 4px var(--pl);scroll-padding-left:var(--pl);
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 88%,transparent);mask-image:linear-gradient(90deg,transparent,#000 4%,#000 88%,transparent);}
+  #hzdeck .carousel button.trk{scroll-snap-align:start;width:var(--cw);height:var(--cw);border-radius:0;border:1px solid var(--hz-rule);background:#140C0A;transform:none;opacity:1;box-shadow:none;transition:border-color .2s,box-shadow .2s;}
+  #hzdeck .carousel .trk.on{transform:none;border:2px solid var(--hz-gold);box-shadow:0 0 12px rgba(255,201,74,.55);}
+  #hzdeck .carousel .tp{left:10%;top:10%;width:80%;height:80%;}
+  #hzdeck .carousel .tp path{stroke:var(--hz-green);stroke-width:5.5;}
+  #hzdeck .carousel .tp path:first-child{stroke-width:13;stroke-opacity:.18;}
+  #hzdeck .carousel .trk.on .tp path{stroke:var(--hz-gold);}
+  #hzdeck .carousel .tp circle{display:none;}
+  #hzdeck .carousel .trk.on .tp circle{display:inline;fill:#141414;}
+  #hzdeck .carousel .tn{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}   /* the name stays the card's text (and its label), unseen */
+  #hzdeck .carousel .tm{display:none;}
+  #hzdeck .carousel .tnew{top:3px;right:3px;width:7px;height:7px;padding:0;font-size:0;background:#ff5d8f;box-shadow:0 0 6px #ff5d8f;}
+  #hzdeck .carousel .tnew::before{content:none;}
+  #hzdeck #coursecap{display:none;}
+  /* 03: difficulty, three words on one line */
+  .hz-row.c3{grid-template-columns:36px auto minmax(0,1fr);align-items:center;padding-top:calc(var(--hz-rp) - 6px);padding-bottom:calc(var(--hz-rp) - 5px);}
+  .hz-row.c3 .hz-no,.hz-row.c3 .hz-lb{grid-row:1;align-self:center;}
+  .hz-row.c3 .hz-lb{grid-column:2;margin-right:18px;}
+  #hzdeck #diffpick{grid-column:3;grid-row:1;display:flex;gap:clamp(10px,2vw,22px);border:0;border-radius:0;overflow:visible;background:none;box-shadow:none;}
+  #hzdeck #diffpick .trk{position:relative;flex:none;margin:0;min-width:44px;min-height:44px;padding:0 3px;border:0;background:none;box-shadow:none;
+    font:400 16px/1 var(--hz-mono);letter-spacing:0;text-transform:capitalize;color:#8f7d6a;}
+  #hzdeck #diffpick .trk::before{display:none;}
+  #hzdeck #diffpick .trk+.trk{border-left:0;}
+  #hzdeck #diffpick .trk.on{color:var(--hz-ink);font-weight:700;background:none;}
+  #hzdeck #diffpick .trk.on::after{content:"";position:absolute;left:0;right:0;bottom:7px;height:3px;background:var(--hz-blue);box-shadow:0 0 8px var(--hz-blue);}
+  /* RACE: a gold-to-orange plate, the word in Monoton, the picks on the right */
+  #hzdeck #startbtn{flex:none;margin:auto 0 0;min-height:56px;padding:13px 18px 12px;border:0;border-radius:0;display:flex;flex-direction:row;align-items:flex-end;justify-content:space-between;gap:12px;
+    background:linear-gradient(180deg,#FFE58A 0%,#FFB534 45%,#F0661F 100%);color:#1A0B04;letter-spacing:0;text-transform:none;font-weight:400;
+    box-shadow:0 0 22px rgba(255,138,30,.45),inset 0 0 0 2px rgba(255,240,190,.6);animation:none;}
+  #hzdeck #startbtn:active{transform:translateY(1px);filter:brightness(.95);}
+  #hzdeck #startbtn .go-gloss,#hzdeck #startbtn .go-ico{display:none;}
+  #hzdeck #startbtn .go-main{flex:none;padding:0;gap:0;font:400 var(--hz-race)/.85 var(--hz-neon);letter-spacing:.02em;}
+  #hzdeck #startbtn .go-main::after{content:"\2192";margin-left:.25em;font:400 .8em/1 system-ui,-apple-system,sans-serif;}
+  #hzdeck #picksum{min-width:0;max-width:60%;font:700 12px/1.35 var(--hz-mono);letter-spacing:0;text-transform:capitalize;color:#1A0B04;white-space:normal;text-align:right;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  #start.firstrun #hzdeck #startbtn::before{animation:hzRipple 1.7s ease-out infinite;}
+  #start.firstrun #hzdeck #startbtn .go-main::after{display:inline-block;animation:nudge 1.1s ease-in-out infinite;}
+  @keyframes hzRipple{0%{box-shadow:0 0 0 0 rgba(255,201,74,.85)}100%{box-shadow:0 0 0 14px rgba(255,201,74,0)}}
+  /* right: the live course in a CRT bezel with a violet neon frame */
+  .hz-r{grid-column:6/13;grid-row:2;display:flex;flex-direction:column;min-width:0;min-height:0;}
+  .hz-win{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;border:3px solid var(--hz-rule);border-radius:18px;
+    box-shadow:0 0 0 2px var(--hz-violet),0 0 26px rgba(138,75,255,.45);touch-action:pan-y;}
+  .hz-bar{position:relative;z-index:1;flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;min-height:var(--hz-bar);padding:0 12px;
+    background:var(--hz-bg);font-size:12px;line-height:1.3;color:var(--hz-ink);white-space:nowrap;}
+  .hz-bar.t{border-bottom:2px solid var(--hz-violet);border-radius:15px 15px 0 0;}
+  .hz-bar.b{padding-right:0;border-top:2px solid var(--hz-violet);border-radius:0 0 15px 15px;}
+  .hz-live{display:flex;align-items:center;gap:7px;flex:none;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;}
+  .hz-live i{width:9px;height:9px;border-radius:50%;background:var(--hz-red);box-shadow:0 0 8px var(--hz-red);}
+  .hz-vibe{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--hz-grey);}
+  .hz-sw{display:none;}
+  .hz-facts{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+  .hz-facts b{font-weight:700;color:var(--hz-gold);}
+  .hz-facts .nw{color:#ff7aa4;font-weight:700;}
+  .hz-nav{flex:none;display:flex;align-self:stretch;}
+  .hz-nav button{width:44px;min-height:var(--hz-bar);margin:0;padding:0 0 2px;border:0;border-left:2px solid var(--hz-violet);background:none;color:var(--hz-gold);font:700 18px/1 var(--hz-mono);cursor:pointer;}
+  .hz-nav button:last-child{border-radius:0 0 15px 0;}
+  .hz-nav button:active{background:rgba(138,75,255,.25);}
+  /* the screen is a hole in the page: the canvas draws the course here. Its own box-shadow paints the bezel's rounded inner corners
+     wherever no caption bar covers them (the 3D is a rectangle), and an inset shade gives the glass some depth */
+  .hz-screen{position:relative;flex:1;min-height:0;overflow:hidden;}
+  .hz-screen::before{content:"";position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 50px rgba(0,0,0,.45);}
+  .hz-screen::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--hz-scr-r,0);box-shadow:0 0 0 3px var(--hz-rule),0 0 0 40px var(--hz-bg);}
+  .hz-nm{position:absolute;left:clamp(10px,1.6vw,16px);bottom:clamp(6px,1.4vh,14px);z-index:1;max-width:calc(100% - 20px);font:400 var(--hz-nm,64px)/1.08 var(--hz-neon);letter-spacing:.02em;white-space:nowrap;
+    color:#FFD15A;text-shadow:0 0 6px #FFB534,0 0 20px #FF8A1E,0 0 40px rgba(255,90,30,.6);pointer-events:none;}
+  .hz-pip{position:absolute;right:12px;top:12px;z-index:1;width:var(--hz-pip);background:var(--hz-bg);border:2px solid var(--hz-gold);box-shadow:0 0 14px rgba(255,201,74,.45);}
+  .hz-pa{height:calc(var(--hz-pip)*.88);background:#140C0A no-repeat 50% 3%/106% auto;}
+  .hz-pn{border-top:2px solid var(--hz-gold);padding:4px 8px 5px;font-size:11px;line-height:1.3;color:var(--hz-ink);}
+  .hz-pn span{display:block;color:var(--hz-grey);white-space:nowrap;}
+  .hz-pn b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* the other ways to play: rounded neon panels with a circuit node on each side */
+  .hz-modes{grid-column:1/-1;grid-row:3;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:clamp(14px,2.6vw,30px);margin-top:clamp(10px,2vh,18px);padding:0 7px;}
+  #hzdeck .hz-modes .sec{--nc:var(--hz-red);position:relative;margin:0;min-width:0;min-height:44px;padding:9px 16px 11px;border:2px solid var(--nc);border-radius:12px;background:#120A08;color:var(--nc);
+    box-shadow:0 0 14px -2px var(--nc),inset 0 0 18px -8px var(--nc);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;
+    text-align:left;text-transform:none;letter-spacing:0;font-weight:400;font-family:var(--hz-mono);}
+  #hzdeck #mpbtn{--nc:var(--hz-green);} #hzdeck #circuitbtn{--nc:var(--hz-blue);}
+  #hzdeck .hz-modes .sec:active{transform:none;background:#1c110c;}
+  #hzdeck .hzn{display:block;font:700 11px/1.3 var(--hz-mono);font-style:normal;color:var(--hz-grey);}
+  #hzdeck .hzn::before,#hzdeck .hzn::after{content:"";position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;box-sizing:border-box;border-radius:50%;border:2px solid var(--nc);background:var(--hz-bg);}
+  #hzdeck .hzn::before{left:-8px;} #hzdeck .hzn::after{right:-8px;}
+  #hzdeck .hz-modes .sec .si{display:none;}
+  #hzdeck .hz-modes .sec .st{gap:1px;min-width:0;max-width:100%;}
+  #hzdeck .hz-modes .sec b{font:700 var(--hz-mode)/1.3 var(--hz-mono);letter-spacing:-.01em;text-transform:none;color:var(--hz-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #hzdeck .hz-modes .sec small{font-size:12px;line-height:1.35;color:var(--hz-grey);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #hzdeck #circuitbtn[data-live]{box-shadow:0 0 0 1px var(--nc),0 0 20px 0 var(--nc),inset 0 0 18px -8px var(--nc)!important;}
+  #hzdeck #circuitbtn[data-live]::after{top:9px;right:12px;width:9px;height:9px;background:var(--nc);box-shadow:0 0 9px var(--nc);}
+
+  /* the welcome card, how to play, the settings sheet and the popovers in the cabinet's colours */
+  body.hz .mcard,body.hz .sheet-card,body.hz .pop{border-color:rgba(255,201,74,.5);background:linear-gradient(180deg,#1a0f0b,#0E0806);font-family:var(--hz-mono);}
+  body.hz .pop::after{background:#0E0806;border-color:rgba(255,201,74,.5);} body.hz .pop.below::after{background:#1a0f0b;}
+  body.hz .mcard h2{color:#FFD15A;text-shadow:0 0 18px rgba(255,138,30,.55);}
+  body.hz .m-eyebrow,body.hz .sheet-top .tag{color:var(--hz-org);}
+  body.hz .mcard p{color:#d9c8a8;} body.hz .mcard p b,body.hz .vp-opt b{color:var(--hz-ink);}
+  body.hz .wl-steps li,body.hz .hp-rules li,body.hz .wl-set,body.hz .hp-seg,body.hz .vp-opt,body.hz .fp-ic{border-color:rgba(255,201,74,.3);background:rgba(40,22,14,.6);}
+  body.hz .wl-steps .wl-ic{background:rgba(255,201,74,.14);color:var(--hz-gold);}
+  body.hz .wl-steps li:not(:last-child)::after,body.hz .hp-rules svg,body.hz .fp-ic{color:var(--hz-gold);stroke:var(--hz-gold);}
+  body.hz #start .stp,body.hz .hp-n{background:var(--hz-gold);color:#1A0B04;box-shadow:0 0 10px rgba(255,201,74,.45);}
+  body.hz .mcard .m-btns button.go,body.hz .sheet-top .go{background:linear-gradient(180deg,#FFE58A,#FFB534 45%,#F0661F);color:#1A0B04;border:0;}
+  body.hz .mcard .m-btns button.go.alt{background:rgba(40,22,14,.6);color:var(--hz-gold);border:2px solid var(--hz-gold);}
+  body.hz .hp-seg button.on,body.hz .vp-opt.on{background:rgba(255,201,74,.16);color:var(--hz-ink);box-shadow:inset 0 -2px 0 var(--hz-gold);border-color:var(--hz-gold);}
+  body.hz .sheet .tile{font-family:var(--hz-mono);background:rgba(40,22,14,.6);color:var(--hz-gold);border-color:rgba(255,201,74,.5);}
+  body.hz .sheet .tile.on{background:rgba(255,201,74,.16);border-color:var(--hz-gold);}
+
+  /* shorter landscape screens (desktop 1280 x 720 and the like): a tighter title and rows; the one-liner under the name gives way */
+  @media (orientation:landscape) and (max-height:780px){
+    body.hz .hzdeck{--tt:clamp(40px,min(9.4vh,7vw),92px);--hz-rp:7px;--hz-pip:clamp(90px,15vh,120px);}
+    #hzdeck .hzd{display:none;}
+    .hz-tag{margin-top:4px;}
+    #hzdeck .hz-modes .sec{padding-top:6px;padding-bottom:8px;}
+  }
+  /* landscape, narrower than a laptop (small tablets, split view): the quick settings stack their label over the value */
+  @media (orientation:landscape) and (max-width:1100px){
+    #hzdeck #quick .chip{padding:0 9px;}
+    #hzdeck #quick .chip .ct{flex-direction:column;align-items:flex-start;gap:0;}
+    #hzdeck #quick .chip .cl{font-size:11px;line-height:1.2;} #hzdeck #quick .chip .cv{font-size:12px;line-height:1.3;}
+  }
+  @media (orientation:landscape) and (max-width:900px){
+    body.hz .hzdeck{grid-template-columns:repeat(2,minmax(0,1fr));}
+    .hz-l{grid-column:1;} .hz-r{grid-column:2;}
+    #hzdeck .hz-modes .sec small{display:none;}
+  }
+  /* phones held sideways: two columns, the live window (and the modes under it) on the left, the picks and RACE on the right.
+     The title stays the wordmark in the top bar; the horizon is the stripe */
+  @media (orientation:landscape) and (max-height:500px){
+    body.hz .hzdeck{--hz-px:12px;--hz-py:6px;--hz-gap:12px;--hz-val:17px;--hz-race:26px;--hz-bar:36px;--hz-rp:5px;
+      grid-template-columns:minmax(0,1.04fr) minmax(0,.96fr);grid-template-rows:auto minmax(0,1fr) auto;}
+    .hz-top{margin-bottom:9px;padding-bottom:0;}
+    .hz-l{grid-column:2;grid-row:2/4;}
+    .hz-r{grid-column:1;grid-row:2;}
+    .hz-modes{grid-column:1;grid-row:3;margin-top:8px;column-gap:16px;}
+    .hz-hero,.hz-tag,#hzdeck .hzd,.hz-pip,#hzdeck .hz-modes .sec small{display:none;}
+    #hzdeck .hzn{font-size:0;line-height:0;}
+    #hzdeck .hz-modes .sec{padding:4px 8px;align-items:center;min-height:44px;}
+    #hzdeck .hz-modes .sec b{font-size:11.5px;letter-spacing:-.04em;}
+    .hz-row{grid-template-columns:26px minmax(0,1fr);}
+    .hz-row.c3{grid-template-columns:26px auto minmax(0,1fr);}
+    .hz-row.c3 .hz-lb{display:none;}
+    #hzdeck #diffpick{grid-column:2/4;gap:14px;}
+    #hzdeck #diffpick .trk{font-size:14px;}
+    .hz-row.c1 .hz-rk{margin-top:4px;}
+    .hz-trk{margin-top:2px;}
+    #hzdeck #startbtn{min-height:44px;padding:9px 12px 8px;margin-top:6px;}
+    .hz-nav button{min-height:36px;}
+    .hz-bar.b{display:none;}
+    .hz-screen{--hz-scr-r:0 0 15px 15px;}
+    #hzdeck #quick .chip{padding:0 8px;}
+    #hzdeck #quick .chip .ct{flex-direction:column;align-items:flex-start;gap:0;}
+    #hzdeck #quick .chip .cl{line-height:1.2;} #hzdeck #quick .chip .cv{font-size:12px;line-height:1.3;}
+    .hz-l .hz-pf{display:block;}
+  }
+  /* portrait (phones, iPad upright): the live window on top, then a horizon band behind a one-line title, the three rows, RACE, the modes */
+  @media (orientation:portrait){
+    body.hz .hzdeck{--hz-px:clamp(14px,4.6vw,40px);--hz-py:clamp(8px,1.6vh,24px);--tt:clamp(28px,min(9.8vw,5.4vh),72px);--hz-val:clamp(18px,4.4vw,26px);
+      grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto auto;}
+    .hz-top{margin-bottom:clamp(8px,1.6vh,16px);}
+    .hz-r{grid-column:1;grid-row:2;}
+    .hz-l{grid-column:1;grid-row:3;}
+    .hz-modes{grid-row:4;}
+    .hz-hero{margin:clamp(6px,1.2vh,14px) calc(-1*(var(--hz-px) + var(--sr))) 4px calc(-1*(var(--hz-px) + var(--sl)));
+      padding:calc(var(--tt)*.22) calc(var(--hz-px) + var(--sr)) calc(var(--tt)*.42) calc(var(--hz-px) + var(--sl));}
+    .hz-hero::before{background:linear-gradient(90deg,transparent calc(72% - 18px),rgba(160,230,255,.22) 72%,transparent calc(72% + 18px)) 0 0/100% 72% no-repeat,
+      linear-gradient(180deg,rgba(255,255,255,0),#fff 60%,#8fe8ff) 72% 0/6px 72% no-repeat,
+      linear-gradient(180deg,var(--hz-bg) 0%,#2a0f1e 34%,#E4572E 66%,#FFC94A 71.6%,#2a0f1e 72.6%,var(--hz-bg) 100%);}
+    .hz-hero::after{height:27.4%;transform:perspective(120px) rotateX(55deg);
+      background:repeating-linear-gradient(90deg,rgba(255,138,30,.85) 0 2px,transparent 2px 26px),repeating-linear-gradient(0deg,rgba(255,138,30,.85) 0 2px,transparent 2px 16px);}
+    .hz-title span{display:inline;}
+    .hz-tag{display:none;}
+    .hz-pf{display:block;}
+    .hz-modes{margin-top:clamp(8px,1.4vh,16px);}
+  }
+  @media (orientation:portrait) and (max-width:600px){
+    body.hz .hzdeck{--hz-rp:6px;--hz-race:clamp(26px,8vw,34px);--hz-bar:36px;}
+    .hz-wm{display:none;}
+    .hz-top{gap:0;}
+    #hzdeck #quick{flex:1;justify-content:space-between;}
+    #hzdeck #quick .chip{padding:0 3px;border-left:0;}
+    #hzdeck #quick .chip .ct{flex-direction:column;align-items:flex-start;gap:0;}
+    #hzdeck #quick .chip .cl{font-size:11px;line-height:1.2;letter-spacing:.03em;} #hzdeck #quick .chip .cv{font-size:12px;line-height:1.3;letter-spacing:-.02em;}
+    #hzdeck #quick #musicbtn .cv::before{margin-right:4px;width:6px;height:6px;}
+    #hzdeck #helpbtn{margin-left:4px;}
+    .hz-row{grid-template-columns:28px minmax(0,1fr);}
+    .hz-row.c3{grid-template-columns:28px auto minmax(0,1fr);}
+    .hz-row.c3 .hz-lb{margin-right:12px;}
+    #hzdeck #diffpick{gap:16px;}
+    #hzdeck #diffpick .trk{font-size:15px;}
+    #hzdeck .hzd,.hz-pip,.hz-bar.b,.hz-lw,.hz-vb{display:none;}
+    .hz-sw{display:inline;}
+    .hz-screen{--hz-scr-r:0 0 15px 15px;}
+    .hz-nm{bottom:8px;}
+    .hz-l .hz-rk{margin-top:6px;}
+    #hzdeck #startbtn{min-height:50px;padding:11px 14px 10px;margin-top:8px;}
+    .hz-modes{column-gap:16px;padding:0 8px;}
+    #hzdeck .hz-modes .sec{padding:6px 6px;align-items:center;text-align:center;}
+    #hzdeck .hzn{font-size:0;line-height:0;}
+    #hzdeck .hz-modes .sec small{display:none;}
+    #hzdeck .hz-modes .sec b{font-size:11.5px;letter-spacing:-.04em;}
+  }
+  @media (orientation:portrait) and (max-height:700px){
+    body.hz .hzdeck{--tt:clamp(26px,8.4vw,40px);--hz-rp:5px;}
+    #hzdeck #startbtn{min-height:46px;padding-top:9px;padding-bottom:8px;}
+  }
+  @media (prefers-reduced-motion:reduce){ #start.firstrun #hzdeck #startbtn::before,#start.firstrun #hzdeck #startbtn .go-main::after{animation:none;} }
+
   /* ================= PICK YOUR SPERM =================
      A stage and a roster, in the home deck's language (glass panes, a 1px teal edge, 16px corners, mono type). The stage (left on a landscape
      screen, a strip across the top in portrait) is a window onto the shared WebGL canvas where the selected racer's own model stands (the SEL3D
@@ -1043,6 +1369,7 @@
 </style>
 </head>
 <body>
+<script>if(window.__srHome!=='classic') document.body.classList.add('hz');</script>
 <div id="app"></div>
 
 <!-- One Piece portrait SVG defs (star pupils + head gloss) -->
@@ -1135,7 +1462,7 @@
       </section>
       <button class="dk-racer nojoy" id="racerbtn" aria-label="Choose your racer">
         <span class="rt-art" id="racerart"></span>
-        <span class="rt-txt"><small><i class="stp">1</i><span class="rl">your&nbsp;</span>racer</small><b id="racername">Guido Tony</b></span>
+        <span class="rt-txt"><small><i class="stp">1</i><span class="rl">your&nbsp;</span>racer<span class="hzc" id="hzrcount"></span></small><b id="racername">Guido Tony</b><span class="hzd" id="hzrdesc"></span></span>
         <span class="rt-chg"><span class="rc">change</span><i aria-hidden="true">›</i></span>
       </button>
       <div class="dk-quick" id="quick" role="group" aria-label="Quick settings">
@@ -1181,12 +1508,53 @@
       </section>
       <section class="dk-diff"><div class="lbl">difficulty</div><div id="diffpick"></div></section>
       <nav class="dk-sec" aria-label="Other ways to play">
-        <button class="go alt sec" id="quickbtn" style="--c:#ffd84a;--cr:255,216,74"><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z"/></svg></span><span class="st"><b>Quick Race</b><small>Jump into an open online race</small></span></button>
-        <button class="go alt sec" id="mpbtn" style="--c:#9be74e;--cr:155,231,78"><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6"/><circle cx="17.2" cy="9" r="2.4"/><path d="M16.4 14.2c2.9.1 4.8 2 4.8 5.3"/></svg></span><span class="st"><b>Multiplayer</b><small>Race friends with a room code</small></span></button>
-        <button class="go alt sec" id="circuitbtn" style="--c:#ff9ec4;--cr:255,158,196"><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4.5a3 3 0 0 0 3 4.2M17 6h2.5a3 3 0 0 1-3 4.2M12 14v4M8 21h8M9.5 18h5"/></svg></span><span class="st"><b>Circuit Cup</b><small>5 courses, most eggs wins</small></span></button>
-        <button class="go alt sec" id="demobtn" style="--c:#6df2d0;--cr:109,242,208" onclick="location.href='demo.html'"><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 3h5M10.5 3v6L4.7 18.6A1.7 1.7 0 0 0 6.2 21h11.6a1.7 1.7 0 0 0 1.5-2.4L13.5 9V3M7.5 15h9"/></svg></span><span class="st"><b>Lab</b><small>Test driving &amp; effects</small></span></button>
+        <button class="go alt sec" id="quickbtn" style="--c:#ffd84a;--cr:255,216,74"><i class="hzn" aria-hidden="true">04</i><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z"/></svg></span><span class="st"><b>Quick Race</b><small>Jump into an open online race</small></span></button>
+        <button class="go alt sec" id="mpbtn" style="--c:#9be74e;--cr:155,231,78"><i class="hzn" aria-hidden="true">05</i><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6"/><circle cx="17.2" cy="9" r="2.4"/><path d="M16.4 14.2c2.9.1 4.8 2 4.8 5.3"/></svg></span><span class="st"><b>Multiplayer</b><small>Race friends with a room code</small></span></button>
+        <button class="go alt sec" id="circuitbtn" style="--c:#ff9ec4;--cr:255,158,196"><i class="hzn" aria-hidden="true">06</i><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4.5a3 3 0 0 0 3 4.2M17 6h2.5a3 3 0 0 1-3 4.2M12 14v4M8 21h8M9.5 18h5"/></svg></span><span class="st"><b>Circuit Cup</b><small>5 courses, most eggs wins</small></span></button>
       </nav>
     </div>
+  </div>
+  <!-- HORIZON: the home deck as an arcade cabinet (the default; Classic above is a setting). It holds only its own frame: the live controls
+       (racer tile, quick settings, course strip, difficulty, RACE, the modes; same ids, same handlers) are moved into its slots while it is on,
+       and back into the Classic deck when it is off. The live course is drawn by the shared WebGL canvas into #hzscreen's rectangle. -->
+  <div class="hzdeck" id="hzdeck">
+    <header class="hz-top">
+      <div class="hz-wm" aria-hidden="true">race wars<i>.</i></div>
+      <span class="hz-slot" data-slot="quick"></span>
+      <span class="hz-slot" data-slot="helpbtn"></span>
+    </header>
+    <div class="hz-l">
+      <div class="hz-hero"><h1 class="hz-title" aria-label="Race Wars"><span>race</span> <span>wars<i>.</i></span></h1></div>
+      <p class="hz-tag">First to the egg wins.</p>
+      <section class="hz-row c1" aria-label="Your racer">
+        <i class="hz-no" aria-hidden="true">01</i>
+        <span class="hz-slot" data-slot="racerbtn"></span>
+        <div class="hz-rk" id="hzrk" role="group" aria-label="Racers"></div>
+      </section>
+      <section class="hz-row c2" aria-label="Choose a course">
+        <i class="hz-no" aria-hidden="true">02</i>
+        <div class="hz-lb"><span>Course <b class="hz-cn"><span class="hz-slot" data-slot="courseno"></span></b></span><span class="hz-pf" id="hzfacts2"></span></div>
+        <div class="hz-trk"><span class="hz-slot" data-slot="courseprev"></span><span class="hz-slot" data-slot="crwrap"></span><span class="hz-slot" data-slot="coursenext"></span></div>
+        <span class="hz-slot" data-slot="coursecap"></span>
+      </section>
+      <section class="hz-row c3" aria-label="Difficulty">
+        <i class="hz-no" aria-hidden="true">03</i>
+        <div class="hz-lb"><span>Difficulty</span></div>
+        <span class="hz-slot" data-slot="diffpick"></span>
+      </section>
+      <span class="hz-slot" data-slot="startbtn"></span>
+    </div>
+    <div class="hz-r">
+      <div class="hz-win" id="hzwin">
+        <div class="hz-bar t"><span class="hz-live"><i aria-hidden="true"></i><span id="hzlive">Live</span></span><span class="hz-vibe" id="hzvibe"></span></div>
+        <div class="hz-screen" id="hzscreen" aria-label="The selected course, live">
+          <div class="hz-nm" id="hznm" aria-hidden="true"></div>
+          <div class="hz-pip" aria-hidden="true"><div class="hz-pa" id="hzpa"></div><div class="hz-pn"><span id="hzpno">Your racer</span><b id="hzpname"></b></div></div>
+        </div>
+        <div class="hz-bar b"><span class="hz-facts" id="hzfacts"></span><span class="hz-nav"><button class="hz-prev nojoy" aria-label="Previous course">&lsaquo;</button><button class="hz-next nojoy" aria-label="Next course">&rsaquo;</button></span></div>
+      </div>
+    </div>
+    <nav class="hz-modes" aria-label="Other ways to play"><span class="hz-slot" data-slot="quickbtn"></span><span class="hz-slot" data-slot="mpbtn"></span><span class="hz-slot" data-slot="circuitbtn"></span></nav>
   </div>
   <!-- the view picker: tapping the View chip steps the camera and shows all three (a tap on one picks it) -->
   <div class="pop hidden" id="viewpop" role="group" aria-label="Camera view">
@@ -1271,6 +1639,7 @@
         <button class="go alt tile" id="mzmazebtn">Mazes: new each race</button>
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="handbtn" style="display:none">Controls: Right-handed</button>
+        <button class="go alt tile" id="homebtn">Home style: Horizon</button>
       </div>
     </div>
   </div>
@@ -64056,9 +64425,23 @@ function syncHUD(){
 
 /* ============== LOOP ============== */
 let last=performance.now();
-// behind the home deck (a dark glass UI) the live course preview needs neither full resolution nor full rate: 60% of the pixels, every other frame
-const MENU_RES=0.6; let menuLo=false, menuTick=0;
-function menuRes(on){ if(on===menuLo) return; menuLo=on; renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*(on?MENU_RES:1)); }
+// behind the home deck (a dark glass UI) the live course preview needs neither full resolution nor full rate: 60% of the pixels, every other frame.
+// The Horizon home draws it only into its window (HZV.rect, kept by setupHomeStyle): a smaller rectangle, so it can afford a sharper 75%,
+// still every other frame, and still fewer pixels than the full-screen 60% (the rest of the page is one clear to the cabinet's black).
+const MENU_RES=0.6, HZ_RES=0.75; let menuLo=false, menuMode=0, menuTick=0;
+const HZV={shown:false, dirty:true, tick:0, rect:{x:0,y:0,w:0,h:0,a:1}, measure:null};
+const HZ_BG=0x0E0806;   // = --hz-bg
+function menuK(){ return menuMode===2?HZ_RES:menuMode===1?MENU_RES:1; }
+function menuRes(m){ if(m===menuMode) return; menuMode=m; menuLo=m>0; renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*menuK()); }
+function hzDraw(){
+  const R=renderer, r=HZV.rect;
+  if(camera.aspect!==r.a){ camera.aspect=r.a; camera.updateProjectionMatrix(); }
+  R.setScissorTest(false); R.setViewport(0,0,_vw,_vh); R.setClearColor(HZ_BG,1); R.clear(true,true,false);
+  R.setClearColor(0x1c1218,1);
+  R.setViewport(r.x,r.y,r.w,r.h); R.setScissor(r.x,r.y,r.w,r.h); R.setScissorTest(true);
+  R.render(scene,camera);
+  R.setScissorTest(false); R.setViewport(0,0,_vw,_vh);
+}
 function frame(now){
   if(SEL3D.vis){ last=now; SEL3D.frame(now); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
   const dt=Math.min(0.033,(now-last)/1000); last=now;
@@ -64067,8 +64450,12 @@ function frame(now){
     renderer.render(scene,camera); requestAnimationFrame(frame); return;
   }
   const tsec=now/1000;
-  menuRes(state==='menu');
   { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
+  // the Horizon home: the course is drawn into its window only (its rectangle re-read on any layout change, and now and then anyway)
+  const hzWin=HZV.shown && state==='menu' && !!HZV.measure;
+  if(hzWin && (HZV.dirty || ++HZV.tick>=90)){ HZV.tick=0; HZV.measure(); }
+  menuRes(state==='menu'?(hzWin?2:1):0);
+  if(!hzWin && camera.aspect!==_vw/_vh){ camera.aspect=_vw/_vh; camera.updateProjectionMatrix(); }
   if(state==='race' && !cupPause){   // (a cup's "leave?" question holds the race still)
     raceTime+=dt;   // accumulate the capped dt: a backgrounded tab / stalled frame must not inflate the clock
     for(const r of racers)updateRacer(r,dt);
@@ -64251,7 +64638,7 @@ function frame(now){
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
   updateParticles(dt);
-  if(!menuLo || (++menuTick&1)) renderer.render(scene,camera);
+  if(!menuLo || (++menuTick&1)){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
   requestAnimationFrame(frame);
 }
 
@@ -65992,7 +66379,8 @@ function bestFmt(s){ return Math.floor(s/60)+':'+(s%60).toFixed(1).padStart(4,'0
 function bestShort(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }   // a card has room for m:ss
 // ---- launch deck: course carousel, racer tile, pick summary, settings sheet ----
 // Colours are derived from each course's own sky tint and ctrl-point outline — no 3D is rendered.
-let paintCapHook=null;   // the course strip's caption repaints with the summary (a maze's number changes with "Mazes: ...")
+let paintCapHook=null;
+let hzHooks=null, trackRecentre=null;   // the Horizon home's painters, and the course strip's re-centring (see setupHomeStyle)   // the course strip's caption repaints with the summary (a maze's number changes with "Mazes: ...")
 function paintSummary(){
   if(paintCapHook) paintCapHook();
   { const dl=document.querySelector('.dk-line'), n=lapsOf();   // the launch deck's tagline names the selected course's race length
@@ -66010,6 +66398,7 @@ function paintRacer(){
   a.innerHTML=svg||'<span style="display:block;width:34px;height:34px;margin:8px 2px;border-radius:50%;background:hsl('+t.hue+' 85% 62%)"></span>';
   n.textContent=t.name;
   $('racerbtn').style.setProperty('--hue',t.hue);
+  if(hzHooks) hzHooks.racer();
   paintSummary();
 }
 // bring the locked-in racer into view when the roster opens (and keep a tapped card centred)
@@ -66416,7 +66805,7 @@ const SEL3D=(function(){
   function release(){ // give the canvas back to the course preview
     if(!saved) return;
     renderer.autoClear=saved.ac; renderer.setScissorTest(false); renderer.setClearColor(0x1c1218); renderer.setViewport(0,0,_vw,_vh);
-    renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*(menuLo?MENU_RES:1)); saved=null;
+    renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*menuK()); saved=null;
   }
   function draw(dt){
     const R=renderer;
@@ -66624,7 +67013,9 @@ function setupTrackPick(){
     b.onclick=()=>{ commit(i); toCard(i,true); };
     wrap.appendChild(b); cards[i]=b;
   });
-  const mid=()=>wrap.scrollLeft+wrap.clientWidth/2;
+  // where the pick sits in the strip: its middle (Classic), or the third place from the left on the Horizon home (see #hzdeck .carousel)
+  const anc=()=>{ if(!document.body.classList.contains('hz')) return wrap.clientWidth/2; const c=cards[ord[0]], cw=c?c.offsetWidth:44; return Math.min(wrap.clientWidth/2,2.5*cw+12); };
+  const mid=()=>wrap.scrollLeft+anc();
   // with no layout (the home screen hidden) every card measures 0, and the first TRACKS entry would "win"
   const nearest=()=>{ if(!wrap.clientWidth) return selTrack; const m=mid(); let bi=0, bd=1e9;
     cards.forEach((c,i)=>{ const d=Math.abs(c.offsetLeft+c.offsetWidth/2-m); if(d<bd){bd=d;bi=i;} }); return bi; };
@@ -66636,6 +67027,7 @@ function setupTrackPick(){
     if(key===capKey&&!force) return; capKey=key;
     capEl.innerHTML='<div class="cp1"><b>'+t.name+'</b><em>'+f.vibe+'</em></div><div class="cp2">'+f.chips.map(c=>'<i>'+c+'</i>').join('')
       +(best?'<i class="bst">\u2605 best '+bestFmt(best)+'</i>':'')+(COURSE_NEW.includes(t.name)?'<i class="nw">NEW</i>':'')+'</div>';
+    if(hzHooks) hzHooks.course(i);
   }
   // a new best time shows on its card (a star and the time, in place of the laps) as soon as the home screen is back
   const refreshBest=()=>cards.forEach((c,k)=>{ const bt=bestOf(TRACKS[k]), tm=c.querySelector('.tm'); c.classList.toggle('best',!!bt); if(tm) tm.dataset.t=bt?'\u2605 '+bestShort(bt):c.dataset.f; });
@@ -66647,8 +67039,11 @@ function setupTrackPick(){
   new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ shown=-1; mark(selTrack); paintCap(selTrack,true); refreshBest(); } })
     .observe($('start'),{attributes:true,attributeFilter:['class']});
   function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
-    const left=c.offsetLeft+c.offsetWidth/2-wrap.clientWidth/2;
+    const left=c.offsetLeft+c.offsetWidth/2-anc();
     if(smooth&&wrap.scrollTo) wrap.scrollTo({left,behavior:'smooth'}); else wrap.scrollLeft=left; }
+  // the home style switched (or the Horizon strip changed size): centre the pick again, before a scroll from the old position could pick another
+  trackRecentre=()=>{ shown=-1; mark(selTrack); toCard(selTrack,false); };
+  if(window.ResizeObserver) new ResizeObserver(()=>{ if(document.body.classList.contains('hz') && !settle && wrap.clientWidth && !$('start').classList.contains('hidden')) toCard(selTrack,false); }).observe(wrap);
   function commit(i,noPreview){
     mark(i);
     if(i===selTrack) { paintSummary(); return; }
@@ -67301,17 +67696,143 @@ window.addEventListener('pointerdown', initAudio, {once:false});
       eng.draw(true); return;
     }
     posed=false;
-    const on=!startEl.classList.contains('hidden')&&(!sheet||sheet.classList.contains('hidden'))&&!document.hidden;
+    const on=!startEl.classList.contains('hidden')&&(!sheet||sheet.classList.contains('hidden'))&&!document.hidden&&!document.body.classList.contains('hz');
     if(on&&!raf){ last=0; raf=requestAnimationFrame(swimTick); }
     else if(!on&&raf){ cancelAnimationFrame(raf); raf=0; }
   }
   if(window.ResizeObserver) new ResizeObserver(fit).observe(hero);   // also fires once the home screen first lays out
   else { window.addEventListener('resize',fit); fit(); }
   const mo=new MutationObserver(sync);
-  for(const e of [startEl,sheet]) if(e) mo.observe(e,{attributes:true,attributeFilter:['class']});   // paused under the settings sheet too
+  for(const e of [startEl,sheet,document.body]) if(e) mo.observe(e,{attributes:true,attributeFilter:['class']});   // paused under the settings sheet too (and while the home is Horizon)
   document.addEventListener('visibilitychange',sync);
   if(rm.addEventListener) rm.addEventListener('change',sync);
   sync();
+})();
+
+// ---- the home deck's style: Horizon (the default) or Classic, a setting in More (remembered as sr_home) ----
+// Horizon keeps only a frame of its own (#hzdeck); the live controls move into its slots while it is on and back into the Classic
+// deck when it is off, so every id, handler and test hook is the one and only. The live course is drawn into its window by
+// frame() (see HZV); this block keeps the window's rectangle, the racer strip, the captions and the swipe in step with the picks.
+(function setupHomeStyle(){
+  const st=$('start'), hd=$('hzdeck'), hb=$('homebtn'); if(!st||!hd) return;
+  const SLOTS=['quick','helpbtn','racerbtn','courseno','courseprev','crwrap','coursenext','coursecap','diffpick','startbtn','quickbtn','mpbtn','circuitbtn'];
+  const marks={};
+  for(const id of SLOTS){ const el=$(id); if(!el||!el.parentNode) continue; const m=document.createComment('home:'+id); el.parentNode.insertBefore(m,el); marks[id]=m; }
+  function move(h){
+    for(const id of SLOTS){ const el=$(id), m=marks[id]; if(!el||!m) continue;
+      if(h){ const s=hd.querySelector('.hz-slot[data-slot="'+id+'"]'); if(s&&el.parentNode!==s) s.appendChild(el); }
+      else if(m.nextSibling!==el) m.parentNode.insertBefore(el,m.nextSibling); }
+  }
+  // ---- the live window: where on the canvas the course is drawn ----
+  const scr=$('hzscreen'), win=$('hzwin'), nm=$('hznm');
+  let nmLen=0, scrW=0, scrH=0;
+  function fitName(){   // the course name, as big as the window lets it be: one line, clear of the corners
+    if(!nm||!scrW) return; const n=Math.max(4,nmLen);
+    const px=Math.max(22,Math.min(scrH*0.24,(scrW-30)/(n*0.79),92));
+    scr.style.setProperty('--hz-nm',px.toFixed(1)+'px');
+  }
+  HZV.measure=()=>{
+    HZV.dirty=false;
+    const cr=renderer.domElement.getBoundingClientRect(), wr=scr.getBoundingClientRect(), R=HZV.rect;
+    if(!cr.width||!cr.height||wr.width<8||wr.height<8){ R.w=0; return; }
+    const kx=_vw/cr.width, ky=_vh/cr.height;
+    const x0=Math.max(0,Math.round((wr.left-cr.left)*kx)), x1=Math.min(_vw,Math.round((wr.right-cr.left)*kx));
+    const y0=Math.max(0,Math.round(_vh-(wr.bottom-cr.top)*ky)), y1=Math.min(_vh,Math.round(_vh-(wr.top-cr.top)*ky));
+    R.x=x0; R.y=y0; R.w=Math.max(0,x1-x0); R.h=Math.max(0,y1-y0); R.a=R.h?R.w/R.h:1;
+    if(Math.round(wr.width)!==scrW||Math.round(wr.height)!==scrH){ scrW=Math.round(wr.width); scrH=Math.round(wr.height); fitName(); }
+  };
+  const dirty=()=>{ HZV.dirty=true; };
+  const sync=()=>{ HZV.shown=document.body.classList.contains('hz') && !st.classList.contains('hidden'); HZV.dirty=true; };
+  new MutationObserver(sync).observe(st,{attributes:true,attributeFilter:['class']});
+  if(window.ResizeObserver) new ResizeObserver(dirty).observe(scr);
+  addEventListener('resize',dirty); if(window.visualViewport) visualViewport.addEventListener('resize',dirty);
+  try{ if(document.fonts&&document.fonts.ready) document.fonts.ready.then(dirty); if(document.fonts) document.fonts.addEventListener('loadingdone',dirty); }catch(_){}
+  // a swipe across the window flicks the course, as the strip does; its own arrows step it
+  const prev=()=>$('courseprev').click(), next=()=>$('coursenext').click();
+  const pb=hd.querySelector('.hz-prev'), nb=hd.querySelector('.hz-next');
+  if(pb) pb.onclick=prev; if(nb) nb.onclick=next;
+  let sx=0, sy=0, sid=null;
+  win.addEventListener('pointerdown',e=>{ if(e.target.closest('button')) return; sid=e.pointerId; sx=e.clientX; sy=e.clientY; });
+  const up=e=>{ if(e.pointerId!==sid) return; sid=null; const dx=e.clientX-sx, dy=e.clientY-sy;
+    if(Math.abs(dx)>36 && Math.abs(dx)>Math.abs(dy)*1.3) (dx<0?next:prev)(); };
+  win.addEventListener('pointerup',up); win.addEventListener('pointercancel',()=>{ sid=null; });
+
+  // ---- 01: the racer strip (the racers' own card portraits, a page of the roster around the pick) ----
+  const rk=$('hzrk'); const urls={}; let defs=null, rkKey='';
+  function art(t){
+    if(urls[t.id]!==undefined) return urls[t.id];
+    let u='';
+    try{
+      if(defs===null){ const d=document.querySelector('svg defs #opstar'); defs=d?d.parentNode.outerHTML:''; }   // the cards' shared patterns and star pupils
+      const s=OP_SVG[t.id];
+      if(s) u='url("'+URL.createObjectURL(new Blob([s.replace('<svg ','<svg xmlns="http://www.w3.org/2000/svg" ').replace(/(<svg[^>]*>)/,'$1'+defs)],{type:'image/svg+xml'}))+'")';
+    }catch(_){ u=''; }
+    return urls[t.id]=u;
+  }
+  function pickRacer(t){
+    if(!t||isLocked(t)) return; if(chosenType===t) return;
+    chosenType=t; try{ localStorage.setItem('sr_racer',t.id); }catch(_){}
+    selMark(t); paintRacer();
+    if(window.netAnnouncePick) netAnnouncePick();
+  }
+  function paintStrip(force){
+    if(!rk||!chosenType||!document.body.classList.contains('hz')) return;
+    const pool=selOrdered().filter(t=>!t.hidden&&!isLocked(t));
+    const w=rk.clientWidth; if(!w) return;
+    const tile=44+6, n=Math.max(1,Math.floor((w+6)/tile)-1);
+    let i=pool.indexOf(chosenType); if(i<0) i=0;
+    const p0=Math.min(Math.floor(i/n)*n,Math.max(0,pool.length-n));
+    const key=n+'|'+p0+'|'+chosenType.id+'|'+pool.length;
+    if(key===rkKey&&!force) return; rkKey=key;
+    rk.textContent='';
+    for(const t of pool.slice(p0,p0+n)){
+      const b=document.createElement('button'); b.type='button'; b.className='hz-rt nojoy'+(t===chosenType?' on':'');
+      b.setAttribute('aria-label',t.name+(t===chosenType?' (your racer)':'')); b.title=t.name;
+      const a=art(t); if(a) b.style.backgroundImage=a; else b.style.background='hsl('+t.hue+' 70% 45%)';
+      b.onclick=()=>pickRacer(t); rk.appendChild(b);
+    }
+    const m=document.createElement('button'); m.type='button'; m.className='hz-rmore nojoy'; m.textContent='›'; m.setAttribute('aria-label','All racers');
+    m.onclick=()=>$('racerbtn').click(); rk.appendChild(m);
+  }
+  function paintRacerHz(){
+    const t=chosenType; if(!t) return;
+    const all=selOrdered().filter(x=>!x.hidden), k=all.indexOf(t);
+    const c=$('hzrcount'); if(c) c.textContent=String(k+1).padStart(2,'0')+' / '+all.length;
+    const d=$('hzrdesc'); if(d) d.textContent=t.desc||'';
+    const pa=$('hzpa'); if(pa) pa.style.backgroundImage=art(t)||'none';
+    const pn=$('hzpname'); if(pn) pn.textContent=t.name;
+    const po=$('hzpno'); if(po) po.textContent=String(k+1).padStart(2,'0')+' · Your racer';
+    paintStrip(false);
+  }
+  if(window.ResizeObserver&&rk) new ResizeObserver(()=>paintStrip(false)).observe(rk);
+
+  // ---- 02: the course, in the window's captions and over its picture ----
+  function paintCourseHz(i){
+    const t=TRACKS[i]; if(!t) return;
+    const ord=courseStripOrder(), no=String(ord.indexOf(i)+1).padStart(2,'0')+' / '+TRACKS.length;
+    const f=courseFacts(t), best=bestOf(t), nw=COURSE_NEW.includes(t.name);
+    const lv=$('hzlive'); if(lv) lv.innerHTML='Live · <span class="hz-lw">Course </span>'+no;
+    const vb=$('hzvibe'); if(vb) vb.innerHTML='<span class="hz-vb">'+f.vibe+(nw?' · new':'')+'</span><span class="hz-sw">swipe ‹ ›</span>';
+    if(nm){ nm.textContent=t.name; nmLen=t.name.length; fitName(); }
+    const fa=$('hzfacts'); if(fa) fa.innerHTML=f.chips.join(' · ')+(best?' · <b>★ '+bestFmt(best)+'</b>':'')+(nw?' · <span class="nw">NEW</span>':'');
+    const f2=$('hzfacts2'); if(f2) f2.textContent=f.chips[0]+(best?' · ★ '+bestFmt(best):'');
+  }
+  hzHooks={racer:paintRacerHz, course:paintCourseHz};
+
+  // ---- the switch ----
+  let on=null;
+  function apply(h){
+    if(h===on) return; on=h;
+    popClose();
+    document.body.classList.toggle('hz',h);
+    move(h);
+    if(hb){ hb.textContent='Home style: '+(h?'Horizon':'Classic'); hb.classList.toggle('on',h); hb.setAttribute('aria-pressed',h?'true':'false'); }
+    sync();
+    if(h){ rkKey=''; paintRacerHz(); paintCourseHz(selTrack); }
+    if(trackRecentre) trackRecentre();   // the strip changed size: centre the pick again (a scroll from a stale position would pick another course)
+  }
+  if(hb) hb.onclick=()=>{ const h=!document.body.classList.contains('hz'); try{ localStorage.setItem('sr_home',h?'horizon':'classic'); }catch(_){} apply(h); };
+  apply(window.__srHome!=='classic');
 })();
 
 // boot
