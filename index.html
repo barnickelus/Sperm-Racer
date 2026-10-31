@@ -60776,6 +60776,498 @@ function tickSeamus(o, r, now){
   if(K.cap){ K.cap.rotation.x=K.capR.x-0.5*e; K.cap.position.y=K.cap0.y+0.5*e; K.cap.position.z=K.cap0.z-0.3*e; }
   if(K.pin){ K.pin.pin.rotation.z=now*(0.7+7*e); const w=0.12+0.9*e; K.pin.mat.emissive.setRGB(0.05*w,0.35*w+0.05,0.12*w); }
 }
+/* ============== FACE KIT (Mr. Park, Norbert Quark, Kenji Tachibana, Birdie Wingate) ==============
+ * The four racers that were a pink blob with a hat share one face, built the way the rich models build theirs:
+ *  - fkSkin: the card's skin swatch, decoded to linear and lit through the full-colour toon steps (SC_GRAD). The cel
+ *    pass's single-channel ramp (GRAD) is read by the r128 toon shader as red-only light, so a skin on it comes out
+ *    pink (and a brown one salmon); on SC_GRAD the lit face lands on the card's colour (gain 0.55 + emissive 0.08 put
+ *    the stage's median face pixel within a few levels of the swatch for every tone from #f0cda8 to #5c3822).
+ *  - eyes: whites that stay white (Phong), an iris of stacked caps (ring, iris, highlight, pupil, two catch-lights)
+ *    centred on the eyeball so the look rotates it and a blink squashes it, upper and lower lids in the skin with a
+ *    lash line, parented to the eyeball so the shared blink, wink and mood lids still close them.
+ *  - brows, a small nose, ears, a soft blush, and a set of mouths (a resting one per character, the grin, the "o",
+ *    the clench, the smirk and the pressed line) swapped by the shared expression scale in tickFace.
+ * Each dress function adds the hair, headgear and costume on top. Textures are painted once and shared. */
+let _fkTex=null;
+function faceKitTextures(){
+  if(_fkTex) return _fkTex;
+  const mk=(w,h,draw)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=T.ClampToEdgeWrapping; t.encoding=T.sRGBEncoding; return t; };
+  const INK='#4a1a12', DARK='#3c1410', TONGUE='#d0606a', TOOTH='#fffdf6';
+  const shape=(x,path,fill,stroke,lw)=>{ x.beginPath(); path(); x.closePath(); if(fill){ x.fillStyle=fill; x.fill(); } if(stroke){ x.strokeStyle=stroke; x.lineWidth=lw; x.stroke(); } };
+  // an open smile: a dark mouth under a curved upper lip line, a row of upper teeth, the tongue low (n teeth, the
+  // corners lifted by `up`, `gap` leaves the two front teeth a touch long)
+  const open=(w,h,n,up,big)=>(x)=>{ x.clearRect(0,0,w,h);
+    const D=()=>{ x.moveTo(10,10+up); x.quadraticCurveTo(w/2,24,w-10,10+up); x.quadraticCurveTo(w*0.84,h-6,w/2,h-6); x.quadraticCurveTo(w*0.16,h-6,10,10+up); };
+    shape(x,D,DARK); x.save(); x.beginPath(); D(); x.clip();
+    x.fillStyle=TONGUE; x.beginPath(); x.ellipse(w/2,h*0.98,w*0.27,h*0.26,0,0,7); x.fill();
+    const tw=(w-40)/n; for(let i=0;i<n;i++){ const X=20+i*tw, mid=Math.abs(i-(n-1)/2)<0.6&&big, th=h*(mid?0.5:0.4); x.fillStyle=TOOTH; x.strokeStyle='#b8aa9a'; x.lineWidth=2;
+      x.beginPath(); x.moveTo(X+1.5,0); x.lineTo(X+tw-1.5,0); x.lineTo(X+tw-1.5,th); x.quadraticCurveTo(X+tw/2,th+h*0.08,X+1.5,th); x.closePath(); x.fill(); x.stroke(); }
+    x.restore(); shape(x,D,null,INK,6); };
+  _fkTex={
+    // the resting warm smile: closed, broad, corners tucked up into the cheeks
+    smile:mk(128,48,(x,w,h)=>{ x.clearRect(0,0,w,h); x.strokeStyle=INK; x.lineCap='round';
+      x.lineWidth=12; x.beginPath(); x.moveTo(14,h*0.24); x.quadraticCurveTo(w/2,h*0.98,w-14,h*0.24); x.stroke();
+      x.lineWidth=7; x.beginPath(); x.moveTo(8,h*0.38); x.quadraticCurveTo(8,h*0.16,16,h*0.06); x.moveTo(w-8,h*0.38); x.quadraticCurveTo(w-8,h*0.16,w-16,h*0.06); x.stroke(); }),
+    grin:mk(256,112,(x,w,h)=>open(w,h,8,6,false)(x)),
+    // eager: the open smile with the two front teeth a little long (Norbert)
+    eager:mk(256,112,(x,w,h)=>open(w,h,6,10,true)(x)),
+    oh:mk(96,96,(x,w,h)=>{ x.clearRect(0,0,w,h); shape(x,()=>x.ellipse(w/2,h*0.52,w*0.28,h*0.36,0,0,7),DARK,INK,6);
+      x.fillStyle=TONGUE; x.beginPath(); x.ellipse(w/2,h*0.74,w*0.16,h*0.1,0,0,7); x.fill(); }),
+    grit:mk(256,64,(x,w,h)=>{ x.clearRect(0,0,w,h);
+      const B=()=>{ const r=14; x.moveTo(16+r,6); x.lineTo(w-16-r,6); x.quadraticCurveTo(w-16,6,w-16,6+r); x.lineTo(w-16,h-6-r); x.quadraticCurveTo(w-16,h-6,w-16-r,h-6); x.lineTo(16+r,h-6); x.quadraticCurveTo(16,h-6,16,h-6-r); x.lineTo(16,6+r); x.quadraticCurveTo(16,6,16+r,6); };
+      shape(x,B,TOOTH); x.strokeStyle='#a89c8e'; x.lineWidth=2.4; for(let i=1;i<9;i++){ const X=16+i*(w-32)/9; x.beginPath(); x.moveTo(X,8); x.lineTo(X,h-8); x.stroke(); }
+      x.strokeStyle='#8a7a6a'; x.lineWidth=3; x.beginPath(); x.moveTo(18,h/2); x.lineTo(w-18,h/2); x.stroke(); shape(x,B,null,INK,6); }),
+    smirk:mk(128,48,(x,w,h)=>{ x.clearRect(0,0,w,h); x.strokeStyle=INK; x.lineCap='round';
+      x.lineWidth=12; x.beginPath(); x.moveTo(16,h*0.5); x.quadraticCurveTo(w*0.55,h*0.76,w-14,h*0.16); x.stroke();
+      x.lineWidth=7; x.beginPath(); x.moveTo(w-8,h*0.34); x.quadraticCurveTo(w-9,h*0.12,w-18,h*0.04); x.stroke(); }),
+    line:mk(128,48,(x,w,h)=>{ x.clearRect(0,0,w,h); x.strokeStyle=INK; x.lineCap='round'; x.lineWidth=12;
+      x.beginPath(); x.moveTo(16,h*0.42); x.quadraticCurveTo(w/2,h*0.6,w-16,h*0.42); x.stroke(); }),
+    // a soft blush disc (alpha only: the colour is the material's)
+    blush:mk(64,64,(x,w,h)=>{ const g=x.createRadialGradient(32,32,0,32,32,32); g.addColorStop(0,'rgba(255,255,255,.55)'); g.addColorStop(1,'rgba(255,255,255,0)');
+      x.fillStyle=g; x.fillRect(0,0,w,h); }),
+    // a four-point glint
+    star:mk(64,64,(x,w,h)=>{ const g=x.createRadialGradient(32,32,0,32,32,14); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(1,'rgba(220,240,255,0)');
+      x.fillStyle=g; x.fillRect(0,0,w,h); x.fillStyle='#f4fbff';
+      x.beginPath(); x.moveTo(32,0); x.lineTo(34.6,29.4); x.lineTo(64,32); x.lineTo(34.6,34.6); x.lineTo(32,64); x.lineTo(29.4,34.6); x.lineTo(0,32); x.lineTo(29.4,29.4); x.fill(); }),
+  };
+  return _fkTex;
+}
+// hair grain: fine short strands in three tones over a base (strands run down the canvas = crown to hairline on a shell)
+const _fkHair={};
+function fkHairTex(key, base, dark, light, sheen){
+  if(_fkHair[key]) return _fkHair[key];
+  let sd=key.length*977+31; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const c=document.createElement('canvas'); c.width=256; c.height=128; const x=c.getContext('2d');
+  x.fillStyle=base; x.fillRect(0,0,256,128); x.lineCap='round';
+  if(sheen){ const g=x.createLinearGradient(0,0,0,128); g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(0.42,sheen); g.addColorStop(0.6,'rgba(255,255,255,0)'); x.fillStyle=g; x.fillRect(0,0,256,128); }
+  for(let i=0;i<700;i++){ const px=R()*256, py=R()*128, l=5+R()*10, a=(R()-0.5)*0.35, k=R();
+    x.strokeStyle=k<0.45?dark:k<0.6?light:'rgba(0,0,0,.35)'; x.lineWidth=0.7+R()*0.9; x.globalAlpha=0.55+R()*0.4;
+    x.beginPath(); x.moveTo(px,py); x.lineTo(px+Math.sin(a)*l,py+Math.cos(a)*l); x.stroke(); }
+  x.globalAlpha=1;
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  return (_fkHair[key]=t);
+}
+const FK_SKIN_K=0.55, FK_SKIN_E=0.08;
+function fkSkin(hex, o){ const lin=vkLin(hex);
+  return new T.MeshToonMaterial(Object.assign({gradientMap:SC_GRAD, color:lin.clone().multiplyScalar(FK_SKIN_K), emissive:lin.clone().multiplyScalar(FK_SKIN_E)}, o)); }
+function fkToon(o){ return new T.MeshToonMaterial(Object.assign({color:0xffffff, gradientMap:SC_GRAD}, o)); }   // already toon: the cel pass leaves it
+function fkPhong(o){ const m=new T.MeshPhongMaterial(o); m.userData.keepPhong=true; return m; }               // gloss (lacquer, metal, glass) stays Phong
+const fkM4=(x,y,z,rx,ry,rz,sx,sy,sz)=>new T.Matrix4().compose(new T.Vector3(x,y,z), new T.Quaternion().setFromEuler(new T.Euler(rx||0,ry||0,rz||0)),
+  new T.Vector3(sx||1,sy==null?(sx||1):sy,sz==null?(sx||1):sz));
+const fkNrm=p=>new T.Vector3(p.x/(HEAD_RX*HEAD_RX),(p.y-HEAD_CY)/(HEAD_RY*HEAD_RY),p.z/(HEAD_RZ*HEAD_RZ)).normalize();
+/* The face. o: {skin, ske (emissive hex, optional), eye:{x,y,R,iris,irisHi,ring,lidUp,lidLo,lidRx,tilt,lash,lashW},
+ *   brow:{col,x0,len,y,arch,tilt,r} (or null), nose, ears, blush (hex or null), mouth:{rest,w,yT,yB,sag,set:{name:[w,yT,yB,sag]}}}
+ * Returns {skinM, inkM, AE (the eye anchors), cE (a point just in front of each eye), set, mo}. The head and the tail
+ * take the skin (the dress function may re-dress the tail). */
+function fkFace(g, K, o){
+  const {head, eyeMat, eyeL, eyeR, pupilL, pupilR, mouth, tailMesh}=K, C=vkLin, M=fkM4, TX=faceKitTextures();
+  const skinM=fkSkin(o.skin);
+  head.material=skinM;                                 // opaque: the hue-coloured nucleus no longer shows through
+  tailMesh.material=fkSkin(o.skin,{side:T.DoubleSide});
+  if(g.userData.glow) g.userData.glow.material.color.multiplyScalar(0.45);   // a softer halo: the costume carries him
+  const inkM=fkToon({vertexColors:true, emissive:0x020306, side:T.DoubleSide});
+  // --- eyes
+  const E0=o.eye, ER=E0.R||1.06, eyeGeo=new T.SphereGeometry(ER,20,14);
+  eyeMat.color.setHex(0xfffcf6); eyeMat.emissive.setHex(0x56544e); eyeMat.userData.keepPhong=true;
+  for(const c of [...g.children]) if(c.isMesh && c.material.isMeshBasicMaterial && c.geometry.type==='SphereGeometry' && c.geometry.parameters.radius===0.24) g.remove(c);   // the stock catch-lights
+  const AE=[]; for(const [E,sx] of [[eyeL,-1],[eyeR,1]]){ E.geometry=eyeGeo; AE.push(seatOnFace(E, sx*E0.x, E0.y, -0.22)); }
+  { const cap=(r,th,c,rx,ry)=>[new T.SphereGeometry(r,20,6,0,Math.PI*2,0,th), new T.Matrix4().makeRotationY(ry||0).multiply(new T.Matrix4().makeRotationX(Math.PI/2+(rx||0))), C(c)];
+    const IS=E0.irisK||1;
+    const irisGeo=vkMerge([cap(ER*1.006,0.6*IS,E0.ring||0x1c1009), cap(ER*1.012,0.53*IS,E0.iris), cap(ER*1.018,0.36*IS,E0.irisHi), cap(ER*1.024,0.25*IS,0x0a0705),
+      cap(ER*1.03,0.1,0xffffff,-0.22,0.22), cap(ER*1.03,0.05,0xffffff,0.14,-0.12)]);
+    irisGeo.rotateX(E0.down||0.05);
+    const irisM=new T.MeshBasicMaterial({vertexColors:true});
+    for(const [p,E] of [[pupilL,eyeL],[pupilR,eyeR]]){ p.geometry=irisGeo; p.material=irisM; p.rotation.set(0,0,0); p.position.copy(E.position); }
+    g.userData.fkIris=true;
+    const LU=E0.lidUp||1.0, LW=E0.lidLo||0.6, RX=E0.lidRx==null?0.22:E0.lidRx;
+    const lidGeo=vkMerge([[new T.SphereGeometry(1,22,8,0,Math.PI*2,0,LU), M(0,0,0,RX)], [new T.SphereGeometry(1,22,5,0,Math.PI*2,Math.PI-LW,LW), M(0,0,0,-0.32)]]);
+    const lashGeo=vkMerge([[new T.TorusGeometry(Math.sin(LU),E0.lashW||0.075,6,28), M(0,0,0,RX).multiply(M(0,Math.cos(LU),0,Math.PI/2)), C(E0.lash||0x1a1418)]]);
+    [eyeL,eyeR].forEach((E,i)=>{ const sx=i?1:-1;
+      for(const [geo,mat] of [[lidGeo,skinM],[lashGeo,inkM]]){ const m=new T.Mesh(geo,mat); m.scale.setScalar(ER*1.07); m.rotation.z=sx*(E0.tilt||0); E.add(m); } }); }   // tilt > 0: the inner corners drop (resolve)
+  // --- brows: a tapered stroke over each eye (x0 the inner end, len the run, arch, tilt = how far the outer end rises)
+  if(o.brow){ const B=o.brow, parts=[];
+    for(const sx of [-1,1]){ const pts=[], tl=sx>0&&B.cock?B.cock:0;
+      for(let i=0;i<=6;i++){ const t=i/6, x=sx*(B.x0+B.len*t), y=B.y+(B.arch||0)*Math.sin(t*Math.PI*0.95)+(B.tilt||0)*t+tl*Math.sin(t*Math.PI*0.8), a=faceAnchor(x,y); pts.push(a.p.clone().addScaledVector(a.n,0.17)); }
+      parts.push([taperTube(new T.CatmullRomCurve3(pts),18,6,u=>((B.r||0.14)*(1-(B.taper==null?0.5:B.taper)*u)+0.035)*Math.min(1,0.45+u*4)), null, C(B.col)]); }
+    g.add(new T.Mesh(vkMerge(parts), inkM)); }
+  // --- a small nose: a bridge and a rounded tip
+  if(o.nose!==false){ const N=o.nose||{}, NA=faceAnchor(0,N.y||3.22), c=NA.p.clone().addScaledVector(NA.n,0.02), s=N.s||1;
+    g.add(new T.Mesh(vkMerge([[new T.SphereGeometry(1,14,10), M(c.x,c.y+0.12*s,c.z-0.02,-0.2,0,0,0.3*s,0.52*s,0.32*s)],
+      [new T.SphereGeometry(1,14,10), M(c.x,c.y-0.18*s,c.z+0.12*s,0,0,0,0.4*s,0.32*s,0.34*s)]]), skinM)); }
+  // --- ears
+  if(o.ears){ const D2=Math.PI/180, items=[];
+    for(const s of [-1,1]){ const p=new T.Vector3(...headPt((90-6)*D2,(90+s*97)*D2,0.97)), n=fkNrm(p);
+      const q=new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(new T.Vector3().crossVectors(new T.Vector3(0,1,0),n).normalize(), new T.Vector3(0,1,0), n));
+      const base=new T.Matrix4().compose(p, q, new T.Vector3(1,1,1)).multiply(new T.Matrix4().makeRotationZ(-s*0.18)).multiply(new T.Matrix4().makeRotationY(-s*0.35));
+      for(const [geo,m] of [[new T.SphereGeometry(1,14,10), M(0,0,0.18,0,0,0,0.56,0.9,0.28)], [new T.TorusGeometry(0.48,0.11,6,18,Math.PI*1.3), M(0,0.05,0.34,0,0,-0.6,1,1.55,1)]])
+        items.push([geo, base.clone().multiply(m)]); }
+    g.add(new T.Mesh(vkMerge(items), skinM)); }
+  // --- blush: two soft discs on the cheeks
+  if(o.blush){ const items=[]; for(const sx of [-1,1]){ const a=faceAnchor(sx*(o.blushX||2.0), o.blushY||3.05);
+      const q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1), a.n), p=a.p.clone().addScaledVector(a.n,0.05);
+      items.push([new T.CircleGeometry(0.62,16), new T.Matrix4().compose(p,q,new T.Vector3(1.25,0.85,1))]); }
+    const bm=new T.Mesh(vkMerge(items), new T.MeshBasicMaterial({color:C(o.blush), map:TX.blush, transparent:true, depthWrite:false}));
+    bm.renderOrder=1; g.add(bm); }
+  // --- the mouths: the resting one shows; tickFace swaps the rest in with the expression
+  g.remove(mouth);
+  const mo=new T.Group(), set={}, MO=o.mouth;
+  { const rows=Object.assign({grin:[1.12,2.78,2.02,0.14], oh:[0.58,2.78,2.08,0], grit:[1.0,2.76,2.18,0.1], smirk:[1.04,2.72,2.4,0.12], line:[0.92,2.66,2.42,0.06]}, MO.set||{});
+    rows[MO.rest]=rows[MO.rest]||[MO.w,MO.yT,MO.yB,MO.sag];
+    let c0=null;
+    for(const k of [MO.rest, ...Object.keys(rows).filter(k=>k!==MO.rest)]){ const [w,yt,yb,sag]=rows[k], tx=TX[MO.tex&&MO.tex[k]||k];
+      const fm=faceMouth(w,yt,yb,sag,tx,0.08), m=fm.children[0].material;
+      m.alphaTest=0.5; m.userData.keepPhong=true; m.emissive=new T.Color(0x5a5048); m.emissiveMap=tx;
+      if(!c0){ c0=fm.position.clone(); mo.position.copy(c0); }
+      fm.position.sub(c0); fm.visible=k===MO.rest; mo.add(fm); set[k]=fm; } }
+  g.add(mo); g.userData.mouth=mo; g.userData.fkMouth={set, cur:MO.rest, rest:MO.rest};
+  const gz=A0=>new T.Vector3(0,0,1).multiplyScalar(0.72).addScaledVector(A0.n,0.28).normalize();
+  const cE=[eyeL.position.clone().addScaledVector(gz(AE[0]),ER+0.3), eyeR.position.clone().addScaledVector(gz(AE[1]),ER+0.3)];
+  return {skinM, inkM, AE, cE, ER, set, mo};
+}
+// per frame: the mouth picked by the shared expression scale (the swapped shapes are drawn at their size, so the stretch
+// is tempered), and the irises turned on the ball with the look, squashed with the lids and gone when the eye shuts
+function tickFace(o, r){
+  const ud=o.userData, fm=ud.fkMouth, mo=ud.mouth, mb=ud.mouthBase, L=r&&r._lk;
+  if(fm && mo && mb){ const sy=mo.scale.y/mb.y, sx=mo.scale.x/mb.x, S=fm.set;
+    let want=((sy>1.25&&sx<1.05)||(sx<0.88&&sy>0.7)) ? 'oh' : sy>1.12 ? 'grin' : (sx>1.18&&sy<0.75) ? 'grit' : sy<0.75 ? 'line' : sx>1.1 ? 'smirk' : fm.rest;
+    if(!S[want]) want=fm.rest;
+    if(want!==fm.cur){ S[fm.cur].visible=false; S[want].visible=true; fm.cur=want; }
+    const tx=Math.pow(sx,-0.55), ty=Math.pow(sy,-0.45); for(const q in S) S[q].scale.set(tx,ty,1); }
+  const pu=ud.pupils, ey=ud.eyes;
+  if(pu && ey && ud.fkIris) for(let i=0;i<2;i++){ const p=pu[i], e=ey[i]; p.rotation.set(0, L ? Math.max(-0.5,Math.min(0.5,L.eyeO)) : 0, 0); p.scale.y=e.scale.y; p.visible=e.scale.y>0.22; }
+}
+// merge static meshes (in g's frame) into one mesh per material: a pile of small parts becomes a few draws. The parts
+// must hang off g through plain groups; their world transforms are baked in, they are removed, and the merged meshes
+// are added to g. (Their geometry needs position, normal and uv: the built-in ones all have them.)
+function fkMergeStatic(g, meshes){
+  g.updateMatrixWorld(true); const inv=new T.Matrix4().copy(g.matrixWorld).invert(), by=new Map();
+  for(const m of meshes){ const k=m.material; if(!by.has(k)) by.set(k,[]); by.get(k).push([m.geometry, new T.Matrix4().multiplyMatrices(inv, m.matrixWorld)]); m.parent.remove(m); }
+  const out=[]; for(const [mat,items] of by){ const me=new T.Mesh(vkMerge(items), mat); g.add(me); out.push(me); }
+  return out;
+}
+/* ============== MR. PARK KIT (id korean) ==============
+ * The precision businessman from the card: warm light skin, neat black hair with real volume combed back into a
+ * top-knot bun (the silhouette the chase camera reads), straight dark brows, black rectangular frames, calm dark
+ * eyes and a warm closed grin; a navy suit over a white shirt and a blue tie, the green lanyard and his ID badge,
+ * a pocket protector with a red and a blue pen, and a stopwatch on a short chain from his lapel. The suit, lanyard,
+ * badge and stopwatch are body parts: they stay on the body while the head turns. (Director Park is his own build.) */
+let _mpTex=null;
+function mrParkTextures(){
+  if(_mpTex) return _mpTex;
+  let sd=6150; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const mk=(w,h,draw,clamp)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=clamp?T.ClampToEdgeWrapping:T.RepeatWrapping; t.encoding=T.sRGBEncoding; return t; };
+  _mpTex={
+    // plain navy suiting, a fine twill
+    suit:mk(64,64,(x,w,h)=>{ x.fillStyle='#1f2a46'; x.fillRect(0,0,w,h);
+      for(let i=0;i<w*h/10;i++){ x.fillStyle=R()<0.5?'rgba(6,10,22,.38)':'rgba(120,140,185,.14)'; x.fillRect(R()*w,R()*h,1.5,1.5); }
+      x.strokeStyle='rgba(140,160,200,.08)'; for(let i=-h;i<w;i+=4){ x.beginPath(); x.moveTo(i,0); x.lineTo(i+h,h); x.stroke(); } }),
+    // a plain blue tie with a faint woven stripe
+    tie:mk(32,64,(x,w,h)=>{ x.fillStyle='#2f5fae'; x.fillRect(0,0,w,h);
+      x.strokeStyle='rgba(20,50,110,.45)'; x.lineWidth=2; for(let i=-w;i<h+w;i+=7){ x.beginPath(); x.moveTo(0,i); x.lineTo(w,i-w*0.7); x.stroke(); } }),
+    lanyard:mk(128,16,(x,w,h)=>{ x.fillStyle='#2fb255'; x.fillRect(0,0,w,h); x.fillStyle='#e9f6ec'; x.fillRect(0,1.5,w,1.2); x.fillRect(0,h-2.7,w,1.2);
+      x.fillStyle='rgba(10,70,30,.35)'; for(let i=0;i<w;i+=6) x.fillRect(i,3,2,h-6); }),
+    // the ID badge: a green header, his photo (black hair, the bun), name lines, a barcode
+    badge:mk(96,128,(x,w,h)=>{ x.fillStyle='#fbfbf7'; x.fillRect(0,0,w,h); x.fillStyle='#22924a'; x.fillRect(0,0,w,24);
+      x.fillStyle='#fff'; x.font='bold 14px Arial,sans-serif'; x.textAlign='center'; x.fillText('STAFF',w/2,17);
+      x.fillStyle='#dfe6ee'; x.fillRect(10,32,34,42); x.fillStyle='#f0cda8'; x.beginPath(); x.arc(27,56,11,0,7); x.fill();
+      x.fillStyle='#141216'; x.beginPath(); x.arc(27,51,11,Math.PI,0); x.fill(); x.beginPath(); x.arc(27,38,5,0,7); x.fill(); x.fillStyle='#22304a'; x.fillRect(14,67,26,7);
+      x.fillStyle='#2a3346'; x.font='bold 12px Arial,sans-serif'; x.textAlign='left'; x.fillText('PARK',50,46); x.fillStyle='#8a94a6'; x.fillRect(50,54,36,4); x.fillRect(50,62,26,4);
+      for(let i=0;i<34;i++){ if(R()<0.62){ x.fillStyle='#1b1d24'; x.fillRect(12+i*2.1,90,1.4+(R()<0.3?1:0),26); } } }, true),
+    // the stopwatch dial: white face, a blue-grey ring, ticks, the red sweep hand
+    dial:mk(128,128,(x,w,h)=>{ x.fillStyle='#dfe6ee'; x.fillRect(0,0,w,h); x.fillStyle='#ffffff'; x.beginPath(); x.arc(64,64,54,0,7); x.fill();
+      x.strokeStyle='#8fa2b5'; x.lineWidth=5; x.beginPath(); x.arc(64,64,54,0,7); x.stroke();
+      x.strokeStyle='#3a4250'; for(let i=0;i<60;i++){ const a=i/60*Math.PI*2, r0=i%5?46:40; x.lineWidth=i%5?1.5:3; x.beginPath(); x.moveTo(64+Math.sin(a)*r0,64-Math.cos(a)*r0); x.lineTo(64+Math.sin(a)*50,64-Math.cos(a)*50); x.stroke(); }
+      x.strokeStyle='#d23b3b'; x.lineWidth=5; x.lineCap='round'; x.beginPath(); x.moveTo(64,64); x.lineTo(64+30,64-34); x.stroke();
+      x.fillStyle='#1a1d24'; x.beginPath(); x.arc(64,64,6,0,7); x.fill(); }, true),
+    // the lens: a faint cool tint, a soft gradient and two diagonal reflections
+    lens:mk(64,48,(x,w,h)=>{ const g=x.createLinearGradient(0,0,0,h); g.addColorStop(0,'rgba(170,205,255,.30)'); g.addColorStop(1,'rgba(210,232,255,.08)');
+      x.fillStyle=g; x.fillRect(0,0,w,h); x.fillStyle='rgba(255,255,255,.5)';
+      x.beginPath(); x.moveTo(w*0.16,0); x.lineTo(w*0.34,0); x.lineTo(w*0.1,h); x.lineTo(-w*0.08,h); x.fill();
+      x.fillStyle='rgba(255,255,255,.28)'; x.beginPath(); x.moveTo(w*0.42,0); x.lineTo(w*0.49,0); x.lineTo(w*0.25,h); x.lineTo(w*0.18,h); x.fill(); }, true),
+  };
+  _mpTex.suit.repeat.set(6,1);
+  return _mpTex;
+}
+function dressMrPark(g, K){
+  const {eyeL, eyeR}=K;
+  const TX=mrParkTextures(), sway=[]; g.userData.sway=sway;
+  const V=(x,y,z)=>new T.Vector3(x,y,z), HP=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k)), C=vkLin, M=fkM4, FACE=Math.PI/2;
+  const sm=(e0,e1,x)=>{ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); };
+  const fd=ph=>Math.abs(Math.atan2(Math.sin(ph-FACE),Math.cos(ph-FACE)));   // 0 at the face, PI at the back
+  const lerpT=(tab,x)=>{ for(let i=1;i<tab.length;i++) if(x<=tab[i][0]){ const [x0,y0]=tab[i-1], [x1,y1]=tab[i], t=(x-x0)/(x1-x0), e=t*t*(3-2*t); return y0+(y1-y0)*e; } return tab[tab.length-1][1]; };
+  const metal=fkPhong({color:0xc8ced8, emissive:0x15171c, shininess:120, specular:0xffffff});
+  const F=fkFace(g, K, {skin:0xf0cda8,
+    eye:{x:1.3, y:3.92, R:1.06, iris:0x55321a, irisHi:0x84552e, lidUp:1.04, lidRx:0.2, tilt:0.04},
+    brow:{col:0x141016, x0:0.42, len:1.5, y:5.2, arch:0.1, tilt:-0.02, r:0.19, taper:0.4},
+    ears:true, blush:0xf2a088, blushY:3.0,
+    mouth:{rest:'smile', w:1.18, yT:2.76, yB:2.26, sag:0.16}});
+  const {skinM, inkM}=F;
+
+  // --- hair: neat and full, combed back from a high hairline over the brow, low over the ears and the nape, into a
+  // top-knot bun on the back of the crown. One glossy shell with an ink line round it
+  const thH=ph=>lerpT([[0,0.64],[0.45,0.68],[0.95,1.0],[1.3,1.22],[1.75,1.26],[2.3,1.5],[Math.PI,1.6]], fd(ph));
+  const hairM=fkPhong({color:0xffffff, map:fkHairTex('park','#0e0d12','rgba(40,44,58,.55)','rgba(105,115,140,.32)','rgba(120,130,165,.2)'), emissive:0x000000, shininess:60, specular:0x161820, side:T.DoubleSide});
+  const hk=(ph,v)=>1.03+0.13*Math.sin(Math.PI*Math.min(1,v*1.05))*(0.5+0.5*Math.pow(1-fd(ph)/Math.PI,0.7))+0.03*(1-v);
+  const hairGeo=wlOutward(gridGeo(64,12,(u,v)=>{ const ph=u*Math.PI*2-Math.PI/2; return headPt(v*thH(ph), ph, hk(ph,v)); }), V(0,HEAD_CY,0));
+  g.add(new T.Mesh(hairGeo, hairM)); g.add(wlInk(hairGeo, 0.05));
+  // the bun: a twisted knot on the back of the crown, the hair gathered up into it, a dark band at its root
+  { const BT=0.66, BP=-Math.PI/2, base=HP(BT,BP,hk(BP,BT/thH(BP))), n=fkNrm(base);
+    const seat=new T.Group(); seat.position.copy(base); seat.quaternion.setFromUnitVectors(V(0,1,0), n.clone().add(V(0,0.55,-0.25)).normalize()); g.add(seat);
+    const piv=new T.Group(); seat.add(piv);   // (sway drives piv's rotation; the seat holds the tilt)
+    const knot=new T.SphereGeometry(1,20,14), kp=knot.attributes.position, ku=knot.attributes.uv;
+    for(let i=0;i<kp.count;i++){ const x=kp.getX(i), y=kp.getY(i), z=kp.getZ(i), a=Math.atan2(z,x), tw=1+0.07*Math.sin(a*3+y*7);   // twisted ridges
+      kp.setXYZ(i, x*1.02*tw, y*0.8, z*0.95*tw); ku.setXY(i, ku.getX(i)*3+ku.getY(i)*1.5, ku.getY(i)); }
+    knot.computeVertexNormals(); knot.translate(0,0.95,0);
+    const gather=new T.CylinderGeometry(0.55,0.95,0.55,18,1,true); gather.translate(0,0.18,0);
+    piv.add(new T.Mesh(vkMerge([[knot,M(0,0.1,0,0,0,0,1.2)],[gather,null]]), hairM));
+    piv.add(new T.Mesh(new T.TorusGeometry(0.6,0.14,8,20).rotateX(Math.PI/2).translate(0,0.46,0), fkPhong({color:vkLin(0x2a2d36), emissive:0x000000, shininess:60, specular:0x4a5060})));
+    sway.push({o:piv, bx:0, bz:0, amp:0.025, f:2.0, ph:0.3, drag:-0.12, side:-0.1}); }
+
+  // --- black rectangular frames: rounded rectangles in glossy acetate, clear lenses, temples back over the ears
+  const glasses=new T.Group(); g.add(glasses);
+  { const A=1.06, B=0.74, RC=0.34;
+    const OL=(()=>{ const pts=[]; for(const [cx,cy,a0] of [[A-RC,B-RC,0],[-(A-RC),B-RC,Math.PI/2],[-(A-RC),-(B-RC),Math.PI],[A-RC,-(B-RC),Math.PI*1.5]])
+      for(let i=0;i<=5;i++){ const a=a0+i/5*Math.PI/2, w=cy<0?0.94:1; pts.push([cx*w+Math.cos(a)*RC, cy+Math.sin(a)*RC]); } return pts; })();
+    const cE=F.cE, bridgeC=cE[0].clone().add(cE[1]).multiplyScalar(0.5); bridgeC.y+=0.08; glasses.position.copy(bridgeC);
+    const frame=[], lensItems=[], ends=[]; const shp=new T.Shape(); OL.forEach(([x,y],i)=>i?shp.lineTo(x,y):shp.moveTo(x,y));
+    for(let k=0;k<2;k++){ const sx=k?1:-1, c=cE[k].clone().sub(bridgeC).add(V(sx*0.06,0,0));
+      const m=new T.Matrix4().compose(c, new T.Quaternion().setFromEuler(new T.Euler(0.06,sx*0.14,0)), V(1,1,1));
+      const loop=OL.map(([x,y])=>V(x,y,0).applyMatrix4(m));
+      frame.push([new T.TubeGeometry(new T.CatmullRomCurve3(loop,true),30,0.11,6,true), null]);
+      frame.push([new T.TubeGeometry(new T.CatmullRomCurve3(loop.slice(0,12)),12,0.15,6,false), null]);   // the heavier top bar
+      const lg=new T.ShapeGeometry(shp,4), uv=lg.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,(uv.getX(i)+A)/(2*A),(uv.getY(i)+B)/(2*B));
+      lensItems.push([lg, m]);
+      ends.push({sx, outer:V(sx*A,B-0.3,0).applyMatrix4(m), inner:V(-sx*A,B-0.35,0).applyMatrix4(m)}); }
+    frame.push([new T.TubeGeometry(new T.CatmullRomCurve3([ends[0].inner, V(0,0.04,0.1), ends[1].inner]),10,0.1,6,false), null]);
+    for(const e of ends){ const sx=e.sx, h=e.outer.clone().add(bridgeC);
+      const pts=[h, V(sx*3.0,h.y-0.08,3.1), V(sx*3.6,4.16,1.2), V(sx*3.88,3.98,-0.25), V(sx*3.7,3.45,-0.95)].map(p=>p.sub(bridgeC));
+      frame.push([new T.TubeGeometry(new T.CatmullRomCurve3(pts),14,0.085,5,false), null]); }
+    glasses.add(new T.Mesh(vkMerge(frame), fkPhong({color:vkLin(0x1a191f), emissive:0x000000, shininess:80, specular:0x3a3e48})));
+    const lens=new T.Mesh(vkMerge(lensItems), fkPhong({color:0xffffff, map:TX.lens, transparent:true, depthWrite:false, shininess:160, specular:0xffffff}));
+    lens.renderOrder=2; glasses.add(lens); }
+
+  // ===== body parts: they stay on the body while the head turns =====
+  // the suit's neckline, open in a V over the shirt and tie, rising at the back; jK: the jacket's radius
+  const vOpen=v=>0.6-0.3*v, jTop=ph=>2.36-0.66*sm(-0.7,1,-Math.sin(ph));
+  const jK=(th,ph)=>{ const t0=jTop(ph)+0.04, v=Math.max(0,Math.min(1,(th-t0)/(2.84-t0))), bk=sm(-0.7,1,-Math.sin(ph));
+    return T.MathUtils.lerp(1.23,1.07,bk*(1-v)*(1-v))+0.05*v+0.015*Math.sin(v*Math.PI); };
+  const whiteM=fkToon({vertexColors:true, emissive:0x2a2c30, side:T.DoubleSide});
+  // the white shirt front in the V, the collar band round the neckline and its two points turned down at the front
+  { const items=[[gridGeo(10,6,(u,v)=>headPt(2.2+0.62*v, FACE+(u*2-1)*0.66, 1.15+0.02*v)), null, C(0xeef2f6)],
+      [gridGeo(48,2,(u,v)=>{ const ph=FACE+0.07+u*(Math.PI*2-0.14), t=jTop(ph), th=t-0.11*(0.4+0.6*Math.abs(Math.sin(ph)))+0.15*v; return headPt(th, ph, jK(t+0.04,ph)-0.04+0.03*v); }), null, C(0xffffff)]];
+    for(const sx of [-1,1]) items.push([gridGeo(6,3,(u,v)=>{ const top=headPt(2.2, FACE+sx*(0.04+0.42*u), 1.19), tip=headPt(2.62, FACE+sx*0.3, 1.215);
+      return [T.MathUtils.lerp(top[0],tip[0],v), T.MathUtils.lerp(top[1],tip[1],v), T.MathUtils.lerp(top[2],tip[2],v)+0.05*Math.sin(v*Math.PI)]; }), null, C(0xffffff)]);
+    // the pocket protector on his right breast: a clear-white sleeve with a red and a blue pen clipped in it
+    const ph0=FACE-1.0, th0=2.6, pp=HP(th0,ph0,jK(th0,ph0)+0.05), pn=fkNrm(pp);
+    const pq=new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(new T.Vector3().crossVectors(V(0,1,0),pn).normalize(), V(0,1,0), pn));
+    const P0=new T.Matrix4().compose(pp, pq, V(1,1,1)).multiply(M(0,0,0,0,0,0.12));
+    items.push([new T.BoxGeometry(0.78,0.7,0.12), P0.clone().multiply(M(0,0,0.02)), C(0xf4f6f8)]);
+    for(const [dx,col,h] of [[-0.18,0xd23b3b,0.7],[0.16,0x2f5fae,0.62]]){
+      items.push([new T.CylinderGeometry(0.075,0.075,h,8), P0.clone().multiply(M(dx,0.3+h*0.25,0.06)), C(col)]);
+      items.push([new T.BoxGeometry(0.05,0.34,0.05), P0.clone().multiply(M(dx,0.32+h*0.3,0.14)), C(0xc8ced8)]); }
+    g.add(bodyPart(new T.Mesh(vkMerge(items), whiteM))); }
+  // the tie: a knot under the collar points and a blade down the front to a point
+  { const knot=gridGeo(6,4,(u,v)=>{ const s=u*2-1; return headPt(2.24+0.17*v, FACE+s*(0.1-0.03*v), 1.205+0.025*Math.cos(s*1.4)); });
+    const blade=gridGeo(6,12,(u,v)=>{ const s=u*2-1, w=(0.08+0.045*v)*(v>0.86?(1-v)/0.14:1); return headPt(2.4+0.52*v, FACE+s*w, 1.19+0.02*Math.cos(s*1.4)); });
+    g.add(bodyPart(new T.Mesh(vkMerge([[knot,null,0xffffff,(a,b)=>[a,b*0.3]],[blade,null,0xffffff]]), fkToon({map:TX.tie, emissive:0x081230, side:T.DoubleSide})))); }
+  // the navy jacket, its lapels and a dark line along their edges
+  const suitM=fkToon({map:TX.suit, emissive:0x05080f, side:T.DoubleSide});
+  { const items=[[gridGeo(64,8,(u,v)=>{ const op=vOpen(v), ph=FACE+op+u*(Math.PI*2-2*op), th=T.MathUtils.lerp(jTop(ph)+0.04, 2.84, v); return headPt(th, ph, jK(th,ph)); }), null, 0xffffff]];
+    const edge=[];
+    for(const sx of [-1,1]){
+      const lp=(u,v)=>{ const op=vOpen(v), w=0.26*(1-v)+0.05, ph=FACE+sx*(op+u*w), th=T.MathUtils.lerp(jTop(FACE+sx*op)+0.02, 2.76, v); return [th,ph,jK(th,ph)+0.025+0.02*Math.sin(u*Math.PI)]; };
+      items.push([gridGeo(3,8,(u,v)=>{ const [th,ph,k]=lp(u,v); return headPt(th,ph,k); }), null, 0xffffff]);
+      const pts=[]; for(let i=0;i<=8;i++){ const [th,ph,k]=lp(0,i/8); pts.push(HP(th,ph,k+0.01)); }
+      edge.push([new T.TubeGeometry(new T.CatmullRomCurve3(pts),12,0.04,4,false), null, C(0x0a0f1c)]); }
+    g.add(bodyPart(new T.Mesh(vkMerge(items), suitM)));
+    g.add(bodyPart(new T.Mesh(vkMerge(edge), inkM))); }
+  // the shoulders of the jacket round the root of the tail (the chase camera's view), the shirt collar at the nape
+  const YS=0.96, Rc=d=>d<3.0?2.0+(d-2.7)*1.1:d<3.3?2.33+(d-3.0)*0.5:d<5.2?2.48-(d-3.3)*0.068:2.35-(d-5.2)*0.4;
+  const yP=(r,a,d)=>V(1.06*r*Math.cos(a), HEAD_CY+YS*r*Math.sin(a), -d);
+  { const lathe=pr=>{ const geo=new T.LatheGeometry(pr.map(p=>new T.Vector2(p[0],p[1])),40), q=new T.Matrix4().compose(V(0,HEAD_CY,0), new T.Quaternion().setFromAxisAngle(V(1,0,0),-Math.PI/2), V(1.06,1,YS));
+      geo.applyMatrix4(q); return geo; };
+    const yoke=lathe([[2.0,2.7],[2.33,3.0],[2.48,3.3],[2.45,4.2],[2.35,5.2],[2.2,5.6],[2.0,5.8],[1.2,5.76]]);
+    g.add(bodyPart(new T.Mesh(yoke, suitM)));
+    const seam=[]; for(let i=0;i<=8;i++){ const d=3.4+i*0.28; seam.push(yP(Rc(d)+0.012,Math.PI/2,d)); }
+    g.add(bodyPart(new T.Mesh(vkMerge([[lathe([[2.3,2.86],[2.6,3.0],[2.72,3.2],[2.6,3.4]]),null,C(0xffffff)],
+      [new T.TubeGeometry(new T.CatmullRomCurve3(seam),12,0.045,4,false), null, C(0x0a0f1c)]]), whiteM))); }
+  // the lanyard: up both sides of the V from the badge, over the collar and round the back of the neck on the jacket
+  { const onJ=ph=>{ const th=jTop(ph)+0.07, d=fd(ph); return HP(th,ph,jK(th,ph)+0.03+0.04*(1-sm(0.85,1.15,d))); };
+    const side=sx=>[HP(2.66,FACE+sx*0.07,1.235), HP(2.53,FACE+sx*0.3,1.245), HP(2.43,FACE+sx*0.5,1.255), onJ(FACE+sx*0.64)];
+    const band=sx=>{ const a=[]; for(let i=1;i<=5;i++) a.push(onJ(FACE+sx*(0.64+i*0.25))); return a; };
+    const over=[]; const N=18; for(let i=0;i<=N;i++){ const a=-0.42+i/N*(Math.PI+0.84), d=4.1; over.push(yP(Rc(d)+0.07,a,d)); }
+    const pts=[...side(1), ...band(1), ...over, ...band(-1).reverse(), ...side(-1).reverse()];
+    const cv=new T.CatmullRomCurve3(pts), M2=120, pos=[], uv=[], idx=[];
+    for(let i=0;i<=M2;i++){ const t=i/M2, p=cv.getPointAt(t), tg=cv.getTangentAt(t), n=fkNrm(p), b=new T.Vector3().crossVectors(tg,n).normalize();
+      for(const s of [-1,1]){ const q=p.clone().addScaledVector(b,s*0.2); pos.push(q.x,q.y,q.z); uv.push(t*14, s>0?1:0); } }
+    for(let i=0;i<M2;i++){ const a=i*2; idx.push(a,a+2,a+1, a+1,a+2,a+3); }
+    const lg=new T.BufferGeometry(); lg.setAttribute('position', new T.Float32BufferAttribute(pos,3)); lg.setAttribute('uv', new T.Float32BufferAttribute(uv,2)); lg.setIndex(idx); lg.computeVertexNormals();
+    g.add(bodyPart(new T.Mesh(lg, fkToon({map:TX.lanyard, emissive:0x04200e, side:T.DoubleSide})))); }
+  // the ID badge on a silver clip at the foot of the V: it swings
+  { const bp=HP(2.68, FACE, 1.24), piv=new T.Group(); piv.position.copy(bp); g.add(bodyPart(piv));
+    const n=fkNrm(bp); piv.rotation.set(-Math.asin(n.y)*0.6, Math.atan2(n.x,n.z), 0);
+    piv.add(new T.Mesh(new T.BoxGeometry(0.95,1.26,0.06).translate(0,-0.84,0.12), fkToon({map:TX.badge, emissive:0x26282c})));
+    piv.add(new T.Mesh(vkMerge([[new T.BoxGeometry(0.34,0.22,0.08), M(0,-0.16,0.12)], [new T.TorusGeometry(0.11,0.035,5,10), M(0,0,0.1)]]), metal));
+    sway.push({o:piv, bx:piv.rotation.x, bz:0, amp:0.1, f:2.4, ph:0.7, drag:0.8, side:0.7}); }
+  // the stopwatch: on a short chain from his left lapel, the dial turned out; it swings and ticks
+  { const ap=HP(2.42, FACE+0.78, jK(2.42,FACE+0.78)+0.05), piv=new T.Group(); piv.position.copy(ap); g.add(bodyPart(piv));
+    const n=fkNrm(ap); piv.rotation.set(-0.15, Math.atan2(n.x,n.z), 0);
+    const items=[]; for(let i=0;i<5;i++) items.push([new T.TorusGeometry(0.09,0.03,5,8), M(0,-0.1-i*0.15,0.08,0,i%2?Math.PI/2:0,0,1,1.4,1)]);
+    items.push([new T.TorusGeometry(0.16,0.05,6,12), M(0,-0.86,0.08)], [new T.CylinderGeometry(0.09,0.09,0.2,8), M(0,-1.02,0.08)],
+      [new T.CylinderGeometry(0.56,0.56,0.24,24), M(0,-1.6,0.08,Math.PI/2)], [new T.TorusGeometry(0.56,0.07,6,24), M(0,-1.6,0.21)],
+      [new T.CylinderGeometry(0.06,0.06,0.18,6), M(0.42,-1.18,0.08,0,0,-0.75)]);
+    piv.add(new T.Mesh(vkMerge(items), metal));
+    const dial=new T.Mesh(new T.CircleGeometry(0.5,24), fkToon({map:TX.dial, emissive:0x30343a})); dial.position.set(0,-1.6,0.215); piv.add(dial);
+    sway.push({o:piv, bx:-0.1, bz:0.05, amp:0.12, f:2.1, ph:1.9, drag:0.9, side:0.8}); }
+  g.userData.tick=tickFace;
+  return true;
+}
+/* ============== NORBERT QUARK KIT (id nerd) ==============
+ * The apex worked out in advance: fair skin, side-parted brown hair combed flat over the top with the cowlick at the
+ * crown that will not lie down (the chase camera's read, with the glasses' arms), thick black square frames with white
+ * tape round the bridge, wide eager eyes behind them, raised brows and a toothy eager smile; a white checked shirt
+ * buttoned to the collar, a red bow tie and a pocket protector stacked with pens and a pencil. The shirt, the tie and
+ * the pocket are body parts: they stay on the body while the head turns. */
+let _nqTex=null;
+function norbertTextures(){
+  if(_nqTex) return _nqTex;
+  let sd=3141; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const mk=(w,h,draw,clamp)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+    draw(c.getContext('2d'),w,h); const t=new T.CanvasTexture(c);
+    t.wrapS=t.wrapT=clamp?T.ClampToEdgeWrapping:T.RepeatWrapping; t.encoding=T.sRGBEncoding; return t; };
+  _nqTex={
+    // a white shirt with a fine pale-blue check
+    shirt:mk(64,64,(x,w,h)=>{ x.fillStyle='#f6f7f4'; x.fillRect(0,0,w,h); x.fillStyle='rgba(100,145,205,.5)';
+      for(let i=0;i<w;i+=8){ x.fillRect(i,0,2,h); x.fillRect(0,i,w,2); } x.fillStyle='rgba(90,130,190,.18)'; for(let i=0;i<w;i+=8) for(let j=0;j<h;j+=8) x.fillRect(i,j,2,2); }),
+    // the bow tie: deep red with small white dots
+    bow:mk(64,32,(x,w,h)=>{ x.fillStyle='#a3192c'; x.fillRect(0,0,w,h); x.fillStyle='#fbeff0';
+      for(let j=0;j<4;j++) for(let i=0;i<8;i++){ x.beginPath(); x.arc(i*8+4+(j%2)*4,j*8+4,1.4,0,7); x.fill(); } }),
+    // the tape round the bridge: off-white, wound in overlapping turns
+    tape:mk(32,32,(x,w,h)=>{ x.fillStyle='#f4f0e2'; x.fillRect(0,0,w,h); x.strokeStyle='rgba(150,140,110,.45)'; x.lineWidth=1.5;
+      for(let i=-h;i<w;i+=7){ x.beginPath(); x.moveTo(i,0); x.lineTo(i+h*0.5,h); x.stroke(); } }),
+    // thick lenses: a stronger tint toward the rims and a bold diagonal glare
+    lens:mk(64,48,(x,w,h)=>{ const g=x.createRadialGradient(w/2,h/2,4,w/2,h/2,w*0.6); g.addColorStop(0,'rgba(200,225,255,.06)'); g.addColorStop(1,'rgba(150,190,240,.42)');
+      x.fillStyle=g; x.fillRect(0,0,w,h); x.fillStyle='rgba(255,255,255,.6)';
+      x.beginPath(); x.moveTo(w*0.12,0); x.lineTo(w*0.36,0); x.lineTo(w*0.12,h); x.lineTo(-w*0.12,h); x.fill();
+      x.fillStyle='rgba(255,255,255,.35)'; x.beginPath(); x.moveTo(w*0.44,0); x.lineTo(w*0.52,0); x.lineTo(w*0.28,h); x.lineTo(w*0.2,h); x.fill(); }, true),
+  };
+  _nqTex.shirt.repeat.set(8,1);
+  return _nqTex;
+}
+function dressNorbert(g, K){
+  const TX=norbertTextures(), sway=[]; g.userData.sway=sway;
+  const V=(x,y,z)=>new T.Vector3(x,y,z), HP=(th,ph,k)=>new T.Vector3(...headPt(th,ph,k)), C=vkLin, M=fkM4, FACE=Math.PI/2;
+  const sm=(e0,e1,x)=>{ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); };
+  const fd=ph=>Math.abs(Math.atan2(Math.sin(ph-FACE),Math.cos(ph-FACE)));
+  const lerpT=(tab,x)=>{ for(let i=1;i<tab.length;i++) if(x<=tab[i][0]){ const [x0,y0]=tab[i-1], [x1,y1]=tab[i], t=(x-x0)/(x1-x0), e=t*t*(3-2*t); return y0+(y1-y0)*e; } return tab[tab.length-1][1]; };
+  const F=fkFace(g, K, {skin:0xf2d8bd,
+    eye:{x:1.32, y:3.95, R:1.1, iris:0x3e6a96, irisHi:0x86b0d6, ring:0x1a2a3c, irisK:1.08, lidUp:0.8, lidLo:0.62, lidRx:0.12, tilt:-0.08},
+    brow:{col:0x4a2a12, x0:0.45, len:1.45, y:5.42, arch:0.2, tilt:0.06, r:0.15, taper:0.45},
+    nose:{s:1.12}, ears:true, blush:0xf0a08c, blushY:2.95,
+    mouth:{rest:'eager', w:1.0, yT:2.8, yB:2.12, sag:0.12}});
+  const {skinM, inkM}=F;
+
+  // --- hair: brown, side-parted on his left, the long side combed flat across the top; the parting is a groove with
+  // the scalp in it. Short over the ears and the nape. One shell, an ink line round it
+  const PX=1.15, thH=ph=>lerpT([[0,0.66],[0.5,0.7],[0.95,1.0],[1.3,1.18],[1.75,1.22],[2.3,1.45],[Math.PI,1.55]], fd(ph));
+  const hairM=fkPhong({color:0xffffff, map:fkHairTex('norbert','#5a3416','rgba(40,20,8,.55)','rgba(170,110,60,.45)','rgba(200,150,100,.22)'), emissive:0x000000, shininess:30, specular:0x2a2018, side:T.DoubleSide});
+  const hk=(p,ph,v)=>{ const groove=Math.exp(-Math.pow((p[0]-PX)/0.2,2))*sm(-2.4,-0.4,p[2])*sm(0.05,0.2,v)*(1-sm(0.85,1,v));
+    const side=sm(PX+0.2,PX-0.6,p[0]);   // the long side (toward his right) sits a little fuller
+    return 1.03+0.1*Math.sin(Math.PI*Math.min(1,v*1.05))*(0.6+0.4*side)+0.03*(1-v)-0.08*groove; };
+  const hairTP=(th,ph,dk)=>{ const v=Math.min(1,th/thH(ph)), p0=headPt(th,ph,1); return headPt(th,ph,hk(p0,ph,v)+(dk||0)); };
+  const hairGeo=wlOutward(gridGeo(64,12,(u,v)=>{ const ph=u*Math.PI*2-Math.PI/2; return hairTP(v*thH(ph),ph); }), V(0,HEAD_CY,0));
+  g.add(new T.Mesh(hairGeo, hairM)); g.add(wlInk(hairGeo, 0.05));
+  // the parting (scalp line in the groove), comb lines across the long side, and the cowlick at the crown
+  { const onHair=(x,z,lift)=>{ const q=1-(x/HEAD_RX)**2-(z/HEAD_RZ)**2; if(q<=0.02) return null;
+      const y=HEAD_RY*Math.sqrt(q), th=Math.acos(Math.min(1,y/HEAD_RY)), s=Math.sin(th)||1e-6, ph=Math.atan2(z/(HEAD_RZ*s),-x/(HEAD_RX*s));
+      if(th>thH(ph)*0.93) return null; return V(...hairTP(th,ph,lift)); };
+    const pts=[]; for(let i=0;i<=9;i++){ const p=onHair(PX,2.0-i*0.45,0); if(p) pts.push(p); }
+    if(pts.length>2) g.add(new T.Mesh(taperTube(new T.CatmullRomCurve3(pts),18,5,u=>0.08*(1-0.5*u*u)), skinM));
+    const parts=[], line=(x0,z0,x1,z1,bend,r,col)=>{ const q=[]; for(let i=0;i<=10;i++){ const t=i/10, p=onHair(T.MathUtils.lerp(x0,x1,t), T.MathUtils.lerp(z0,z1,t)-bend*t*t, 0.012); if(!p) break; q.push(p); }
+      if(q.length>=3) parts.push([taperTube(new T.CatmullRomCurve3(q),10,4,u=>r*(1-0.7*u)+0.012), null, C(col)]); };
+    for(const z of [2.2,1.4,0.6,-0.2,-1.0,-1.8]) line(PX-0.26,z,-3.1,z-0.9,0.4,0.045,0x2e1a0a);
+    for(const z of [1.0,-0.2,-1.4]) line(PX-0.5,z,-2.9,z-0.8,0.35,0.03,0xa8743e);
+    for(const z of [1.6,0.4,-0.8]) line(PX+0.25,z,3.1,z-0.9,0.5,0.04,0x2e1a0a);
+    g.add(new T.Mesh(vkMerge(parts), inkM));
+    // the cowlick: three stiff tufts at the back of the crown, springing up and back
+    const cw=[]; const c0=V(...hairTP(0.42,-Math.PI/2-0.2,0)), n0=fkNrm(c0);
+    for(const [dx,lean,len] of [[0,0,1.5],[0.22,0.5,1.15],[-0.2,-0.45,1.05]]){
+      const d=n0.clone().multiplyScalar(0.5).add(V(lean*0.6,0.9,-0.35)).normalize(), b=V(dx,0,0);
+      const cv=new T.CatmullRomCurve3([c0.clone().add(b).addScaledVector(d,-0.2), c0.clone().add(b).addScaledVector(d,len*0.55).add(V(0,0,-0.1)), c0.clone().add(b).addScaledVector(d,len).add(V(lean*0.2,-0.15,-0.45))]);
+      cw.push([taperTube(cv,10,6,u=>0.26*(1-u)+0.02), null]); }
+    const piv=new T.Group(); piv.position.copy(c0); g.add(piv);
+    const cg=vkMerge(cw); cg.translate(-c0.x,-c0.y,-c0.z); piv.add(new T.Mesh(cg, hairM));
+    sway.push({o:piv, bx:0, bz:0, amp:0.06, f:3.2, ph:0.4, drag:-0.35, side:-0.3}); }
+
+  // --- the frames: thick black squares, white tape wound round the bridge, heavy lenses, temples back over the ears
+  { const A=1.18, B=0.95, RC=0.26;
+    const OL=(()=>{ const pts=[]; for(const [cx,cy,a0] of [[A-RC,B-RC,0],[-(A-RC),B-RC,Math.PI/2],[-(A-RC),-(B-RC),Math.PI],[A-RC,-(B-RC),Math.PI*1.5]])
+      for(let i=0;i<=4;i++){ const a=a0+i/4*Math.PI/2; pts.push([cx+Math.cos(a)*RC, cy+Math.sin(a)*RC]); } return pts; })();
+    const cE=F.cE, bc=cE[0].clone().add(cE[1]).multiplyScalar(0.5); bc.y+=0.05;
+    const glasses=new T.Group(); glasses.position.copy(bc); g.add(glasses);
+    const frame=[], lensItems=[], ends=[]; const shp=new T.Shape(); OL.forEach(([x,y],i)=>i?shp.lineTo(x,y):shp.moveTo(x,y));
+    for(let k=0;k<2;k++){ const sx=k?1:-1, c=cE[k].clone().sub(bc).add(V(sx*0.08,0,0.05));
+      const m=new T.Matrix4().compose(c, new T.Quaternion().setFromEuler(new T.Euler(0.05,sx*0.16,0)), V(1,1,1));
+      const loop=OL.map(([x,y])=>V(x,y,0).applyMatrix4(m));
+      frame.push([new T.TubeGeometry(new T.CatmullRomCurve3(loop,true),32,0.17,6,true), null]);
+      const lg=new T.ShapeGeometry(shp,2), uv=lg.attributes.uv; for(let i=0;i<uv.count;i++) uv.setXY(i,(uv.getX(i)+A)/(2*A),(uv.getY(i)+B)/(2*B));
+      lensItems.push([lg, m]);
+      ends.push({sx, outer:V(sx*A,B-0.35,0).applyMatrix4(m), inner:V(-sx*A,0.15,0).applyMatrix4(m)}); }
+    frame.push([new T.TubeGeometry(new T.CatmullRomCurve3([ends[0].inner, V(0,0.12,0.12), ends[1].inner]),10,0.15,6,false), null]);
+    for(const e of ends){ const sx=e.sx, h=e.outer.clone().add(bc);
+      const pts=[h, V(sx*3.05,h.y-0.05,3.0), V(sx*3.62,4.2,1.2), V(sx*3.9,4.0,-0.25), V(sx*3.72,3.45,-0.95)].map(p=>p.sub(bc));
+      frame.push([new T.TubeGeometry(new T.CatmullRomCurve3(pts),14,0.11,5,false), null]); }
+    glasses.add(new T.Mesh(vkMerge(frame), fkPhong({color:vkLin(0x141317), emissive:0x000000, shininess:70, specular:0x3a3e48})));
+    const lens=new T.Mesh(vkMerge(lensItems), fkPhong({color:0xffffff, map:TX.lens, transparent:true, depthWrite:false, shininess:160, specular:0xffffff}));
+    lens.renderOrder=2; glasses.add(lens);
+    // the tape: a fat wound wrap over the bridge
+    const tp=new T.Mesh(new T.CylinderGeometry(0.3,0.3,0.62,12,1).rotateZ(Math.PI/2).translate(0,0.12,0.14), fkToon({map:TX.tape, emissive:0x2a2822}));
+    glasses.add(tp); }
+
+  // ===== body parts: they stay on the body while the head turns =====
+  // the shirt: buttoned to a collar band under the chin, rising at the back; the collar points over the band
+  const sTop=ph=>2.26-0.6*sm(-0.7,1,-Math.sin(ph));
+  const sK=(th,ph)=>{ const t0=sTop(ph), v=Math.max(0,Math.min(1,(th-t0)/(2.84-t0))), bk=sm(-0.7,1,-Math.sin(ph));
+    return T.MathUtils.lerp(1.17,1.06,bk*(1-v)*(1-v))+0.04*v+0.012*Math.sin(v*Math.PI); };
+  const shirtM=fkToon({map:TX.shirt, emissive:0x24262a, side:T.DoubleSide});
+  { const items=[[gridGeo(64,8,(u,v)=>{ const ph=FACE+u*Math.PI*2, th=T.MathUtils.lerp(sTop(ph), 2.84, v); return headPt(th, ph, sK(th,ph)); }), null]];
+    items.push([gridGeo(56,2,(u,v)=>{ const ph=FACE+0.05+u*(Math.PI*2-0.1), t=sTop(ph), th=t-0.12+0.16*v; return headPt(th, ph, sK(t,ph)+0.035); }), null]);   // the collar band
+    for(const sx of [-1,1]) items.push([gridGeo(6,3,(u,v)=>{ const top=headPt(2.14, FACE+sx*(0.04+0.48*u), 1.2), tip=headPt(2.6, FACE+sx*0.36, 1.23);
+      return [T.MathUtils.lerp(top[0],tip[0],v), T.MathUtils.lerp(top[1],tip[1],v), T.MathUtils.lerp(top[2],tip[2],v)+0.06*Math.sin(v*Math.PI)]; }), null]);
+    // the placket and its buttons down the front
+    items.push([gridGeo(2,6,(u,v)=>headPt(2.3+0.54*v, FACE+(u*2-1)*0.07, sK(2.3+0.54*v,FACE)+0.012)), null]);
+    g.add(bodyPart(new T.Mesh(vkMerge(items), shirtM)));
+    const btn=[]; for(const th of [2.5,2.72]) btn.push([new T.SphereGeometry(0.08,8,6), new T.Matrix4().makeTranslation(...headPt(th,FACE,sK(th,FACE)+0.03)), C(0xe8e4d8)]);
+    g.add(bodyPart(new T.Mesh(vkMerge(btn), inkM))); }
+  // the shirt's shoulders round the root of the tail, the collar standing up at the nape
+  { const YS=0.96, lathe=pr=>{ const geo=new T.LatheGeometry(pr.map(p=>new T.Vector2(p[0],p[1])),40), q=new T.Matrix4().compose(V(0,HEAD_CY,0), new T.Quaternion().setFromAxisAngle(V(1,0,0),-Math.PI/2), V(1.06,1,YS));
+      geo.applyMatrix4(q); return geo; };
+    const yoke=lathe([[2.0,2.7],[2.3,3.0],[2.42,3.3],[2.4,4.2],[2.3,5.2],[2.15,5.6],[1.95,5.8],[1.2,5.76]]);
+    g.add(bodyPart(new T.Mesh(vkMerge([[yoke,null],[lathe([[2.24,2.82],[2.55,2.96],[2.66,3.2],[2.55,3.4]]),null]]), shirtM))); }
+  // the bow tie at the collar: two pleated wings and the knot, deep red with white dots
+  { const bp=HP(2.27,FACE,1.22), n=fkNrm(bp), piv=new T.Group(); piv.position.copy(bp);
+    piv.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(new T.Vector3().crossVectors(V(0,1,0),n).normalize(), V(0,1,0), n)); g.add(bodyPart(piv));
+    const wing=sx=>gridGeo(8,6,(u,v)=>{ const x=sx*(0.12+u*0.95), h=(0.18+0.42*u)*(1-0.15*Math.sin(u*Math.PI)), y=(v*2-1)*h, z=0.12+0.08*Math.sin(u*Math.PI)-0.05*Math.abs(v*2-1)*u;
+      return [x, y+0.04*Math.sin(v*Math.PI*3)*u, z]; });
+    const items=[[wing(-1),null],[wing(1),null],[new T.SphereGeometry(0.24,12,8), M(0,0,0.2,0,0,0,1,1.05,0.75)]];
+    piv.add(new T.Mesh(vkMerge(items), fkToon({map:TX.bow, emissive:0x2a0308, side:T.DoubleSide})));
+    sway.push({o:piv.children[0], bx:0, bz:0, amp:0.04, f:3.4, ph:1.2, drag:0.2, side:0.3}); }
+  // the pocket protector on his right breast: a white sleeve, three pens (blue, red, black) and a yellow pencil
+  { const ph0=FACE-0.86, th0=2.6, pp=HP(th0,ph0,sK(th0,ph0)+0.05), pn=fkNrm(pp);
+    const P0=new T.Matrix4().compose(pp, new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(new T.Vector3().crossVectors(V(0,1,0),pn).normalize(), V(0,1,0), pn)), V(1,1,1)).multiply(M(0,0,0,0,0,-0.1));
+    const items=[[new T.BoxGeometry(0.95,0.78,0.14), P0.clone().multiply(M(0,0,0.02)), C(0xf4f6f8)], [new T.BoxGeometry(0.95,0.16,0.18), P0.clone().multiply(M(0,0.36,0.04)), C(0xdfe4ea)]];
+    for(const [dx,col,h,cap] of [[-0.3,0x2a56b8,0.7,0x2a56b8],[-0.1,0xd23b3b,0.78,0xd23b3b],[0.1,0x1a1a1e,0.66,0x1a1a1e],[0.3,0xf2c230,0.9,0xf0a0a8]]){
+      items.push([new T.CylinderGeometry(0.07,0.07,h,8), P0.clone().multiply(M(dx,0.3+h*0.3,0.07)), C(col)]);
+      items.push([new T.SphereGeometry(0.075,8,6), P0.clone().multiply(M(dx,0.3+h*0.8,0.07)), C(cap)]);
+      if(col!==0xf2c230) items.push([new T.BoxGeometry(0.04,0.3,0.04), P0.clone().multiply(M(dx,0.36+h*0.35,0.15)), C(0xc8ced8)]); }
+    g.add(bodyPart(new T.Mesh(vkMerge(items), inkM))); }
+  g.userData.tick=tickFace;
+  return true;
+}
 function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
 function makeCellBuild(hue, typeId){
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
@@ -61441,42 +61933,7 @@ function makeCellBuild(hue, typeId){
   } else if(typeId === 'wall'){
     tailTextured = dressWall(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});
   } else if(typeId === 'korean'){
-    head.material.color.setHex(0xf0cda8); head.material.emissive.setHex(0x3a2c1e);
-    const hairMat=new T.MeshPhongMaterial({color:0x161210});
-    const hair=new T.Mesh(new T.SphereGeometry(3.5,16,11,0,Math.PI*2,0,Math.PI*0.5), hairMat);
-    hair.position.set(0,4.2,0); hair.scale.set(1.05,0.7,1.08); g.add(hair);
-    // top-knot man-bun on the back crown — an unmistakable silhouette from behind
-    const bun=new T.Mesh(new T.SphereGeometry(1.15,12,10), hairMat);
-    bun.position.set(0,5.4,-2.2); g.add(bun);
-    const bunTie=new T.Mesh(new T.TorusGeometry(0.85,0.18,6,12), new T.MeshPhongMaterial({color:0x14110e}));
-    bunTie.position.set(0,5.0,-2.0); bunTie.rotation.x=0.5; g.add(bunTie);
-    const streak=new T.Mesh(new T.BoxGeometry(0.5,0.2,4.2), new T.MeshPhongMaterial({color:0xb98a3a, emissive:0x3a2606}));
-    streak.position.set(1.0,5.0,0); g.add(streak);          // bleached side streak
-    const gm=new T.MeshPhongMaterial({color:0x222222, shininess:80});
-    for(const ex of [-1.45,1.45]){ const r=new T.Mesh(new T.TorusGeometry(1.0,0.14,8,16), gm); r.position.set(ex,4.15,4.0); g.add(r); }
-    const bridge=new T.Mesh(new T.BoxGeometry(1.0,0.16,0.16), gm); bridge.position.set(0,4.15,4.2); g.add(bridge);
-    // shirt collar (ring clears the head) + a blue tie hanging in front
-    const collar=new T.Mesh(new T.TorusGeometry(4.2,0.42,8,18), new T.MeshPhongMaterial({color:0xf2f2f2, emissive:0x444444}));
-    collar.position.set(0,1.5,0.4); collar.rotation.x=Math.PI/2; collar.scale.set(0.85,1,1); g.add(collar);
-    const knot=new T.Mesh(new T.BoxGeometry(0.6,0.55,0.3), new T.MeshPhongMaterial({color:0x244a8c}));
-    knot.position.set(0,1.0,4.0); g.add(knot);
-    const tie=new T.Mesh(new T.BoxGeometry(0.8,2.4,0.25), new T.MeshPhongMaterial({color:0x2f5fae, emissive:0x0a1830}));
-    tie.position.set(0,-0.4,4.0); tie.rotation.x=-0.12; g.add(tie);
-    // small silver ear studs on the sides — raised to the head's side surface (x≈3.5) and enlarged so they read
-    // clearly from the side and back; subtle K-style sparkle
-    const kStud=new T.MeshPhongMaterial({color:0xeaeaf0, emissive:0x335577, shininess:100});
-    for(const sx of [-1,1]){ const stud=new T.Mesh(new T.OctahedronGeometry(0.5), kStud);
-      stud.position.set(sx*3.5,3.2,-0.3); g.add(stud); }
-    // portrait-sync: green lanyard + white ID badge hanging beside the tie
-    const lanyard=new T.Mesh(new T.CylinderGeometry(0.09,0.09,2.4,5),
-      new T.MeshPhongMaterial({color:0x2a8a4a, emissive:0x0a3018}));
-    lanyard.position.set(1.5,0.6,3.9); lanyard.rotation.z=0.35; g.add(lanyard);
-    const badge=new T.Mesh(new T.BoxGeometry(1.0,1.3,0.12),
-      new T.MeshPhongMaterial({color:0xf6f6f2, emissive:0x444444}));
-    badge.position.set(1.95,-0.7,3.95); g.add(badge);
-    const photo=new T.Mesh(new T.BoxGeometry(0.5,0.5,0.14),
-      new T.MeshPhongMaterial({color:0xf0cda8}));
-    photo.position.set(1.8,-0.45,4.02); g.add(photo);
+    tailTextured = dressMrPark(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});   // Mr. Park (MR. PARK KIT)
   } else if(typeId === 'rick'){
     // Super Freak: the funk superstar, dressed by dressRick (long box braids, star shades, sequin collar, the disco point)
     tailTextured = dressRick(g, {head, eyeMat, mouth, tailMesh, nuc, glow});
@@ -61568,45 +62025,7 @@ function makeCellBuild(hue, typeId){
     g.add(grin); g.userData.mouth=grin;
 
   } else if(typeId === 'nerd'){
-    // Norbert Quark — thick frames with the taped bridge, bow tie, pocket protector.
-    // Frames sit AROUND the eyes rather than over them so the expression still reads.
-    head.material.color.setHex(0xf2d8bd); head.material.emissive.setHex(0x3d2c1c);
-    const frameMat=new T.MeshPhongMaterial({color:0x14120f, emissive:0x050403, shininess:90});
-    const GY=4.2, GZ=headSurfZ(1.5,GY)+0.30;
-    for(const sx of [-1.5,1.5]){
-      const rim=new T.Mesh(new T.TorusGeometry(1.35,0.24,8,20), frameMat);
-      rim.position.set(sx,GY,GZ); g.add(rim);
-      const arm=new T.Mesh(new T.BoxGeometry(0.18,0.18,2.6), frameMat);
-      arm.position.set(sx*2.6,GY+0.15,GZ-1.5); arm.rotation.y=sx*0.34; g.add(arm);
-    }
-    const tape=new T.Mesh(new T.BoxGeometry(0.55,0.95,0.30),
-      new T.MeshPhongMaterial({color:0xf4f1e4, emissive:0x2a2822, shininess:10}));
-    tape.position.set(0,GY,headSurfZ(0,GY)+0.32); g.add(tape);   // the repaired bridge
-    // side part, combed flat
-    const hairMat=new T.MeshPhongMaterial({color:0x7a4a1e, emissive:0x201005, shininess:25});
-    const hair=new T.Mesh(new T.SphereGeometry(3.3,18,10,0,Math.PI*2,0,Math.PI*0.44), hairMat);
-    hair.position.set(0,4.55,-0.15); hair.scale.set(1.02,0.72,1.42); g.add(hair);
-    const part=new T.Mesh(new T.BoxGeometry(0.30,0.22,4.0),
-      new T.MeshPhongMaterial({color:0xf2d8bd, emissive:0x3d2c1c}));
-    part.position.set(-1.5,5.62,0.2); part.rotation.x=0.10; g.add(part);
-    // bow tie
-    const tieMat=new T.MeshPhongMaterial({color:0x8f1d2b, emissive:0x2a0308, shininess:60});
-    const TY=2.0, TZ=headSurfZ(0,TY)+0.25;
-    for(const sx of [-1,1]){
-      const wing=new T.Mesh(new T.ConeGeometry(0.85,1.5,4), tieMat);
-      wing.position.set(sx*1.05,TY,TZ-0.1); wing.rotation.z=sx*Math.PI/2; wing.rotation.y=0.2; g.add(wing);
-    }
-    const knot=new T.Mesh(new T.BoxGeometry(0.55,0.62,0.5), tieMat);
-    knot.position.set(0,TY,TZ); g.add(knot);
-    // pocket protector, with pens
-    const pocket=new T.Mesh(new T.BoxGeometry(1.5,1.7,0.28),
-      new T.MeshPhongMaterial({color:0xe9e6da, emissive:0x24231d, shininess:20}));
-    pocket.position.set(1.9,1.35,headSurfZ(1.9,1.35)+0.25); pocket.rotation.y=-0.25; g.add(pocket);
-    [[-0.42,0x2244cc],[0,0xcc2222],[0.42,0x1a1a1a]].forEach(([dx,c])=>{
-      const pen=new T.Mesh(new T.CylinderGeometry(0.13,0.13,1.5,6),
-        new T.MeshPhongMaterial({color:c, emissive:new T.Color(c).multiplyScalar(0.2).getHex(), shininess:80}));
-      pen.position.set(1.9+dx*0.9,2.05,headSurfZ(1.9,1.35)+0.35); pen.rotation.y=-0.25; g.add(pen);
-    });
+    tailTextured = dressNorbert(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});   // Norbert Quark (NORBERT QUARK KIT)
   } else if(typeId === 'samurai'){
     // Kenji Tachibana — lacquered kabuto with a gold crescent maedate, a flared shikoro of
     // silk-laced lames, and a katana slung over the left shoulder. The armour is the
