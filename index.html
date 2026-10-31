@@ -920,6 +920,18 @@
   .hz-screen{position:relative;flex:1;min-height:0;overflow:hidden;}
   .hz-screen::before{content:"";position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 50px rgba(0,0,0,.45);}
   .hz-screen::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--hz-scr-r,0);box-shadow:0 0 0 3px var(--hz-rule),0 0 0 40px var(--hz-bg);}
+  /* while the course behind it is being built (see PREVIEW), the screen shows a dark card with the course's outline: a channel ident */
+  .hz-tune{position:absolute;inset:0;z-index:0;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s;
+    background:radial-gradient(90% 80% at 50% 50%,#1b1016 0%,#120a0d 60%,#0E0806 100%);}
+  .hz-win.tuning .hz-tune{opacity:1;transition-duration:.08s;}
+  .hz-win.tuning .hz-live i{background:#6b5d50;box-shadow:none;}
+  .hz-tl{position:absolute;left:12px;top:9px;font:700 11px/1.3 var(--hz-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--hz-grey);}
+  .hz-tl i{font-style:normal;animation:hzDots 1.2s steps(1) infinite;} .hz-tl i:nth-child(2){animation-delay:.4s;} .hz-tl i:nth-child(3){animation-delay:.8s;}
+  @keyframes hzDots{0%,99%{opacity:0}50%{opacity:1}}
+  .hz-ta{width:52%;height:62%;animation:hzTune 1.3s ease-in-out infinite alternate;}
+  .hz-ta svg{width:100%;height:100%;filter:drop-shadow(0 0 8px rgba(138,75,255,.5));}
+  @keyframes hzTune{from{opacity:.55;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
+  @media (prefers-reduced-motion:reduce){ .hz-ta,.hz-tl i{animation:none;} }
   .hz-nm{position:absolute;left:clamp(10px,1.6vw,16px);bottom:clamp(6px,1.4vh,14px);z-index:1;max-width:calc(100% - 20px);font:400 var(--hz-nm,64px)/1.08 var(--hz-neon);letter-spacing:.02em;white-space:nowrap;
     color:#FFD15A;text-shadow:0 0 6px #FFB534,0 0 20px #FF8A1E,0 0 40px rgba(255,90,30,.6);pointer-events:none;}
   .hz-pip{position:absolute;right:12px;top:12px;z-index:1;width:var(--hz-pip);background:var(--hz-bg);border:2px solid var(--hz-gold);box-shadow:0 0 14px rgba(255,201,74,.45);}
@@ -1568,6 +1580,7 @@
       <div class="hz-win" id="hzwin">
         <div class="hz-bar t"><span class="hz-live"><i aria-hidden="true"></i><span id="hzlive">Live</span></span><span class="hz-vibe" id="hzvibe"></span></div>
         <div class="hz-screen" id="hzscreen" aria-label="The selected course, live">
+          <div class="hz-tune" aria-hidden="true"><span class="hz-tl">Tuning<i>.</i><i>.</i><i>.</i></span><div class="hz-ta" id="hzta"></div></div>
           <div class="hz-nm" id="hznm" aria-hidden="true"></div>
           <div class="hz-pip" aria-hidden="true"><div class="hz-pa" id="hzpa"></div><div class="hz-pn"><span id="hzpno">Your racer</span><b id="hzpname"></b></div></div>
         </div>
@@ -48304,7 +48317,7 @@ function disposeObject(o){
     if(c.material) (Array.isArray(c.material)?c.material:[c.material]).forEach(freeMat); });
 }
 function buildTrack(idx){
-  selTrack=idx;
+  selTrack=idx; PREVIEW.built=idx;   // (the home deck's preview knows what the scene holds: see PREVIEW)
   MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
   document.body.classList.toggle('maze-course', !!TRACKS[idx].maze);   // its HUD: no minimap, place only
   { const ml=document.querySelector('#mapwrap .ml'); if(ml) ml.textContent=TRACKS[idx].maze?'labyrinth':'circuit'; }   // (unless the maze radar is on)
@@ -64453,6 +64466,29 @@ const HZV={shown:false, dirty:true, tick:0, rect:{x:0,y:0,w:0,h:0,a:1}, measure:
 const HZ_BG=0x0E0806;   // = --hz-bg
 function menuK(){ return menuMode===2?HZ_RES:menuMode===1?MENU_RES:1; }
 function menuRes(m){ if(m===menuMode) return; menuMode=m; menuLo=m>0; renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*menuK()); }
+// The course behind the home deck is built a moment after the pick settles, not on every flick of the strip: a flick across five
+// courses used to build all five (each a synchronous half-second or more on an iPad), and the strip stalled with each one. A commit
+// now only schedules the build; the build runs once the picks have been still for PREVIEW_DELAY, and only the course that is then
+// chosen. Until it has been drawn, the Horizon window shows its "tuning" card (the course's outline over a dark screen) and the loop
+// does not draw the preview at all, nor while the strip is scrolling, so the page's own animation has the frame to itself. At boot
+// the deck is painted first and the course built after, so the page is up before its heaviest work. PREVIEW.built is the course the
+// scene holds (every buildTrack sets it), so coming back to the home screen rebuilds only when the pick moved on while it was away.
+const PREVIEW_DELAY=350;
+const PREVIEW={built:-1, timer:0, hold:0, pending:false};
+function previewHold(ms){ PREVIEW.hold=Math.max(PREVIEW.hold, performance.now()+ms); }
+function previewTune(on){ const w=$('hzwin'); if(w) w.classList.toggle('tuning',on); }
+function previewSoon(delay){
+  clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
+  PREVIEW.timer=setTimeout(previewNow, delay);
+}
+function previewNow(){
+  clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
+  if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
+  if(PREVIEW.built!==selTrack){ buildTrack(selTrack); buildRacers(); }
+  PREVIEW.pending=false; PREVIEW.hold=0;
+  // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
+  let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
+}
 function hzDraw(){
   const R=renderer, r=HZV.rect;
   if(camera.aspect!==r.a){ camera.aspect=r.a; camera.updateProjectionMatrix(); }
@@ -64658,7 +64694,8 @@ function frame(now){
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
   updateParticles(dt);
-  if(!menuLo || (++menuTick&1)){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
+  if(!held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
   requestAnimationFrame(frame);
 }
 
@@ -67069,11 +67106,12 @@ function setupTrackPick(){
     if(i===selTrack) { paintSummary(); return; }
     selTrack=i;
     try{ localStorage.setItem('sr_track',String(i)); }catch(_){}
-    if(!noPreview){ buildTrack(i); buildRacers(); }   // live-preview the chosen circuit behind the menu
+    if(!noPreview) previewSoon(PREVIEW_DELAY);   // live-preview the chosen circuit behind the menu, once the picks have settled (see PREVIEW)
     paintSummary();
   }
   let raf=0, settle=0;
   wrap.addEventListener('scroll',()=>{
+    previewHold(220); if(PREVIEW.pending) previewSoon(PREVIEW_DELAY);   // the strip's own motion gets the frame while it moves, and a build it is still heading away from waits
     cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ if(wrap.clientWidth) mark(nearest()); });
     clearTimeout(settle);
     // never commit from a hidden strip: a flick then a quick tap on RACE used to land here after the home
@@ -67088,7 +67126,8 @@ function setupTrackPick(){
   $('courseprev').onclick=()=>toCard(ord[Math.max(0,posOf(nearest())-1)],true);
   $('coursenext').onclick=()=>toCard(ord[Math.min(ord.length-1,posOf(nearest())+1)],true);
   // whenever the home screen (re)appears, show what is actually selected (a Circuit Cup or a lobby may have moved selTrack)
-  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ mark(selTrack); toCard(selTrack,false); paintSummary(); } })
+  new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ mark(selTrack); toCard(selTrack,false); paintSummary();
+    if(state==='menu' && PREVIEW.built!==selTrack) previewSoon(120); } })   // (the pick moved on while the deck was away: a lobby, a cup)
     .observe($('start'),{attributes:true,attributeFilter:['class']});
   mark(selTrack); toCard(selTrack,false); paintSummary();
 }
@@ -67834,6 +67873,8 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const lv=$('hzlive'); if(lv) lv.innerHTML='Live · <span class="hz-lw">Course </span>'+no;
     const vb=$('hzvibe'); if(vb) vb.innerHTML='<span class="hz-vb">'+f.vibe+(nw?' · new':'')+'</span><span class="hz-sw">swipe ‹ ›</span>';
     if(nm){ nm.textContent=t.name; nmLen=t.name.length; fitName(); }
+    const ta=$('hzta'); if(ta){ const c=$('trackpick').children[ord.indexOf(i)], s=c&&c.querySelector('svg.tp'); ta.replaceChildren(s?s.cloneNode(true):''); }   // the tuning card shows the course that is coming
+    if(i!==PREVIEW.built) previewTune(true); else if(!PREVIEW.pending) previewTune(false);   // ...and goes up as soon as the strip has moved off the course the scene holds
     const fa=$('hzfacts'); if(fa) fa.innerHTML=f.chips.join(' · ')+(best?' · <b>★ '+bestFmt(best)+'</b>':'')+(nw?' · <span class="nw">NEW</span>':'');
     const f2=$('hzfacts2'); if(f2) f2.textContent=f.chips[0]+(best?' · ★ '+bestFmt(best):'');
   }
@@ -67855,14 +67896,18 @@ window.addEventListener('pointerdown', initAudio, {once:false});
   apply(window.__srHome!=='classic');
 })();
 
-// boot
+// boot: the deck is painted first (its window "tuning"), then the default circuit is built behind it, then the loop runs.
+// (A frame, then a task: the browser paints between them, so the page is up before its heaviest work. If a tap in that gap
+// already started a race, the race built its own course and previewNow builds nothing.)
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
 state='menu';
-buildTrack(selTrack);        // build the default circuit
-buildRacers();               // show grid behind menu
-setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
-requestAnimationFrame(frame);
+previewTune(true);
+requestAnimationFrame(()=>setTimeout(()=>{
+  previewNow();                // build the default circuit and show the grid behind the menu
+  requestAnimationFrame(frame);
+  setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
+},0));
 
 /* Read-only multiplayer diagnostics, deliberately kept in the shipped build. The WebRTC
    path can only really fail on someone else's network — a broker outage, a NAT that will
