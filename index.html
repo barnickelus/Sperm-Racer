@@ -43800,6 +43800,9 @@ const NAT={ conc:0xd8cfc4, concD:0xa8998c, chrome:0xe6ecf0, red:0xe8503c, blue:0
   white:0xf2f2f2, orange:0xf2a03a, pink:0xe8608c, leaf:0x2e6a3c, leafD:0x1c4a2a,
   // bleacher rows, front to back: a 70s sunset in moulded plastic
   seats:[0xf2c230,0xf2a03a,0xee7a30,0xe8503c,0xd8344a,0xb82a5a,0x9a2a6a,0x74286a,0x52205e,0x3a1a52] };
+// The hall's air (fog and clear colour, see buildTrack): a warm, dim mauve a step above the
+// darkest tile, so the far side of the room fades INTO the humid air instead of into a void.
+const NAT_HAZE=0x2a1b20;
 // A mark in the hall is only allowed where nobody can drive into it. The loop's corridor
 // is 48.4 on the infield and 28.2 outside the centreline; `r` is the prop's own radius.
 // Used as a FILTER on every free-standing prop below, so a future edit to the course
@@ -44132,6 +44135,131 @@ function natPlace(list, bx,by,bz, yaw, parts){
   const c=Math.cos(yaw), s=Math.sin(yaw);
   for(const p of parts) list.push({x:bx+p[0]*c+p[2]*s, y:by+p[1], z:bz-p[0]*s+p[2]*c,
     s:p[3], sy:p[4], sz:p[5], ry:yaw, rz:p[7]||0, c:p[6]});
+}
+
+/* ---- second pass: THE AIR, THE LAGOONS, THE WINDOWS ------------------------------------ *
+ * The room was built and then hidden: 560 units of near-black fog in a hall 2,600 across put the
+ * clerestory, the tower and the bleachers behind a curtain, so every frame was water, coping and
+ * a void. The haze (NAT_HAZE) opens the room; these fill the middle distance it opens onto:
+ *   LAGOONS   - the leisure pool every 1970s bath set beside the competition tank: a round pool
+ *               with a concrete MUSHROOM in it, orange fibreglass cap, pouring a ring of water off
+ *               its rim. A turquoise disc at three to six hundred units is the value accent the
+ *               brown infield never had, and the mushroom is a silhouette nothing else could be.
+ *   INFLATABLES - rubber rings and balls adrift on the pools, riding the lane ropes' swell.
+ *   WINDOWS   - underwater viewing windows in the crimson tank wall, glowing turquoise: a raised
+ *               pool you can see INTO, and a run of small lights at floor level across the infield.
+ * Everything stands on the deck or in a wall, and every free-standing piece goes through natSafe. */
+let NAT_FALL_TEX=null, NAT_PORT_TEX=null;
+// the water sheet off a mushroom's rim: streaks long in v, so it scrolls as falling water
+function natFallTex(){
+  if(NAT_FALL_TEX) return NAT_FALL_TEX;
+  const c=document.createElement('canvas'); c.width=64; c.height=64; const g=c.getContext('2d'), R=harbRnd(0xFA11);
+  g.fillStyle='#000'; g.fillRect(0,0,64,64);
+  for(let k=0;k<46;k++){ const x=R()*64, w=1+R()*2.5, y=R()*64, h=14+R()*40, a=0.25+R()*0.6;
+    g.fillStyle=`rgba(255,255,255,${a.toFixed(2)})`; g.fillRect(x,y,w,h); g.fillRect(x,y-64,w,h); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; return (NAT_FALL_TEX=t);
+}
+// a viewing window: lit water seen through thick glass, brighter toward the surface it looks up at
+function natPortTex(){
+  if(NAT_PORT_TEX) return NAT_PORT_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  const gr=g.createLinearGradient(0,0,0,64); gr.addColorStop(0,'#9ff0ee'); gr.addColorStop(0.45,'#3cc4cc'); gr.addColorStop(1,'#126a7c');
+  g.fillStyle=gr; g.fillRect(0,0,64,64);
+  g.strokeStyle='rgba(230,255,250,0.55)'; g.lineWidth=1.6;
+  for(let k=0;k<3;k++){ g.beginPath(); for(let x=0;x<=64;x+=4){ const y=12+k*9+Math.sin(x*0.21+k*1.9)*2.4; x?g.lineTo(x,y):g.moveTo(x,y); } g.stroke(); }
+  g.fillStyle='rgba(20,60,90,0.55)'; g.fillRect(0,50,64,14);            // the far floor of the pool, in shadow
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; return (NAT_PORT_TEX=t);
+}
+// Lagoons on the infield floor. Pushes stems/caps/loungers into the shared batches (L: conc,
+// trim, cyl, cones, floats) and adds the water, caustic, coping and falls itself.
+function natLagoons(L, R){
+  const F=NAT_FLOOR, wy=F+0.12, out=[];
+  // off the INNER side of the lap, a hundred-odd units in from the apron limit, one per quarter:
+  // the chase camera's middle distance on every corner. The first carries the flume.
+  for(let q=0;q<4;q++) for(let t=0;t<16;t++){
+    const i=Math.floor((q+0.16+R()*0.68)*STEPS/4)%STEPS, s=SAMP[i];
+    const r=60+R()*28, d=HW*2.2+r+(q?60:110)+R()*150;
+    const x=s.p.x+s.n.x*innerSign*d, z=s.p.z+s.n.z*innerSign*d;
+    if(!natSafe(x,z,r+(q?18:60))) continue;
+    if(out.some(o=>Math.hypot(o.x-x,o.z-z)<o.r+r+(o.flume||!q?150:110))) continue;
+    if(Math.abs(x)<135+r+(q?40:80) && z>-440-r-(q?0:60) && z<380+r+(q?0:60)) continue;   // the competition compound
+    out.push({x,z,r,flume:q===0, tx:s.p.x, tz:s.p.z}); break; }
+  TRACK_PULSE.natFalls=TRACK_PULSE.natFalls||[];
+  const fall=natFallTex().clone(); fall.needsUpdate=true; fall.repeat.set(5,1.4);
+  if(out.length) TRACK_PULSE.natFalls.push(fall);
+  for(const P of out){
+    const wg=new T.CircleGeometry(P.r,44); wg.rotateX(-Math.PI/2);
+    const wm=new T.Mesh(wg, natMat(0xffffff,140,0xffffff,{color:0x3ab4c4, emissive:0x06333c,
+      polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1}));
+    wm.position.set(P.x,wy,P.z); trackGroup.add(wm);
+    const cm=natCausticMat(P.r*2/55, P.r*2/55, 0xd8fff4, 0.5, 0, 320);
+    const cmesh=new T.Mesh(wg, cm); cmesh.position.set(P.x,wy+0.05,P.z); trackGroup.add(cmesh);
+    TRACK_PULSE.natCaus.push(cm);
+    // coping: a rounded pale lip, and the tile band just inside it
+    const tor=new T.Mesh(new T.TorusGeometry(P.r+2.2,1.5,6,48), natMat(NAT.conc,26,0x555050));
+    tor.rotation.x=Math.PI/2; tor.position.set(P.x,F+0.6,P.z); trackGroup.add(tor);
+    if(P.flume){ natFlume(L, P, R); }
+    else {
+    // THE MUSHROOM: a stem, a cream underside, an orange cap; the falls hang from the cap rim
+    const h=17+R()*6, cr=13+R()*4;
+    L.cyl.push({x:P.x, y:F+h/2, z:P.z, s:2.6, sy:h, sz:2.6, c:NAT.conc});
+    L.cyl.push({x:P.x, y:F+h-0.8, z:P.z, s:cr*0.94, sy:1.2, sz:cr*0.94, c:0xe6dccb});
+    L.cones.push({x:P.x, y:F+h+2.1, z:P.z, s:cr, sy:4.2, sz:cr, c:NAT.orange});
+    const fm=new T.Mesh(new T.CylinderGeometry(cr*0.97, cr*1.22, h-0.4, 32, 1, true),
+      new T.MeshBasicMaterial({map:fall, color:0xc8f4f2, transparent:true, opacity:0.42,
+        depthWrite:false, side:T.DoubleSide, blending:T.AdditiveBlending}));
+    fm.position.set(P.x, wy+(h-0.4)/2, P.z); trackGroup.add(fm);
+    }
+    // loungers round the lip, white moulded plastic, irregular
+    for(let a=R()*6.28, n=0; n<9; a+=0.55+R()*0.6, n++){
+      const d=P.r+14+R()*6, lx=P.x+Math.cos(a)*d, lz=P.z+Math.sin(a)*d, yaw=-a+Math.PI/2;
+      if(!natSafe(lx,lz,6)) continue;
+      natPlace(L.trim, lx,F,lz, yaw, [[0,1.3,0, 4.2,0.7,11, NAT.white],[0,2.9,-5.2, 4.2,3.2,0.7, NAT.white],
+        [-1.7,0.6,3.6, 0.5,1.2,0.5, 0x8a8a90],[1.7,0.6,3.6, 0.5,1.2,0.5, 0x8a8a90],[-1.7,0.6,-3.6, 0.5,1.2,0.5, 0x8a8a90],[1.7,0.6,-3.6, 0.5,1.2,0.5, 0x8a8a90]]);
+    }
+    // rings and balls adrift on it
+    for(let q=0;q<4;q++){ const a=R()*6.28, d=P.r*(0.45+R()*0.42);
+      L.floats.push({x:P.x+Math.cos(a)*d, y:wy+0.5, z:P.z+Math.sin(a)*d, s:2.6+R()*1.2, rx:Math.PI/2, c:[NAT.orange,NAT.red,0xf2c230,NAT.white][q%4]}); }
+  }
+  return out;
+}
+// THE FLUME: an orange tube spiralling down off a concrete tower into the lagoon, the one
+// silhouette in the hall taller than the bleachers. The tower stands on the far side of the
+// lagoon from the road, so the spiral is seen whole across the water; columns carry the tube.
+function natFlume(L, P, R){
+  const F=NAT_FLOOR, dx=P.x-P.tx, dz=P.z-P.tz, dl=Math.hypot(dx,dz)||1, ux=dx/dl, uz=dz/dl;
+  const cx=P.x+ux*(P.r+30), cz=P.z+uz*(P.r+30), top=F+78, Rh=22, turns=2.25;
+  const a0=Math.atan2(-uz,-ux)+0.9, pts=[];
+  L.conc.push({x:cx, y:F+(top+6-F)/2, z:cz, s:11, sy:top+6-F, sz:11, c:NAT.conc});        // the tower
+  L.conc.push({x:cx, y:top+7, z:cz, s:16, sy:2, sz:16, c:NAT.concD});                    // its roof slab
+  L.cones.push({x:cx, y:top+11.5, z:cz, s:12, sy:7, sz:12, c:NAT.red});                  // and a red hat
+  for(let k=0;k<=64;k++){ const t=k/64, a=a0-t*turns*Math.PI*2, y=top-2-(top-2-(F+11))*t;
+    pts.push(new T.Vector3(cx+Math.cos(a)*Rh, y, cz+Math.sin(a)*Rh));
+    if(k%7===3) L.conc.push({x:cx+Math.cos(a)*Rh, y:F+(y-3.6-F)/2, z:cz+Math.sin(a)*Rh, s:1.8, sy:y-3.6-F, sz:1.8, c:NAT.concD}); }
+  // the run-out: off the last turn and down to the water, toward the lagoon's middle
+  const e=pts[pts.length-1], mx=P.x+(e.x-P.x)*0.35, mz=P.z+(e.z-P.z)*0.35;
+  pts.push(new T.Vector3((e.x*2+mx)/3, F+7, (e.z*2+mz)/3), new T.Vector3(mx, F+3.2, mz));
+  const tube=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(pts), 220, 3.3, 10, false),
+    natMat(0xf2a03a, 70, 0x806048));
+  trackGroup.add(tube);
+}
+// Viewing windows in the tank wall, both sides, wherever the wall is tall enough to hold one.
+// Laterals and heights come from the same banked surround edge the wall is built down from.
+function natPortholes(inS){
+  const R=harbRnd(0x9087), glass=[], rim=[], d=new T.Object3D();
+  for(const [side,L1] of [[inS,50.5],[-inS,HW+8]]){
+    for(let i=3;i<STEPS;i+=6+((R()*7)|0)){
+      const s=SAMP[i], b=s.p.clone().addScaledVector(s.bn, side*L1); b.y=Math.max(b.y, NAT_FLOOR+0.3);
+      const H=b.y-NAT_FLOOR; if(H<13) continue;
+      const nx=s.n.x*side, nz=s.n.z*side, yc=NAT_FLOOR+Math.min(H*0.5, 9.5), r=H>22?4.2:3.4;
+      glass.push({x:b.x+nx*0.12, y:yc, z:b.z+nz*0.12, ry:Math.atan2(nx,nz), r});
+      rim.push({x:b.x+nx*0.06, y:yc, z:b.z+nz*0.06, ry:Math.atan2(nx,nz), r:r*1.22});
+    } }
+  const mk=(geo,mat,L)=>{ if(!L.length) return; const m=new T.InstancedMesh(geo,mat,L.length); m.frustumCulled=false;
+    L.forEach((v,k)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0,v.ry,0); d.scale.setScalar(v.r); d.updateMatrix(); m.setMatrixAt(k,d.matrix); });
+    m.instanceMatrix.needsUpdate=true; trackGroup.add(m); };
+  mk(new T.CircleGeometry(1,22), natMat(0x2a2226,60,0x8a8a8a,{side:T.DoubleSide}), rim);
+  mk(new T.CircleGeometry(1,22), new T.MeshBasicMaterial({map:natPortTex(), side:T.DoubleSide}), glass);
 }
 
 /* ============== PLEIN-AIR OIL KIT (Sienna) ============== *
@@ -48736,10 +48864,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].pool ? 170 : TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].pool ? 1320 : TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -48771,6 +48899,11 @@ function buildTrack(idx){
   // Iris: the far bands blend in the eye and then into the blush haze the dome writes at its
   // horizon (raw sRGB there, so the fog takes it decoded)
   if(TRACKS[idx].coil) scene.fog.color.setHex(IRIS_SKYC.HAZE).convertSRGBToLinear();
+  // Marina: the hall's own air. Warm water under a cold roof fills a natatorium with a humid haze
+  // that the pods and the low sun light from inside, so its far walls go DIM AND WARM, not black;
+  // 560 into near-black put the whole room (the clerestory, the tower, the bleachers) behind a
+  // wall of nothing. The clear colour takes the same value, so past the far plane is more haze.
+  if(TRACKS[idx].pool){ scene.fog.color.setHex(NAT_HAZE); scene.background.setHex(NAT_HAZE); }
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -50276,6 +50409,7 @@ function buildTrack(idx){
       const wt=poolWallTex(); wt.repeat.set(1,1);
       mk(skPos,skUv,ki, new T.MeshLambertMaterial({color:0xb09098, map:wt, side:T.DoubleSide}));
     }
+    natPortholes(innerSign);             // underwater viewing windows in that tank wall
     // THE T. A lane line ends in a crossbar two metres short of the wall, and here the
     // "walls" are the four turns. Painted on the floor at each turn-in, it closes the lane
     // line in the texture into the most recognisable mark in any pool — and it is a
@@ -51330,6 +51464,14 @@ function buildTrack(idx){
       trackGroup.add(m);
       TRACK_PULSE.natSteam.push({m, x, z, o:0.04+R()*0.025, ph:R()*6.28});
     }
+
+    // the lagoons beside the competition compound, and inflatables adrift on every pool
+    { const floats=[];
+      natLagoons({conc, trim, cyl, cones, floats}, harbRnd(0x1A600A));
+      const FR=harbRnd(0xF10A7);
+      for(let q=0;q<7;q++) floats.push({x:-118+FR()*236, y:F+0.62, z:-190+FR()*540, s:2.8+FR()*1.0, rx:Math.PI/2,
+        c:[NAT.orange,0xf2c230,NAT.red,NAT.white,NAT.pink][q%5]});
+      trackGroup.add(harbBatch(new T.TorusGeometry(1,0.42,8,18), natBobMat(TRACK_PULSE.natRope), floats)); }
 
     trackGroup.add(harbBatch(BOX(), natMat(0xffffff, 8, 0x1a1414), conc));
     trackGroup.add(harbBatch(BOX(), natMat(0xffffff, 50, 0x505050), trim));
@@ -65646,6 +65788,7 @@ function frame(now){
     f.m.rotation.x=Math.sin(tsec*0.8+f.ph)*0.10+Math.sin(tsec*2.1+f.ph*1.7)*0.035;
   if(TRACK_PULSE.natClocks) for(const c of TRACK_PULSE.natClocks)
     c.m.rotation.z=-((tsec+c.ph)%60)/60*Math.PI*2;
+  if(TRACK_PULSE.natFalls) for(const t of TRACK_PULSE.natFalls) t.offset.y=(tsec*0.47)%1;   // the mushrooms pour
   if(TRACK_PULSE.natSteam) for(const s of TRACK_PULSE.natSteam){
     s.m.position.x=s.x+Math.sin(tsec*0.031+s.ph)*14;
     s.m.position.z=s.z+Math.cos(tsec*0.023+s.ph)*14;
