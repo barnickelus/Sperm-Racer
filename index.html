@@ -3690,8 +3690,12 @@ const SONG_ENGINE=(function(){
   /* A spring tank is not a room. A pulse goes down each spring and comes back every round
      trip, and the spring is dispersive, so each return is a CHIRP that smears a little more
      than the last — that is the boing. Three springs of different lengths, slightly
-     different per channel, plus a diffuse wash underneath. */
-  function springIR(ctx,sec){
+     different per channel, plus a diffuse wash underneath.
+     It is written as a generator that pauses every few returns and every block of the wash, so a
+     station that is built while the page has to stay smooth (the home theme) can make it a slice at a
+     time; run to the end in one go (springIR) it is the same arithmetic in the same order, sample for
+     sample. */
+  function* springGen(ctx,sec){
     const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), R=rngOf(7771);
     for(let ch=0;ch<2;ch++){
       const d=buf.getChannelData(ch);
@@ -3706,16 +3710,25 @@ const SONG_ENGINE=(function(){
             const w=Math.sin(Math.PI*i/n);
             d[i0+i]+=amp*w*w*Math.sin(ph)*0.5; ph+=2*Math.PI*f/sr; f*=m;
           }
+          if(k%8===7) yield;
         }
+        yield;
       }
+      const BLK=16384;
       let e=0;
-      for(let i=0;i<len;i++){ const t=i/sr;
-        d[i]+=(R()*2-1)*0.16*Math.exp(-t/0.33)*(1-Math.exp(-t/0.03)); e+=d[i]*d[i]; }
+      for(let i1=0;i1<len;i1+=BLK){
+        for(let i=i1,iz=Math.min(len,i1+BLK);i<iz;i++){ const t=i/sr;
+          d[i]+=(R()*2-1)*0.16*Math.exp(-t/0.33)*(1-Math.exp(-t/0.03)); e+=d[i]*d[i]; }
+        yield; }
       const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k;     // unit energy: level set by the returns, not by luck
+      yield;
     }
     return buf;
   }
-  function buildBus(ctx,spec,lite){
+  function springIR(ctx,sec){ const g=springGen(ctx,sec); let r=g.next(); while(!r.done) r=g.next(); return r.value; }
+  // the bus, built in sections (a generator, like the spring: buildBus runs it straight through)
+  function buildBus(ctx,spec,lite,defer){ const g=busGen(ctx,spec,lite,defer); let r=g.next(); while(!r.done) r=g.next(); return r.value; }
+  function* busGen(ctx,spec,lite,defer){
     const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
     const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
     const P=(v)=>{ if(ctx.createStereoPanner){ const p=ctx.createStereoPanner(); p.pan.value=v; return p; } return G(1); };
@@ -3753,16 +3766,21 @@ const SONG_ENGINE=(function(){
     wow.connect(wowG); flut.connect(flutG);
     for(const d of [dL,dR]){ wowG.connect(d.delayTime); flutG.connect(d.delayTime); }
     wow.start(); flut.start();
+    yield;
     // ---- spring tank
     const springIn=G(1), sHP=F('highpass',300,0.7), conv=ctx.createConvolver();
-    conv.normalize=false; conv.buffer=springIR(ctx,lite?1.6:2.3);
+    // defer: the tank is wired up empty and its impulse made later, a slice at a time (see springGen)
+    conv.normalize=false; const springJob=defer?springGen(ctx,lite?1.6:2.3):null; if(!defer) conv.buffer=springIR(ctx,lite?1.6:2.3);
     const sPk=F('peaking',2700,1.1); sPk.gain.value=5;
     const sLP=F('lowpass',7200,0.7), springRet=G(spec.springRet||0.8);
     springIn.connect(sHP); sHP.connect(conv); conv.connect(sPk); sPk.connect(sLP); sLP.connect(springRet); springRet.connect(mix);
     const e2s=G(0.16); echoRet.connect(e2s); e2s.connect(springIn);   // echo into the tank, the dub way
+    yield;
     // ---- channel strips
     const ch={};
+    let strips=0;
     for(const name in spec.channels){
+      if(strips++%4===3) yield;
       const c=spec.channels[name], input=G(c.level);
       let node=input;
       for(const [k,a,b,q] of (c.chain||[])){
@@ -3787,7 +3805,7 @@ const SONG_ENGINE=(function(){
       reg(input.gain,c.level); reg(dry.gain,1); reg(es.gain,c.echo||0); reg(thr.gain,1); reg(thrS.gain,1);
       ch[name]={in:input, L:L||input, R:Rr||input, dry, echo:es, thr, thrS, base:c};
     }
-    return {ch, mix, out, echoIn, springIn, fb, dL, dR, dubHP, dubLP, autos, lfos:[wow,flut]};
+    return {ch, mix, out, echoIn, springIn, fb, dL, dR, dubHP, dubLP, autos, lfos:[wow,flut], conv, springJob};
   }
   // periodic waves: a 16' Hammond-ish drawbar set (played an octave down) and a free reed
   function waves(ctx){
@@ -3896,9 +3914,19 @@ const SONG_ENGINE=(function(){
   }
   function produceStation(ctx,dest,song,opts){
     opts=opts||{};
-    const bus=buildBus(ctx,song.mix,!!opts.lite), noise=noiseBuffer(ctx,2.5), live=[];
-    const V=makeVoices(ctx,bus,noise,live,!!opts.lite);
-    if(song.voices) Object.assign(V, song.voices(ctx,bus,noise,live,!!opts.lite));   // a song may bring its own instruments
+    /* The studio is built in steps: the bus (a few channel strips at a time), the noise, the instruments. A station
+       is built straight through, here, as it always was; with opts.defer (the home theme, built while the page
+       has to stay smooth) the steps are taken by H.build a slice at a time, and the spring tank's impulse after
+       them (see springGen), and the station can start once H.ready. */
+    let bus=null, noise=null, V=null; const live=[];
+    const steps=(function*(){
+      const bg=busGen(ctx,song.mix,!!opts.lite,!!opts.defer); let r=bg.next(); while(!r.done){ yield; r=bg.next(); } bus=r.value;
+      noise=noiseBuffer(ctx,2.5); yield;
+      const v=makeVoices(ctx,bus,noise,live,!!opts.lite);
+      if(song.voices) Object.assign(v, song.voices(ctx,bus,noise,live,!!opts.lite));   // a song may bring its own instruments
+      V=v; })();
+    const finish=()=>{ let r=steps.next(); while(!r.done) r=steps.next(); };
+    if(!opts.defer) finish();
     const level=opts.level!=null?opts.level:0.9;
     let key=0, tempoScale=1, running=false, timer=null, gen=0, connected=false;
     let bar=0, barT=0, sd=0.2, plan=null, idx=0, planInfo=null, disconnectTimer=null, lastPump=0, lookAhead=0.3;
@@ -3963,7 +3991,8 @@ const SONG_ENGINE=(function(){
       lookAhead=Math.min(1.5,Math.max(0.3,lookAhead*0.9,gap*1.6+0.1));
       return (typeof document!=='undefined'&&document.hidden)?Math.max(1.5,lookAhead):lookAhead; };
     const H={
-      song, bus,
+      song, get bus(){ return bus; },
+      get ready(){ return !!V; },
       get running(){ return running; },
       get timer(){ return timer; },
       // the bar the scheduler has loaded (it runs ahead of the speakers): its index, its section
@@ -3972,9 +4001,21 @@ const SONG_ENGINE=(function(){
       get bar(){ return bar; }, get barT(){ return barT; }, get stepDur(){ return sd; },
       get sectionId(){ return planInfo?planInfo.sectionId:null; },
       setKey(k){ key=k|0; },
+      // a station made with opts.defer: take the build's next steps (the bus, the noise, the instruments, then the
+      // spring tank's impulse) for up to ms of main thread, then give the thread back; true once all is built
+      // (always true for a station built the ordinary way). The finished impulse goes into the convolver on a
+      // call of its own, since that copy has a cost too.
+      build(ms){ ms=ms||4; const t0=performance.now(), over=()=>performance.now()-t0>=ms;
+        while(!V){ steps.next(); if(over()) return false; }
+        while(bus.springJob){ const r=bus.springJob.next(); if(r.done){ bus.springJob=null; bus.springBuf=r.value; }
+          if(over()) return false; }
+        if(bus.springBuf){ if(performance.now()-t0>0.5) return false;   // the convolver's copy gets a call to itself
+          bus.conv.buffer=bus.springBuf; bus.springBuf=null; }
+        return true; },
       setTempoScale(x){ tempoScale=x||1; if(running) setEcho(ctx.currentTime,0.35); },  // the tape warps to the new time
       start(o){ o=o||{};
         if(running) return H;
+        if(!V) finish();                                  // (a deferred station started before it was ready)
         gen++; if(disconnectTimer){ clearTimeout(disconnectTimer); disconnectTimer=null; }
         const t0=(o.when!=null?o.when:ctx.currentTime)+0.05;
         tempoScale=o.tempoScale||1;
