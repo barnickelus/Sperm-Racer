@@ -43900,15 +43900,33 @@ function paintMatFrom(old, hsl){
     side:old.side, transparent:faint, opacity:faint?old.opacity:1,
     depthWrite:old.depthWrite, depthTest:old.depthTest });
 }
-// Repaint a racer. Unlike clay and felt this KEEPS the outline shell, recoloured to the
-// seam brown — those hard dark edges between panels are half the reference's structure.
+// Repaint Pierre as Plein-Air Pierre, the only racer this runs on (the course pass is paintifyScene). Each part takes
+// its colour from the card's palette (warm beige skin, the near-black beret, bone-white eyes and collar, the sienna
+// neckerchief, an olive body), laid over a pale canvas of brush strokes rather than the olive one, which had muddied every
+// colour to the same murky green, and lit in two painterly steps (full-colour toon on linear colours: matte, a lit side
+// and a shadow side like the card's). A seam-brown contour goes round the head.
+const PIERRE_PAINT={0xf0cdb0:0xc4b48c, 0x15110f:0x2a221a, 0x3a2a1c:0x4a3a24, 0xf0f0f0:0xe8e2d0, 0xb52a2a:0xb0442a, 0xd9a45a:0xc9a060,
+  0x9a6a2c:0x8a6a3a, 0xffffff:0xe8e2d0, 0x111111:0x241d16, 0x442222:0x4a3a24};
+let PIERRE_TEX=null;
 function paintify(g){
-  const hsl={h:0,s:0,l:0};
+  const ud=g.userData, head=ud.head, tail=ud.tailMesh, cache=new Map(), hsl={h:0,s:0,l:0};
+  if(!PIERRE_TEX){   // loaded brush strokes, light and dark, crossing at an angle: alla prima, no canvas weave showing through
+    const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d'); let sd=1874; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+    x.fillStyle='#ece4d2'; x.fillRect(0,0,128,128); x.lineCap='round';
+    for(let i=0;i<150;i++){ const k=R(), px=R()*128, py=R()*128, a=-0.5+(R()-0.5)*0.7, l=12+R()*26;
+      x.strokeStyle=k<0.4?'rgba(255,252,240,.55)':k<0.75?'rgba(150,130,96,.32)':k<0.9?'rgba(110,128,150,.22)':'rgba(176,90,52,.18)'; x.lineWidth=3+R()*7;
+      x.beginPath(); x.moveTo(px,py); x.quadraticCurveTo(px+Math.cos(a)*l*0.5+(R()-0.5)*6,py+Math.sin(a)*l*0.5+(R()-0.5)*6,px+Math.cos(a)*l,py+Math.sin(a)*l); x.stroke(); }
+    PIERRE_TEX=new T.CanvasTexture(c); PIERRE_TEX.wrapS=PIERRE_TEX.wrapT=T.RepeatWrapping; PIERRE_TEX.encoding=T.sRGBEncoding; PIERRE_TEX.repeat.set(2,1); }
+  const C=h=>new T.Color(h).convertSRGBToLinear();
+  const mat=(hex,side)=>new T.MeshToonMaterial({gradientMap:SC_GRAD, color:C(hex).multiplyScalar(0.62), emissive:C(hex).multiplyScalar(0.1), map:PIERRE_TEX, side});
   g.traverse(o=>{
     if(!o.isMesh || !o.material) return;
     if(o.userData.isOutline){ if(o.material.color) o.material.color.setHex(PAINT_SEAM); return; }
-    o.material=paintMatFrom(o.material, hsl);
-  });
+    const old=o.material, hex=old.color?old.color.getHex():0xffffff;
+    const want=o===tail?0x6b6a3a : (PIERRE_PAINT[hex]!=null?PIERRE_PAINT[hex]:null);
+    if(want==null || old.isMeshBasicMaterial && o!==head && hex!==0xffffff){ o.material=paintMatFrom(old, hsl); return; }
+    const k=want+':'+old.side; if(!cache.has(k)) cache.set(k, mat(want,old.side)); o.material=cache.get(k); });
+  const ol=new T.Mesh(head.geometry, new T.MeshBasicMaterial({color:PAINT_SEAM, side:T.BackSide})); ol.scale.setScalar(1.065); ol.userData.isOutline=true; head.add(ol);
 }
 function paintifyScene(root, pulse){
   const remap=new Map(), hsl={h:0,s:0,l:0};
@@ -51811,14 +51829,36 @@ function paperMat(old, hsl){
     depthWrite: faint?false:true,
   });
 }
-// Re-cut a finished racer as a folded paper model.
+// Re-cut Wei Long as Origami Wei, the only racer this runs on (the course pass is paperifyScene). Card stock in the
+// card's sage greens with one amber accent, each part keeping its own value step; the head and eyes re-folded into big
+// facets and every part flat-shaded in linear colour, so the light steps crisply facet to facet instead of washing the
+// stock out to white; the head's folds drawn as fine crease lines with the cut outline round it, two folded ear flaps
+// on the crown and an amber fold for a nose.
+const WEI_PAPER={0x141017:0x7f9a66, 0xcf2e2e:0xe4b35a, 0xeceae3:0xf3efe0, 0x3aa66a:0x8fb47a, 0xffffff:0xfbf8ee, 0x111111:0x2f3a2a, 0x442222:0x2f3a2a};
 function paperify(g){
-  const hsl={h:0,s:0,l:0};
+  const ud=g.userData, head=ud.head, C=h=>new T.Color(h).convertSRGBToLinear();
+  const mat=(hex,o)=>new T.MeshPhongMaterial(Object.assign({color:C(hex).multiplyScalar(0.62), emissive:C(hex).multiplyScalar(0.1), map:PAPER_TEX,
+    flatShading:true, shininess:2, specular:0x0c0c0a}, o));
+  head.geometry=new T.SphereGeometry(3.4,10,6);                              // big folded facets
+  if(ud.eyes) for(const e of ud.eyes) e.geometry=new T.SphereGeometry(1.35,6,4);
+  const tail=ud.tailMesh, mo=ud.mouth, cache=new Map();
   g.traverse(o=>{
-    if(!o.isMesh || !o.material) return;
-    if(o.userData.isOutline){ return; }        // paper KEEPS its cut outline, unlike clay
-    o.material=paperMat(o.material, hsl);
-  });
+    if(!o.isMesh || !o.material || o.userData.isOutline) return;
+    const old=o.material, hex=old.color?old.color.getHex():0xffffff;
+    const want=o===head?0xcfe0b6 : o===tail?0xb9c9a4 : o===mo?0x2f3a2a : (WEI_PAPER[hex]!=null?WEI_PAPER[hex]:null);
+    if(want==null){ o.material=paperMat(old, {h:0,s:0,l:0}); return; }
+    const k=want+':'+old.side; if(!cache.has(k)) cache.set(k, mat(want,{side:old.side})); o.material=cache.get(k); });
+  // the folds: crease lines on every facet edge, and the cut outline round the head
+  const crease=new T.LineSegments(new T.EdgesGeometry(head.geometry,1), new T.LineBasicMaterial({color:C(0x6d6552), transparent:true, opacity:0.55}));
+  head.add(crease);
+  const ol=new T.Mesh(head.geometry, new T.MeshBasicMaterial({color:0x2a2620, side:T.BackSide})); ol.scale.setScalar(1.045); ol.userData.isOutline=true; head.add(ol);
+  // two folded ear flaps on the crown, and the amber nose fold
+  const flapM=mat(0x9fb887), items=[];
+  for(const sx of [-1,1]){ const p=new T.Vector3(...headPt(0.62, Math.PI/2+sx*0.62, 0.98));
+    items.push([new T.ConeGeometry(0.95,2.5,3), new T.Matrix4().compose(p.add(new T.Vector3(0,0.9,0)), new T.Quaternion().setFromEuler(new T.Euler(-0.35,sx*0.4,-sx*0.45)), new T.Vector3(1,1,0.45))]); }
+  g.add(new T.Mesh(vkMerge(items), flapM));
+  const nA=faceAnchor(0,3.5), nose=new T.Mesh(new T.ConeGeometry(0.42,0.8,3), mat(0xe4b35a));
+  nose.position.copy(nA.p).addScaledVector(nA.n,0.25); nose.rotation.set(Math.PI/2,0,Math.PI); nose.scale.set(1,1,0.6); g.add(nose);
 }
 // Re-cut a whole built scene the same way. Glow effects are left alone for the same
 // reason clayifyScene leaves them: boost pads are light, not material.
