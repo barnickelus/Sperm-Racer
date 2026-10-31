@@ -44595,13 +44595,52 @@ function ophLumpGeo(detail, seed){
     v.multiplyScalar(0.76+(h-Math.floor(h))*0.42); p.setXYZ(i,v.x,v.y,v.z); }
   g.computeVertexNormals(); return g;
 }
-function ophMat(){ return new T.MeshLambertMaterial({color:0xffffff}); }
+function ophMat(){ return ophLand(new T.MeshLambertMaterial({color:0xffffff})); }
+/* CLOUD SHADOWS. The fair-weather cumulus in ophSky cast their shade on the valley: broad soft
+   patches, a few hundred units across, drifting downwind with the sky's own clouds at about five
+   units a second. A cloud shadow takes the SUN away and leaves the sky, so it scales only the
+   direct term (vLightFront) and the hemisphere fill is untouched: shadowed meadow stays green,
+   just cooler and a step down — the value plan moves, the colour does not. Per vertex (the ground
+   grid is 20 units, the shadows 300 with 60-unit soft edges, so there is nothing finer to resolve),
+   on the shared OPH_T clock, so the land, every prop and the stream's bed all agree. On the grid
+   it is the slow breathing of a summer afternoon; at racing speed it is big shapes of light and
+   shade sliding past in the corner of the eye, which is what makes the meadows read as open land
+   under a sky rather than a lawn under a lamp. */
+const OPH_CLOUD_GLSL=`
+uniform float uOphT;
+float ophCH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float ophCN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(ophCH(i),ophCH(i+vec2(1.0,0.0)),f.x), mix(ophCH(i+vec2(0.0,1.0)),ophCH(i+vec2(1.0,1.0)),f.x), f.y); }
+float ophCloud(vec2 w){ vec2 p=w/270.0+vec2(uOphT*0.0195, uOphT*0.008);
+  float n=ophCN(p)*0.64+ophCN(p*2.37+vec2(5.2,1.3))*0.36;      // (mean 0.49, sd 0.15: ~45% under cloud)
+  return smoothstep(0.47,0.60,n); }
+`;
+function ophLand(m, key){
+  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey;
+  m.onBeforeCompile=(sh,r)=>{ if(prev && prev!==T.Material.prototype.onBeforeCompile) prev(sh,r);
+    sh.uniforms.uOphT=OPH_T;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL)
+      .replace('#include <lights_lambert_vertex>',`#include <lights_lambert_vertex>
+      { vec4 cw=vec4(position,1.0);
+        #ifdef USE_INSTANCING
+          cw=instanceMatrix*cw;
+        #endif
+        cw=modelMatrix*cw; float cs=1.0-0.55*ophCloud(cw.xz);
+        vLightFront*=cs;
+        #ifdef DOUBLE_SIDED
+          vLightBack*=cs;
+        #endif
+      }`); };
+  const base=(pk && pk!==T.Material.prototype.customProgramCacheKey) ? pk.call(m) : '';
+  m.customProgramCacheKey=()=>'ophLand'+(key||'')+base;
+  return m;
+}
 // Wind. Displaces in WORLD space after the instance transform, weighted by |local y| so a
 // blade's root (y=0) is pinned and its tip (|y|=1) moves. The phase comes from the
 // instance's own position, so a clump sways together and the next clump is out of step —
 // a breeze crossing the bank, not a metronome.
 function ophSwayMat(amp){
-  const m=ophMat();
+  const m=new T.MeshLambertMaterial({color:0xffffff});
   m.onBeforeCompile=sh=>{ sh.uniforms.uT=OPH_T;
     sh.vertexShader='uniform float uT;\n'+sh.vertexShader.replace('#include <project_vertex>',
 `vec4 mvPosition = vec4( transformed, 1.0 );
@@ -44615,7 +44654,7 @@ function ophSwayMat(amp){
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`); };
   m.customProgramCacheKey=()=>'ophSway'+amp;
-  return m;
+  return ophLand(m);                     // the cloud shade, chained after the sway
 }
 /* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
    (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
@@ -44742,7 +44781,7 @@ function ophGroundMat(side){
     OPH_GRASS=ophCanvasTex(c); OPH_GRASS.encoding=T.sRGBEncoding; }
   const m=new T.MeshLambertMaterial({map:OPH_GRASS, vertexColors:true, side:side||T.FrontSide});
   m.color.setRGB(1.36,1.36,1.36);                 // cancels the sheet's mean (~0.73 linear)
-  return m;
+  return ophLand(m, 'g');                         // the cloud shadows cross the meadow (see ophLand)
 }
 function ophTerrain(F, ccx, ccz){
   const N=144, W=2900, V=(N+1)*(N+1), P=new Float32Array(V*3), Cc=new Float32Array(V*3), UV=new Float32Array(V*2), c=new T.Color();
@@ -44881,22 +44920,24 @@ function ophWaterMat(lap){
       uBank:{value:new T.Color(0x1a2c16).convertSRGBToLinear()},
       uPd:{value:Pd}, uPs:{value:Ps}, uFlow:{value:OPH.flow} }]),
     vertexShader:`
-      attribute vec3 aS; varying vec3 vS; varying vec3 vW;
+      attribute vec3 aS; varying vec3 vS; varying vec3 vW; varying float vCl;
+      ${OPH_CLOUD_GLSL}
       #include <fog_pars_vertex>
-      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz;
+      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz);
         vec4 mvPosition=viewMatrix*w; gl_Position=projectionMatrix*mvPosition;
         #include <fog_vertex>
       }`,
     fragmentShader:`
       uniform sampler2D uDeep, uShal, uRip; uniform float uT, uPd, uPs, uFlow;
-      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW;
+      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW; varying float vCl;
       #include <fog_pars_fragment>
       void main(){
         float ak=abs(vS.x), fv=uT*uFlow;
         float deep=1.0-smoothstep(20.5,25.5,ak);
         vec3 dC=texture2D(uDeep, vec2(vS.x/46.0+0.5, (vS.y-fv)/uPd)).rgb;
         vec3 sC=texture2D(uShal, vec2(vS.x/uPs, vS.y/uPs)).rgb;
-        vec3 base=pow(mix(sC,dC,deep), vec3(2.2));
+        // the bed through the water is sunlit: a passing cloud shadow takes it down a step
+        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl);
         vec3 V=normalize(cameraPosition-vW);
         float rp=texture2D(uRip, vec2(vS.x/37.0, (vS.y-fv*1.15)/61.0)).r;
         float rq=texture2D(uRip, vec2(vS.x/23.0+0.37, (vS.y-fv*0.8)/97.0+0.5)).r;
@@ -44913,6 +44954,7 @@ function ophWaterMat(lap){
       }`,
     fog:true, side:T.DoubleSide });
   m.uniforms.uDeep.value=ophDeepTex(); m.uniforms.uShal.value=ophShalTex(); m.uniforms.uRip.value=ophRipTex();
+  m.uniforms.uOphT=OPH_T;                // the shared clock, by reference (merge() above would have cloned it)
   return m;
 }
 /* THE SKY. High summer afternoon: pale warm haze at the horizon (the lightest value in the
@@ -44971,7 +45013,9 @@ const OPH_PAL={
   willowDk:[0x4f6e40,0x5a7a48,0x46643a],                   // the shaded mass inside a crown
   strand:[0x93b06c,0xa6bc7c,0x86a45e,0x7c9a58],
   wood:[0x2f4a26,0x3a5a2c,0x27401f,0x45652f,0x324e28],
+  woodLit:[0x4e7434,0x587e38,0x46692e,0x5f843c],         // the sunlit upper masses of a hedgerow crown
   hill:[0x2e4630,0x34503a,0x28402c,0x3a5640],
+  hillLit:[0x46603e,0x4e6a44,0x405a3a],                     // the far wood's sunlit crowns
   pollard:[0x8aa27a,0x9cb38a,0x7a946a,0xa4b890],
   reed:[0x5e7a36,0x6f8a3e,0x87965a,0x4f6a2e,0x7c8c48],
   loose:[0xa8307e,0x962c74,0xb8408a,0x8e3478],
@@ -45079,15 +45123,28 @@ function ophPollard(F, O, R, x, z){
     s:3+R()*2, sy:2.4+R(), sz:3+R()*2, ry:R()*6, c:_ophPick(R,OPH_PAL.pollard)});
   return true;
 }
-// Hedgerow oak / elm: short trunk, big faceted crown. Dark: these are the frame.
+/* Hedgerow oak / elm. These are the frame, so they stay dark — but they were five big
+   single-value facets parked on a stub of trunk, and over a hill crest (trunk hidden behind
+   it) they read as boulders hanging in the sky. What says TREE at two hundred units is the
+   silhouette and the light, not detail: a clear bole under a lifted crown, two limbs into it,
+   and the crown built as a DOME of smaller masses — scalloped edge against the haze, the
+   upper masses in sunlit green and the under-masses in shade, so it has a top and a bottom. */
 function ophTree(F, O, R, x, z, sc){
-  const q=F.near(x,z); if(q.t<30 || !harbClearOK(x,z,16*sc)) return false;
-  const gy=F.H(x,z,q), h=(7+R()*6)*sc, r=(1.6+R())*sc, tc=_ophPick(R,OPH_PAL.trunk);
-  O.trunk.push({x,y:gy-1,z,s:r,sy:h+4,sz:r,ry:R()*6,c:tc});
-  const n=5+((R()*5)|0);
-  for(let k=0;k<n;k++){ const pr=(8+R()*7)*sc;
-    O.lump.push({x:x+(R()-0.5)*14*sc, y:gy+h+pr*0.5+R()*12*sc, z:z+(R()-0.5)*14*sc,
-                 s:pr, sy:pr*0.8, sz:pr*(0.8+R()*0.3), ry:R()*6, c:_ophPick(R,OPH_PAL.wood)}); }
+  // (cleared by the crown's own spread: its rim masses reach CR plus their own radius)
+  const CR=(12+R()*6)*sc, q=F.near(x,z); if(q.t<30 || !harbClearOK(x,z,CR+8*sc)) return false;
+  const gy=F.H(x,z,q), h=(10+R()*6)*sc, r=(1.5+R()*0.8)*sc, tc=_ophPick(R,OPH_PAL.trunk);
+  O.trunk.push({x,y:gy-1,z,s:r,sy:h+5,sz:r,ry:R()*6,c:tc});
+  const top=gy+h;
+  // two limbs out of the bole into the crown: the fork is what a lifted crown hangs from
+  for(let k=0;k<2;k++){ const a=R()*6.283, tl=0.45+R()*0.35;
+    const d=new T.Vector3(Math.sin(tl)*Math.cos(a), Math.cos(tl), Math.sin(tl)*Math.sin(a));
+    O.trunk.push({x, y:top-1, z, q:new T.Quaternion().setFromUnitVectors(_ophUp,d), s:r*0.6, sy:CR*0.75, sz:r*0.55, c:tc}); }
+  const n=8+((R()*5)|0);
+  for(let k=0;k<n;k++){ const a=R()*6.283, f=Math.sqrt(R()), rr=f*CR, pr=(5+R()*4)*sc*(1.15-0.3*f);
+    const y=top+CR*0.3+(1-f*f)*CR*0.55+(R()-0.5)*3*sc, hi=(y-top)/(CR*0.85);
+    O.lump.push({x:x+Math.cos(a)*rr, y, z:z+Math.sin(a)*rr*0.9,
+                 s:pr, sy:pr*0.82, sz:pr*(0.85+R()*0.3), ry:R()*6, rx:(R()-0.5)*0.4,
+                 c:_ophPick(R, hi>0.62 ? OPH_PAL.woodLit : OPH_PAL.wood)}); }
   return true;
 }
 /* THE BANK. Clumps on an irregular cadence, typed by a slow noise along the lap so each
@@ -45118,7 +45175,7 @@ function ophVerge(F, O, innerSign){
           O.stem.push({x,y:c0.y-0.3,z,s:0.12,sy:h,c:0x5a6a34});
           O.stem.push({x,y:c0.y+h-0.3,z,s:0.46,sy:2.4,c:0x4a3222}); }            // bulrush heads
       } else if(type==='loose'){
-        const t=4.2+R()*7, g=t<5.5?0.65:1, np=2+((R()*5)|0), c0=at(t,j0);
+        const t=4.2+R()*7, g=t<5.5 ? 0.65*(0.7+R()*0.3) : 0.75+R()*0.45, np=2+((R()*5)|0), c0=at(t,j0);
         for(let p=0;p<np;p++){ const px=c0.x+(R()-0.5)*6, pz=c0.z+(R()-0.5)*6;
           const gy=F.H(px,pz);
           O.lump0.push({x:px,y:gy+0.6,z:pz,s:1.3,sy:1.5,sz:1.2,ry:R()*6,c:_ophPick(R,OPH_PAL.leaf)});
@@ -45161,7 +45218,9 @@ function ophVerge(F, O, innerSign){
           O.lump0.push({x:c1.x, y:c1.y+0.15, z:c1.z, s:r, sy:0.5, sz:r*(0.7+R()*0.4), ry:R()*6,
                         c:R()<0.78?_ophPick(R,OPH_PAL.forget):0x4a7a30}); }
       }
-      i += 2+((R()*5)|0);
+      // DRIFTS, not a picket: mostly close-set with an open gap now and then, so a run of one
+      // plant reads as a stand with a shape rather than a fence of matching clumps
+      i += R()<0.2 ? 8+((R()*12)|0) : 1+((R()*4)|0);
     }
   }
 }
@@ -45334,11 +45393,22 @@ function ophScenery(F, O, innerSign, ccx, ccz){
     const d=toeAt(i,sd)+70+Math.pow(R(),0.8)*520, cx=s.p.x+s.n.x*sd*d, cz=s.p.z+s.n.z*sd*d;
     const nt=2+((R()*7)|0);
     for(let t=0;t<nt;t++) ophTree(F,O,R, cx+(R()-0.5)*70, cz+(R()-0.5)*70, 0.9+R()*0.8); }
-  // the wooded ring on the hills — the far edge, graded out by the long fog
-  for(let k=0;k<230;k++){ const a=R()*6.283, r=760+R()*560, x=ccx+Math.cos(a)*r, z=ccz+Math.sin(a)*r;
-    if(!harbClearOK(x,z,70)) continue;
-    const pr=24+R()*28;
-    O.lump.push({x, y:F.H(x,z)+pr*0.28, z, s:pr, sy:pr*0.72, sz:pr*(0.8+R()*0.4), ry:R()*6, c:_ophPick(R,OPH_PAL.hill)}); }
+  /* THE WOODED RING on the hills — the far edge, graded out by the long fog. It was 230 single
+     faceted masses, 50-100 across, half-sunk in the slopes: a dark polyhedron on a skyline is a
+     boulder whatever green it is painted, and from the stream they lined every crest like a
+     moraine. Now it is parkland wood: clumps of two or three trees, each a bole under a crown of
+     three masses — a domed top a step lighter where the sun is on it, two shoulders in shade —
+     so the skyline is scalloped and stands on legs. Same batches as the rest of the valley. */
+  for(let k=0;k<120;k++){ const a=R()*6.283, r=760+R()*560, x0=ccx+Math.cos(a)*r, z0=ccz+Math.sin(a)*r;
+    if(!harbClearOK(x0,z0,80)) continue;
+    const nt=2+(R()<0.5?1:0);
+    for(let t=0;t<nt;t++){ const x=x0+(R()-0.5)*56, z=z0+(R()-0.5)*56, gy=F.H(x,z);
+      const CR=11+R()*8, h=7+R()*7, tc=_ophPick(R,OPH_PAL.trunk), a1=R()*6.283;
+      O.trunk.push({x, y:gy-2, z, s:2.1, sy:h+CR*0.6, sz:2.1, ry:R()*6, c:tc});
+      O.lump.push({x, y:gy+h+CR*0.95, z, s:CR*0.82, sy:CR*0.68, sz:CR*0.8, ry:R()*6, c:_ophPick(R,OPH_PAL.hillLit)});
+      for(const da of [0, Math.PI+(R()-0.5)*1.2]){ const aa=a1+da;
+        O.lump.push({x:x+Math.cos(aa)*CR*0.62, y:gy+h+CR*0.5, z:z+Math.sin(aa)*CR*0.62,
+                     s:CR*0.68, sy:CR*0.58, sz:CR*0.7, ry:R()*6, c:_ophPick(R,OPH_PAL.hill)}); } } }
   // poppy and ox-eye daisy drifts just over the bank crest
   for(let d=0;d<34;d++){ const i=(R()*STEPS)|0, s=SAMP[i], sd=R()<0.5?1:-1;
     const t=16+R()*26, L=toeAt(i,sd)+t, cx=s.p.x+s.n.x*sd*L, cz=s.p.z+s.n.z*sd*L;
