@@ -44520,9 +44520,14 @@ function paintWater(sc, uT){
   const U={uT};                          // the sky's own clock (frame() advances it), by reference
   const az=new T.Vector2(PAINT_SUN.x, PAINT_SUN.z).normalize();
   m.onBeforeCompile=sh=>{ sh.uniforms.uStroke={value:paintStrokeTex()}; sh.uniforms.uT=U.uT;
-    sh.vertexShader='varying vec3 vHW;\n'+sh.vertexShader.replace('#include <project_vertex>',
-      '#include <project_vertex>\n  vHW=(modelMatrix*vec4(transformed,1.0)).xyz;');
-    sh.fragmentShader=`varying vec3 vHW; uniform sampler2D uStroke; uniform float uT;
+    // (r128 uploads cameraPosition only to Phong/Standard/Toon/Shader materials — on a Lambert it is
+    // (0,0,0) — so the eye is recovered from viewMatrix, which every material gets. The view vector
+    // is linear across the plane, so as a varying it is exact.)
+    sh.vertexShader='varying vec3 vHW; varying vec3 vHV;\n'+sh.vertexShader.replace('#include <project_vertex>',
+      `#include <project_vertex>
+  vHW=(modelMatrix*vec4(transformed,1.0)).xyz;
+  { vec3 t3=viewMatrix[3].xyz; vHV=vHW+vec3(dot(viewMatrix[0].xyz,t3), dot(viewMatrix[1].xyz,t3), dot(viewMatrix[2].xyz,t3)); }`);
+    sh.fragmentShader=`varying vec3 vHW; varying vec3 vHV; uniform sampler2D uStroke; uniform float uT;
       const vec2 SA=vec2(${az.x.toFixed(4)},${az.y.toFixed(4)}), SB=vec2(${(-az.y).toFixed(4)},${az.x.toFixed(4)});
       const vec3 SUN=vec3(${PAINT_SUN.x.toFixed(4)},${PAINT_SUN.y.toFixed(4)},${PAINT_SUN.z.toFixed(4)});
       `+sh.fragmentShader
@@ -44533,18 +44538,20 @@ function paintWater(sc, uT){
         // looking along it and wrong looking across it (they run off to a vanishing point, like
         // speed lines), so there are two sets at right angles, each fixed to the water, and each
         // fragment takes the one that lies across its own view ray. Nothing swims when you turn.
-        vec2 vq=normalize(vHW.xz-cameraPosition.xz+1e-4);
+        vec2 vq=normalize(vHV.xz+1e-4);
         float wA=smoothstep(0.35,0.65,abs(dot(vq,SA)));
         vec3 st=mix(texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb,
                     texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb, wA);
         diffuseColor.rgb*=1.0+(st.r-0.5)*0.26+(st.g-0.5)*vec3(0.05,0.0,-0.06);`)
       .replace('#include <fog_fragment>',`
-        { vec3 V=normalize(vHW-cameraPosition); vec3 Rf=vec3(V.x,-V.y,V.z);
+        { vec3 V=normalize(vHV); vec3 Rf=vec3(V.x,-V.y,V.z);
           vec2 rh=normalize(Rf.xz+1e-5), sh2=normalize(SUN.xz);
           float daz=1.0-dot(rh,sh2), del=Rf.y-SUN.y;
           float path=exp(-daz/0.010)*exp(-del*del/0.09);
-          float dab=texture2D(uStroke, vec2(wq.x/38.0+uT*0.006, wq.y/9.0)).b;
-          gl_FragColor.rgb+=vec3(0.30,0.27,0.19)*path*smoothstep(0.56,0.86,dab); }
+          // (dabs a few units long and about one across: any finer and the mipmap averages them
+          // away before they reach the threshold; a soft ramp, so far off they melt into a sheen)
+          float dab=texture2D(uStroke, vec2(wq.x/70.0+uT*0.006, wq.y/30.0)).b;
+          gl_FragColor.rgb+=vec3(0.34,0.30,0.21)*path*clamp((dab-0.52)*3.2,0.0,1.0); }
         #include <fog_fragment>`); };
   m.customProgramCacheKey=()=>'paintWater';
   const w=new T.Mesh(g,m); w.position.y=-2;
