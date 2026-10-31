@@ -35043,28 +35043,30 @@ const TESSA_HOR=0x5a4854;               // the sky's horizon band (raw: the dome
 function tessaFloorLevel(inS){ let lo=1e9;
   for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
   return Math.floor(lo-4); }
+// The shimmer is worked out per VERTEX (the wave is ~1,300 units long, so a tile's corners agree)
+// and so is the light: a tile face is flat, so its shade is one number. The fragment shader is
+// left with the tile pattern and the fog, which is all it was ever going to need per pixel.
 const TESSA_VS=`
   attribute vec3 aBase; attribute vec3 aAccent; attribute vec3 aAccent2; attribute float aShape;
   varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
-  varying vec2 vUv; varying vec3 vN; varying float vFogDepth; varying float vPh;
-  uniform float uT;
+  varying vec2 vUv; varying float vFogDepth;
+  uniform float uT, uAmp; uniform vec3 lightDir;
+  vec3 hrot(vec3 c, float a){ const vec3 k=vec3(0.57735); float ca=cos(a); return c*ca+cross(k,c)*sin(a)+k*dot(k,c)*(1.0-ca); }
   void main(){
-    vBase=aBase; vAccent=aAccent; vAccent2=aAccent2; vShape=aShape; vUv=uv;
     mat3 im=mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
     mat3 mm=mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
-    vN=normalize(mm*im*normal);
+    float sh=0.46+0.6*max(0.0, dot(normalize(mm*im*normal), lightDir));
     vec4 wp=modelMatrix*instanceMatrix*vec4(position,1.0);
-    vPh=0.6*sin(uT*0.23+wp.x*0.0041+wp.z*0.0029)+0.4*sin(uT*0.13-wp.x*0.0019+wp.y*0.0052);
+    float ph=(0.6*sin(uT*0.23+wp.x*0.0041+wp.z*0.0029)+0.4*sin(uT*0.13-wp.x*0.0019+wp.y*0.0052))*uAmp;
+    vBase=aBase*sh; vAccent=hrot(aAccent,ph)*sh; vAccent2=hrot(aAccent2,-ph*0.7)*sh; vShape=aShape; vUv=uv;
     vec4 mv=viewMatrix*wp; vFogDepth=-mv.z;
     gl_Position=projectionMatrix*mv;
   }`;
 const TESSA_FS=`
-  uniform vec3 lightDir; uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar; uniform float uAmp;
+  uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar;
   varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
-  varying vec2 vUv; varying vec3 vN; varying float vFogDepth; varying float vPh;
-  vec3 hrot(vec3 c, float a){ const vec3 k=vec3(0.57735); float ca=cos(a); return c*ca+cross(k,c)*sin(a)+k*dot(k,c)*(1.0-ca); }
+  varying vec2 vUv; varying float vFogDepth;
   void main(){
-    float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
     float cu=vUv.x-0.5, cv=vUv.y-0.5, qx=abs(cu), qy=abs(cv); vec3 c;
     bool grout=(qx>0.40||qy>0.40) || (qx>0.32&&qy>0.32&&length(vec2(qx-0.32,qy-0.32))>0.09);
     if(grout){ c=vBase*0.45; }
@@ -35076,12 +35078,26 @@ const TESSA_FS=`
       else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);
       bool dm=length(vUv-vec2(0.30,0.30))<0.075 || length(vUv-vec2(0.70,0.30))<0.075
            || length(vUv-vec2(0.30,0.70))<0.075 || length(vUv-vec2(0.70,0.70))<0.075;
-      c = central ? hrot(vAccent, vPh*uAmp) : (dm ? hrot(vAccent2, -vPh*uAmp*0.7) : vBase);
+      c = central ? vAccent : (dm ? vAccent2 : vBase);
     }
-    c = c*(0.46+0.6*ndl);
     c = mix(c, uFogColor, smoothstep(uFogNear, uFogFar, vFogDepth));
     gl_FragColor=vec4(c, 1.0);
   }`;
+// mosaicTile's three colours, written straight into the attribute arrays: the source colour's
+// HSL is worked out once per hex rather than once per tile, and nothing is allocated. Tessa
+// carries ~15,000 tiles, and three Colors and three setHSLs apiece was most of her build.
+const TESSA_HSL=new Map();
+function tessaHue(p,q,t){ if(t<0) t+=1; if(t>1) t-=1; if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*6*(2/3-t); return p; }
+function tessaRGB(A,o,h,s,l){ h=((h%1)+1)%1;
+  if(s===0){ A[o]=A[o+1]=A[o+2]=l; return; }
+  const q=l<=0.5?l*(1+s):l+s-l*s, p=2*l-q; A[o]=tessaHue(p,q,h+1/3); A[o+1]=tessaHue(p,q,h); A[o+2]=tessaHue(p,q,h-1/3); }
+function tessaTile(hex, h, aB, aA, aA2, o){
+  let c=TESSA_HSL.get(hex); if(!c){ const hsl={}; _mSrc.set(hex).getHSL(hsl); c=[hsl.h,hsl.s,hsl.l]; TESSA_HSL.set(hex,c); }
+  const r1=(h&255)/255, r2=((h>>>8)&255)/255, r3=((h>>>16)&255)/255, r4=((h>>>24)&255)/255, H=c[0], S=c[1], L=c[2];
+  const cf=(v,a,b)=>v<a?a:v>b?b:v;
+  tessaRGB(aB, o, (H+(r1-0.5)*0.05+1)%1, cf(S+(r3-0.5)*0.18,0,1), cf(L+(r2-0.5)*0.24,0.06,0.95));
+  tessaRGB(aA, o, (H+0.33+r4*0.34)%1,    cf(S*0.5+0.4,0.25,1),    cf(0.92-L*0.7+(r1-0.5)*0.18,0.12,0.92));
+  tessaRGB(aA2,o, (H-0.12+r2*0.1+1)%1,   cf(S*0.7+0.2,0.3,1),     cf(L*0.55+0.16+(r3-0.5)*0.12,0.18,0.66)); }
 // one set of uniforms for every Tessa batch (made per build, after the fog is set)
 function tessaUniforms(){
   const fog=scene.fog;
@@ -35102,10 +35118,8 @@ function tessaBatch(list, chunk, geo){
       if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
       const sx=v.s, sy=v.sy!=null?v.sy:v.s, sz=v.sz!=null?v.sz:v.s;
       d.scale.set(sx,sy,sz); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
-      const h=mosaicHash(Math.round(v.x*4), Math.round(v.y*4), Math.round(v.z*4)), t=mosaicTile(v.c, h);
-      aB[i*3]=t[0].r; aB[i*3+1]=t[0].g; aB[i*3+2]=t[0].b;
-      aA[i*3]=t[1].r; aA[i*3+1]=t[1].g; aA[i*3+2]=t[1].b;
-      aA2[i*3]=t[2].r; aA2[i*3+1]=t[2].g; aA2[i*3+2]=t[2].b;
+      const h=mosaicHash(Math.round(v.x*4), Math.round(v.y*4), Math.round(v.z*4));
+      tessaTile(v.c, h, aB, aA, aA2, i*3);
       aS[i]=v.sh!=null?v.sh:h%4;
       r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.hypot(sx,sy,sz)*0.5+1); });
     g.setAttribute('aBase',   new T.InstancedBufferAttribute(aB,3));
@@ -35130,19 +35144,15 @@ function tessaSky(){
       uniform vec3 uHor; varying vec3 vDir;
       void main(){
         vec3 d=normalize(vDir);
-        float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
+        float el=d.y, az=atan(d.z,d.x);                // (sine of the elevation: square enough low down)
         const float CELL=0.039269908;                  // 2*pi/160
-        vec2 g=vec2(az, el)/CELL, id=floor(g), f=fract(g)-0.5;
-        float h=fract(sin(dot(id,vec2(12.9898,78.233)))*43758.5453);
+        vec2 g=vec2(az, el)/CELL, id=floor(g), f=abs(fract(g)-0.5);
+        float h=fract((id.x*0.1031+id.y*0.1373)*(id.y*0.0713+id.x*0.0517+17.0)*11.3);
         float e=max(0.0,(id.y+0.5)*CELL);
         vec3 mid=vec3(0.15,0.21,0.27), zen=vec3(0.035,0.085,0.115);
         vec3 base=mix(uHor, mid, smoothstep(0.0,0.20,e)); base=mix(base, zen, smoothstep(0.16,0.95,e));
-        float k=1.0-smoothstep(0.55,1.1,e);           // tile contrast, gone toward the zenith
-        base*=1.0+(h-0.5)*0.07*k;
-        float q=max(abs(f.x),abs(f.y)), r=length(f);
-        vec3 c=base;
-        if(q>0.44) c=base*(1.0-0.05*k);
-        else if(r<0.15) c=base*(1.0+0.045*k)+vec3(0.008,0.004,0.0)*k*h;
+        float k=1.0-smoothstep(0.55,1.0,e);           // tile contrast, gone toward the zenith
+        vec3 c=base*(1.0+(h-0.5)*0.08*k-0.05*k*step(0.44,max(f.x,f.y)));
         if(el<0.0) c=uHor;
         gl_FragColor=vec4(c,1.0);
       }` }));
@@ -35171,8 +35181,7 @@ function tessaFloorTex(){
     g.fill();
     g.fillStyle=hex(t[2]); for(const [ox,oy] of [[9,9],[23,9],[9,23],[23,23]]){ g.beginPath(); g.arc(x+ox,y+oy,2.2,0,Math.PI*2); g.fill(); } }
   const tx=new T.CanvasTexture(c); tx.wrapS=tx.wrapT=T.RepeatWrapping; tx.encoding=T.sRGBEncoding;
-  tx.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
-  return (TESSA_FLOOR_TEX=tx); }
+  return (TESSA_FLOOR_TEX=tx); }                  // (no anisotropy: the marks are quiet enough to mip, and it is the dearest fetch)
 // the shoulder: the road's own 8px tiles, but held DARK and nearly one value - grounds a step
 // apart, a muted dot in each - so the deck reads as road, apron, wall, floor, in that order
 let TESSA_DECK_TEX=null;
@@ -35265,7 +35274,9 @@ function tessaGate(inS){
 }
 // THE PORTRAIT: Salty, drawn small and soft on a canvas (the soft edges ARE the in-between tile
 // colours a Close is built from), then read back one cell per tile. Four faces, four grounds.
+const TESSA_CELLS=new Map();
 function tessaPortraitCells(bg, W, H){
+  const key=bg.join()+W+'x'+H; if(TESSA_CELLS.has(key)) return TESSA_CELLS.get(key);
   const S=4, c=document.createElement('canvas'); c.width=W*S; c.height=H*S; const g=c.getContext('2d');
   g.scale(S,S);
   const vg=g.createLinearGradient(0,0,0,H); vg.addColorStop(0,bg[0]); vg.addColorStop(1,bg[1]); g.fillStyle=vg; g.fillRect(0,0,W,H);
@@ -35287,7 +35298,7 @@ function tessaPortraitCells(bg, W, H){
   g2.imageSmoothingEnabled=true; g2.imageSmoothingQuality='high'; g2.drawImage(c,0,0,W,H);
   const D=g2.getImageData(0,0,W,H).data, out=[];
   for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const o=(y*W+x)*4; out.push((D[o]<<16)|(D[o+1]<<8)|D[o+2]); }
-  return out; }
+  TESSA_CELLS.set(key,out); return out; }
 const TESSA_BG=[['#2a8a8a','#145a64'],['#d8a03a','#a8602a'],['#8a4ab0','#4a2a78'],['#e86a5a','#a83a4a']];
 // one portrait face into list L, in a frame centred (cx,cz) facing yaw, its foot at y0
 function tessaFace(L, cx, y0, cz, yaw, bg, CS, W, H){
@@ -35322,17 +35333,16 @@ function tessaPortrait(x0, z0, R, plinth){
 // come apart into tiles as it nears.
 function tessaGallery(L, plinth){
   const cand=[];
-  for(let i=0;i<STEPS;i+=9) for(const D of [520,680,840]) for(const lat of [-160,0,160]){
+  for(let i=0;i<STEPS;i+=12) for(const D of [520,680,840]) for(const lat of [-160,0,160]){
     const s=SAMP[i], x=s.p.x+s.t.x*D+s.n.x*lat, z=s.p.z+s.t.z*D+s.n.z*lat;
-    if(!pixClear(x,z,176)) continue;
     let sc=0, vx=0, vz=0;
-    for(let j=0;j<STEPS;j+=2){ const q=SAMP[j], dx=x-q.p.x, dz=z-q.p.z, d=Math.hypot(dx,dz);
-      if(d<300||d>950) continue; const ca=(dx*q.t.x+dz*q.t.z)/d; if(ca<0.914) continue;   // cos 24 deg
+    for(let j=0;j<STEPS;j+=3){ const q=SAMP[j], dx=x-q.p.x, dz=z-q.p.z, d2=dx*dx+dz*dz;
+      if(d2<90000||d2>902500) continue; const d=Math.sqrt(d2), ca=(dx*q.t.x+dz*q.t.z)/d; if(ca<0.914) continue;   // cos 24 deg
       const w=(ca-0.914)/0.086; sc+=w; vx-=dx/d*w; vz-=dz/d*w; }
     if(sc>0) cand.push({i,x,z,sc,yaw:Math.atan2(vx,vz)}); }
-  const pick=[];
+  const pick=[];                                   // clearance (the dear test) only for the leaders
   for(const c of cand.sort((a,b)=>b.sc-a.sc)){ if(pick.length>=3) break;
-    if(pick.some(p=>Math.hypot(p.x-c.x,p.z-c.z)<560)) continue; pick.push(c); }
+    if(pick.some(p=>Math.hypot(p.x-c.x,p.z-c.z)<560)) continue; if(!pixClear(c.x,c.z,176)) continue; pick.push(c); }
   pick.forEach((c,k)=>{ const W=20, H=26, CS=11, top=tessaPlinth(plinth, c.x, c.z, W*CS+6, c.yaw, 24);
     tessaFace(L, c.x, top, c.z, c.yaw, (k+1)%4, CS, W, H);
     const ca=Math.cos(c.yaw), sa=Math.sin(c.yaw);                         // the board behind it, and its frame
@@ -35397,7 +35407,7 @@ function tessaScenery(inS, ccx, ccz){
         y+=cs*0.8; } } }
   // GRAIN near the road: low tile slabs on the floor, where the deck runs low enough to see them
   { const PL=[0xc8902a,0xc8406a,0x1e8a86,0x6a44a8,0x3a6ab8];
-    for(let k=0;k<700 && lows.length<220;k++){ const s=SAMP[(R()*STEPS)|0]; if(s.p.y-TESSA_FLOOR_Y>56) continue;
+    for(let k=0;k<420 && lows.length<200;k++){ const s=SAMP[(R()*STEPS)|0]; if(s.p.y-TESSA_FLOOR_Y>56) continue;
       const sd=R()<0.5?-1:1, lim=sd*inS>0?HW*2.2+8:HW*1.28+10, out=lim+6+R()*150;
       const x=s.p.x+s.n.x*sd*out+(R()*2-1)*12, z=s.p.z+s.n.z*sd*out+(R()*2-1)*12, w=6+R()*6;
       if(!pixClear(x,z,w*0.75)) continue;
@@ -35600,8 +35610,39 @@ function pixSky(){
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
     const m=new T.Points(g, new T.PointsMaterial({vertexColors:true, size:2.5, sizeAttenuation:false, transparent:true, opacity:0.8, depthWrite:false, fog:false}));
     m.renderOrder=-1; G.add(m); stars=m.material; }
-  G.userData.pix={bars:bars.material.map, star:stars};
+  // THE CURRENT (second pass, below): red cells streaming round the sky in three wavy bands
+  G.userData.pix={bars:bars.material.map, star:stars, flow:pixCurrent(G)};
   return G; }
+/* THE CURRENT. A bloodstream that does not flow is a vessel diagram: nothing in the old sky moved
+   one way. Three bands of red cells, pixel sprites, wind round the sky above the skyline like the
+   parallax layers of a shooter - each band a river that wanders up and down and thickens and
+   thins along its length, each turning the same way at its own slow rate (minutes a lap), so the
+   upper and lower bands slip against each other. Camera-centred on the dome, so they are at
+   infinity; alpha-tested, so they cost no blending; three matrices a frame. */
+let PIX_CELL_TEX=null;
+function pixCellSprite(){
+  if(PIX_CELL_TEX) return PIX_CELL_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=16; const g=c.getContext('2d');
+  for(let y=0;y<16;y++) for(let x=0;x<16;x++){ const d=Math.hypot(x-7.5,y-7.5); if(d>7.4) continue;
+    g.fillStyle=d>6.3?'#6a0a1e':d>4.4?'#d8203c':d>2.6?'#b81a34':'#f07a8e'; g.fillRect(x,y,1,1); }
+  g.fillStyle='#ffb0bc'; g.fillRect(4,4,2,1); g.fillRect(4,5,1,1);                      // the catch-light
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.magFilter=T.NearestFilter; t.minFilter=T.NearestFilter; t.generateMipmaps=false;
+  return (PIX_CELL_TEX=t); }
+function pixCurrent(G){
+  const R=pixRnd(0xF10E), TAU=Math.PI*2, out=[];
+  // held DOWN in value - a step or two above the bands they cross, so they read as a current in
+  // the dark and not as confetti; the near (low) band biggest and densest, the far one faint
+  for(const [n,mid,amp,wid,sz,w,ph,v0] of [[140,0.16,0.035,0.026,15,0.0105,0.4,0.48],[80,0.29,0.05,0.032,11,0.0165,2.1,0.38],[40,0.43,0.04,0.03,8,0.0072,4.0,0.30]]){
+    const P=[], C=[];
+    for(let k=0;k<n*4 && P.length<n*3;k++){ const a=R()*TAU;
+      if(R()>0.15+0.85*Math.pow(0.5+0.5*Math.sin(a*2+ph),2)) continue;        // thick and thin along it
+      const e=mid+amp*Math.sin(a*3+ph)+(R()-0.5)*wid, r=1010, v=v0*(0.75+0.5*R());
+      P.push(Math.cos(a)*Math.cos(e)*r, Math.sin(e)*r, Math.sin(a)*Math.cos(e)*r); C.push(v,v*0.92,v*0.95); }
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('color',new T.Float32BufferAttribute(C,3));
+    const m=new T.Points(g, new T.PointsMaterial({map:pixCellSprite(), vertexColors:true, size:sz, sizeAttenuation:false,
+      alphaTest:0.5, depthWrite:false, fog:false}));
+    m.renderOrder=-1; m.frustumCulled=false; m.rotation.y=ph; G.add(m); out.push({m, w, a0:ph}); }
+  return out; }
 // The floor: a low-contrast checker with a little pixel grit in it. NearestFilter up close
 // for crisp squares, mipmapped + anisotropic far off so the checker greys out instead of
 // crawling into moire at the horizon.
@@ -35615,6 +35656,23 @@ function pixFloorTex(){
   t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter;
   t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
   return t; }
+// the floor's VEINS: an emissive sheet the heart's beat drives (see pixTick) - three vessels and
+// their branches, meandering in pixel steps and wrapping at the edges so the sheet tiles
+let PIX_VEIN_TEX=null;
+function pixVeinTex(){
+  if(PIX_VEIN_TEX) return PIX_VEIN_TEX;
+  const N=256, c=document.createElement('canvas'); c.width=c.height=N; const g=c.getContext('2d'), R=pixRnd(0x5E1A);
+  g.fillStyle='#000'; g.fillRect(0,0,N,N);
+  const walk=(x,y,dx,dy,len,w)=>{ for(let k=0;k<len;k++){
+      for(const [ox,oy] of [[0,0],[N,0],[-N,0],[0,N],[0,-N]]){ g.fillStyle='#4a0812'; g.fillRect(((x+ox)|0)-w,((y+oy)|0)-w,w*2+2,w*2+2);
+        g.fillStyle='#c8183a'; g.fillRect(((x+ox)|0)-(w>>1),((y+oy)|0)-(w>>1),Math.max(2,w),Math.max(2,w)); }
+      if(R()<0.22){ const t=dx; dx=R()<0.5?dy:-dy; dy=R()<0.5?t:-t; if(dx===0&&dy===0) dx=4; }
+      x=(x+dx+N)%N; y=(y+dy+N)%N;
+      if(w>2 && R()<0.035) walk(x,y,dy||4,dx||4,(len-k)*0.4|0,w-2); } };
+  for(let v=0;v<3;v++) walk(R()*N|0, R()*N|0, 4, 0, 140, 4);
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapNearestFilter;
+  return (PIX_VEIN_TEX=t); }
 // the deck shoulder: the road's own 8px blocks at the road's own scale, two navies darker, so
 // the shoulder reads as more deck rather than as a second surface; and the rumble strip
 function pixDeckTex(){
@@ -35745,9 +35803,11 @@ function pixScenery(inS, ccx, ccz){
   const R=pixRnd(0x8B17), P={};
   const towers=[], mesas=[], lows=[], plinth=[];
   // the floor, under everything, centred on the course
+  // (second pass: the floor carries the veins, lit by the heart's beat)
   { const fl=new T.Mesh(new T.PlaneGeometry(7600,7600,1,1).rotateX(-Math.PI/2),
-      new T.MeshLambertMaterial({map:pixFloorTex(), color:0xffffff}));
-    fl.material.map.repeat.set(7600/320,7600/320); fl.position.set(ccx,PIX_FLOOR_Y,ccz); trackGroup.add(fl); }
+      new T.MeshLambertMaterial({map:pixFloorTex(), color:0xffffff, emissiveMap:pixVeinTex(), emissive:0x1e0408}));
+    fl.material.map.repeat.set(7600/320,7600/320); fl.position.set(ccx,PIX_FLOOR_Y,ccz); trackGroup.add(fl);
+    P.floor={e:fl.material.emissive, e0:new T.Color(0x1e0408), e1:new T.Color(0x9a1830)}; }
   const place=(r, minOut, maxOut, side, tries)=>{   // a clear footprint beside a random sample
     for(let t=0;t<(tries||40);t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
       const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
@@ -35756,14 +35816,23 @@ function pixScenery(inS, ccx, ccz){
     return null; };
   // HEART on its plinth, a little off the infield's centroid so it is never exactly behind
   // the near statue from the start straight
-  { let hx=ccx-40, hz=ccz+30; const VS=9.5;
+  // (second pass: it was the compass and it was never in shot - from the middle of an infield
+  // this size it sat 600-900 units off the line of sight. It now stands on the infield where
+  // the chase camera looks longest, scored without the scenery's RNG so nothing else moves,
+  // a third bigger, with a glow round it and a ring that runs out across the floor on each beat)
+  { let hx=ccx-40, hz=ccz+30; const VS=12.5, hs=pixHeartSpot(inS);
+    if(hs){ hx=hs.x; hz=hs.z; }
     for(let t=0;t<30&&!pixClear(hx,hz,72);t++){ hx=ccx+(R()*2-1)*240; hz=ccz+(R()*2-1)*240; }
     const tiers=[[96,10,0x2a3a6b],[72,10,0x39508f],[48,10,0x4a62a8],[16,4,0xffd24a]]; let y=PIX_FLOOR_Y;
     for(const [w,h,c] of tiers){ plinth.push({x:hx, y:y+h/2, z:hz, s:w, sy:h, c}); y+=h; }
     const hm=new T.Mesh(pixModel(pixHeartVox(), 0.5), pixMat({vertexColors:true, emissive:0x3a0610}));
     hm.geometry.translate(0,0.5,0);          // tip of the sprite on the origin
     hm.position.set(hx, y, hz); hm.scale.setScalar(VS); trackGroup.add(hm);
-    P.heart={m:hm, s:VS, e:hm.material.emissive, e0:new T.Color(0x3a0610), e1:new T.Color(0x7a1424)}; }
+    const halo=glowSprite(0xff2a4a, VS*24); halo.material.opacity=0.2; halo.position.set(hx, y+VS*5.6, hz); trackGroup.add(halo);
+    const rg=new T.RingGeometry(0.93,1,56); rg.rotateX(-Math.PI/2);
+    const ring=new T.Mesh(rg, new T.MeshBasicMaterial({color:0xff3a5a, transparent:true, opacity:0, blending:T.AdditiveBlending, depthWrite:false}));
+    ring.position.set(hx, PIX_FLOOR_Y+0.4, hz); trackGroup.add(ring);
+    P.heart={m:hm, s:VS, e:hm.material.emissive, e0:new T.Color(0x3a0610), e1:new T.Color(0x7a1424), halo:halo.material, ring}; }
   // THREE SALTY MONUMENTS on stepped columns that reach the floor (see saltyVox)
   // (three meshes on one geometry, not one instanced draw: a batch spanning the course is
   // never off screen, and two of the three usually are)
@@ -35837,14 +35906,30 @@ function pixScenery(inS, ccx, ccz){
   pixBatch(lows, pixMat(), 1400, null, 0.7);
   pixBatch(plinth, pixMat(), 0, null, 0.5);
   return P; }
+// where on the infield the chase camera sees a spot longest (dead ahead within 26 degrees, at
+// 250-1100 units); no RNG, so the rest of the scenery is laid exactly as before
+function pixHeartSpot(inS){
+  let best=null;
+  for(let i=0;i<STEPS;i+=14) for(const D of [150,260,380]){ const s=SAMP[i], lim=HW*2.2+72+D;
+    const x=s.p.x+s.n.x*inS*lim, z=s.p.z+s.n.z*inS*lim; let sc=0;
+    for(let j=0;j<STEPS;j+=3){ const q=SAMP[j], dx=x-q.p.x, dz=z-q.p.z, d2=dx*dx+dz*dz;
+      if(d2<62500||d2>1210000) continue; const ca=(dx*q.t.x+dz*q.t.z)/Math.sqrt(d2); if(ca>0.899) sc+=(ca-0.899)/0.101; }
+    if(!best||sc>best.sc){ if(pixClear(x,z,72)) best={x,z,sc}; } }
+  return best; }
 // heart: lub-dub at ~52 bpm, a few percent, and the glow follows it; the coins turn
+// (second pass: the floor's veins and the heart's halo take the same beat, a faint ring runs out
+// over the floor from the plinth on each one, and the current turns in the sky)
 function pixTick(P, tsec){
   if(P.bars) P.bars.offset.y=0.05*Math.sin(tsec*0.061)+0.025*Math.sin(tsec*0.023+1.3);
   if(P.star) P.star.opacity=0.68+0.2*Math.sin(tsec*0.37);
-  if(P.heart){ const H=P.heart, ph=(tsec*0.87)%1;
-    const b=Math.exp(-Math.pow((ph-0.05)/0.045,2))+0.55*Math.exp(-Math.pow((ph-0.22)/0.05,2));
+  const ph=(tsec*0.87)%1, b=Math.exp(-Math.pow((ph-0.05)/0.045,2))+0.55*Math.exp(-Math.pow((ph-0.22)/0.05,2));
+  if(P.heart){ const H=P.heart;
     H.m.scale.setScalar(H.s*(1+0.03*b)); H.m.rotation.y=tsec*0.21;
-    H.e.copy(H.e0).lerp(H.e1, b*0.8); }
+    H.e.copy(H.e0).lerp(H.e1, b*0.8);
+    if(H.halo) H.halo.opacity=0.14+0.10*b;
+    if(H.ring){ const k=(ph+0.95)%1; H.ring.scale.setScalar(60+k*420); H.ring.material.opacity=0.20*(1-k)*(1-k); } }
+  if(P.floor) P.floor.e.copy(P.floor.e0).lerp(P.floor.e1, Math.min(1,b)*0.85);
+  if(P.flow) for(const f of P.flow) f.m.rotation.y=f.a0+tsec*f.w;
   if(P.coins){ const C=P.coins, d=C.d;
     C.list.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z); d.rotation.set(0, v.ph+tsec*v.w, 0); d.scale.setScalar(v.s); d.updateMatrix(); C.m.setMatrixAt(i,d.matrix); });
     C.m.instanceMatrix.needsUpdate=true; }
@@ -43953,6 +44038,258 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
     }
   }
 }
+
+/* ============== THE BEAD BOARD, second pass (Perla) ============== *
+ * The brief is a product shot: beadwork on a glossy pegboard, lit by two gelled softboxes,
+ * magenta one side and blue the other, against a dark seamless backdrop. What was built was
+ * the voxel course's dressing in pink - a checker ribbon over a black void, red and white kerb
+ * cubes standing inside the corridor, twelve bead orbs hanging at road height with nothing
+ * under them, and fog at 560 - so none of the studio existed: no lights, no board, no sweep.
+ *   THE STUDIO  - a seamless backdrop dome, near-black overhead, with the two gels pooled low
+ *                 on it where the lights are aimed (magenta to the west, blue to the east, the
+ *                 same sides the rig's rim and fill come from), and SOFTBOXES ON STANDS round
+ *                 the lap - the brightest shapes after the plinth, each throwing a pool of its
+ *                 colour onto the board in front of it. Some are tall strip boxes, for rhythm.
+ *   THE BOARD   - the floor is a dark smoked pegboard: a peg grid you read speed against, glossy
+ *                 enough to take a sheen from the key.
+ *   THE PLINTH  - the road's pink checker now has shoulders (the apron is a surface), a gloss
+ *                 black fascia, rows of square PEGS standing on the shoulder at the corridor
+ *                 limits, and piers and caps under it; the tunnel is a run of strung bead hoops
+ *                 on peg legs at 31, and START is spelt in beads on a peg gantry.
+ *   THE WORK    - the subject of the shot: a beaded Salty on a TURNTABLE in the infield, sited
+ *                 where the chase camera sees it longest and turning slowly, as a product does
+ *                 for the camera; bead orbs resting ON the board; loose strands spilled across it.
+ * Everything stands on the floor (PERLA_FLOOR_Y) or the deck, and clears every leg (pixClear).
+ * Beads are instanced in district chunks; the scenery bead is a lower-poly sphere than the
+ * racer's (it is never closer than a few car lengths, and the gloss reads the same).
+ * ---------------------------------------------------------------------------------- */
+let PERLA_FLOOR_Y=-2;
+const PERLA_HOR=0x1e1228, PERLA_MAG=0xff3fa4, PERLA_BLU=0x3f7dff;
+function perlaFloorLevel(inS){ let lo=1e9;
+  for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
+  return Math.floor(lo-4); }
+function perlaGloss(o){ return new T.MeshPhongMaterial(Object.assign({color:0xffffff, shininess:120, specular:0xffffff}, o||{})); }
+const PERLA_BEAD=new T.SphereGeometry(0.5,6,4);
+// THE BACKDROP: a seamless sweep - darkest overhead, a lifted band where the paper curves up
+// behind the floor, and the two gels pooled low on it. Raw colour, no texture.
+function perlaSky(){
+  const v=h=>{ const c=new T.Color(h); return new T.Vector3(c.r,c.g,c.b); };
+  const m=new T.Mesh(new T.SphereGeometry(1150,40,20), new T.ShaderMaterial({side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{uHor:{value:v(PERLA_HOR)}, uTop:{value:v(0x050308)}, uCa:{value:v(PERLA_MAG)}, uCb:{value:v(PERLA_BLU)}},
+    vertexShader:`varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      uniform vec3 uHor, uTop, uCa, uCb; varying vec3 vDir;
+      void main(){
+        vec3 d=normalize(vDir); float el=d.y;
+        vec3 c=mix(uHor, uTop, smoothstep(0.0,0.62,el));
+        vec2 h=normalize(d.xz+vec2(1e-5));
+        float a=max(0.0,dot(h,vec2(-0.91,0.40))), b=max(0.0,dot(h,vec2(0.91,-0.40)));
+        float lo=exp(-pow((el-0.07)/0.17,2.0));
+        c+=uCa*pow(a,5.0)*lo*0.42 + uCb*pow(b,5.0)*lo*0.36;
+        c+=vec3(0.06,0.03,0.07)*exp(-pow(el/0.05,2.0));                 // the sweep's own soft lip
+        if(el<0.0) c=uHor;
+        gl_FragColor=vec4(c,1.0);
+      }` }));
+  m.renderOrder=-3; const G=new T.Group(); G.add(m); return G; }
+// THE BOARD: smoked plastic with a peg on a 6-unit grid, each peg lit from the top left
+let PERLA_FLOOR_TEX=null, PERLA_DECK_TEX=null, PERLA_BOX_TEX=null;
+function perlaFloorTex(){
+  if(PERLA_FLOOR_TEX) return PERLA_FLOOR_TEX;
+  const N=256, C=32, c=document.createElement('canvas'); c.width=c.height=N; const g=c.getContext('2d');
+  g.fillStyle='#130b1b'; g.fillRect(0,0,N,N);
+  for(let j=0;j<N/C;j++) for(let i=0;i<N/C;i++){ const x=i*C+C/2, y=j*C+C/2;
+    g.fillStyle='#0a0510'; g.beginPath(); g.arc(x+1.5,y+2,9.5,0,Math.PI*2); g.fill();      // the peg's shadow
+    g.fillStyle='#281a36'; g.beginPath(); g.arc(x,y,9,0,Math.PI*2); g.fill();
+    g.fillStyle='#3c2a52'; g.beginPath(); g.arc(x-2.5,y-2.5,4.5,0,Math.PI*2); g.fill();
+    g.fillStyle='#6a5088'; g.beginPath(); g.arc(x-3.5,y-3.5,1.6,0,Math.PI*2); g.fill(); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  return (PERLA_FLOOR_TEX=t); }
+// the shoulder: the plinth's pegs again, deep plum, a step under the road's pink
+function perlaDeckTex(){
+  if(PERLA_DECK_TEX) return PERLA_DECK_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  for(let y=0;y<64;y+=16) for(let x=0;x<64;x+=16){ const k=((x+y)>>4)&1;
+    g.fillStyle=k?'#3a1838':'#481e44'; g.fillRect(x,y,16,16);
+    g.fillStyle=k?'#5a2852':'#6a2e60'; g.beginPath(); g.arc(x+8,y+8,4.6,0,Math.PI*2); g.fill();
+    g.fillStyle='#a05090'; g.fillRect(x+5,y+5,2,2); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy()); return (PERLA_DECK_TEX=t); }
+// a softbox face: even and bright, falling off a little to a dark edge, as a diffuser does
+function perlaBoxTex(){
+  if(PERLA_BOX_TEX) return PERLA_BOX_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d'), D=g.createImageData(64,64);
+  for(let y=0;y<64;y++) for(let x=0;x<64;x++){ const u=Math.abs(x-31.5)/31.5, v=Math.abs(y-31.5)/31.5, e=Math.max(u,v);
+    const k=e>0.94?0.18:0.62+0.38*(1-Math.pow(Math.max(u*0.9,v),3)); const o=(y*64+x)*4; D.data[o]=D.data[o+1]=D.data[o+2]=Math.round(k*255); D.data[o+3]=255; }
+  g.putImageData(D,0,0); const t=new T.CanvasTexture(c); return (PERLA_BOX_TEX=t); }
+// THE PLINTH: shoulders out to 35 and 54, gloss black fascia, square pegs on the shoulder at
+// the corridor limits (29.3-32.3 outside, 49.3-52.3 inside, horizontal), not in the tunnel
+function perlaDeck(inS, tunIdx){
+  const LAST=STEPS, inT=i=>tunIdx.some(([a,b])=>i>=a-2&&i<=b+2);
+  const D={p:[],u:[],i:[]}, F={p:[],i:[]};
+  for(const side of [1,-1]){ const OUT=side===inS?54:35, b0=D.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], a=s.p.clone().addScaledVector(s.bn,side*HW), o=s.p.clone().addScaledVector(s.bn,side*OUT);
+      D.p.push(a.x,a.y+0.04,a.z, o.x,o.y+0.04,o.z); D.u.push(HW/44,i*0.2143, OUT/44,i*0.2143); }
+    for(let i=0;i<LAST;i++){ const a=b0+i*2; D.i.push(a,a+1,a+2, a+1,a+3,a+2); }
+    const f0=F.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], o=s.p.clone().addScaledVector(s.bn,side*OUT); F.p.push(o.x,o.y+0.04,o.z, o.x,o.y-6.5,o.z); }
+    for(let i=0;i<LAST;i++){ const f=f0+i*2; F.i.push(f,f+2,f+1, f+1,f+2,f+3); } }
+  const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(D.p,3));
+  dg.setAttribute('uv',new T.Float32BufferAttribute(D.u,2)); dg.setIndex(D.i); dg.computeVertexNormals();
+  const dt=perlaDeckTex().clone(); dt.needsUpdate=true; dt.repeat.set(3,3);         // a peg every ~3.4 units, as the board
+  trackGroup.add(new T.Mesh(dg, new T.MeshPhongMaterial({map:dt, color:0xffffff, shininess:70, specular:0x505050, side:T.DoubleSide})));
+  const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(F.p,3)); fg.setIndex(F.i); fg.computeVertexNormals();
+  trackGroup.add(new T.Mesh(fg, new T.MeshPhongMaterial({color:0x120c16, shininess:90, specular:0x606060, side:T.DoubleSide})));
+  const P=[], pt=(s,L)=>s.p.clone().addScaledVector(s.bn,L/Math.cos(s.bank||0));
+  for(const [side,L] of [[-inS,30.8],[inS,50.8]]){ let d0=0, n=0;
+    for(let i=0;i<STEPS;i++){ const A=SAMP[i], B=SAMP[(i+1)%STEPS], qa=pt(A,side*L), qb=pt(B,side*L), dl=qa.distanceTo(qb), ry=Math.atan2(A.t.x,A.t.z);
+      for(;d0<dl;d0+=3.4, n++){ if(inT(i)) continue; const f=d0/dl, k=(n%6);
+        P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:2.8, sy:3.0, sz:2.8, ry, c:k<3?0xe0217f:k<5?0xf4e8f0:0xf2c230}); }
+      d0-=dl; } }
+  pixBatch(P, perlaGloss(), 900, VOX_GEO, 0);
+}
+// THE PIERS: gloss black stepped columns with a cap under both shoulders
+function perlaPiers(){
+  const L=[], R=pixRnd(0x9E21A);
+  for(let i=2;i<STEPS;i+=6+((R()*5)|0)){
+    const A=pixFrame(i), s=A.s, top=s.p.y-0.6, drop=top-PERLA_FLOOR_Y; if(drop<3) continue;
+    const ry=Math.atan2(s.t.x,s.t.z), c=s.p.clone().addScaledVector(A.y,-2.7);
+    L.push({x:c.x,y:c.y,z:c.z, s:90, sy:3.4, sz:5.5, q:A.q, c:0x1e1426});
+    const n=Math.max(1,Math.round((drop-3)/8));
+    for(let k=0;k<n;k++){ const h=(drop-3)/n, w=8+k*1.8;
+      L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w*0.8, ry, c:k%2?0x2a1c36:0x1e1426}); } }
+  pixBatch(L, perlaGloss({shininess:90, specular:0x8080a0}), 1400, VOX_GEO, 0);
+}
+// TUNNEL: strung bead hoops on peg legs - plumb legs at 31 (inner face ~28.9, clear of 28.2),
+// a tombstone crown, gold and white at the mouths, the colourways cycling through the throat
+function perlaTunnel(tunIdx){
+  const B=[], pegs=[], LAT=31, LEG=20, CR=13, CW=[[0xe0217f,0xf25aa8],[0xf4e8f0,0x1f3a9e],[0xf25aa8,0xf2c230],[0x1f3a9e,0xf4e8f0]];
+  for(const [i0,i1] of tunIdx){ let n=0;
+    for(let i=i0;i<=i1;i+=3+(n%3), n++){
+      const s=SAMP[i%STEPS], mouth=i<i0+3||i>i1-4, ry=Math.atan2(s.t.x,s.t.z), tb=Math.tan(s.bank||0);
+      const yA=s.p.y+tb*LAT, yB=s.p.y-tb*LAT, top=Math.max(yA,yB)+LEG, cw=mouth?[0xf2c230,0xf4e8f0]:CW[n%CW.length];
+      for(const [side,y0] of [[1,yA],[-1,yB]]){ const x=s.p.x+s.n.x*side*LAT, z=s.p.z+s.n.z*side*LAT;
+        pegs.push({x, y:(y0+top)/2, z, s:3.4, sy:top-y0, sz:3.4, ry, c:0x1e1426}); }
+      const pts=[]; for(let a=0;a<=20;a++){ const th=Math.PI*(a/20); pts.push([Math.cos(th)*LAT, top+Math.sin(th)*CR]); }
+      pts.forEach(([off,y],k)=>B.push({x:s.p.x+s.n.x*off, y, z:s.p.z+s.n.z*off, s:mouth?5.6:4.6, c:cw[k%2]})); } }
+  pixBatch(B, perlaGloss(), 0, PERLA_BEAD, 0); pixBatch(pegs, perlaGloss({shininess:90}), 0, VOX_GEO, 0);
+}
+// THE START: peg posts outside both walls and on the floor, a beam strung with big beads, and
+// START spelt in beads on the face the grid looks at
+function perlaGate(inS){
+  const A=pixFrame(0), s=A.s, ry=Math.atan2(s.t.x,s.t.z), tilt=Math.abs(Math.sin(s.bank||0)), pegs=[], B=[];
+  const Lo=-inS*36, Li=inS*56, bot=s.p.y+22+tilt*56, BH=12;
+  const at=(lat,y)=>({x:s.p.x+s.n.x*lat, y, z:s.p.z+s.n.z*lat});
+  for(const lat of [Lo,Li]){ const p=at(lat,0);
+    for(let y=PERLA_FLOOR_Y+3,k=0;y<bot+BH;y+=6,k++) pegs.push({x:p.x, y, z:p.z, s:6, sy:6, sz:6, ry, c:k%2?0xe0217f:0xf4e8f0}); }
+  const span=Math.abs(Li-Lo)+6, lo=Math.min(Lo,Li)-3, mid=(Lo+Li)/2, c0=at(mid,bot+BH/2);
+  pegs.push({x:c0.x, y:c0.y, z:c0.z, s:span, sy:BH, sz:4, ry, c:0x1a1220});
+  for(let k=0;k*4.2<span;k++) for(const yy of [bot+0.6, bot+BH-0.6]){ const p=at(lo+2.1+k*4.2, yy); B.push({x:p.x, y:p.y, z:p.z, s:4.4, c:[0xe0217f,0xf4e8f0,0xf2c230,0x1f3a9e][(k+(yy>bot+1?2:0))%4]}); }
+  const word='START', px=1.7, W=word.length*6-1;
+  for(let w=0;w<word.length;w++){ const G=PIX_FONT[word[w]];
+    for(let r=0;r<7;r++) for(let cc=0;cc<5;cc++){ if(G[r][cc]!=='#') continue;
+      const p=at(-((w*6+cc)-(W-1)/2)*px, bot+BH/2+(3-r)*px); B.push({x:p.x-s.t.x*2.4, y:p.y, z:p.z-s.t.z*2.4, s:px*1.15, c:0xf4e8f0}); } }
+  pixBatch(pegs, perlaGloss({shininess:90}), 0, VOX_GEO, 0); pixBatch(B, perlaGloss(), 0, PERLA_BEAD, 0);
+}
+// where the chase camera sees a spot longest: dead ahead within 24 degrees at 300-950 units
+function perlaSpots(n, clr, sep){
+  const cand=[];
+  for(let i=0;i<STEPS;i+=12) for(const D of [420,560,700]) for(const lat of [-140,0,140]){
+    const s=SAMP[i], x=s.p.x+s.t.x*D+s.n.x*lat, z=s.p.z+s.t.z*D+s.n.z*lat;
+    let sc=0; for(let j=0;j<STEPS;j+=3){ const q=SAMP[j], dx=x-q.p.x, dz=z-q.p.z, d2=dx*dx+dz*dz;
+      if(d2<67600||d2>902500) continue; const ca=(dx*q.t.x+dz*q.t.z)/Math.sqrt(d2); if(ca>0.914) sc+=(ca-0.914)/0.086; }
+    if(sc>0) cand.push({x,z,sc}); }
+  const pick=[]; for(const c of cand.sort((a,b)=>b.sc-a.sc)){ if(pick.length>=n) break;   // clearance only for the leaders
+    if(pick.some(p=>Math.hypot(p.x-c.x,p.z-c.z)<sep)) continue; if(!pixClear(c.x,c.z,clr)) continue; pick.push(c); }
+  return pick; }
+// THE WORK: Salty in seed beads - head, eyes, grin, cap and band, the striped tail coiled round
+// the platter - on a gloss black turntable with a magenta rim. Local coordinates, one group.
+function perlaHero(x0, z0){
+  const G=new T.Group(), B=[], P=3.0;
+  const tt=new T.Mesh(new T.CylinderGeometry(78,80,6,48), perlaGloss({color:0x141018, shininess:110, specular:0x9090b0}));
+  tt.position.y=3; G.add(tt);
+  const rimM=new T.Mesh(new T.CylinderGeometry(80.6,80.6,2,48,1,true), perlaGloss({color:PERLA_MAG, emissive:0x3a0820}));
+  rimM.position.y=4.6; G.add(rimM);
+  const hy=6+30, SK=0xf3c9cf, WH=0xf8f4f6, DK=0x2c1e20, NV=0x1b3766, GD=0xffd24a, CK=0xf08aa6;
+  beadEllipsoid(B, 0,hy,0, 30,26,34, P, (la,lo,x,y,z)=>{
+    for(const sx of [-12,12]){ const dx=x-sx, dy=y-(hy+6); if(z>14 && dx*dx+dy*dy<30) return DK; if(z>12 && dx*dx*0.55+dy*dy*0.7<64) return WH; }
+    if(z>18 && Math.abs(x)<12 && y<hy-4 && y>hy-11) return DK;
+    if(z>12 && Math.abs(Math.abs(x)-19)<5 && Math.abs(y-(hy-3))<4) return CK;
+    return SK; }, {yMin:6});
+  beadEllipsoid(B, 0,hy+18,-1, 29,15,29, P, ()=>WH, {yMin:hy+18});                     // the cap's dome
+  for(let k=0;k<3;k++) beadHoop(B, 0, hy+16+k*P*0.95, -1, 28.5, P, NV);                // its band
+  beadEllipsoid(B, 0,hy+19,27, 3.2,3.2,2.4, 2.2, ()=>GD);                               // the badge
+  // the tail: shrinking rings along a curve that coils round behind him on the platter
+  for(let k=0;k<16;k++){ const t=k/15, a=Math.PI*0.5+t*Math.PI*1.35, r=40+t*22, rr=11*(1-t)+2.6;
+    beadEllipsoid(B, Math.cos(a)*r, 6+rr*0.8, -Math.sin(a)*r-6, rr,rr*0.8,rr, 3.4, ()=>(k&1)?NV:WH, {yMin:6}); }
+  const ms=pixBatch(B, perlaGloss(), 0, PERLA_BEAD, 0); trackGroup.remove(ms[0]); G.add(ms[0]);
+  G.position.set(x0, PERLA_FLOOR_Y, z0); trackGroup.add(G);
+  return G; }
+// Everything off the deck. Returns the moving parts for perlaTick.
+function perlaScenery(inS, ccx, ccz){
+  const R=pixRnd(0xBEAD5), P={};
+  { const g=new T.PlaneGeometry(9000,9000,1,1); g.rotateX(-Math.PI/2);
+    const tx=perlaFloorTex(); tx.repeat.set(9000/48, 9000/48);
+    const fl=new T.Mesh(g, new T.MeshPhongMaterial({map:tx, color:0xffffff, shininess:60, specular:0x4a3a5a}));
+    fl.position.set(ccx, PERLA_FLOOR_Y, ccz); trackGroup.add(fl); }
+  const place=(r, minOut, maxOut, side)=>{
+    for(let t=0;t<40;t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
+      const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*16, z=s.p.z+s.n.z*sd*out+(R()*2-1)*16;
+      if(pixClear(x,z,r)) return {x,z,s,sd}; }
+    return null; };
+  // THE WORK, on its turntable
+  // (built at 1, shown at 1.6: the platter is then 128 across, cleared for 150)
+  { const sp=perlaSpots(1, 150, 0)[0] || {x:ccx, z:ccz}; P.turn=perlaHero(sp.x, sp.z); P.turn.scale.setScalar(1.6);
+    P.turn.rotation.y=R()*6.283; P.ry0=P.turn.rotation.y; }
+  // THE LIGHTS: softboxes and strip boxes on stands, aimed at the road, and their pools on the board
+  { const house=[], face=[], stand=[], pool=[], halo=[], F=PERLA_FLOOR_Y, up=new T.Vector3(0,1,0), q=new T.Quaternion(), dv=new T.Vector3();
+    const NL=18;
+    for(let k=0;k<NL;k++){ let ok=null;
+      for(let t=0;t<12&&!ok;t++){ const i=(Math.floor((k+0.15+R()*0.7)*STEPS/NL))%STEPS, s=SAMP[i], sd=(k+t)%2?-1:1;
+        const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+34+R()*60, x=s.p.x+s.n.x*sd*out, z=s.p.z+s.n.z*sd*out;
+        if(pixClear(x,z,30)) ok={x,z,s}; }
+      if(!ok) continue;
+      const {x,z,s}=ok, strip=(k%4===2), w=strip?13:34, h=strip?72:46, yaw=Math.atan2(s.p.x-x, s.p.z-z), pitch=strip?0.12:0.30;
+      const hc=Math.max(s.p.y+(strip?40:30), F+(strip?52:44)), gel=new T.Color(x<ccx?PERLA_MAG:PERLA_BLU);
+      const fx=Math.sin(yaw), fz=Math.cos(yaw);
+      // the face takes the gel DECODED (MeshBasic writes it back out through the sRGB encode), so a
+      // magenta box is the magenta of the gel and not a pastel of it; the diffuser texture's own
+      // falloff does the rest
+      face.push({x:x+fx*0.6, y:hc, z:z+fz*0.6, s:w, sy:h, sz:0.6, rx:pitch, ry:yaw, o:'YXZ', c:gel.clone().lerp(new T.Color(0xffffff),0.10).convertSRGBToLinear().getHex()});
+      halo.push({x:x+fx*3, y:hc, z:z+fz*3, c:gel.getHex(), s:strip?100:120});
+      house.push({x:x-fx*5.6, y:hc+Math.sin(pitch)*5.6, z:z-fz*5.6, s:w+3, sy:h+3, sz:11, rx:pitch, ry:yaw, o:'YXZ', c:0x141018});
+      house.push({x:x-fx*12, y:hc+Math.sin(pitch)*12, z:z-fz*12, s:w*0.45, sy:h*0.45, sz:5, rx:pitch, ry:yaw, o:'YXZ', c:0x1c1820});
+      stand.push({x:x-fx*12, y:(F+hc)/2, z:z-fz*12, s:1.7, sy:hc-F, sz:1.7, c:0x2a2830});
+      for(let l=0;l<3;l++){ const a=yaw+l*2.094, ex=x-fx*12+Math.sin(a)*12, ez=z-fz*12+Math.cos(a)*12;
+        dv.set(ex-(x-fx*12), -11, ez-(z-fz*12)); const len=dv.length(); q.setFromUnitVectors(up, dv.normalize());
+        stand.push({x:(ex+x-fx*12)/2, y:F+5.5, z:(ez+z-fz*12)/2, s:1.2, sy:len, sz:1.2, q:q.clone(), c:0x2a2830}); }
+      // the pool it throws on the board, toward the road
+      pool.push({x:x+fx*60, z:z+fz*60, yaw, w:strip?70:150, d:strip?150:120, c:gel.clone().multiplyScalar(strip?0.55:0.75)}); }
+    pixBatch(house, perlaGloss({shininess:60, specular:0x404040}), 1400, VOX_GEO, 0);
+    pixBatch(stand, new T.MeshLambertMaterial({color:0xffffff}), 1400, VOX_GEO, 0);
+    const fm=new T.MeshBasicMaterial({map:perlaBoxTex(), color:0xffffff});
+    pixBatch(face, fm, 1400, VOX_GEO, 0);
+    // each box blooms a little into the air round it, so it reads as a source and not a sign
+    for(const v of halo){ const h=glowSprite(v.c, v.s); h.material.opacity=0.5; h.position.set(v.x,v.y,v.z); trackGroup.add(h); }
+    if(pool.length){ const g=new T.PlaneGeometry(1,1); g.rotateX(-Math.PI/2);
+      const m=new T.InstancedMesh(g, new T.MeshBasicMaterial({map:TEX_GLOW, transparent:true, opacity:0.55, blending:T.AdditiveBlending, depthWrite:false}), pool.length), d=new T.Object3D();
+      pool.forEach((v,k)=>{ d.position.set(v.x, F+0.25, v.z); d.rotation.set(0,v.yaw,0); d.scale.set(v.w,1,v.d); d.updateMatrix(); m.setMatrixAt(k,d.matrix); m.setColorAt(k,v.c); });
+      m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true; m.frustumCulled=false; m.renderOrder=1; trackGroup.add(m); } }
+  // ORBS resting on the board, and STRANDS spilled across it
+  { const B=[], PAL=[0xe0217f,0xf25aa8,0xf4e8f0,0x1f3a9e,0xf2c230];
+    for(let k=0, n=0;n<12 && k<200;k++){ const R2=8+R()*12, q=place(R2+2, 8, n%3?120:300); if(!q) continue; n++;
+      const base=PAL[n%PAL.length], alt=PAL[(n+2)%PAL.length], st=(R()*4)|0;
+      beadEllipsoid(B, q.x, PERLA_FLOOR_Y+R2*0.97, q.z, R2,R2,R2, 3.8, (la,lo)=> st===0 ? ((Math.floor(la*7)%3===0)?alt:base)
+        : st===1 ? ((Math.floor(lo*12)%2)?alt:base) : st===2 ? (la>0.5?base:alt) : ((Math.floor(la*9)+Math.floor(lo*9))%2?alt:base)); }
+    for(let k=0, n=0;n<22 && k<300;k++){ const q=place(4, 4, 150); if(!q) continue;
+      let x=q.x, z=q.z, a=R()*6.283; const cnt=22+((R()*24)|0), cw=[PAL[(k)%5],PAL[(k+1)%5],PAL[(k+3)%5]]; let ok=0;
+      for(let j=0;j<cnt;j++){ a+=(R()-0.5)*0.5; x+=Math.cos(a)*3.5; z+=Math.sin(a)*3.5; if(!pixClear(x,z,2)) break;
+        B.push({x, y:PERLA_FLOOR_Y+1.7, z, s:3.6, c:cw[(j%5===4)?2:(j%2)]}); ok++; }
+      if(ok) n++; }
+    pixBatch(B, perlaGloss(), 1400, PERLA_BEAD, 0); }
+  return P; }
+function perlaTick(P, tsec){ if(P.turn) P.turn.rotation.y=P.ry0+tsec*0.045; }   // a turn every two and a half minutes
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
 // including the default branch — these lights are shared module state, so leaving them
 // unset would strand the studio rig on whatever course you switched to next.
@@ -49267,10 +49604,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].pool ? 170 : TRACKS[idx].mosaic ? 240 : TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].pool ? 170 : TRACKS[idx].mosaic ? 240 : TRACKS[idx].bead ? 220 : TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].pool ? 1320 : TRACKS[idx].mosaic ? 1360 : TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].pool ? 1320 : TRACKS[idx].mosaic ? 1360 : TRACKS[idx].bead ? 1350 : TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -49309,6 +49646,8 @@ function buildTrack(idx){
   if(TRACKS[idx].pool){ scene.fog.color.setHex(NAT_HAZE); scene.background.setHex(NAT_HAZE); }
   // Tessa: the land fades into the rose-grey band the tiled sky stands on (the dome is raw too)
   if(TRACKS[idx].mosaic) scene.fog.color.setHex(TESSA_HOR);
+  // Perla: the board fades into the backdrop where it sweeps up behind the floor (raw, as the dome)
+  if(TRACKS[idx].bead) scene.fog.color.setHex(PERLA_HOR);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -49369,7 +49708,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil && !mosaic;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil && !mosaic && !bead;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -49957,6 +50296,12 @@ function buildTrack(idx){
     skyDome=tessaSky(); trackGroup.add(skyDome);
     TRACK_PULSE.tessa={u:TESSA_U};
     tessaPiers();
+  } else if(bead){
+    // Perla: the studio backdrop, the floor level, the plinth's piers (THE BEAD BOARD)
+    PERLA_FLOOR_Y=perlaFloorLevel(innerSign);
+    skyDome=perlaSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.perla={};
+    perlaPiers();
   } else if(vox){
     // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
     // course reads as something BUILT. Wider as it descends, which makes the elevation
@@ -50371,13 +50716,15 @@ function buildTrack(idx){
     ? new T.MeshBasicMaterial({map:rt,color:0xffffff,side:T.DoubleSide})
     : arc
     ? arcPatch(new T.MeshLambertMaterial({map:rt,color:0xffffff,vertexColors:true,side:T.DoubleSide}),'road')
-    : vox
+    : (vox && !bead)
     ? new T.MeshPhongMaterial({map:rt,color:0xffffff,emissive:0x0d1832,
         shininess:6,specular:0x223355,side:T.DoubleSide,flatShading:true})
     // clay and paper draw their own stock into rt, so they must NOT inherit the fleshy
     // pink tint — multiplied through, it turned the terracotta slab salmon
     : bead
-    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:90,specular:0xffffff,
+    // (Perla reaches this now - the voxel branch above used to catch her first.) A glossy plinth,
+    // but the key's highlight on a flat deck this size is a stripe, not a glint: held to grey
+    ? new T.MeshPhongMaterial({map:rt,color:0xffffff,shininess:70,specular:0x5a5a5a,
         side:T.DoubleSide})
     : loom
     ? new T.MeshLambertMaterial({map:rt,color:0xffffff,side:T.DoubleSide})   // the woven canvas carries its own fibre
@@ -50618,6 +50965,8 @@ function buildTrack(idx){
     veraGate(innerSign);                  // a vector gate spelling START; nothing lit on this course
   } else if(mosaic){
     tessaGate(innerSign);                 // a tile gantry spelling START, posts on the floor
+  } else if(bead){
+    perlaGate(innerSign);                 // peg posts, a strung beam, START in beads
   } else {
   // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
   // it parallels the road at 14 up instead of cutting across it level; each post stands from
@@ -50913,6 +51262,9 @@ function buildTrack(idx){
   } else if(mosaic){
     // shoulders, fascia and tile parapets standing ON the shoulder at the corridor limits
     tessaDeck(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
+  } else if(bead){
+    // shoulders, a gloss fascia and square pegs standing ON the shoulder at the corridor limits
+    perlaDeck(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
@@ -51067,6 +51419,8 @@ function buildTrack(idx){
     pixTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(mosaic){
     tessaTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
+  } else if(bead){
+    perlaTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     const arch=[];
     for(const seg of tun){
@@ -51150,7 +51504,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho && !mosaic){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho && !mosaic && !bead){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -52139,24 +52493,9 @@ function buildTrack(idx){
     if(cone.length) trackGroup.add(feltBatch(new T.ConeGeometry(1,2,7), cone));
     BOX.dispose();
   } else if(bead){
-    // Oversized bead orbs, exactly the two magenta spheres flanking the reference plinth.
-    // Built as real bead rings rather than scaled-up cubes, so the rows curve on them too.
-    // Bead PITCH is what costs here, not orb count: at a 1.7 pitch these came to ~50,000
-    // spheres, roughly 5M triangles, which made this the heaviest course in the game by
-    // about 3x and is far past what the phones this targets can carry. Scenery orbs read
-    // as beaded from a distance at a much coarser pitch — the fine pitch is only worth
-    // paying for on the racer, which fills the screen.
-    const orbs=[], PAL=[0xe0217f,0xf25aa8,0xf2f2f2,0x1f3a9e,0xf2c230];
-    for(let k=0;k<12;k++){
-      const s2=SAMP[(k*97)%STEPS];
-      const side=(k%2?-1:1), out=HW*(3.4+((k*17)%40)/8);
-      const R2=10+((k*23)%11);
-      const base=PAL[k%PAL.length], alt=PAL[(k+2)%PAL.length];
-      beadEllipsoid(orbs,
-        s2.p.x+s2.n.x*side*out, s2.p.y+R2*0.55+((k*11)%14), s2.p.z+s2.n.z*side*out,
-        R2,R2,R2, 3.4, (la)=> (Math.floor(la*7)%3===0) ? alt : base);
-    }
-    trackGroup.add(beadBatch(orbs));
+    // the studio: the board, the softboxes and their pools, the work on its turntable, orbs and
+    // strands resting on the board (see THE BEAD BOARD). The old orbs hung at road height.
+    Object.assign(TRACK_PULSE.perla, perlaScenery(innerSign, ccx, ccz));
   } else if(wire){
     Object.assign(TRACK_PULSE.vera, veraScenery(innerSign, ccx, ccz));   // phage, helices, cells, solids, obstacles
   } else if(tc){
@@ -66225,6 +66564,8 @@ function frame(now){
   if(TRACK_PULSE.pix) pixTick(TRACK_PULSE.pix, tsec);
   // Tessa: a slow wave turns the tiles' accents a little and back; the portrait pylon turns
   if(TRACK_PULSE.tessa) tessaTick(TRACK_PULSE.tessa, tsec);
+  // Perla: the work turns on its turntable
+  if(TRACK_PULSE.perla) perlaTick(TRACK_PULSE.perla, tsec);
   // Vera: the ECG write-head sweeps the horizon, solids tumble, the phage and helices turn
   if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
