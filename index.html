@@ -35038,7 +35038,7 @@ function saltyVox(){
  * Everything is batched through tessaBatch: one shared shader, chunked by district so whole
  * districts frustum-cull, one uniform for all the motion. Clearance: pixClear, every leg.
  * ---------------------------------------------------------------------------------- */
-let TESSA_FLOOR_Y=-2, TESSA_U=null;
+let TESSA_FLOOR_Y=-2, TESSA_U=null, TESSA_SALTY=null;
 const TESSA_HOR=0x5a4854;               // the sky's horizon band (raw: the dome is a raw shader too)
 function tessaFloorLevel(inS){ let lo=1e9;
   for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
@@ -35222,8 +35222,8 @@ function tessaDeck(inS, tunIdx){
   for(const [side,L] of [[-inS,30.8],[inS,50.8]]){ let d0=0, n=0;
     for(let i=0;i<STEPS;i++){ const A=SAMP[i], B=SAMP[(i+1)%STEPS], qa=pt(A,side*L), qb=pt(B,side*L), dl=qa.distanceTo(qb);
       const ry=Math.atan2(A.t.x,A.t.z);
-      for(;d0<dl;d0+=3.4, n++){ if(inT(i)) continue; const f=d0/dl;
-        P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:3.0, sy:3.0, sz:3.0, ry, c:((n>>2)&1)?0xb81e34:0xe8e0d0}); }
+      for(;d0<dl;d0+=3.8, n++){ if(inT(i)) continue; const f=d0/dl;
+        P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:3.0, sy:3.0, sz:3.3, ry, c:((n>>2)&1)?0xb81e34:0xe8e0d0}); }
       d0-=dl; } }
   tessaBatch(P, 900);
 }
@@ -35375,7 +35375,7 @@ function tessaScenery(inS, ccx, ccz){
     P.pylon=tessaPortrait(px, pz, R, plinths); }
   const gal=[]; P.gallery=tessaGallery(gal, plinths);
   // THE THREE SALTY STATUES, on stepped tile columns that reach the floor
-  { const shell=saltyVox();
+  { const shell=TESSA_SALTY||(TESSA_SALTY=saltyVox());          // (the same shell every build: made once)
     for(const [u,scale,side] of [[0.08,2.6,1],[0.45,2.2,-1],[0.78,2.4,1]]){
       const s=SAMP[Math.floor(u*STEPS)%STEPS]; let out=HW*3.6, bx=0, bz=0;
       for(;out<HW*9;out+=6){ bx=s.p.x+s.n.x*side*out; bz=s.p.z+s.n.z*side*out; if(pixClear(bx,bz,7*scale+4)) break; }
@@ -35398,7 +35398,7 @@ function tessaScenery(inS, ccx, ccz){
   { const MP=[0x24304a,0x2c2a4e,0x1e3a40], TOP=[0x4a6a8a,0x6a4a7a,0x3a7070];
     for(let k=0, n=0;n<22 && k<500;k++){ const inf=n<6, w0=72+R()*60, rad=w0*0.75;
       const q=place(rad, inf?60:30, inf?380:320, inf?inS:-inS); if(!q) continue; n++;
-      const tiers=2+((R()*3)|0), yaw=R()*1.57, ca=Math.cos(yaw), sa=Math.sin(yaw), CS=12; let y=TESSA_FLOOR_Y;
+      const tiers=2+((R()*3)|0), yaw=R()*1.57, ca=Math.cos(yaw), sa=Math.sin(yaw), CS=16; let y=TESSA_FLOOR_Y;
       for(let t=0;t<tiers;t++){ const w=w0*(1-t*0.24), m=Math.max(1,Math.round(w/CS)), cs=w/m;
         for(let a=0;a<m;a++) for(let b=0;b<m;b++){ const lx=(a-(m-1)/2)*cs, lz=(b-(m-1)/2)*cs*0.8;
           const uw=w0*(1-(t+1)*0.24)/2-cs*0.5;
@@ -49712,7 +49712,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil && !mosaic && !bead;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil && !mosaic && !bead;   // Lily lays its own pond; Iris her desert; Pixie a checker floor; Tessa a tiled one; Perla a pegboard
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -51508,7 +51508,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho && !mosaic && !bead){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho && !mosaic && !bead){   // Tessa and Perla: tile blocks / pegs on the apron deck   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
