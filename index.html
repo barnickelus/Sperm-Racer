@@ -2215,6 +2215,7 @@ const altIndex={};   // {charId: 0=home station, 1..n = index into ALT_MAP[id]}
 // courseStyleId), 'racer' always starts on the racer's station. onCourseSong is the live
 // tuning: set as each race starts, then moved by the dial.
 let soundtrack='course', onCourseSong=false;
+try{ if(localStorage.getItem('sr_music')==='0') musicOn=false; }catch(_){}   // Music OFF is remembered on this device
 try{ if(localStorage.getItem('sr_soundtrack')==='racer') soundtrack='racer'; }catch(_){}
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
@@ -33359,6 +33360,95 @@ SONG_ENGINE.songs.homeTheme=(function(){
   };
 })();
 /* ==== /SONG ENGINE ==== */
+
+/* ---- THE HOME THEME ON THE MENUS (when "Egg on the Horizon" plays) ----
+   It is the menus' record: the home page in either style, the racer select, the Circuit Cup's chooser and its
+   race cards, the multiplayer lobby — every screen where state is 'menu'. A race's countdown fades it out before
+   the course is built; it stays off through the race and the results (those belong to the race's own station and
+   the fanfare), and when the player is back on a menu it fades in again at the next phrase of the record, so a
+   return picks the record up where it was rather than playing its power-on again.
+     - Nothing runs before the player first touches the page. Browsers will not start sound without a gesture, and
+       the page has enough to do while it loads. The first pointerdown / touchend / keydown unlocks the audio
+       (initAudio, inside the gesture, as the buttons do), and a quarter of a second later — after the tap's own
+       work, and long enough to see whether that tap was RACE — the record is built a slice of a few milliseconds
+       after each frame (the bus a few channel strips at a time, the noise, the instruments: see produceStation's
+       defer), so the course strip does not hitch. It starts as soon as the bus is up, fading in over two seconds,
+       and the spring tank's impulse is made behind it, a slice at a time (see springGen).
+     - The page hidden (another app, the tab in the background): it stops at once. Shown again: it fades back in.
+     - Music OFF silences it, as it does the race stations, and the switch is remembered on this device (sr_music).
+   srNet.theme reports what it is doing, and what its start cost the main thread. */
+const MENU_MUSIC=(function(){
+  const FADE_IN=2, FADE_OUT=0.8, LEVEL=0.27;   // LEVEL: about 3 dB under a race station (0.38), it is the room's music
+  let h=null, fade=null, armed=false, playing=false, building=false, stopT=null, kickT=null, nextBar=0;
+  const cost={slices:[], readyAt:0, start:0};          // main-thread ms of each build slice; slices until it could play; the first start
+  const song=()=>SONG_ENGINE.songs.homeTheme;
+  const want=()=>armed && musicOn && !!actx && !document.hidden && state==='menu';
+  const later=(f)=>requestAnimationFrame(()=>setTimeout(f,0));   // just after the next frame
+  function build(){
+    const t0=performance.now();
+    fade=actx.createGain(); fade.gain.value=0; fade.connect(masterGain);
+    h=SONG_ENGINE.produceStation(actx, fade, song(), {lite:isTouch, level:LEVEL, defer:true});
+    cost.slices.push(+(performance.now()-t0).toFixed(2));
+    building=true;
+    let warm=false;
+    const slice=()=>{ const was=h.ready, t1=performance.now();
+      // once the bus is up, one slice reads the record's first bars ahead (a dry run of the planner, its events
+      // thrown away), so the start does not pay for compiling it; then it can play
+      const done=(was && !warm) ? (warm=true, song().plan(nextBar, SONG_ENGINE.rngOf(1), {lite:isTouch}), false) : h.build(4);
+      cost.slices.push(+(performance.now()-t1).toFixed(2));
+      if(was && warm && !cost.readyAt){ cost.readyAt=cost.slices.length; later(sync); }
+      if(done) building=false; else later(slice); };
+    later(slice);
+  }
+  function fadeIn(){
+    if(actx.state!=='running' && actx.resume){ try{ const pr=actx.resume(); if(pr&&pr.catch) pr.catch(()=>{}); }catch(_){} }
+    if(!h) build();
+    if(!h.ready) return;                                   // still building: the slice that finishes the bus calls sync
+    if(playing && h.running && !stopT) return;           // already in (or on its way in)
+    const g=fade.gain, now=actx.currentTime;
+    if(stopT){ clearTimeout(stopT); stopT=null;           // caught mid-fade-out: turn round from where it is
+      if(h.running){ const v=g.value; g.cancelScheduledValues(now); g.setValueAtTime(v,now); g.linearRampToValueAtTime(1,now+FADE_IN*(1-v)); playing=true; return; } }
+    const t0=performance.now();
+    h.setKey(0); h.start({bar:nextBar});
+    if(!cost.start) cost.start=+(performance.now()-t0).toFixed(2);
+    g.cancelScheduledValues(now); g.setValueAtTime(0,now); g.linearRampToValueAtTime(1,now+0.05+FADE_IN);
+    playing=true;
+  }
+  function halt(){ if(stopT){ clearTimeout(stopT); stopT=null; }
+    if(h && h.running) nextBar=song().entry(h.stop()+1);
+    playing=false; }
+  function fadeOut(sec){
+    if(!playing) return;
+    const g=fade.gain, now=actx.currentTime;
+    if(sec<=0.12){ g.cancelScheduledValues(now); g.setTargetAtTime(0,now,0.02); halt(); return; }   // (the page hidden: now)
+    if(stopT) return;                                      // already on its way out
+    g.cancelScheduledValues(now); g.setValueAtTime(g.value,now); g.linearRampToValueAtTime(0,now+sec);
+    stopT=setTimeout(()=>{ stopT=null; halt(); },sec*1000+60);
+  }
+  // out: how quickly to fade if it should not be playing (the Music switch is quicker than a race start)
+  function sync(out){ if(!armed) return; if(want()) fadeIn(); else fadeOut(out==null?FADE_OUT:out); }
+  function arm(){ armed=true;
+    document.addEventListener('visibilitychange',()=>{ if(document.hidden) fadeOut(0); else sync(); });
+    setInterval(sync,500);                                // the menus come and go by many doors: look twice a second
+  }
+  function gesture(e){
+    if(armed && state!=='menu') return;                    // in a race a tap is only a tap
+    initAudio(); if(!actx) return;
+    if(!armed) arm();
+    if(e && e.target && e.target.closest && e.target.closest('#musicbtn')) return;   // the switch decides for itself
+    clearTimeout(kickT); kickT=setTimeout(sync,250);
+  }
+  for(const ev of ['pointerdown','touchend','keydown']) addEventListener(ev,gesture,{capture:true,passive:true});
+  return {
+    sync,
+    leave(){ fadeOut(FADE_OUT); },                         // a race is starting: before the course is built
+    info(){ const i=h&&h.running?h.info():null;
+      return {armed, playing:!!(h&&h.running), ctx:actx?actx.state:null, gain:fade?+fade.gain.value.toFixed(3):0,
+        song:song().title, section:i?i.section:null, bar:i?i.bar:null, nextBar, built:!!h, springReady:!!h&&!building,
+        cost:{slices:cost.slices.length, readyAt:cost.readyAt, start:cost.start, maxSlice:cost.slices.length?Math.max(...cost.slices):0,
+          total:+cost.slices.reduce((a,b)=>a+b,0).toFixed(2), all:cost.slices.slice(0,60)}}; },
+  };
+})();
 
 /* ============== ONE PIECE PORTRAIT KIT (select-screen SVG art) ============== *
  *  Each racer is a cel-shaded teardrop head + flowing tail, hand-built from a
@@ -67689,6 +67779,7 @@ function setupSelect(keepPick){
 const _origCountdown = countdown;
 countdown = function(){
   if(state==='count') return;   // double-tap on Lock in: one build, one tick chain
+  MENU_MUSIC.leave();           // the menus' record fades out before the course is built (see MENU_MUSIC)
   SEL3D.drop();   // the select stage's models go before the track and the grid are built
   initAudio();
   // the labyrinth: this race's maze is the one planned (or handed over: the host's, "Same maze");
@@ -68921,7 +69012,9 @@ setupFullscreen();
 (function setupMusic(){ const b=$('musicbtn'); if(!b)return;
   setBtn(b,'Music',musicOn?'ON':'OFF',musicOn);
   b.onclick=()=>{ musicOn=!musicOn; setBtn(b,'Music',musicOn?'ON':'OFF',musicOn);
-    if(!musicOn) stopMusic(); else if(state==='race') startMusic(); }; })();
+    try{ localStorage.setItem('sr_music',musicOn?'1':'0'); }catch(_){}
+    if(!musicOn) stopMusic(); else if(state==='race') startMusic();
+    MENU_MUSIC.sync(0.3); }; })();      // and the menus' record (see MENU_MUSIC)
 // which station a race starts on: its course's own record where it has one, or always the racer's
 (function setupSoundtrack(){ const b=$('sndbtn'); if(!b)return;
   const paint=()=>{ b.textContent='Soundtrack: '+(soundtrack==='course'?'Course songs':'Racer songs'); b.classList.toggle('on',soundtrack==='course'); };
@@ -69544,6 +69637,8 @@ window.srNet={
     lobby:NET.lobby, racing:NET.on, fillAI:NET.fillAI, open:NET.open, finding:NET.finding, openT:netOpenLeft(),
     players:[...NET.players.values()].map(p=>({id:p.id, name:p.name, typeId:p.typeId,
       quietMs:Math.round(performance.now()-p.last)}))}; },
+  // the menus' record (MENU_MUSIC): whether it is playing, where, and what its start cost the main thread
+  get theme(){ return MENU_MUSIC.info(); },
   // What is actually playing: which tune, and whose arrangement of it. Read-only, and the
   // only practical way to check a course song is re-genring rather than overwriting.
   get music(){ if(!curStyle) return {playing:false};
