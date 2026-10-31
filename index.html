@@ -270,6 +270,7 @@
   #loading b{color:var(--signal);}
 
   /* ===== full-screen atmosphere overlays (pure CSS, GPU cheap) ===== */
+  #diag{position:fixed;left:6px;top:6px;z-index:99;padding:3px 7px;border-radius:4px;background:rgba(0,0,0,.62);color:#9cf59c;font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;pointer-events:none;white-space:pre;}   /* frame stats (More: "Frame stats") */
   #fx{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden;}   /* (clipped to the screen it covers: the oversized speed-line disc no longer makes the page scrollable) */
   #vignette{position:absolute;inset:0;
     box-shadow:inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5);
@@ -287,7 +288,8 @@
       repeating-conic-gradient(from 0deg at 50% 50%, rgba(234,255,248,.14) 0deg 1.2deg, transparent 1.2deg 7deg);
     -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent 29vmax, #000 56vmax);
             mask-image:radial-gradient(circle at 50% 50%, transparent 29vmax, #000 56vmax);
-    animation:spin 8s linear infinite;}
+    animation:spin 8s linear infinite;display:none;}   /* (display:none until it is lit: a disc this size spinning at opacity 0 behind the home deck still cost the compositor every frame) */
+  #speed.live{display:block;}
   @supports (width:hypot(3px,4px)){ #speed{--sd:calc(hypot(100vw,100vh) * 1.03);} }
   @keyframes spin{to{transform:rotate(360deg)}}
   #boostflash{position:absolute;inset:0;background:radial-gradient(circle at 50% 60%,rgba(255,210,120,.0),transparent 60%);
@@ -923,13 +925,14 @@
   /* while the course behind it is being built (see PREVIEW), the screen shows a dark card with the course's outline: a channel ident */
   .hz-tune{position:absolute;inset:0;z-index:0;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s;
     background:radial-gradient(90% 80% at 50% 50%,#1b1016 0%,#120a0d 60%,#0E0806 100%);}
+  .hz-tune.has-poster{background-size:cover;background-position:50% 50%;} .hz-tune.has-poster .hz-ta{display:none;}
   .hz-win.tuning .hz-tune{opacity:1;transition-duration:.08s;}
   .hz-win.tuning .hz-live i{background:#6b5d50;box-shadow:none;}
-  .hz-tl{position:absolute;left:12px;top:9px;font:700 11px/1.3 var(--hz-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--hz-grey);}
-  .hz-tl i{font-style:normal;animation:hzDots 1.2s steps(1) infinite;} .hz-tl i:nth-child(2){animation-delay:.4s;} .hz-tl i:nth-child(3){animation-delay:.8s;}
+  .hz-tl{position:absolute;left:10px;top:8px;padding:2px 7px;border-radius:3px;background:rgba(14,8,6,.72);font:700 11px/1.3 var(--hz-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--hz-ink);}
+  .hz-tl i{font-style:normal;} .hz-win.tuning .hz-tl i{animation:hzDots 1.2s steps(1) infinite;} .hz-tl i:nth-child(2){animation-delay:.4s;} .hz-tl i:nth-child(3){animation-delay:.8s;}
   @keyframes hzDots{0%,99%{opacity:0}50%{opacity:1}}
-  .hz-ta{width:52%;height:62%;animation:hzTune 1.3s ease-in-out infinite alternate;}
-  .hz-ta svg{width:100%;height:100%;filter:drop-shadow(0 0 8px rgba(138,75,255,.5));}
+  .hz-ta{width:52%;height:62%;} .hz-win.tuning .hz-ta{animation:hzTune 1.3s ease-in-out infinite alternate;}   /* (the card's motion runs only while it is up: an animation in a hidden layer still costs a frame) */
+  .hz-ta svg{width:100%;height:100%;}
   @keyframes hzTune{from{opacity:.55;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
   @media (prefers-reduced-motion:reduce){ .hz-ta,.hz-tl i{animation:none;} }
   .hz-nm{position:absolute;left:clamp(10px,1.6vw,16px);bottom:clamp(6px,1.4vh,14px);z-index:1;max-width:calc(100% - 20px);font:400 var(--hz-nm,64px)/1.08 var(--hz-neon);letter-spacing:.02em;white-space:nowrap;
@@ -1416,6 +1419,7 @@
   </radialGradient>
 </defs></svg>
 
+<div id="diag" class="hidden" aria-live="off"></div>
 <div id="fx">
   <div id="vignette"></div>
   <div id="speed"></div>
@@ -1673,6 +1677,7 @@
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="handbtn" style="display:none">Controls: Right-handed</button>
         <button class="go alt tile" id="homebtn">Home style: Horizon</button>
+        <button class="go alt tile" id="diagbtn">Frame stats: OFF</button>
       </div>
     </div>
   </div>
@@ -64450,7 +64455,7 @@ function syncHUD(){
   // speed-line + vignette intensity
   const boost=me.boostT>0;
   const inten=Math.max(0,(sp-90)/90) + (boost?0.6:0);
-  elSpeed.style.opacity=Math.min(0.85,inten).toFixed(2);
+  { const so=Math.min(0.85,inten); elSpeed.style.opacity=so.toFixed(2); elSpeed.classList.toggle('live',so>0.01); }   // (the disc exists only while it shows; the results screen keeps whatever the last race frame left)
   elVig.style.boxShadow=boost
     ? 'inset 0 0 240px 50px rgba(2,12,16,.9), inset 0 0 70px rgba(255,180,90,.12)'
     : 'inset 0 0 200px 30px rgba(2,12,16,.85), inset 0 0 60px rgba(2,12,16,.5)';
@@ -64474,6 +64479,15 @@ function menuRes(m){ if(m===menuMode) return; menuMode=m; menuLo=m>0; renderer.s
 // the deck is painted first and the course built after, so the page is up before its heaviest work. PREVIEW.built is the course the
 // scene holds (every buildTrack sets it), so coming back to the home screen rebuilds only when the pick moved on while it was away.
 const PREVIEW_DELAY=350;
+// frame stats (More: "Frame stats"): a readout for a device that feels slow: fps, the loop's own ms per frame, the canvas's
+// pixel size, the last course build, the state and home style. Off by default (sr_diag).
+const DIAG={on:false, el:null, n:0, ms:0, t0:0, build:0, built:''};
+function diagTick(now, ms){
+  if(!DIAG.on||!DIAG.el) return; DIAG.n++; DIAG.ms+=ms; if(now-DIAG.t0<500) return;
+  const c=renderer.domElement, fps=DIAG.n*1000/(now-DIAG.t0);
+  DIAG.el.textContent=fps.toFixed(0)+' fps · loop '+(DIAG.ms/DIAG.n).toFixed(1)+' ms · canvas '+c.width+'×'+c.height+' · build '+DIAG.build.toFixed(0)+' ms'+(DIAG.built?' ('+DIAG.built+')':'')+' · '+state+' · '+(document.body.classList.contains('hz')?'horizon':'classic');
+  DIAG.n=0; DIAG.ms=0; DIAG.t0=now;
+}
 const PREVIEW={built:-1, timer:0, hold:0, pending:false};
 function previewHold(ms){ PREVIEW.hold=Math.max(PREVIEW.hold, performance.now()+ms); }
 function previewTune(on){ const w=$('hzwin'); if(w) w.classList.toggle('tuning',on); }
@@ -64484,7 +64498,7 @@ function previewSoon(delay){
 function previewNow(){
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
   if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
-  if(PREVIEW.built!==selTrack){ buildTrack(selTrack); buildRacers(); }
+  if(PREVIEW.built!==selTrack){ const b0=performance.now(); buildTrack(selTrack); buildRacers(); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; }
   PREVIEW.pending=false; PREVIEW.hold=0;
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
   let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
@@ -64499,6 +64513,7 @@ function hzDraw(){
   R.setScissorTest(false); R.setViewport(0,0,_vw,_vh);
 }
 function frame(now){
+  const _f0=performance.now();
   if(SEL3D.vis){ last=now; SEL3D.frame(now); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
   const dt=Math.min(0.033,(now-last)/1000); last=now;
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
@@ -64694,8 +64709,10 @@ function frame(now){
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
   updateParticles(dt);
+  if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
   const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
   if(!held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  diagTick(now, performance.now()-_f0);
   requestAnimationFrame(frame);
 }
 
@@ -67329,6 +67346,11 @@ setupFullscreen();
 // both sides already carry a button set.
 let handLeft=false; try{ handLeft=localStorage.getItem('sr_hand')==='l'; }catch(_){}
 document.body.classList.toggle('lefty',handLeft);
+(function setupDiag(){ const b=$('diagbtn'), el=$('diag'); if(!b||!el) return; DIAG.el=el;
+  const set=o=>{ DIAG.on=o; el.classList.toggle('hidden',!o); b.textContent='Frame stats: '+(o?'ON':'OFF'); b.classList.toggle('on',o); b.setAttribute('aria-pressed',o?'true':'false'); DIAG.n=0; DIAG.ms=0; DIAG.t0=performance.now(); };
+  let on=false; try{ on=localStorage.getItem('sr_diag')==='1'; }catch(_){}
+  set(on); b.onclick=()=>{ set(!DIAG.on); try{ localStorage.setItem('sr_diag',DIAG.on?'1':'0'); }catch(_){} };
+})();
 (function setupHand(){ const b=$('handbtn'); if(!b) return;
   const paint=()=>{ b.textContent='Controls: '+(handLeft?'Left-handed':'Right-handed'); b.classList.toggle('on',handLeft); };
   b.onclick=()=>{ handLeft=!handLeft; document.body.classList.toggle('lefty',handLeft); try{ localStorage.setItem('sr_hand',handLeft?'l':'r'); }catch(_){} paint(); };
@@ -67875,8 +67897,22 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     if(nm){ nm.textContent=t.name; nmLen=t.name.length; fitName(); }
     const ta=$('hzta'); if(ta){ const c=$('trackpick').children[ord.indexOf(i)], s=c&&c.querySelector('svg.tp'); ta.replaceChildren(s?s.cloneNode(true):''); }   // the tuning card shows the course that is coming
     if(i!==PREVIEW.built) previewTune(true); else if(!PREVIEW.pending) previewTune(false);   // ...and goes up as soon as the strip has moved off the course the scene holds
+    poster(i);
     const fa=$('hzfacts'); if(fa) fa.innerHTML=f.chips.join(' · ')+(best?' · <b>★ '+bestFmt(best)+'</b>':'')+(nw?' · <span class="nw">NEW</span>':'');
     const f2=$('hzfacts2'); if(f2) f2.textContent=f.chips[0]+(best?' · ★ '+bestFmt(best):'');
+  }
+  // the course's poster: a still of its home window (posters/<name>.jpg, made by tools/posters.js), shown on the tuning card the moment a
+  // course is picked, so a flick through the strip lands on a picture while the live one is built. The pick's neighbours are fetched
+  // ahead, a little after each change, so the next flick has its picture too.
+  const PO={}; let poTimer=0;
+  function posterUrl(t){ return 'posters/'+t.name.toLowerCase()+'.jpg'; }
+  function posterLoad(t){ if(PO[t.name]) return PO[t.name]; const im=new Image(); PO[t.name]=im; im.src=posterUrl(t); return im; }
+  function poster(i){
+    const t=TRACKS[i], el=hd.querySelector('.hz-tune'); if(!t||!el) return;
+    const im=posterLoad(t), show=()=>{ if(TRACKS[selTrack]!==t && el.dataset.for!==t.name) return; el.style.backgroundImage='url("'+posterUrl(t)+'")'; el.classList.add('has-poster'); };
+    el.dataset.for=t.name;
+    if(im.complete && im.naturalWidth) show(); else { el.classList.remove('has-poster'); el.style.backgroundImage=''; im.onload=show; im.onerror=()=>{ el.classList.remove('has-poster'); el.style.backgroundImage=''; }; }   // (until it is in: the outline, never the last course's picture)
+    clearTimeout(poTimer); poTimer=setTimeout(()=>{ const ord=courseStripOrder(), k=ord.indexOf(i); for(const d of [1,-1,2,-2,3]){ const j=ord[k+d]; if(j!==undefined) posterLoad(TRACKS[j]); } },1200);
   }
   hzHooks={racer:paintRacerHz, course:paintCourseHz};
 
