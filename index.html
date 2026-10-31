@@ -44214,33 +44214,84 @@ function paintMatFrom(old, hsl){
     side:old.side, transparent:faint, opacity:faint?old.opacity:1,
     depthWrite:old.depthWrite, depthTest:old.depthTest });
 }
-// Repaint Pierre as Plein-Air Pierre, the only racer this runs on (the course pass is paintifyScene). Each part takes
-// its colour from the card's palette (warm beige skin, the near-black beret, bone-white eyes and collar, the sienna
-// neckerchief, an olive body), laid over a pale canvas of brush strokes rather than the olive one, which had muddied every
-// colour to the same murky green, and lit in two painterly steps (full-colour toon on linear colours: matte, a lit side
-// and a shadow side like the card's). A seam-brown contour goes round the head.
-const PIERRE_PAINT={0xf0cdb0:0xc4b48c, 0x15110f:0x2a221a, 0x3a2a1c:0x4a3a24, 0xf0f0f0:0xe8e2d0, 0xb52a2a:0xb0442a, 0xd9a45a:0xc9a060,
-  0x9a6a2c:0x8a6a3a, 0xffffff:0xe8e2d0, 0x111111:0x241d16, 0x442222:0x4a3a24};
+// Repaint Pierre as Plein-Air Pierre, the only racer this runs on (the course pass is paintifyScene), to the card: warm
+// peach skin, the black beret with a painted highlight, eyes closed and content, a black handlebar moustache curling up
+// at the ends, a small round "o" of a mouth, a red neckerchief knotted at the side over a Breton striped collar, the
+// baguette, and a blue-and-white striped tail. Everything is laid over loaded brush strokes (a pale canvas, not the olive
+// one, which had muddied every colour to one green) and lit in two painterly steps (full-colour toon on linear colours),
+// with a seam-brown contour round the head. The base build's moustache arc, collar ring and neckerchief make way.
 let PIERRE_TEX=null;
 function paintify(g){
-  const ud=g.userData, head=ud.head, tail=ud.tailMesh, cache=new Map(), hsl={h:0,s:0,l:0};
-  if(!PIERRE_TEX){   // loaded brush strokes, light and dark, crossing at an angle: alla prima, no canvas weave showing through
-    const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d'); let sd=1874; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
-    x.fillStyle='#ece4d2'; x.fillRect(0,0,128,128); x.lineCap='round';
-    for(let i=0;i<150;i++){ const k=R(), px=R()*128, py=R()*128, a=-0.5+(R()-0.5)*0.7, l=12+R()*26;
-      x.strokeStyle=k<0.4?'rgba(255,252,240,.55)':k<0.75?'rgba(150,130,96,.32)':k<0.9?'rgba(110,128,150,.22)':'rgba(176,90,52,.18)'; x.lineWidth=3+R()*7;
-      x.beginPath(); x.moveTo(px,py); x.quadraticCurveTo(px+Math.cos(a)*l*0.5+(R()-0.5)*6,py+Math.sin(a)*l*0.5+(R()-0.5)*6,px+Math.cos(a)*l,py+Math.sin(a)*l); x.stroke(); }
-    PIERRE_TEX=new T.CanvasTexture(c); PIERRE_TEX.wrapS=PIERRE_TEX.wrapT=T.RepeatWrapping; PIERRE_TEX.encoding=T.sRGBEncoding; PIERRE_TEX.repeat.set(2,1); }
-  const C=h=>new T.Color(h).convertSRGBToLinear();
-  const mat=(hex,side)=>new T.MeshToonMaterial({gradientMap:SC_GRAD, color:C(hex).multiplyScalar(0.62), emissive:C(hex).multiplyScalar(0.1), map:PIERRE_TEX, side});
-  g.traverse(o=>{
-    if(!o.isMesh || !o.material) return;
+  const ud=g.userData, head=ud.head, tail=ud.tailMesh, hsl={h:0,s:0,l:0}, V=(x,y,z)=>new T.Vector3(x,y,z), FACE=Math.PI/2;
+  const sm=(e0,e1,x)=>{ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); };
+  const canvas=(w,h,paint)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); paint(x,w,h);
+    const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding; return t; };
+  let sd=1874; const R=()=>{ sd=(sd*16807)%2147483647; return (sd-1)/2147483646; };
+  const strokes=(x,w,h,n,cols,a0,wid)=>{ x.lineCap='round'; for(let i=0;i<n;i++){ const px=R()*w, py=R()*h, a=a0+(R()-0.5)*0.7, l=12+R()*26;
+      x.strokeStyle=cols[(R()*cols.length)|0]; x.lineWidth=wid[0]+R()*wid[1];
+      x.beginPath(); x.moveTo(px,py); x.quadraticCurveTo(px+Math.cos(a)*l*0.5+(R()-0.5)*6,py+Math.sin(a)*l*0.5+(R()-0.5)*6,px+Math.cos(a)*l,py+Math.sin(a)*l); x.stroke(); } };
+  if(!PIERRE_TEX){ PIERRE_TEX={
+    // loaded brush strokes, light and dark, crossing at an angle: alla prima, no canvas weave showing through
+    paint:canvas(128,128,(x,w,h)=>{ x.fillStyle='#ece4d2'; x.fillRect(0,0,w,h); strokes(x,w,h,150,['rgba(255,252,240,.55)','rgba(255,252,240,.55)','rgba(150,130,96,.3)','rgba(150,130,96,.3)','rgba(176,90,52,.16)'],-0.5,[3,7]); }),
+    // the beret: near-black wool, one painted highlight of blue-grey light across its crown
+    beret:canvas(128,64,(x,w,h)=>{ x.fillStyle='#d8d8de'; x.fillRect(0,0,w,h); strokes(x,w,h,60,['rgba(60,60,70,.35)','rgba(255,255,255,.3)'],0,[3,6]);
+      x.lineCap='round'; for(const [y,a,c] of [[18,0.5,'rgba(255,255,255,.85)'],[26,0.6,'rgba(220,230,255,.6)']]){ x.strokeStyle=c; x.lineWidth=7; x.beginPath(); x.moveTo(w*0.52,y); x.quadraticCurveTo(w*0.62,y-6,w*0.74,y+2); x.stroke(); } }),
+    // the Breton collar: navy stripes on cream, painted (rows of the canvas run round the collar)
+    breton:canvas(16,64,(x,w,h)=>{ x.fillStyle='#ece4d2'; x.fillRect(0,0,w,h); for(let i=0;i<4;i++){ x.fillStyle='#3e4a68'; x.fillRect(0,8+i*14,w,6); } }),
+    // the tail: navy bands across it on cream, each band a broad stroke
+    tail:canvas(256,16,(x,w,h)=>{ x.fillStyle='#e6dfcb'; x.fillRect(0,0,w,h); for(let i=0;i<11;i++){ x.fillStyle=i%2?'#46527a':'#3e4a68'; x.fillRect(10+i*22,0,11,h); }
+      strokes(x,w,h,40,['rgba(255,252,240,.35)','rgba(60,70,100,.25)'],0,[2,4]); }),
+  }; PIERRE_TEX.paint.repeat.set(2,1); PIERRE_TEX.breton.repeat.set(1,1); }
+  const TX=PIERRE_TEX, C=h=>new T.Color(h).convertSRGBToLinear(), cache=new Map();
+  const mat=(hex,o)=>{ const k=hex+':'+JSON.stringify(Object.keys(o||{}).map(q=>q+(o[q]&&o[q].uuid||o[q])));
+    if(!cache.has(k)) cache.set(k, new T.MeshToonMaterial(Object.assign({gradientMap:SC_GRAD, color:C(hex).multiplyScalar(0.62), emissive:C(hex).multiplyScalar(0.1), map:TX.paint}, o))); return cache.get(k); };
+  const hexOf=c=>c.material&&c.material.color?c.material.color.getHex():-1;
+  // what the card redraws goes: the moustache arc, the collar ring, the neckerchief ring and knot, the nucleus
+  for(const c of [...g.children]) if(c.isMesh && c!==head && c!==tail && c!==ud.mouth){ const h=hexOf(c);
+    if(h===0x3a2a1c || h===0xf0f0f0 || h===0xb52a2a || (c.material.isMeshBasicMaterial && c.geometry.type==='SphereGeometry' && c.geometry.parameters.radius===1.5)) g.remove(c); }
+  // the head: warm peach, its contour in seam brown
+  head.material=mat(0xe0b896);
+  { const ol=new T.Mesh(head.geometry, new T.MeshBasicMaterial({color:PAINT_SEAM, side:T.BackSide})); ol.scale.setScalar(1.065); ol.userData.isOutline=true; head.add(ol); }
+  const skin=head.material, ink=mat(0x2c2018);
+  // eyes closed and content: each eyeball becomes a low lid in the skin with a dark downward arc and two lashes on it
+  // (still the eyes the blink and the wink squash); the pupils and the catch-lights are not shown
+  const lidGeo=new T.SphereGeometry(0.95,14,8).scale(1,0.62,0.42).translate(0,0,0.42);
+  const arc=vkMerge([[new T.TorusGeometry(0.7,0.085,5,14,Math.PI).rotateZ(Math.PI), new T.Matrix4().makeTranslation(0,0.12,0.84)],
+    [new T.CylinderGeometry(0.05,0.05,0.34,4), new T.Matrix4().makeTranslation(-0.62,-0.06,0.82).multiply(new T.Matrix4().makeRotationZ(-0.9))],
+    [new T.CylinderGeometry(0.05,0.05,0.3,4), new T.Matrix4().makeTranslation(-0.36,-0.4,0.84).multiply(new T.Matrix4().makeRotationZ(-0.35))]]);
+  (ud.eyes||[]).forEach((e,i)=>{ const sx=i?1:-1; e.geometry=lidGeo; e.material=skin; const a=new T.Mesh(arc, ink); a.scale.x=-sx; e.add(a); });
+  for(const p of ud.pupils||[]) p.visible=false;
+  for(const c of g.children) if(c.isMesh && c.material.isMeshBasicMaterial && c.geometry.type==='SphereGeometry' && c.geometry.parameters.radius===0.24) c.visible=false;
+  // the handlebar moustache: black, full under the nose, curling up and in at the ends
+  { const items=[], f=(x,y,o)=>{ const a=faceAnchor(x,y); return a.p.clone().addScaledVector(a.n,o); };
+    for(const sx of [-1,1]){ const cv=new T.CatmullRomCurve3([f(sx*0.05,3.05,0.16), f(sx*0.75,2.94,0.2), f(sx*1.45,2.86,0.2), f(sx*1.95,3.05,0.2), f(sx*2.05,3.45,0.2), f(sx*1.8,3.6,0.2), f(sx*1.68,3.42,0.2)], false, 'centripetal');
+      items.push([taperTube(cv,26,7,u=>0.26*(1-0.72*u)+0.05*Math.sin(Math.PI*Math.min(1,u*3))), null]); }
+    g.add(new T.Mesh(vkMerge(items), ink)); }
+  // the mouth: a small round "o" (still the expression's mouth)
+  if(ud.mouth){ ud.mouth.geometry=vkMerge([[new T.TorusGeometry(0.3,0.12,6,16), null, C(0x9a4a44)], [new T.CircleGeometry(0.22,14), new T.Matrix4().makeTranslation(0,0,-0.02), C(0x4a1e18)]]);
+    ud.mouth.material=mat(0xffffff,{vertexColors:true}); ud.mouth.rotation.x*=0.5; ud.mouth.scale.set(1,0.9,1); seatOnFace(ud.mouth, 0, 2.5, 0.08); }
+  // the beret: black, its painted highlight; the baguette and its scores in the card's ochres
+  for(const c of g.children){ if(!c.isMesh) continue; const h=hexOf(c);
+    if(h===0x15110f) c.material=mat(0x2f2e35,{map:TX.beret});
+    else if(h===0xd9a45a) c.material=mat(0xc9a368); else if(h===0x9a6a2c) c.material=mat(0x7a5024); }
+  // ===== body parts: the Breton collar round the neck, the red neckerchief over it, knotted at his left side
+  const cTop=ph=>2.34-0.5*sm(-0.7,1,-Math.sin(ph));
+  g.add(bodyPart(new T.Mesh(gridGeo(40,4,(u,v)=>{ const ph=FACE-Math.PI+u*Math.PI*2, th=T.MathUtils.lerp(cTop(ph)+0.12, 2.86, v); return headPt(th, ph, 1.11+0.03*v); }),
+    mat(0xffffff,{map:TX.breton, side:T.DoubleSide}))));
+  const red=mat(0xa8443a,{side:T.DoubleSide}), kn=[];
+  kn.push([gridGeo(40,2,(u,v)=>{ const ph=FACE-Math.PI+u*Math.PI*2, t=cTop(ph); return headPt(t-0.1+0.24*v, ph, 1.15+0.02*Math.sin(v*Math.PI)); }), null]);
+  const kp=new T.Vector3(...headPt(cTop(FACE+0.7)+0.02, FACE+0.7, 1.2));
+  kn.push([new T.SphereGeometry(0.42,10,8), new T.Matrix4().makeTranslation(kp.x,kp.y,kp.z).multiply(new T.Matrix4().makeScale(1,0.85,0.8))]);
+  g.add(bodyPart(new T.Mesh(vkMerge(kn), red)));
+  { const piv=new T.Group(); piv.position.copy(kp); g.add(bodyPart(piv)); const ends=[];
+    for(const [rz,len] of [[0.35,1.3],[-0.1,1.1]]) ends.push([new T.ConeGeometry(0.28,len,4).rotateZ(Math.PI).translate(0,-len/2,0).scale(1,1,0.4), new T.Matrix4().makeRotationZ(rz)]);
+    piv.add(new T.Mesh(vkMerge(ends), red)); (ud.sway||(ud.sway=[])).push({o:piv, bx:0, bz:0, amp:0.12, f:2.4, ph:0.8, drag:0.8, side:0.6}); }
+  // the tail: blue-and-white stripes across it
+  tail.material=mat(0xffffff,{map:TX.tail, side:T.DoubleSide});
+  // anything left (the tail's outline shell, the glow) in the plein-air treatment; outlines in seam brown
+  g.traverse(o=>{ if(!o.isMesh || !o.material) return;
     if(o.userData.isOutline){ if(o.material.color) o.material.color.setHex(PAINT_SEAM); return; }
-    const old=o.material, hex=old.color?old.color.getHex():0xffffff;
-    const want=o===tail?0x6b6a3a : (PIERRE_PAINT[hex]!=null?PIERRE_PAINT[hex]:null);
-    if(want==null || old.isMeshBasicMaterial && o!==head && hex!==0xffffff){ o.material=paintMatFrom(old, hsl); return; }
-    const k=want+':'+old.side; if(!cache.has(k)) cache.set(k, mat(want,old.side)); o.material=cache.get(k); });
-  const ol=new T.Mesh(head.geometry, new T.MeshBasicMaterial({color:PAINT_SEAM, side:T.BackSide})); ol.scale.setScalar(1.065); ol.userData.isOutline=true; head.add(ol);
+    if(!o.material.isMeshToonMaterial && !o.material.isMeshBasicMaterial) o.material=paintMatFrom(o.material, hsl); });
 }
 function paintifyScene(root, pulse){
   const remap=new Map(), hsl={h:0,s:0,l:0};
