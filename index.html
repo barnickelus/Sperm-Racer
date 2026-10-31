@@ -40529,6 +40529,27 @@ function macroSky(){
     streak(cx2, cy2, r2, 'rgba(44,24,66,0.9)', 0.42);
     streak(cx2+14, cy2-9, r2*0.72, 'rgba(255,140,90,0.9)', 0.18);  // lit underside faces the glow
   }
+  /* THE EVENING EFFECT. Monet's dusks over the pond are not a gradient: they are banks of
+     violet cloud lying low across the afterglow, each lit salmon and gold along its underside,
+     and thin rose wisps high above catching the last of it. The banks sit in the band just over
+     the glow (where every frame's top third is looking), built of overlapping streaks so their
+     tops are soft and their lit lower edges are the crisp thing; irregular in size and spacing,
+     with one or two larger masses so the band has an accent. The wisps go high and faint. */
+  { const R=harbRnd(0x5C1E5);
+    for(let i=0;i<16;i++){
+      const cx2=R()*1024, cy2=284+Math.pow(R(),1.4)*70, big=R()<0.18, r2=(big?44:22)+R()*(big?30:22);
+      for(let k=0;k<3;k++){ const ox=(R()-0.5)*r2*3.2, oy=(R()-0.3)*r2*0.5;
+        streak(cx2+ox, cy2+oy+r2*0.25, r2*(0.7+R()*0.5), 'rgba(52,26,72,0.95)', 0.24+R()*0.14); }
+      streak(cx2+r2*0.4, cy2-r2*0.28, r2*0.8, 'rgba(255,150,104,0.95)', 0.20+R()*0.12);   // the lit underside
+      streak(cx2-r2*0.6, cy2-r2*0.36, r2*0.45, 'rgba(255,206,140,0.95)', 0.16);           // and its hottest edge
+    }
+    for(let i=0;i<9;i++){ const sx3=R()*1024, sy3=372+R()*90, r3=10+R()*12;
+      x.save(); x.translate(((sx3%1024)+1024)%1024, sy3); x.scale(9,1);
+      for(const ox of [-1024/9,0,1024/9]){ const rg3=x.createRadialGradient(ox,0,0,ox,0,r3);
+        rg3.addColorStop(0,'rgba(240,150,170,0.9)'); rg3.addColorStop(1,'rgba(0,0,0,0)');
+        x.globalAlpha=0.10+R()*0.08; x.fillStyle=rg3; x.fillRect(ox-r3,-r3,r3*2,r3*2); }
+      x.globalAlpha=1; x.restore(); }
+  }
   // THE MOON: crisp warm-white disc, a soft halo, and an offset dusk disc carving a
   // gentle gibbous shade. Kept well clear of the wrap line, high in the view.
   blob(690, 442, 64, 'rgba(255,238,214,0.95)', 0.30);              // halo
@@ -40540,7 +40561,12 @@ function macroSky(){
     const bx=(i*307)%1024, by=420+((i*67)%80), r=7+((i*37)%14);
     blob(bx,by,r,'rgba(255,220,190,1)', 0.16+((i*13)%12)/100);
   }
-  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.needsUpdate=true;
+  // flipY OFF. Everything above is laid out as the note at the top says — canvas BOTTOM is the
+  // zenith — but a CanvasTexture flips by default and a SphereGeometry puts uv.y=1 at its top, so
+  // the sheet went on upside down: the moon, the cloud streaks and the embers all hung below the
+  // horizon, under the pond, and the dusk gradient ran the wrong way up. Unflipped, the sky is the
+  // one that was painted.
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.flipY=false; t.needsUpdate=true;
   const m=new T.Mesh(new T.SphereGeometry(1150,32,20),
     new T.MeshBasicMaterial({map:t, side:T.BackSide, fog:false, depthWrite:false}));
   m.frustumCulled=false; return m;
@@ -41212,10 +41238,11 @@ function lilyScenery(MK, inS, G){
   const pop=[], crown=[], trunk=[];
   for(let row=0;row<9;row++){
     const a0=row*0.698+R()*0.25, span=0.32+R()*0.3, off=18+R()*34;
-    for(let a=a0;a<a0+span;a+=(15+R()*14)/(MK.shoreR(a)+off)){
+    for(let a=a0;a<a0+span;a+=(R()<0.15?34+R()*30:12+R()*16)/(MK.shoreR(a)+off)){
       const rr=MK.shoreR(a)+off+Math.sin(a*9+row)*14+(R()-0.5)*6, x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr, y=MK.shore(x,z);
       if(y===null) continue;
-      const h=55+R()*42, w=6.4+R()*2.8;
+      // (heights and girths spread wide: a row of matched flames is a fence)
+      const h=44+Math.pow(R(),0.8)*62, w=5.4+R()*3.8;
       pop.push({x, y:y+h*0.52, z, s:w, sy:h*0.5, sz:w, ry:R()*6.28, c:LILY.tree[(R()*2)|0]});
       trunk.push({x, y:y+2, z, s:0.8, sy:5, c:0x201a20});
     }
@@ -41311,6 +41338,21 @@ function lilyScenery(MK, inS, G){
     P.flies.push({p:pc, m, ph:cl*2.3, f:0.37+cl*0.23});
   }
 }
+// Wisteria florets: pale open flowers over a shaded ground, a light upper lip on each. Tiled
+// round the raceme (wraps 3 x 4); built once a page.
+let LILY_FLORET=null;
+function lilyFloretTex(){
+  if(LILY_FLORET) return LILY_FLORET;
+  const N=64, c=document.createElement('canvas'); c.width=c.height=N; const x=c.getContext('2d'), R=harbRnd(0xF1043E);
+  x.fillStyle='#a4a0b4'; x.fillRect(0,0,N,N);
+  for(let k=0;k<70;k++){ const px=R()*N, py=R()*N, r=2.2+R()*2.4;
+    for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){ const X=px+ox, Y=py+oy; if(X<-r||X>N+r||Y<-r||Y>N+r) continue;
+      x.fillStyle='rgba(70,64,92,0.55)'; x.beginPath(); x.arc(X+0.6,Y+0.9,r,0,6.283); x.fill();
+      x.fillStyle=R()<0.3?'#ffffff':'#ece6f6'; x.beginPath(); x.ellipse(X,Y,r,r*0.8,0,0,6.283); x.fill();
+      x.fillStyle='rgba(255,236,170,0.8)'; x.beginPath(); x.arc(X-r*0.15,Y-r*0.25,r*0.28,0,6.283); x.fill(); } }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(3,4); t.encoding=T.sRGBEncoding;
+  LILY_FLORET=t; return t;
+}
 // flush the shared bags: one draw per family for the whole lap
 function lilyFlush(G, MK){
   const add=m=>{ trackGroup.add(m); return m; };
@@ -41342,17 +41384,33 @@ function lilyFlush(G, MK){
   if(G.az.length){ add(lilyCells(G.lump, G.azLeaf, lilyMat(24,0x2a3a30,{vc:true,lam:1}), 440)); add(lilyCells(G.lump2, G.az, lilyMat(34,0x8a4a6a,{vc:true}), 440)); }
   // a wisteria raceme: a tapering bunch, its rings pinched alternately so it reads as
   // florets rather than as a smooth cone (smooth cones read as icicles)
-  const hang=(()=>{ const g=new T.CylinderGeometry(1,0.38,1,5,4).translate(0,-0.5,0), p=g.attributes.position;
-    for(let k=0;k<p.count;k++){ const y=p.getY(k), ring=Math.round(-y*4), a=Math.atan2(p.getZ(k),p.getX(k));
-      const f=(ring===4?0.3:ring%2?0.78:1.0)*(1+0.16*Math.sin(a*3+ring*1.7)); p.setX(k,p.getX(k)*f); p.setZ(k,p.getZ(k)*f); }
-    g.computeVertexNormals(); return lilyShade(g,(x,y)=>0.5+0.5*(1+y)); })();
-  if(G.rac.length) add(lilyCells(hang, G.rac, lilyMat(18,0x3a2a4a,{vc:true, sway:0.6, lam:1}), 430));
+  // (deeper pinches than before, and the florets painted on: a smooth cone of one purple, lit
+  // facet by facet, read as an icicle or a crystal at any length — it is the broken surface of
+  // open flowers that says wisteria. The sheet is pale florets over a shaded ground, wrapped
+  // three times round and four down, so the raceme's own shading still runs top to tip.)
+  // A teardrop, not a cone: fullest just under the stalk where the open florets are, drawn in to
+  // a ROUND tip of buds, the rings alternately pinched (florets), and the whole spray drooping in a
+  // gentle curve rather than hanging plumb — a straight pointed cone is an icicle at any colour.
+  const hang=(()=>{ const RG=6, g=new T.CylinderGeometry(1,1,1,5,RG).translate(0,-0.5,0), p=g.attributes.position;
+    for(let k=0;k<p.count;k++){ const y=p.getY(k), t=-y, ring=Math.round(t*RG), a=Math.atan2(p.getZ(k),p.getX(k));
+      const prof=t<0.22 ? 0.72+1.27*t : 1.0-0.84*Math.pow((t-0.22)/0.78,1.5);
+      const f=prof*(ring===RG?0.35:ring%2?0.74:1.0)*(1+0.18*Math.sin(a*3+ring*1.7));
+      p.setX(k,p.getX(k)*f+0.30*t*t); p.setZ(k,p.getZ(k)*f); }
+    g.computeVertexNormals(); return lilyShade(g,(x,y)=>0.62+0.38*(1+y)); })();
+  if(G.rac.length){ const rm=lilyMat(18,0x3a2a4a,{vc:true, sway:0.6, lam:1}); rm.map=lilyFloretTex(); rm.color.setScalar(1.5); add(lilyCells(hang, G.rac, rm, 430)); }   // (lifted by the sheet's mean)
   if(G.wLeaf.length) add(lilyCells(G.lump, G.wLeaf, lilyMat(24,0x3a3a4a,{vc:true,lam:1}), 450));
   if(G.culm.length) add(lilyCells(lilyShade(new T.CylinderGeometry(1,1.12,1,6,14,true).translate(0,0.5,0),
       (x,y)=>{ const b=(y*14)%2; return (0.55+0.45*y)*(b<0.25?1.0:0.8); }), G.culm, lilyMat(60,0x80c0a0,{vc:true}), 900));
   if(G.bLeaf.length) add(lilyCells(blade, G.bLeaf, lilyMat(20,0x2a4a3a,{sway:0.4, dbl:true, lam:1}), 430));
-  const popG=new T.SphereGeometry(1,7,9), pp=popG.attributes.position;
-  for(let k=0;k<pp.count;k++){ const y=pp.getY(k), f=y>0?1-0.42*y*y:1-0.15*(-y); pp.setX(k,pp.getX(k)*f); pp.setZ(k,pp.getZ(k)*f); }
+  /* Monet's poplars are LOMBARDY poplars: a narrow flame, fullest a third of the way up and drawn
+     to a point, its edge broken by the sprays. The old egg with a round crown read as a row of
+     capsules standing on the far shore. Same instances and rows; the silhouette is the change. */
+  const popG=new T.SphereGeometry(1,7,11), pp=popG.attributes.position;
+  for(let k=0;k<pp.count;k++){ const x=pp.getX(k), y=pp.getY(k), z=pp.getZ(k), t=(y+1)/2, a=Math.atan2(z,x);
+    const prof=t<0.3 ? 0.62+0.38*Math.sin(t/0.3*Math.PI/2) : Math.pow(1-(t-0.3)/0.7, 1.35);
+    const rag=1+0.14*Math.sin(a*3+y*9.0)*Math.sin(y*17.0+a*2)+0.06*Math.sin(a*5-y*23.0);
+    const r0=Math.hypot(x,z)||1, f=prof*rag/r0*Math.sqrt(Math.max(0,1-y*y));
+    pp.setX(k,x*f); pp.setZ(k,z*f); }
   popG.computeVertexNormals(); lilyShade(popG,(x,y)=>0.6+0.4*(y+1)/2);
   if(G.pop.length) add(lilyCells(popG, G.pop, lilyMat(4,0x101410,{vc:true,lam:1})));
   if(G.crown.length) add(lilyCells(G.lump, G.crown, lilyMat(4,0x101410,{vc:true,lam:1})));
