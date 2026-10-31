@@ -35038,7 +35038,7 @@ function saltyVox(){
  * Everything is batched through tessaBatch: one shared shader, chunked by district so whole
  * districts frustum-cull, one uniform for all the motion. Clearance: pixClear, every leg.
  * ---------------------------------------------------------------------------------- */
-let TESSA_FLOOR_Y=-2, TESSA_U=null, TESSA_SALTY=null;
+let TESSA_FLOOR_Y=-2, TESSA_U=null, TESSA_MAT=null, TESSA_SALTY=null;
 const TESSA_HOR=0x5a4854;               // the sky's horizon band (raw: the dome is a raw shader too)
 function tessaFloorLevel(inS){ let lo=1e9;
   for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
@@ -35106,7 +35106,9 @@ function tessaUniforms(){
 // {x,y,z,s,sy,sz,rx,ry,rz,o|q,c,sh} -> mosaic InstancedMesh per district (chunk units; 0 = one batch)
 function tessaBatch(list, chunk, geo){
   if(!list.length) return [];
-  const mat=new T.ShaderMaterial({vertexShader:TESSA_VS, fragmentShader:TESSA_FS, uniforms:TESSA_U||tessaUniforms()});
+  // ONE material for every batch on the course: same program, same uniforms, so the renderer never
+  // switches material between tile draws and uploads the uniforms once a frame, not once a batch
+  const mat=TESSA_MAT||(TESSA_MAT=new T.ShaderMaterial({vertexShader:TESSA_VS, fragmentShader:TESSA_FS, uniforms:TESSA_U||tessaUniforms()}));
   const out=[], groups=new Map(), d=new T.Object3D();
   for(const v of list){ const k=chunk?(Math.floor(v.x/chunk)+512)*4096+(Math.floor(v.z/chunk)+512):0;
     let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(v); }
@@ -35225,7 +35227,7 @@ function tessaDeck(inS, tunIdx){
       for(;d0<dl;d0+=3.8, n++){ if(inT(i)) continue; const f=d0/dl;
         P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:3.0, sy:3.0, sz:3.3, ry, c:((n>>2)&1)?0xb81e34:0xe8e0d0}); }
       d0-=dl; } }
-  tessaBatch(P, 900);
+  tessaBatch(P, 1800);
 }
 // THE VIADUCT: stepped tile piers on an irregular stride, each with a cap under both shoulders
 function tessaPiers(){
@@ -35238,7 +35240,7 @@ function tessaPiers(){
     const n=Math.max(1,Math.round((drop-3)/8));
     for(let k=0;k<n;k++){ const h=(drop-3)/n, w=8+k*1.6;
       L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w, ry, c:k%2?0x3e5a7a:0x2a3a5c}); } }
-  tessaBatch(L, 1400);
+  tessaBatch(L, 2000);
 }
 // TUNNEL: tile arches with tombstone legs plumb at 31 (inner face 29.3, clear of the 28.2 wall),
 // gold-keyed portals at the mouths - the first cut's purple canyon, made legal
@@ -35412,7 +35414,8 @@ function tessaScenery(inS, ccx, ccz){
       const x=s.p.x+s.n.x*sd*out+(R()*2-1)*12, z=s.p.z+s.n.z*sd*out+(R()*2-1)*12, w=6+R()*6;
       if(!pixClear(x,z,w*0.75)) continue;
       lows.push({x, y:TESSA_FLOOR_Y+w*0.25, z, s:w, sy:w*0.5, sz:w, ry:R()*1.57, c:PL[(k*7)%PL.length]}); } }
-  tessaBatch(towers, 1400); tessaBatch(mesas, 1400); tessaBatch(lows, 1400); tessaBatch(cols.concat(plinths), 0); tessaBatch(gal, 0);
+  // as few meshes as will still let the far districts cull: every draw is main-thread time a frame
+  tessaBatch(towers.concat(mesas, lows, cols, plinths, gal), 2000);
   return P; }
 // the shimmer runs off one uniform; the pylon turns once in about four minutes (set from the
 // clock, never accumulated, so a stalled frame cannot make it jump)
@@ -50296,7 +50299,7 @@ function buildTrack(idx){
     pixPiers();
   } else if(mosaic){
     // Tessa: the tiled sky, the floor level, one set of shader uniforms, the piers (TESSELLATION)
-    TESSA_FLOOR_Y=tessaFloorLevel(innerSign); TESSA_U=null; tessaUniforms();
+    TESSA_FLOOR_Y=tessaFloorLevel(innerSign); TESSA_U=null; TESSA_MAT=null; tessaUniforms();
     skyDome=tessaSky(); trackGroup.add(skyDome);
     TRACK_PULSE.tessa={u:TESSA_U};
     tessaPiers();
