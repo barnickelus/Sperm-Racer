@@ -35008,6 +35008,409 @@ function saltyVox(){
   return out;
 }
 
+/* ============== THE TESSELLATION, second pass (Tessa) ============== *
+ * The first cut swapped the batcher and nothing else, so Tessa was the voxel course's props
+ * on three flat planes: a mauve floor the size of the world with nothing in it, a flat teal
+ * sky, and 560 units of fog that ended the world before the tiles ever got the distance
+ * they need to MIX - which is the whole idea. Chuck Close's grid only works at two
+ * distances at once: up close every cell is its own small abstract (a ring, a lozenge, a
+ * dot, on a contrasting ground), and from across the room the cells fuse into a face. So
+ * the second pass gives the tiles both distances and a face to fuse into:
+ *   ONE FOCAL POINT - THE PORTRAIT: Salty, in a grid of tiles, on the four faces of a pylon
+ *                     standing in the infield, turning very slowly. From the far side of the
+ *                     lap it is a face; from the near side it is several thousand tiles.
+ *   GROUND          - the floor is tiled too: big cells with their own rings and dots over
+ *                     soft colour zones, so near the road it is a mosaic and toward the
+ *                     horizon the mipmaps do what the eye does to a Close - average it.
+ *   SKY             - the ground of the picture: a dome of cells (procedural, so they stay
+ *                     crisp), rose-grey at the horizon to deep teal overhead, almost no
+ *                     contrast inside a cell - the background of a portrait, not a pattern.
+ *   STRUCTURE       - a tiled deck with shoulders (the apron is a surface you can see you are
+ *                     allowed onto), parapets of tile blocks standing ON it at the corridor
+ *                     limits (the old kerb dice stood inside the corridor and the karts drove
+ *                     through them), piers and caps, a tombstone tunnel and a START gate.
+ *   MASS            - tile towers in districts and stepped terraces, every one standing on
+ *                     the floor (the shared towers started ten units under the ROAD, so on
+ *                     the high side of the lap they hung in the air), and the three Salty
+ *                     statues on columns down to the floor instead of floating heads.
+ *   MOTION          - the pylon turns; and a very slow wave runs through the world rotating
+ *                     every tile's accent hue a little and back, so the mix breathes.
+ * Everything is batched through tessaBatch: one shared shader, chunked by district so whole
+ * districts frustum-cull, one uniform for all the motion. Clearance: pixClear, every leg.
+ * ---------------------------------------------------------------------------------- */
+let TESSA_FLOOR_Y=-2, TESSA_U=null;
+const TESSA_HOR=0x5a4854;               // the sky's horizon band (raw: the dome is a raw shader too)
+function tessaFloorLevel(inS){ let lo=1e9;
+  for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
+  return Math.floor(lo-4); }
+const TESSA_VS=`
+  attribute vec3 aBase; attribute vec3 aAccent; attribute vec3 aAccent2; attribute float aShape;
+  varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
+  varying vec2 vUv; varying vec3 vN; varying float vFogDepth; varying float vPh;
+  uniform float uT;
+  void main(){
+    vBase=aBase; vAccent=aAccent; vAccent2=aAccent2; vShape=aShape; vUv=uv;
+    mat3 im=mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);
+    mat3 mm=mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz);
+    vN=normalize(mm*im*normal);
+    vec4 wp=modelMatrix*instanceMatrix*vec4(position,1.0);
+    vPh=0.6*sin(uT*0.23+wp.x*0.0041+wp.z*0.0029)+0.4*sin(uT*0.13-wp.x*0.0019+wp.y*0.0052);
+    vec4 mv=viewMatrix*wp; vFogDepth=-mv.z;
+    gl_Position=projectionMatrix*mv;
+  }`;
+const TESSA_FS=`
+  uniform vec3 lightDir; uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar; uniform float uAmp;
+  varying vec3 vBase; varying vec3 vAccent; varying vec3 vAccent2; varying float vShape;
+  varying vec2 vUv; varying vec3 vN; varying float vFogDepth; varying float vPh;
+  vec3 hrot(vec3 c, float a){ const vec3 k=vec3(0.57735); float ca=cos(a); return c*ca+cross(k,c)*sin(a)+k*dot(k,c)*(1.0-ca); }
+  void main(){
+    float ndl=max(0.0, dot(normalize(vN), normalize(lightDir)));
+    float cu=vUv.x-0.5, cv=vUv.y-0.5, qx=abs(cu), qy=abs(cv); vec3 c;
+    bool grout=(qx>0.40||qy>0.40) || (qx>0.32&&qy>0.32&&length(vec2(qx-0.32,qy-0.32))>0.09);
+    if(grout){ c=vBase*0.45; }
+    else {
+      bool central;
+      if(vShape<0.5) central=length(vec2(cu,cv))<0.18;
+      else if(vShape<1.5) central=max(qx,qy)<0.16;
+      else if(vShape<2.5) central=qx+qy<0.21;
+      else central=(cv>-0.16 && cv<0.16 && qx<(0.16-cv)*0.9);
+      bool dm=length(vUv-vec2(0.30,0.30))<0.075 || length(vUv-vec2(0.70,0.30))<0.075
+           || length(vUv-vec2(0.30,0.70))<0.075 || length(vUv-vec2(0.70,0.70))<0.075;
+      c = central ? hrot(vAccent, vPh*uAmp) : (dm ? hrot(vAccent2, -vPh*uAmp*0.7) : vBase);
+    }
+    c = c*(0.46+0.6*ndl);
+    c = mix(c, uFogColor, smoothstep(uFogNear, uFogFar, vFogDepth));
+    gl_FragColor=vec4(c, 1.0);
+  }`;
+// one set of uniforms for every Tessa batch (made per build, after the fog is set)
+function tessaUniforms(){
+  const fog=scene.fog;
+  return (TESSA_U={ uT:{value:0}, uAmp:{value:0.36}, lightDir:{value:new T.Vector3(0.5,0.9,0.6).normalize()},
+    uFogColor:{value:fog.color.clone()}, uFogNear:{value:fog.near}, uFogFar:{value:fog.far} }); }
+// {x,y,z,s,sy,sz,rx,ry,rz,o|q,c,sh} -> mosaic InstancedMesh per district (chunk units; 0 = one batch)
+function tessaBatch(list, chunk, geo){
+  if(!list.length) return [];
+  const mat=new T.ShaderMaterial({vertexShader:TESSA_VS, fragmentShader:TESSA_FS, uniforms:TESSA_U||tessaUniforms()});
+  const out=[], groups=new Map(), d=new T.Object3D();
+  for(const v of list){ const k=chunk?(Math.floor(v.x/chunk)+512)*4096+(Math.floor(v.z/chunk)+512):0;
+    let g=groups.get(k); if(!g) groups.set(k,g=[]); g.push(v); }
+  for(const L of groups.values()){
+    const n=L.length, g=(geo||VOX_GEO).clone(), m=new T.InstancedMesh(g, mat, n);
+    const aB=new Float32Array(n*3), aA=new Float32Array(n*3), aA2=new Float32Array(n*3), aS=new Float32Array(n);
+    let cx=0,cy=0,cz=0; for(const v of L){ cx+=v.x; cy+=v.y; cz+=v.z; } cx/=n; cy/=n; cz/=n; let r=0;
+    L.forEach((v,i)=>{ d.position.set(v.x,v.y,v.z);
+      if(v.q) d.quaternion.copy(v.q); else d.rotation.set(v.rx||0, v.ry||0, v.rz||0, v.o||'XYZ');
+      const sx=v.s, sy=v.sy!=null?v.sy:v.s, sz=v.sz!=null?v.sz:v.s;
+      d.scale.set(sx,sy,sz); d.updateMatrix(); m.setMatrixAt(i,d.matrix);
+      const h=mosaicHash(Math.round(v.x*4), Math.round(v.y*4), Math.round(v.z*4)), t=mosaicTile(v.c, h);
+      aB[i*3]=t[0].r; aB[i*3+1]=t[0].g; aB[i*3+2]=t[0].b;
+      aA[i*3]=t[1].r; aA[i*3+1]=t[1].g; aA[i*3+2]=t[1].b;
+      aA2[i*3]=t[2].r; aA2[i*3+1]=t[2].g; aA2[i*3+2]=t[2].b;
+      aS[i]=v.sh!=null?v.sh:h%4;
+      r=Math.max(r, Math.hypot(v.x-cx,v.y-cy,v.z-cz)+Math.hypot(sx,sy,sz)*0.5+1); });
+    g.setAttribute('aBase',   new T.InstancedBufferAttribute(aB,3));
+    g.setAttribute('aAccent', new T.InstancedBufferAttribute(aA,3));
+    g.setAttribute('aAccent2',new T.InstancedBufferAttribute(aA2,3));
+    g.setAttribute('aShape',  new T.InstancedBufferAttribute(aS,1));
+    m.instanceMatrix.needsUpdate=true;
+    g.boundingSphere=new T.Sphere(new T.Vector3(cx,cy,cz), r);
+    m.frustumCulled=!!chunk; trackGroup.add(m); out.push(m);
+  }
+  return out; }
+// THE SKY: cells on the dome, 2.25 degrees square at the horizon, each a whisper of a tile -
+// a darker grout line and a faint lighter disc - over a three-stop gradient. Procedural, so
+// the cells stay crisp at any resolution; the contrast fades out toward the zenith, where the
+// cells crowd together and would only shimmer.
+function tessaSky(){
+  const hc=new T.Color(TESSA_HOR);
+  const m=new T.Mesh(new T.SphereGeometry(1150,48,24), new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
+    uniforms:{uHor:{value:new T.Vector3(hc.r,hc.g,hc.b)}},
+    vertexShader:`varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      uniform vec3 uHor; varying vec3 vDir;
+      void main(){
+        vec3 d=normalize(vDir);
+        float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
+        const float CELL=0.039269908;                  // 2*pi/160
+        vec2 g=vec2(az, el)/CELL, id=floor(g), f=fract(g)-0.5;
+        float h=fract(sin(dot(id,vec2(12.9898,78.233)))*43758.5453);
+        float e=max(0.0,(id.y+0.5)*CELL);
+        vec3 mid=vec3(0.15,0.21,0.27), zen=vec3(0.035,0.085,0.115);
+        vec3 base=mix(uHor, mid, smoothstep(0.0,0.20,e)); base=mix(base, zen, smoothstep(0.16,0.95,e));
+        float k=1.0-smoothstep(0.55,1.1,e);           // tile contrast, gone toward the zenith
+        base*=1.0+(h-0.5)*0.07*k;
+        float q=max(abs(f.x),abs(f.y)), r=length(f);
+        vec3 c=base;
+        if(q>0.44) c=base*(1.0-0.05*k);
+        else if(r<0.15) c=base*(1.0+0.045*k)+vec3(0.008,0.004,0.0)*k*h;
+        if(el<0.0) c=uHor;
+        gl_FragColor=vec4(c,1.0);
+      }` }));
+  m.renderOrder=-3;
+  const G=new T.Group(); G.add(m); return G; }
+// The floor's tiles: 16x16 cells to a sheet, each one a small Close - grout, a ground, a central
+// mark and four dots - in mid-dark muted grounds so the deck stays the lighter plane.
+let TESSA_FLOOR_TEX=null;
+function tessaFloorTex(){
+  if(TESSA_FLOOR_TEX) return TESSA_FLOOR_TEX;
+  const N=512, C=32, c=document.createElement('canvas'); c.width=c.height=N; const g=c.getContext('2d');
+  const PAL=[0x2c3850,0x3a2c44,0x223e40,0x403628,0x30402a,0x402a36,0x2a3048];
+  const hex=col=>'#'+col.getHexString();
+  for(let j=0;j<N/C;j++) for(let i=0;i<N/C;i++){
+    const h=mosaicHash(i*7+3, j*11+5, 29), t=mosaicTile(PAL[h%PAL.length], h), x=i*C, y=j*C;
+    // a FLOOR, not a wall: grounds held dark, marks pulled most of the way back to them, so the
+    // deck stays the lighter, louder plane and the floor only shows its tiles near the road
+    t[0].multiplyScalar(0.62); t[1].lerp(t[0],0.74); t[2].lerp(t[0],0.66);
+    g.fillStyle=hex(t[0].clone().multiplyScalar(0.48)); g.fillRect(x,y,C,C);
+    g.fillStyle=hex(t[0]); g.beginPath(); if(g.roundRect) g.roundRect(x+3,y+3,C-6,C-6,4); else g.rect(x+3,y+3,C-6,C-6); g.fill();
+    g.fillStyle=hex(t[1]); g.beginPath();
+    const sh=(h>>>3)%4, mx=x+C/2, my=y+C/2;
+    if(sh===0) g.arc(mx,my,6,0,Math.PI*2); else if(sh===1) g.rect(mx-5,my-5,10,10);
+    else if(sh===2){ g.moveTo(mx,my-7); g.lineTo(mx+7,my); g.lineTo(mx,my+7); g.lineTo(mx-7,my); }
+    else { g.arc(mx,my,7,0,Math.PI*2); g.arc(mx,my,3.5,0,Math.PI*2,true); }
+    g.fill();
+    g.fillStyle=hex(t[2]); for(const [ox,oy] of [[9,9],[23,9],[9,23],[23,23]]){ g.beginPath(); g.arc(x+ox,y+oy,2.2,0,Math.PI*2); g.fill(); } }
+  const tx=new T.CanvasTexture(c); tx.wrapS=tx.wrapT=T.RepeatWrapping; tx.encoding=T.sRGBEncoding;
+  tx.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  return (TESSA_FLOOR_TEX=tx); }
+// the shoulder: the road's own 8px tiles, but held DARK and nearly one value - grounds a step
+// apart, a muted dot in each - so the deck reads as road, apron, wall, floor, in that order
+let TESSA_DECK_TEX=null;
+function tessaDeckTex(){
+  if(TESSA_DECK_TEX) return TESSA_DECK_TEX;
+  const c=document.createElement('canvas'); c.width=c.height=64; const g=c.getContext('2d');
+  const MT=['#1a2232','#1c2630','#20202e','#1e2a2c','#241f2c','#1a2430'], DOT=['#3a4a66','#4a3a58','#2e5252','#584a36'];
+  for(let y=0;y<64;y+=8) for(let x=0;x<64;x+=8){ const i=((x>>3)*5+(y>>3)*3)%MT.length;
+    g.fillStyle='#0c1016'; g.fillRect(x,y,8,8); g.fillStyle=MT[i]; g.fillRect(x+1,y+1,6,6);
+    g.fillStyle=DOT[(i+(y>>3))%DOT.length]; g.fillRect(x+3,y+3,2,2); }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.encoding=T.sRGBEncoding;
+  t.magFilter=T.NearestFilter; t.minFilter=T.NearestMipmapLinearFilter;
+  return (TESSA_DECK_TEX=t); }
+// THE DECK, as Pixie's: shoulders out to 35 outside and 54 inside (the infield apron to 48.4 is
+// a legal shortcut, so it is drawn), a dark fascia off each lip, and parapets of tile blocks
+// standing ON the shoulder at the corridor limits - 29.3-32.3 outside, 49.3-52.3 inside, as
+// horizontal laterals the way the physics measures its walls. Not in the tunnel.
+function tessaDeck(inS, tunIdx){
+  const LAST=STEPS, inT=i=>tunIdx.some(([a,b])=>i>=a-2&&i<=b+2);
+  const D={p:[],u:[],i:[]}, F={p:[],i:[]};
+  for(const side of [1,-1]){ const OUT=side===inS?54:35;
+    const b0=D.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], a=s.p.clone().addScaledVector(s.bn,side*HW), o=s.p.clone().addScaledVector(s.bn,side*OUT);
+      D.p.push(a.x,a.y+0.04,a.z, o.x,o.y+0.04,o.z); D.u.push(HW/44,i*0.2143, OUT/44,i*0.2143); }
+    for(let i=0;i<LAST;i++){ const a=b0+i*2; D.i.push(a,a+1,a+2, a+1,a+3,a+2); }
+    const f0=F.p.length/3;
+    for(let i=0;i<=LAST;i++){ const s=SAMP[i%STEPS], o=s.p.clone().addScaledVector(s.bn,side*OUT);
+      F.p.push(o.x,o.y+0.04,o.z, o.x,o.y-6.5,o.z); }
+    for(let i=0;i<LAST;i++){ const f=f0+i*2; F.i.push(f,f+2,f+1, f+1,f+2,f+3); } }
+  const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(D.p,3));
+  dg.setAttribute('uv',new T.Float32BufferAttribute(D.u,2)); dg.setIndex(D.i); dg.computeVertexNormals();
+  trackGroup.add(new T.Mesh(dg, new T.MeshLambertMaterial({map:tessaDeckTex(), color:0xffffff, side:T.DoubleSide})));
+  const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(F.p,3)); fg.setIndex(F.i); fg.computeVertexNormals();
+  trackGroup.add(new T.Mesh(fg, new T.MeshLambertMaterial({color:0x1a1c2a, side:T.DoubleSide})));
+  // the parapets: tile blocks, three units, on an even 3.4 pitch (a wall, not a scatter),
+  // colour in runs of four so the wall reads as a red-and-cream band at speed
+  const P=[], pt=(s,L)=>s.p.clone().addScaledVector(s.bn,L/Math.cos(s.bank||0));
+  for(const [side,L] of [[-inS,30.8],[inS,50.8]]){ let d0=0, n=0;
+    for(let i=0;i<STEPS;i++){ const A=SAMP[i], B=SAMP[(i+1)%STEPS], qa=pt(A,side*L), qb=pt(B,side*L), dl=qa.distanceTo(qb);
+      const ry=Math.atan2(A.t.x,A.t.z);
+      for(;d0<dl;d0+=3.4, n++){ if(inT(i)) continue; const f=d0/dl;
+        P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:3.0, sy:3.0, sz:3.0, ry, c:((n>>2)&1)?0xb81e34:0xe8e0d0}); }
+      d0-=dl; } }
+  tessaBatch(P, 900);
+}
+// THE VIADUCT: stepped tile piers on an irregular stride, each with a cap under both shoulders
+function tessaPiers(){
+  const L=[], R=pixRnd(0x7E55A);
+  for(let i=2;i<STEPS;i+=6+((R()*5)|0)){
+    const A=pixFrame(i), s=A.s, top=s.p.y-0.6, drop=top-TESSA_FLOOR_Y; if(drop<3) continue;
+    const ry=Math.atan2(s.t.x,s.t.z), c=s.p.clone().addScaledVector(A.y,-2.6);
+    for(let k=-4;k<=4;k++){ const p=c.clone().addScaledVector(A.x,k*9.6);      // the cap, as a row of tiles
+      L.push({x:p.x,y:p.y,z:p.z, s:9.4, sy:3.4, sz:6, q:A.q, c:0x2a3a5c}); }
+    const n=Math.max(1,Math.round((drop-3)/8));
+    for(let k=0;k<n;k++){ const h=(drop-3)/n, w=8+k*1.6;
+      L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w, ry, c:k%2?0x3e5a7a:0x2a3a5c}); } }
+  tessaBatch(L, 1400);
+}
+// TUNNEL: tile arches with tombstone legs plumb at 31 (inner face 29.3, clear of the 28.2 wall),
+// gold-keyed portals at the mouths - the first cut's purple canyon, made legal
+function tessaTunnel(tunIdx){
+  const arch=[], LAT=31, LEG=20, CR=13;
+  for(const [i0,i1] of tunIdx){ let n=0;
+    for(let i=i0;i<=i1;i+=3+(n%3), n++){
+      const s=SAMP[i%STEPS], mouth=i<i0+3||i>i1-4, ry=Math.atan2(s.t.x,s.t.z), tb=Math.tan(s.bank||0);
+      const yA=s.p.y+tb*LAT, yB=s.p.y-tb*LAT, top=Math.max(yA,yB)+LEG, cell=[];
+      for(const [side,y0] of [[1,yA],[-1,yB]]) for(let y=y0+2.2;y<top;y+=4.4) cell.push([side*LAT,y]);
+      for(let a=0;a<=18;a++){ const th=Math.PI*(a/18); cell.push([Math.cos(th)*LAT, top+Math.sin(th)*CR]); }
+      cell.forEach(([off,y],k)=>{ const key=Math.abs(off)<3&&y>top+8;
+        arch.push({x:s.p.x+s.n.x*off, y, z:s.p.z+s.n.z*off, s:4.4, sy:4.4, sz:mouth?7:4.4, ry,
+          c:mouth?(key?0xf2c84a:0x4a2a8a):(k%2?0x7046b0:0x8e62d6)}); }); } }
+  tessaBatch(arch, 0);
+}
+// THE START: a tile gantry, posts outside both walls and on the floor, START in cream tiles
+function tessaGate(inS){
+  const A=pixFrame(0), s=A.s, L=[], ry=Math.atan2(s.t.x,s.t.z), tilt=Math.abs(Math.sin(s.bank||0));
+  const Lo=-inS*36, Li=inS*56, bot=s.p.y+22+tilt*56, BH=13;
+  const at=(lat,y)=>({x:s.p.x+s.n.x*lat, y, z:s.p.z+s.n.z*lat});
+  for(const lat of [Lo,Li]){ const p=at(lat,0);
+    for(let y=TESSA_FLOOR_Y+3;y<bot+BH;y+=6) L.push({x:p.x, y, z:p.z, s:6, sy:6, sz:6, ry, c:0x3a2a5a}); }
+  const mid=(Lo+Li)/2, span=Math.abs(Li-Lo)+6;
+  for(let k=0;k<Math.floor(span/6.2);k++){ const lat=Math.min(Lo,Li)-3+3.1+k*6.2;
+    for(let r=0;r<2;r++){ const p=at(lat,bot+3.25+r*6.5); L.push({x:p.x, y:p.y, z:p.z, s:6.2, sy:6.5, sz:4, ry, c:(k+r)%2?0x1e3a5a:0x2e2a5e}); } }
+  const word='START', px=1.6, W=word.length*6-1;
+  for(let w=0;w<word.length;w++){ const G=PIX_FONT[word[w]];
+    for(let r=0;r<7;r++) for(let cc=0;cc<5;cc++){ if(G[r][cc]!=='#') continue;
+      const p=at(-((w*6+cc)-(W-1)/2)*px, bot+BH/2+(3-r)*px);
+      L.push({x:p.x-s.t.x*2.3, y:p.y, z:p.z-s.t.z*2.3, s:px, sy:px, sz:1.0, ry, c:0xf4e8c8, sh:1}); } }
+  tessaBatch(L, 0);
+}
+// THE PORTRAIT: Salty, drawn small and soft on a canvas (the soft edges ARE the in-between tile
+// colours a Close is built from), then read back one cell per tile. Four faces, four grounds.
+function tessaPortraitCells(bg, W, H){
+  const S=4, c=document.createElement('canvas'); c.width=W*S; c.height=H*S; const g=c.getContext('2d');
+  g.scale(S,S);
+  const vg=g.createLinearGradient(0,0,0,H); vg.addColorStop(0,bg[0]); vg.addColorStop(1,bg[1]); g.fillStyle=vg; g.fillRect(0,0,W,H);
+  const cx=W/2, ell=(x,y,rx,ry,col)=>{ g.fillStyle=col; g.beginPath(); g.ellipse(x,y,rx,ry,0,0,Math.PI*2); g.fill(); };
+  // collar and shoulders, the sailor's square collar in navy with its white stripe
+  g.fillStyle='#1b3766'; g.beginPath(); g.moveTo(cx-W*0.46,H); g.lineTo(cx-W*0.30,H*0.80); g.lineTo(cx+W*0.30,H*0.80); g.lineTo(cx+W*0.46,H); g.fill();
+  g.strokeStyle='#f4f4f4'; g.lineWidth=0.9; g.beginPath(); g.moveTo(cx-W*0.40,H); g.lineTo(cx-W*0.27,H*0.83); g.moveTo(cx+W*0.40,H); g.lineTo(cx+W*0.27,H*0.83); g.stroke();
+  ell(cx,H*0.56,W*0.36,H*0.29,'#f3c9cf');                                   // the head
+  ell(cx-W*0.24,H*0.64,W*0.07,H*0.04,'#f09aaa'); ell(cx+W*0.24,H*0.64,W*0.07,H*0.04,'#f09aaa');   // cheeks
+  for(const sx of [-1,1]){ ell(cx+sx*W*0.14,H*0.53,W*0.085,H*0.075,'#fbfbf4'); ell(cx+sx*W*0.13,H*0.545,W*0.045,H*0.045,'#2c1e20');
+    ell(cx+sx*W*0.115,H*0.525,W*0.015,H*0.013,'#ffffff'); }                    // eyes, pupils, catch-lights
+  g.fillStyle='#2c1e20'; g.beginPath(); g.ellipse(cx,H*0.69,W*0.10,H*0.035,0,0,Math.PI); g.fill();   // the grin
+  // the cap: white dome, navy band, gold badge, worn a touch to one side
+  g.save(); g.translate(cx,H*0.31); g.rotate(-0.06);
+  g.fillStyle='#f4f4f4'; g.beginPath(); g.ellipse(0,0,W*0.34,H*0.13,0,Math.PI,0); g.fill();
+  g.fillStyle='#1b3766'; g.fillRect(-W*0.35,-H*0.005,W*0.70,H*0.06);
+  g.fillStyle='#ffd24a'; g.beginPath(); g.arc(0,H*0.025,W*0.04,0,Math.PI*2); g.fill(); g.restore();
+  const s2=document.createElement('canvas'); s2.width=W; s2.height=H; const g2=s2.getContext('2d');
+  g2.imageSmoothingEnabled=true; g2.imageSmoothingQuality='high'; g2.drawImage(c,0,0,W,H);
+  const D=g2.getImageData(0,0,W,H).data, out=[];
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const o=(y*W+x)*4; out.push((D[o]<<16)|(D[o+1]<<8)|D[o+2]); }
+  return out; }
+const TESSA_BG=[['#2a8a8a','#145a64'],['#d8a03a','#a8602a'],['#8a4ab0','#4a2a78'],['#e86a5a','#a83a4a']];
+// one portrait face into list L, in a frame centred (cx,cz) facing yaw, its foot at y0
+function tessaFace(L, cx, y0, cz, yaw, bg, CS, W, H){
+  const cells=tessaPortraitCells(TESSA_BG[bg], W, H), ca=Math.cos(yaw), sa=Math.sin(yaw), half=W*CS/2;
+  for(let r=0;r<H;r++) for(let c=0;c<W;c++){
+    const lx=(c-(W-1)/2)*CS, ly=(H-1-r)*CS+CS/2, lz=0.6;
+    L.push({x:cx+lx*ca+lz*sa, y:y0+ly, z:cz-lx*sa+lz*ca, s:CS, sy:CS, sz:1.2, ry:yaw, c:cells[r*W+c]}); }
+  return half; }
+// a stepped tile plinth, square, on the floor; returns its top
+function tessaPlinth(L, x0, z0, w0, yaw, d0){ let y=TESSA_FLOOR_Y; const ca=Math.cos(yaw||0), sa=Math.sin(yaw||0);
+  for(const [w,h,dd] of [[w0+36,8,(d0||w0)+36],[w0+18,8,(d0||w0)+18],[w0+4,8,(d0||w0)+4]]){
+    for(let a=-w/2+4;a<w/2;a+=8) for(let b=-dd/2+4;b<dd/2;b+=8){ if(Math.abs(a)<w/2-12&&Math.abs(b)<dd/2-12) continue;
+      L.push({x:x0+a*ca+b*sa, y:y+h/2, z:z0-a*sa+b*ca, s:8, sy:h, sz:8, ry:yaw||0, c:0x30405a}); }
+    y+=h; }
+  return y; }
+// THE PYLON: four faces about a dark core, turning
+function tessaPortrait(x0, z0, R, plinth){
+  const W=22, H=28, CS=10, half=W*CS/2, G=new T.Group(), L=[];
+  const by=tessaPlinth(plinth, x0, z0, half*2, 0);
+  for(let f=0;f<4;f++){ const a=f*Math.PI/2; tessaFace(L, Math.sin(a)*half, 0, Math.cos(a)*half, a, f, CS, W, H); }
+  for(let r=0;r<H;r+=2) L.push({x:0, y:(H-1-r)*CS, z:0, s:half*2-0.2, sy:CS*2, sz:half*2-0.2, c:0x161a24});
+  for(let k=-W/2;k<W/2+1;k++){ const o=k*CS;
+    for(const sg of [1,-1]){ L.push({x:o, y:H*CS+2, z:sg*half, s:CS, sy:4, sz:CS, c:0xe8e0d0, sh:2});
+      L.push({x:sg*half, y:H*CS+2, z:o, s:CS, sy:4, sz:CS, c:0xe8e0d0, sh:2}); } }
+  const ms=tessaBatch(L, 0); trackGroup.remove(ms[0]); G.add(ms[0]);
+  G.position.set(x0, by, z0); G.rotation.y=R()*6.283; trackGroup.add(G);
+  return G; }
+// THE GALLERY: three portraits standing where the chase camera looks longest. This lap has
+// no straights to end in, so each spot is SCORED: how many samples see it within 24 degrees of
+// dead ahead at 300-950 units. The best three, well apart, each turned to face the average
+// direction it is seen from - so for a few seconds every lap you drive at a face and watch it
+// come apart into tiles as it nears.
+function tessaGallery(L, plinth){
+  const cand=[];
+  for(let i=0;i<STEPS;i+=9) for(const D of [520,680,840]) for(const lat of [-160,0,160]){
+    const s=SAMP[i], x=s.p.x+s.t.x*D+s.n.x*lat, z=s.p.z+s.t.z*D+s.n.z*lat;
+    if(!pixClear(x,z,176)) continue;
+    let sc=0, vx=0, vz=0;
+    for(let j=0;j<STEPS;j+=2){ const q=SAMP[j], dx=x-q.p.x, dz=z-q.p.z, d=Math.hypot(dx,dz);
+      if(d<300||d>950) continue; const ca=(dx*q.t.x+dz*q.t.z)/d; if(ca<0.914) continue;   // cos 24 deg
+      const w=(ca-0.914)/0.086; sc+=w; vx-=dx/d*w; vz-=dz/d*w; }
+    if(sc>0) cand.push({i,x,z,sc,yaw:Math.atan2(vx,vz)}); }
+  const pick=[];
+  for(const c of cand.sort((a,b)=>b.sc-a.sc)){ if(pick.length>=3) break;
+    if(pick.some(p=>Math.hypot(p.x-c.x,p.z-c.z)<560)) continue; pick.push(c); }
+  pick.forEach((c,k)=>{ const W=20, H=26, CS=11, top=tessaPlinth(plinth, c.x, c.z, W*CS+6, c.yaw, 24);
+    tessaFace(L, c.x, top, c.z, c.yaw, (k+1)%4, CS, W, H);
+    const ca=Math.cos(c.yaw), sa=Math.sin(c.yaw);                         // the board behind it, and its frame
+    for(let r=0;r<H;r+=2) L.push({x:c.x-sa*2.2, y:top+(H-1-r)*CS, z:c.z-ca*2.2, s:W*CS+2, sy:CS*2, sz:3.2, ry:c.yaw, c:0x161a24});
+    for(let k2=0;k2<=W;k2++){ const lx=(k2-W/2)*CS;
+      L.push({x:c.x+lx*ca+sa*0.8, y:top+H*CS+2.5, z:c.z-lx*sa+ca*0.8, s:CS, sy:5, sz:5, ry:c.yaw, c:0xe8e0d0, sh:2}); } });
+  return pick; }
+// Everything off the deck. Returns the moving parts for tessaTick.
+function tessaScenery(inS, ccx, ccz){
+  const R=pixRnd(0x7E55A2), P={}, plinths=[], towers=[], mesas=[], lows=[], cols=[];
+  { const g=new T.PlaneGeometry(9000,9000,36,36); g.rotateX(-Math.PI/2);
+    // soft colour ZONES under the tiles, as the passages of a portrait: a warm region, a cool one
+    const pa=g.attributes.position, col=new Float32Array(pa.count*3);
+    for(let k=0;k<pa.count;k++){ const x=pa.getX(k)+ccx, z=pa.getZ(k)+ccz;
+      const w=0.5+0.5*Math.sin(x*0.0019+0.7)*Math.cos(z*0.0016-0.4), v=0.5+0.5*Math.sin(z*0.0023+x*0.0007+2.1);
+      col[k*3]=0.84+0.24*w-0.04*v; col[k*3+1]=0.86+0.06*w+0.08*v; col[k*3+2]=0.94-0.14*w+0.12*v; }
+    g.setAttribute('color',new T.Float32BufferAttribute(col,3));
+    const tx=tessaFloorTex(); tx.repeat.set(9000/288, 9000/288);
+    const fl=new T.Mesh(g, new T.MeshLambertMaterial({map:tx, color:0xffffff, vertexColors:true}));
+    fl.position.set(ccx, TESSA_FLOOR_Y, ccz); trackGroup.add(fl); }
+  const place=(r, minOut, maxOut, side)=>{
+    for(let t=0;t<40;t++){ const s=SAMP[(R()*STEPS)|0], sd=side||(R()<0.5?-1:1);
+      const lim=sd*inS>0?HW*2.2:HW*1.28, out=lim+r+minOut+R()*(maxOut-minOut);
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*20, z=s.p.z+s.n.z*sd*out+(R()*2-1)*20;
+      if(pixClear(x,z,r)) return {x,z,s,sd}; }
+    return null; };
+  // THE PORTRAIT, near the infield's middle but never exactly behind a statue from the line
+  { let px=ccx+30, pz=ccz-40;
+    for(let t=0;t<30&&!pixClear(px,pz,192);t++){ px=ccx+(R()*2-1)*260; pz=ccz+(R()*2-1)*260; }
+    P.pylon=tessaPortrait(px, pz, R, plinths); }
+  const gal=[]; P.gallery=tessaGallery(gal, plinths);
+  // THE THREE SALTY STATUES, on stepped tile columns that reach the floor
+  { const shell=saltyVox();
+    for(const [u,scale,side] of [[0.08,2.6,1],[0.45,2.2,-1],[0.78,2.4,1]]){
+      const s=SAMP[Math.floor(u*STEPS)%STEPS]; let out=HW*3.6, bx=0, bz=0;
+      for(;out<HW*9;out+=6){ bx=s.p.x+s.n.x*side*out; bz=s.p.z+s.n.z*side*out; if(pixClear(bx,bz,7*scale+4)) break; }
+      const by=s.p.y+16, ry=Math.atan2(s.p.x-bx, s.p.z-bz), ca=Math.cos(ry), sa=Math.sin(ry);
+      for(const v of shell){ const rx=v.x*ca+v.z*sa, rz=-v.x*sa+v.z*ca;
+        towers.push({x:bx+rx*scale, y:by+v.y*scale, z:bz+rz*scale, s:scale*1.03, ry, c:v.c}); }
+      const top=by-5*scale; let y=TESSA_FLOOR_Y;
+      const w0=7*scale; while(y<top-1){ const h=Math.min(w0, top-y); cols.push({x:bx, y:y+h/2, z:bz, s:w0, sy:h, sz:w0, ry, c:0x2a3a5c}); y+=h; }
+      cols.push({x:bx, y:top-2, z:bz, s:9*scale, sy:4, sz:9*scale, ry, c:0x4a62a8});
+      cols.push({x:bx, y:TESSA_FLOOR_Y+4, z:bz, s:11*scale, sy:8, sz:11*scale, ry, c:0x34486e}); } }
+  // TOWERS in districts: cubes stacked from the floor, tapering, each a tile on every face
+  { const PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0,0xe8804a];
+    for(let k=0, n=0;n<30 && k<500;k++){ const q=place(30, 8, n%3?170:420); if(!q) continue; n++;
+      const cnt=2+((R()*4)|0);
+      for(let j=0;j<cnt;j++){ const w=9+R()*9, x=q.x+(R()*2-1)*44, z=q.z+(R()*2-1)*44;
+        if(!pixClear(x,z,w*0.75)) continue;
+        const tall=3+((R()*R()*12)|0), c=PAL[(n+j)%PAL.length], yaw=R()*1.57;
+        for(let y=0;y<tall;y++){ const ww=w*(1-y*0.05); towers.push({x, y:TESSA_FLOOR_Y+ww*0.5+y*w*0.92, z, s:ww, sy:ww, sz:ww, ry:yaw, c}); } } } }
+  // TERRACES walling the outfield and a few in the infield: stepped, each step a row of tiles
+  { const MP=[0x24304a,0x2c2a4e,0x1e3a40], TOP=[0x4a6a8a,0x6a4a7a,0x3a7070];
+    for(let k=0, n=0;n<22 && k<500;k++){ const inf=n<6, w0=72+R()*60, rad=w0*0.75;
+      const q=place(rad, inf?60:30, inf?380:320, inf?inS:-inS); if(!q) continue; n++;
+      const tiers=2+((R()*3)|0), yaw=R()*1.57, ca=Math.cos(yaw), sa=Math.sin(yaw), CS=12; let y=TESSA_FLOOR_Y;
+      for(let t=0;t<tiers;t++){ const w=w0*(1-t*0.24), m=Math.max(1,Math.round(w/CS)), cs=w/m;
+        for(let a=0;a<m;a++) for(let b=0;b<m;b++){ const lx=(a-(m-1)/2)*cs, lz=(b-(m-1)/2)*cs*0.8;
+          const uw=w0*(1-(t+1)*0.24)/2-cs*0.5;
+          if(t<tiers-1 && Math.abs(lx)<uw && Math.abs(lz)<uw*0.8) continue;   // hollow under the next tier
+          mesas.push({x:q.x+lx*ca+lz*sa, y:y+cs*0.4, z:q.z-lx*sa+lz*ca, s:cs, sy:cs*0.8, sz:cs*0.8, ry:yaw, c:t===tiers-1?TOP[n%3]:MP[(n+t)%3]}); }
+        y+=cs*0.8; } } }
+  // GRAIN near the road: low tile slabs on the floor, where the deck runs low enough to see them
+  { const PL=[0xc8902a,0xc8406a,0x1e8a86,0x6a44a8,0x3a6ab8];
+    for(let k=0;k<700 && lows.length<220;k++){ const s=SAMP[(R()*STEPS)|0]; if(s.p.y-TESSA_FLOOR_Y>56) continue;
+      const sd=R()<0.5?-1:1, lim=sd*inS>0?HW*2.2+8:HW*1.28+10, out=lim+6+R()*150;
+      const x=s.p.x+s.n.x*sd*out+(R()*2-1)*12, z=s.p.z+s.n.z*sd*out+(R()*2-1)*12, w=6+R()*6;
+      if(!pixClear(x,z,w*0.75)) continue;
+      lows.push({x, y:TESSA_FLOOR_Y+w*0.25, z, s:w, sy:w*0.5, sz:w, ry:R()*1.57, c:PL[(k*7)%PL.length]}); } }
+  tessaBatch(towers, 1400); tessaBatch(mesas, 1400); tessaBatch(lows, 1400); tessaBatch(cols.concat(plinths), 0); tessaBatch(gal, 0);
+  return P; }
+// the shimmer runs off one uniform; the pylon turns once in about four minutes (set from the
+// clock, never accumulated, so a stalled frame cannot make it jump)
+function tessaTick(P, tsec){
+  P.u.uT.value=tsec;
+  if(P.pylon) P.pylon.rotation.y=P.ry0+tsec*0.026;
+}
+
 /* ============== 8-BIT BLOODSTREAM, second pass (Pixie) ============== *
  * The first cut put pastel blocks on a void, and it held up while the lap was ~3,000 units.
  * At twice the footprint it fell apart into its parts: a flat mauve floor with no grain to
@@ -48864,10 +49267,10 @@ function buildTrack(idx){
   // composition's frame, and 120/560 was dissolving them before the eye could read the
   // skyline. 150/1000 keeps the ranges as shapes while still greying them off.
   // Ophelia: the Pre-Raphaelites refused aerial softening, so the fog only starts far out
-  scene.fog.near = TRACKS[idx].pool ? 170 : TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
+  scene.fog.near = TRACKS[idx].pool ? 170 : TRACKS[idx].mosaic ? 240 : TRACKS[idx].testcard ? 700 : TRACKS[idx].shore ? 420 : TRACKS[idx].bit8 ? 300 : TRACKS[idx].vector ? 260 : TRACKS[idx].eden ? 150 : TRACKS[idx].hana ? 330 : TRACKS[idx].arcade ? 300 : TRACKS[idx].ophelia ? 260 : TRACKS[idx].paint ? 34 : (TRACKS[idx].coil ? 190 : (TRACKS[idx].felt ? 260 : (TRACKS[idx].macro ? 135 : 120)));
   // macro's short-ish fog IS the tilt-shift: scenery melts into the mauve 'room' while
   // the bokeh dome (fog:false) stays crisp behind it — blur with shapes, not a wall
-  scene.fog.far  = TRACKS[idx].pool ? 1320 : TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
+  scene.fog.far  = TRACKS[idx].pool ? 1320 : TRACKS[idx].mosaic ? 1360 : TRACKS[idx].testcard ? 2600 : TRACKS[idx].shore ? 1380 : TRACKS[idx].bit8 ? 1320 : TRACKS[idx].vector ? 1300 : TRACKS[idx].eden ? 1150 : TRACKS[idx].hana ? 1320 : TRACKS[idx].arcade ? 1380 : TRACKS[idx].ophelia ? 1250 : TRACKS[idx].paint ? 560 : (TRACKS[idx].coil ? 1340 : (TRACKS[idx].felt ? 1000 : (TRACKS[idx].macro ? 540 : 560)));
   // Fog colour is normally the sky tint, but on the oil course it has to match the sky at
   // the HORIZON rather than the sky overall, or the water fades to a value the sky never
   // reaches and the seam between them reads as a cut. Set unconditionally above, then
@@ -48904,6 +49307,8 @@ function buildTrack(idx){
   // 560 into near-black put the whole room (the clerestory, the tower, the bleachers) behind a
   // wall of nothing. The clear colour takes the same value, so past the far plane is more haze.
   if(TRACKS[idx].pool){ scene.fog.color.setHex(NAT_HAZE); scene.background.setHex(NAT_HAZE); }
+  // Tessa: the land fades into the rose-grey band the tiled sky stands on (the dome is raw too)
+  if(TRACKS[idx].mosaic) scene.fog.color.setHex(TESSA_HOR);
 
   const loop = TRACKS[idx].loop!==false;
   const cross = !!TRACKS[idx].cross;
@@ -48964,7 +49369,7 @@ function buildTrack(idx){
   // Marina lays its own tiled deck (and the hall walls stand on it), so the shared plane
   // goes too. Reassigned on every build, so no other course inherits it.
   // Ophelia lays a whole valley of its own, so the plane goes there too
-  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
+  groundPlane.visible = !wire && !felt && !pool && !oph && !macro && !arc && !hana && !eden && !pix && !tc && !sho && !coil && !mosaic;   // Lily lays its own pond; Iris her desert; Pixie a checker floor
   groundPlane.material.color.set(clay ? 0x6b5137 : paper ? 0x8d7f66
     : bead ? 0x0d0a18 : pool ? 0x140a10
     // On the oil course the ground plane IS the harbour: one flat sheet of slack water
@@ -49546,6 +49951,12 @@ function buildTrack(idx){
     skyDome=pixSky(); trackGroup.add(skyDome);
     TRACK_PULSE.pix=Object.assign({}, skyDome.userData.pix);
     pixPiers();
+  } else if(mosaic){
+    // Tessa: the tiled sky, the floor level, one set of shader uniforms, the piers (TESSELLATION)
+    TESSA_FLOOR_Y=tessaFloorLevel(innerSign); TESSA_U=null; tessaUniforms();
+    skyDome=tessaSky(); trackGroup.add(skyDome);
+    TRACK_PULSE.tessa={u:TESSA_U};
+    tessaPiers();
   } else if(vox){
     // Blocky viaduct: stepped pillars marching down the spine to the ground plane, so the
     // course reads as something BUILT. Wider as it descends, which makes the elevation
@@ -49850,7 +50261,10 @@ function buildTrack(idx){
       rg.fillStyle=MT[i]; rg.fillRect(x,y,8,8);
       rg.fillStyle=MT[(i+3)%MT.length]; rg.fillRect(x+2,y+2,4,4);
     }
-    rg.fillStyle='#e8d24a'; rg.fillRect(0,0,8,256); rg.fillRect(56,0,8,256);
+    // the rails as tiles too, gold and ochre on a dark grout, so the edge is a band of the
+    // same material instead of the one flat stripe in a world of cells (and a step quieter)
+    for(let y=0;y<256;y+=8) for(const x of [0,56]){ rg.fillStyle='#2a2418'; rg.fillRect(x,y,8,8);
+      rg.fillStyle=((y>>3)&1)?'#d8bc48':'#c49a3a'; rg.fillRect(x+1,y+1,6,6); rg.fillStyle='#f0e0a0'; rg.fillRect(x+3,y+3,2,2); }
     rg.fillStyle='#f2f2f2'; for(let y=0;y<256;y+=32) rg.fillRect(28,y,8,16);
   } else if(vox){
     // hard-edged 8px blocks, a chunky dashed centre line and cyan rails. NearestFilter
@@ -50202,6 +50616,8 @@ function buildTrack(idx){
     pixGate(innerSign);                   // a block gantry spelling START, posts on the floor
   } else if(wire){
     veraGate(innerSign);                  // a vector gate spelling START; nothing lit on this course
+  } else if(mosaic){
+    tessaGate(innerSign);                 // a tile gantry spelling START, posts on the floor
   } else {
   // The bar takes the road's basis (heading, then rolled by the bank — same as the ramps) so
   // it parallels the road at 14 up instead of cutting across it level; each post stands from
@@ -50494,6 +50910,9 @@ function buildTrack(idx){
   } else if(pix){
     // shoulders, rumble strip, fascia and an outside parapet that stands ON the deck
     pixDeck(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
+  } else if(mosaic){
+    // shoulders, fascia and tile parapets standing ON the shoulder at the corridor limits
+    tessaDeck(innerSign, (TRACKS[idx].tunnels||[]).map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     // classic kerb colours, stair-stepped up and outward so corners get a readable wall
     const curbs=[];
@@ -50646,6 +51065,8 @@ function buildTrack(idx){
     /* root arches, the hollow log and the bell arbor were planned with the garden */
   } else if(pix){
     pixTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
+  } else if(mosaic){
+    tessaTunnel(tun.map(([a,b])=>[Math.floor(a*STEPS),Math.floor(b*STEPS)]));
   } else if(vox){
     const arch=[];
     for(const seg of tun){
@@ -50729,7 +51150,7 @@ function buildTrack(idx){
   //      infield apron you can cut corners across (loops only, not figure-8s) ----
   // (Ophelia's infield limit is its own bank, reed-lined at 49 — no membrane needed)
   // (Lily's is the edge of its own infield verge at 51, where the bank drops to the pond)
-  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
+  if(loop && !cross && !oph && !TRACKS[idx].macro && !arc && !hana && !pix && !wire && !tc && !sho && !mosaic){   // Hana: shrubs and pines mark it   // Trixie: the hedge is the wall   // Pixie: a parapet on the apron deck   // Vera: a dashed line (veraEdge)   // Stacey: the castellation kerb
     const H=8, IN=HW*2.2, wp=[], wi=[], rp=[];
     for(let i=0;i<=STEPS;i++){
       const s=SAMP[i%STEPS];
@@ -51767,6 +52188,9 @@ function buildTrack(idx){
     TRACK_PULSE.arc.q=arcFlush(AK);       // every block above, as three instanced draws
   } else if(pix){
     Object.assign(TRACK_PULSE.pix, pixScenery(innerSign, ccx, ccz));   // heart, monuments, cells, districts
+  } else if(mosaic){
+    Object.assign(TRACK_PULSE.tessa, tessaScenery(innerSign, ccx, ccz));   // floor, portrait, statues, districts
+    TRACK_PULSE.tessa.ry0=TRACK_PULSE.tessa.pylon ? TRACK_PULSE.tessa.pylon.rotation.y : 0;
   } else if(vox){
     // colour-banded blocky towers, tapering as they rise, for parallax depth
     const towers=[], PAL=[0x2ec4b6,0xff6f91,0xffd166,0x8f5fd0,0x4d9de0];
@@ -65799,6 +66223,8 @@ function frame(now){
   if(TRACK_PULSE.arc) arcTick(TRACK_PULSE.arc, tsec);
   // Pixie: the heart beats and turns, red cells turn like coins, copper bars drift
   if(TRACK_PULSE.pix) pixTick(TRACK_PULSE.pix, tsec);
+  // Tessa: a slow wave turns the tiles' accents a little and back; the portrait pylon turns
+  if(TRACK_PULSE.tessa) tessaTick(TRACK_PULSE.tessa, tsec);
   // Vera: the ECG write-head sweeps the horizon, solids tumble, the phage and helices turn
   if(TRACK_PULSE.vera) veraTick(TRACK_PULSE.vera, tsec);
   // Hana: claws breathe, pines sway, boats ride, papers fly, falls pour, rain on the climb
