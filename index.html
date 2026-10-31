@@ -44331,7 +44331,7 @@ function paintifyScene(root, pulse){
  */
 function paintSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uT:{value:0} },
+    uniforms:{ uT:{value:0}, uStroke:{value:paintStrokeTex()} },
     // vP has to be the WORLD position, not the object position. The dome sits at the
     // world origin while the camera roams several hundred units around the circuit, so
     // shading off the object position anchors the whole gradient — horizon included — to
@@ -44340,7 +44340,7 @@ function paintSky(){
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP; uniform float uT;
+      varying vec3 vP; uniform float uT; uniform sampler2D uStroke;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),
@@ -44366,6 +44366,16 @@ function paintSky(){
         float sd=distance(d, normalize(vec3(0.22,0.30,-0.92)));
         c=mix(c, vec3(0.980,0.962,0.884), smoothstep(0.44,0.0,sd)*0.42);
         c=mix(c, vec3(1.000,0.992,0.940), smoothstep(0.055,0.0,sd)*(0.72+0.10*sin(uT*0.27)));
+        // BRUSHWORK. The sky is the largest surface in the picture and it was a perfect
+        // gradient, which no painter ever laid: here are the broad strokes it was put on with —
+        // the same mixture dragged across a shade lighter and darker, warm against cool, long
+        // and horizontal (paintStrokeTex). A few percent either way: the value plan is the
+        // gradient's, the strokes only say it was painted. Faded out at the horizon so the seam
+        // with the fogged water stays exact, and up at the zenith where nobody looks.
+        { vec3 s=texture2D(uStroke, vec2(az*0.95493, el*2.4+0.17)).rgb;
+          float k=smoothstep(0.014,0.09,el)*(1.0-smoothstep(0.7,1.0,el));
+          c*=1.0+(s.r-0.5)*0.10*k;
+          c+=vec3(0.012,0.004,-0.011)*(s.g-0.5)*2.0*k; }
         // --- far hills: one value step off the sky, nothing more ---
         float hh=0.0315 + 0.0225*sin(az*2.3+0.7) + 0.0125*sin(az*5.1+2.2) + 0.0060*sin(az*11.0+4.0);
         float hill=smoothstep(hh+0.0045, hh-0.0045, el)*smoothstep(-0.004,0.004,el);
@@ -44387,8 +44397,100 @@ function paintSky(){
         c=mix(c, vec3(0.402,0.386,0.336), mast*0.55);
         gl_FragColor=vec4(c,1.0);
       }`});
+  // noPaint: the scene pass (paintifyScene) converts every material in trackGroup it is not told
+  // to leave alone, and this one was being turned into a canvas-mapped Lambert sphere — so the
+  // horizon, the far shore, the fleet's picket and the sun described above had never been seen.
+  mat.userData.noPaint=true;
   const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat);   // < camera.far (1400)
   m.frustumCulled=false; return m;
+}
+/* THE BRUSH. One tileable sheet of loaded-brush strokes, three independent fields in its three
+   channels so one fetch carries all of it:
+     R  value: long strokes a shade lighter or darker than the ground they cross, each a bundle
+        of bristle tracks with a ragged, tapering start and finish — the mark a flat makes
+        dragged sideways through wet paint;
+     G  temperature: a second, looser set, read as warm against cool (broken colour);
+     B  the LIGHT: short, separate, sharp-ended dabs, only ever lighter — the broken highlights
+        a painter lays across water where the sun's path falls (paintWater's glitter mask).
+   Strokes run along x (the sheet is mapped with x across the line of sight on the water, and
+   round the horizon on the sky). Built once a page; mipmapped, so it greys out to its own mean
+   in the distance instead of shimmering. */
+let PAINT_STROKE=null;
+function paintStrokeTex(){
+  if(PAINT_STROKE) return PAINT_STROKE;
+  const N=256, R=harbRnd(0x0175EA);
+  const layer=(n, len, wid, light, dab)=>{ const c=document.createElement('canvas'); c.width=c.height=N;
+    const g=c.getContext('2d'); g.fillStyle='rgb(128,128,128)'; g.fillRect(0,0,N,N); g.lineCap='butt';
+    for(let k=0;k<n;k++){
+      const x0=R()*N, y0=R()*N, L=len[0]+R()*len[1], W=wid[0]+R()*wid[1], a=(R()-0.5)*0.12;
+      const up=light ? true : R()<0.5, v=up ? 150+R()*95 : 30+R()*70, nb=Math.max(3,(W/1.6)|0);
+      const ca=Math.cos(a), sa=Math.sin(a);
+      for(let b=0;b<nb;b++){
+        const off=(b/(nb-1)-0.5)*W, s0=R()*L*0.18, s1=L*(0.8+R()*0.2), al=(dab?0.55:0.22)+R()*(dab?0.4:0.3);
+        g.strokeStyle=`rgba(${v|0},${v|0},${v|0},${al.toFixed(3)})`; g.lineWidth=0.8+R()*1.4;
+        for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){
+          const X=x0+ox, Y=y0+oy+off; if(X+L<0||X-L>N||Y<-W||Y>N+W) continue;
+          g.beginPath(); g.moveTo(X+ca*s0, Y+sa*s0); g.lineTo(X+ca*s1, Y+sa*s1); g.stroke(); } } }
+    return g.getImageData(0,0,N,N).data; };
+  const r=layer(320,[40,110],[5,9],false,false), gg=layer(140,[60,140],[8,12],false,false), bb=layer(240,[8,26],[2,4],true,true);
+  const c=document.createElement('canvas'); c.width=c.height=N; const x=c.getContext('2d'), img=x.createImageData(N,N);
+  for(let i=0;i<N*N*4;i+=4){ img.data[i]=r[i]; img.data[i+1]=gg[i]; img.data[i+2]=bb[i]; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  PAINT_STROKE=t; return t;
+}
+/* THE WATER, painted. The shared ground plane was the harbour, and it was one flat Lambert
+   value: the largest surface in the frame, and the one with no paint on it. This replaces it
+   (same plane, same colour, same light, so the value ladder is where it was) and lays on it
+   what a plein-air painter puts on slack water:
+     - the strokes: the brush sheet's value field, broad and horizontal, anchored to the water
+       (so they pass under you at the speed of the ground) and aligned across the line to the
+       sun, the way wind-ruffled water is ruled;
+     - the SUN'S PATH: a column of broken light, the sheet's dabs lit only where the reflected
+       view ray meets the hazy sun in the sky dome (paintSky's direction) — so it always lies
+       between you and the sun, widens and breaks up toward you, and is simply absent when you
+       drive away from it. The one bright note on the water, and the thing that says HARBOUR AT
+       MID-MORNING rather than "beige floor"; it shimmers as the swell (uT) slides the dabs.
+   Lambert lighting is per vertex and the plane is one quad, so the light is as flat as it was;
+   the paint goes on in the fragment, two fetches. */
+const PAINT_SUN=new T.Vector3(0.22,0.30,-0.92).normalize();
+function paintWater(sc, uT){
+  const g=new T.PlaneGeometry(2400*sc,2400*sc,1,1); g.rotateX(-Math.PI/2);
+  const m=new T.MeshLambertMaterial({color:0x8a8470});
+  m.userData.noPaint=true;
+  const U={uT};                          // the sky's own clock (frame() advances it), by reference
+  const az=new T.Vector2(PAINT_SUN.x, PAINT_SUN.z).normalize();
+  m.onBeforeCompile=sh=>{ sh.uniforms.uStroke={value:paintStrokeTex()}; sh.uniforms.uT=U.uT;
+    sh.vertexShader='varying vec3 vHW;\n'+sh.vertexShader.replace('#include <project_vertex>',
+      '#include <project_vertex>\n  vHW=(modelMatrix*vec4(transformed,1.0)).xyz;');
+    sh.fragmentShader=`varying vec3 vHW; uniform sampler2D uStroke; uniform float uT;
+      const vec2 SA=vec2(${az.x.toFixed(4)},${az.y.toFixed(4)}), SB=vec2(${(-az.y).toFixed(4)},${az.x.toFixed(4)});
+      const vec3 SUN=vec3(${PAINT_SUN.x.toFixed(4)},${PAINT_SUN.y.toFixed(4)},${PAINT_SUN.z.toFixed(4)});
+      `+sh.fragmentShader
+      .replace('#include <map_fragment>',`#include <map_fragment>
+        vec2 wq=vec2(dot(vHW.xz,SB), dot(vHW.xz,SA));
+        wq.y+=sin(wq.x*0.0041+wq.y*0.0013)*26.0+sin(wq.x*0.011-1.3)*7.0;   // the strokes swell and bend a little: hand-laid, not ruled
+        // Water is painted ACROSS the line of sight. One world-anchored set of strokes is right
+        // looking along it and wrong looking across it (they run off to a vanishing point, like
+        // speed lines), so there are two sets at right angles, each fixed to the water, and each
+        // fragment takes the one that lies across its own view ray. Nothing swims when you turn.
+        vec2 vq=normalize(vHW.xz-cameraPosition.xz+1e-4);
+        float wA=smoothstep(0.35,0.65,abs(dot(vq,SA)));
+        vec3 st=mix(texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb,
+                    texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb, wA);
+        diffuseColor.rgb*=1.0+(st.r-0.5)*0.26+(st.g-0.5)*vec3(0.05,0.0,-0.06);`)
+      .replace('#include <fog_fragment>',`
+        { vec3 V=normalize(vHW-cameraPosition); vec3 Rf=vec3(V.x,-V.y,V.z);
+          vec2 rh=normalize(Rf.xz+1e-5), sh2=normalize(SUN.xz);
+          float daz=1.0-dot(rh,sh2), del=Rf.y-SUN.y;
+          float path=exp(-daz/0.010)*exp(-del*del/0.09);
+          float dab=texture2D(uStroke, vec2(wq.x/38.0+uT*0.006, wq.y/9.0)).b;
+          gl_FragColor.rgb+=vec3(0.30,0.27,0.19)*path*smoothstep(0.56,0.86,dab); }
+        #include <fog_fragment>`); };
+  m.customProgramCacheKey=()=>'paintWater';
+  const w=new T.Mesh(g,m); w.position.y=-2;
+  return w;
 }
 
 /* ---------------- THE HARBOUR: Sienna's dressing kit ----------------------------------
@@ -44540,6 +44642,98 @@ function harbGullGeo(){
     0,0,0, -1,0.34,-0.30, -0.55,0.10,0.34,
     0,0,0,  0.55,0.10,0.34, 1,0.34,-0.30 ],3));
   g.computeVertexNormals(); return g;
+}
+/* TIMBER, member by member: a box from point a to point b, w thick (its local y runs a->b), in
+   the harbour's painted tooth. One instanced batch for a whole structure. */
+function harbBeams(list){
+  const m=new T.InstancedMesh(new T.BoxGeometry(1,1,1), harbMat(0xffffff), list.length); m.frustumCulled=false;
+  const o=new T.Object3D(), c=new T.Color(), U=new T.Vector3(0,1,0), d=new T.Vector3();
+  const X=new T.Vector3(), Z=new T.Vector3(), M=new T.Matrix4();
+  list.forEach((v,i)=>{ d.set(v.b[0]-v.a[0], v.b[1]-v.a[1], v.b[2]-v.a[2]); const L=d.length()||1; d.multiplyScalar(1/L);
+    o.position.set((v.a[0]+v.b[0])/2, (v.a[1]+v.b[1])/2, (v.a[2]+v.b[2])/2);
+    // flat members (planks, boards) carry their thin axis (local z) as near vertical as they can
+    if(v.flat){ Z.set(0,1,0).addScaledVector(d,-d.y); if(Z.lengthSq()<1e-6) Z.set(1,0,0); Z.normalize(); X.crossVectors(d,Z);
+      o.quaternion.setFromRotationMatrix(M.makeBasis(X,d,Z)); }
+    else o.quaternion.setFromUnitVectors(U,d);
+    o.scale.set(v.w, L+(v.ext||0), v.d||v.w); o.updateMatrix(); m.setMatrixAt(i,o.matrix);
+    c.setHex(v.c); m.setColorAt(i,c); });
+  m.instanceMatrix.needsUpdate=true; m.instanceColor.needsUpdate=true; return m;
+}
+/* THE NET SHED (Sienna's tunnel). The shared tunnel was a run of pink-turned-brown torus rings
+   whose inner face stood at 23 laterally — inside the 28.2 corridor, so a kart on the outside of
+   the deck drove through every one of them. A harbour has its own covered way: an open timber
+   shed on piles over the water, the kind fish are landed and nets mended under. Bents of two
+   piles and a tie beam, a pitched roof of rafters and loose boards with daylight between them,
+   long braces, purlins tying the bays. In the oil it is the one passage of real dark: the deck
+   runs from the pale haze into a striped shade of boards and light and out again — compression
+   and release, done with value alone.
+   CLEARANCE: piles stand at 31.5 either side (the tunnel's corridor is 28.2 both ways, and the
+   fascia overhang ends at 23.6), tie beams and everything above them at +23 over the banked
+   deck surface at that lateral (chase cam +13, mega +18). The piles go down to the water. */
+function harbShed(innerSign){
+  const tn=TRACKS[selTrack].tunnels||[], R=harbRnd(0x5ED0B7), B=[], WL=-2.6, PL=31.5;
+  const TIM=[0x3a3226,0x2e2820,0x413a30,0x352d22], BRD=[0x4a4234,0x3e372b,0x544a3a,0x2f291f];
+  const surf=(s,lat)=>s.p.y+Math.sin(s.bank||0)*lat;
+  const P=(s,lat,y)=>[s.p.x+s.n.x*lat, y, s.p.z+s.n.z*lat];
+  const pick=a=>a[(R()*a.length)|0];
+  for(const [ua,ub] of tn){
+    const i0=Math.floor(ua*STEPS)+1, i1=Math.floor(ub*STEPS)-1, bents=[];
+    for(let i=i0;i<=i1;i+=5+((R()*3)|0)) bents.push(i);
+    if(bents[bents.length-1]<i1-2) bents.push(i1);
+    const tops=[];
+    for(const i of bents){ const s=SAMP[i%STEPS];
+      const yl=surf(s,-PL)+23.5, yr=surf(s,PL)+23.5, ym=Math.max(yl,yr)+10.5+R()*1.5;
+      for(const [lat,y] of [[-PL,yl],[PL,yr]]){
+        B.push({a:P(s,lat,WL), b:P(s,lat,y+1.2), w:1.6+R()*0.4, c:pick(TIM)});                       // the pile
+        B.push({a:P(s,lat*1.18,WL), b:P(s,lat,y-8), w:0.8, c:pick(TIM)}); }                          // a raking shore
+      B.push({a:P(s,-PL-1.2,yl), b:P(s,PL+1.2,yr), w:1.3, d:1.6, flat:1, c:pick(TIM)});               // tie beam
+      const L=P(s,-PL-2.5,yl+0.4), Rr=P(s,PL+2.5,yr+0.4), K=P(s,0,ym);
+      B.push({a:L, b:K, w:1.0, d:1.2, c:pick(TIM)}); B.push({a:Rr, b:K, w:1.0, d:1.2, c:pick(TIM)});  // rafters
+      B.push({a:P(s,0,(yl+yr)/2), b:K, w:0.7, c:pick(TIM)});                                          // king post
+      tops.push({s, L, Rr, K, yl, yr});
+    }
+    // purlins and boards, bay by bay (the road curves, so each bay is its own)
+    for(let k=0;k<tops.length-1;k++){ const A=tops[k], Bt=tops[k+1];
+      for(const f of [0.0,0.35,0.7,1.0]) for(const [a,b] of [[A.L,A.K],[A.Rr,A.K]]){
+        const q=[a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f+0.8, a[2]+(b[2]-a[2])*f];
+        const a2=(a===A.L?Bt.L:Bt.Rr);
+        const q2=[a2[0]+(Bt.K[0]-a2[0])*f, a2[1]+(Bt.K[1]-a2[1])*f+0.8, a2[2]+(Bt.K[2]-a2[2])*f];
+        B.push({a:q, b:q2, w:0.6, c:pick(TIM)}); }
+      // loose boards across the purlins: some missing, so the roof is striped with daylight
+      const nb=10+((R()*3)|0);
+      for(const side of [0,1]) for(let j=0;j<nb;j++){ if(R()<0.14) continue;
+        const f=(j+0.5)/nb, a=side?A.Rr:A.L, a2=side?Bt.Rr:Bt.L;
+        const p0=[a[0]+(A.K[0]-a[0])*f, a[1]+(A.K[1]-a[1])*f+1.4, a[2]+(A.K[2]-a[2])*f];
+        const p1=[a2[0]+(Bt.K[0]-a2[0])*f, a2[1]+(Bt.K[1]-a2[1])*f+1.4, a2[2]+(Bt.K[2]-a2[2])*f];
+        B.push({a:p0, b:p1, w:3.1+R()*0.8, d:0.35, ext:1.5+R()*2, flat:1, c:pick(BRD)}); }
+      // a long diagonal brace on each side, every other bay
+      if(k%2===0) for(const lat of [-PL,PL]) B.push({a:P(A.s,lat,lat<0?A.yl-6:A.yr-6), b:P(Bt.s,lat,lat<0?Bt.yl+0.5:Bt.yr+0.5), w:0.7, c:pick(TIM)});
+    }
+  }
+  if(!B.length) return null;
+  return harbBeams(B);
+}
+/* THE START: a timber footbridge over the causeway, the way harbour causeways are crossed by the
+   quay's own walkway. Two pile trestles standing in the water clear of the corridor (outside at
+   34, infield at 54 — the shared gate stood its posts at 25, inside the 28.2 wall), a deck and
+   handrails spanning between them at +23 over the banked road, X-braced legs. One more
+   silhouette in the fleet's vocabulary instead of a white plastic bar. */
+function harbFootbridge(innerSign){
+  const s=SAMP[2], R=harbRnd(0xF00B21), B=[], WL=-2.6;
+  const TIM=[0x3a3226,0x2e2820,0x413a30], surf=lat=>s.p.y+Math.sin(s.bank||0)*lat;
+  const P=(lat,y,dt)=>[s.p.x+s.n.x*lat+s.t.x*(dt||0), y, s.p.z+s.n.z*lat+s.t.z*(dt||0)];
+  const lo=-34*innerSign, hi=54*innerSign;                    // outside, infield
+  let top=-1e9; for(let l=-34;l<=54;l+=2) top=Math.max(top, surf(l*innerSign)+23);
+  const pick=()=>TIM[(R()*TIM.length)|0];
+  for(const lat of [lo,hi]) for(const dt of [-3.2,3.2]){
+    B.push({a:P(lat,WL,dt), b:P(lat,top+5.6,dt), w:1.7, c:pick()}); }
+  for(const lat of [lo,hi]){ B.push({a:P(lat,WL+4,-3.2), b:P(lat,top-1,3.2), w:0.7, c:pick()}); B.push({a:P(lat,WL+4,3.2), b:P(lat,top-1,-3.2), w:0.7, c:pick()}); }
+  const lw=Math.min(lo,hi)-2.5, hw=Math.max(lo,hi)+2.5;
+  for(const dt of [-2.6,2.6]) B.push({a:P(lw,top,dt), b:P(hw,top,dt), w:1.5, d:1.3, c:pick()});        // stringers
+  for(let l=lw;l<=hw;l+=1.4) B.push({a:P(l,top+0.9,-3.4), b:P(l,top+0.9,3.4), w:1.2, d:0.4, flat:1, c:R()<0.5?0x4a4234:0x3e372b});   // planks
+  for(const dt of [-3.3,3.3]){ B.push({a:P(lw,top+5,dt), b:P(hw,top+5,dt), w:0.5, c:pick()});
+    for(let l=lw;l<=hw+0.01;l+=(hw-lw)/12) B.push({a:P(l,top+0.9,dt), b:P(l,top+5.4,dt), w:0.5, c:pick()}); }
+  return harbBeams(B);
 }
 
 /* ============== THE STREAM: Ophelia's dressing kit ============== *
@@ -49040,6 +49234,10 @@ function buildTrack(idx){
   } else if(paint){
     skyDome=paintSky(); trackGroup.add(skyDome);
     TRACK_PULSE.paintSky=skyDome.material;
+    // the harbour is painted water now (paintWater), not the shared plane: it is put back for
+    // every other course by the shared visibility line above, which runs on every build
+    groundPlane.visible=false;
+    trackGroup.add(paintWater(TRACKS[idx].sc||1, skyDome.material.uniforms.uT));
     // The causeway spine. Darkened hard from 0x6a6a52: this is the deepest note in the
     // scene and it sits directly under the lightest large plane, which is the one place a
     // painting can put its maximum value contrast and have it mean something structural.
@@ -50067,6 +50265,8 @@ function buildTrack(idx){
   const s0=SAMP[0];
   if(oph){
     ophBridge(OK.F, OK.O, innerSign);     // a plank footbridge with a garland; flushed below
+  } else if(paint){
+    trackGroup.add(harbFootbridge(innerSign));   // the quay's footbridge over the causeway (see harbFootbridge)
   } else if(loom){
     loomGate(innerSign);
   } else if(felt){
@@ -50483,6 +50683,9 @@ function buildTrack(idx){
   } else if(macro){
     // the wisteria walk and the bamboo grove (see lilyTunnels)
     lilyTunnels(MK, innerSign, MK.G);
+  } else if(paint){
+    // the net shed on its piles (see harbShed); the shared rings stood inside the corridor
+    const sh=harbShed(innerSign); if(sh) trackGroup.add(sh);
   } else if(loom){
     loomTunnels(tun, innerSign);
   } else if(felt){
@@ -51024,7 +51227,12 @@ function buildTrack(idx){
     };
     for(let k=0;k<190;k++){
       const sp2=farSpot(250); if(!sp2) continue;
-      const aer=0.58+R()*0.24;                       // uniformly far, uniformly dissolved
+      // Uniformly far, and held as ONE soft mass between the dome's shore band and the sky.
+      // With the band finally drawn (paintSky), shapes fogged all the way to the haze colour
+      // stood as white cut-outs in front of a darker shore — recession backwards; unfogged they
+      // came forward as hard boxes. So they take the haze only part of the way (farMat below):
+      // the edges stay lost, the values sit a step above the band, and nearer ones are darker.
+      const aer=0.16+R()*0.18;
       const w=26+R()*90, dh=9+R()*24, dz=16+R()*46, ry=R()*6.283;
       c.setHex(pick([0x8a8370,0x7d7768,0x948d78,0x6f6a5c])).lerp(SKYC,aer);
       sheds.push({x:sp2.x, y:-2+dh*0.5, z:sp2.z, s:w, sy:dh, sz:dz, ry, c:c.getHex()});
@@ -51036,16 +51244,36 @@ function buildTrack(idx){
                      s:w*0.56, sy:dh*0.46, sz:dz*0.60, ry, c:c.getHex()});
       }
     }
-    for(let k=0;k<3;k++){                            // the three tall things
+    // The three tall things, and they are WORKING ones: a warehouse chimney, a standing crane
+    // and the harbour light (the old three were one box-and-pyramid repeated, which read as
+    // steeples). A horizon with one vertical accent on it is where the eye goes and stays.
+    for(let k=0;k<3;k++){
       const sp2=farSpot(330); if(!sp2) continue;
       const hh=60+R()*46, ry=R()*3.1, rr=8+R()*7;
-      c.setHex(0x77705e).lerp(SKYC,0.56);
-      sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr, sy:hh, sz:rr, ry, c:c.getHex()});
-      c.setHex(0x6a6352).lerp(SKYC,0.52);
-      spires.push({x:sp2.x, y:-2+hh+11, z:sp2.z, s:rr*1.25, sy:24, sz:rr*1.25, ry, c:c.getHex()});
+      c.setHex(0x77705e).lerp(SKYC,0.12);
+      if(k===0){        // chimney: tall and slim, a lip at the top
+        sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr*0.55, sy:hh, sz:rr*0.55, ry, c:c.getHex()});
+        sheds.push({x:sp2.x, y:-2+hh+1, z:sp2.z, s:rr*0.75, sy:2.4, sz:rr*0.75, ry, c:c.getHex()}); }
+      else if(k===1){   // crane: a tower, its jib out over the water and the counter-jib back
+        sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr*0.6, sy:hh, sz:rr*0.6, ry, c:c.getHex()});
+        sheds.push({x:sp2.x+Math.cos(ry)*hh*0.22, y:-2+hh-2, z:sp2.z-Math.sin(ry)*hh*0.22, s:hh*0.75, sy:2.6, sz:2.6, ry, c:c.getHex()});
+        sheds.push({x:sp2.x+Math.cos(ry)*hh*0.5, y:-2+hh-16, z:sp2.z-Math.sin(ry)*hh*0.5, s:0.6, sy:26, sz:0.6, ry, c:c.getHex()}); }
+      else {            // the harbour light: a tapering tower and its lantern room
+        sheds.push({x:sp2.x, y:-2+hh*0.42, z:sp2.z, s:rr, sy:hh*0.84, sz:rr, ry, c:c.getHex()});
+        c.setHex(0x6a6352).lerp(SKYC,0.08);
+        sheds.push({x:sp2.x, y:-2+hh*0.84+3.5, z:sp2.z, s:rr*0.6, sy:7, sz:rr*0.6, ry, c:c.getHex()});
+        spires.push({x:sp2.x, y:-2+hh*0.84+9, z:sp2.z, s:rr*0.55, sy:5, sz:rr*0.55, ry, c:c.getHex()}); }
     }
-    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), sheds));
-    trackGroup.add(harbBatch(new T.ConeGeometry(1,1,4), harbMat(0xffffff), spires));
+    // the haze taken only two-thirds of the way: past the fog's far end the town still holds a
+    // value of its own, a step above the band behind it
+    const farMat=harbMat(0xffffff);
+    farMat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace('#include <fog_fragment>',
+      `#ifdef USE_FOG
+        gl_FragColor.rgb=mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, fogDepth)*0.66);
+      #endif`); };
+    farMat.customProgramCacheKey=()=>'harbFar';
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), farMat, sheds));
+    trackGroup.add(harbBatch(new T.ConeGeometry(1,1,4), farMat, spires));
 
     const sailMat=harbMat(0xffffff,{});
     trackGroup.add(harbBatch(HULLG, harbMat(0xffffff), hulls));
