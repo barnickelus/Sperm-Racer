@@ -44901,7 +44901,7 @@ function ophLand(m, key){
 // blade's root (y=0) is pinned and its tip (|y|=1) moves. The phase comes from the
 // instance's own position, so a clump sways together and the next clump is out of step —
 // a breeze crossing the bank, not a metronome.
-function ophSwayMat(amp){
+function ophSwayMat(amp, noCloud){
   const m=new T.MeshLambertMaterial({color:0xffffff});
   m.onBeforeCompile=sh=>{ sh.uniforms.uT=OPH_T;
     sh.vertexShader='uniform float uT;\n'+sh.vertexShader.replace('#include <project_vertex>',
@@ -44916,7 +44916,7 @@ function ophSwayMat(amp){
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`); };
   m.customProgramCacheKey=()=>'ophSway'+amp;
-  return ophLand(m);                     // the cloud shade, chained after the sway
+  return noCloud ? m : ophLand(m);       // the cloud shade, chained after the sway (not on the reeds: see ophFlush)
 }
 /* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
    (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
@@ -45401,8 +45401,9 @@ function ophTree(F, O, R, x, z, sc){
   for(let k=0;k<2;k++){ const a=R()*6.283, tl=0.45+R()*0.35;
     const d=new T.Vector3(Math.sin(tl)*Math.cos(a), Math.cos(tl), Math.sin(tl)*Math.sin(a));
     O.trunk.push({x, y:top-1, z, q:new T.Quaternion().setFromUnitVectors(_ophUp,d), s:r*0.6, sy:CR*0.75, sz:r*0.55, c:tc}); }
-  const n=8+((R()*5)|0);
-  for(let k=0;k<n;k++){ const a=R()*6.283, f=Math.sqrt(R()), rr=f*CR, pr=(5+R()*4)*sc*(1.15-0.3*f);
+  // (six to nine masses: a dome needs no more, and every extra layer is overdraw where a copse fills the frame)
+  const n=6+((R()*4)|0);
+  for(let k=0;k<n;k++){ const a=R()*6.283, f=Math.sqrt(R()), rr=f*CR, pr=(6+R()*4.5)*sc*(1.15-0.3*f);
     const y=top+CR*0.3+(1-f*f)*CR*0.55+(R()-0.5)*3*sc, hi=(y-top)/(CR*0.85);
     O.lump.push({x:x+Math.cos(a)*rr, y, z:z+Math.sin(a)*rr*0.9,
                  s:pr, sy:pr*0.82, sz:pr*(0.85+R()*0.3), ry:R()*6, rx:(R()-0.5)*0.4,
@@ -45574,10 +45575,14 @@ function ophFlush(O, grp){
   const G=ophGeos(), L1=ophLumpGeo(1,1.0), L0=ophLumpGeo(0,1.7);
   if(O.trunk.length)  grp.add(ophBatch(G.trunk, O.trunk));
   if(O.lump.length)   grp.add(ophBatch(L1, O.lump));
-  if(O.lump0.length)  grp.add(ophBatch(L0, O.lump0, null, 420));
-  if(O.stem.length)   grp.add(ophBatch(G.stem, O.stem, null, 420));
-  if(O.spike.length)  grp.add(ophBatch(G.spike, O.spike, null, 520));
-  if(O.blade.length)  grp.add(ophBatch(G.blade, O.blade, ophSwayMat(0.45), 420));
+  // The cloud shade is a per-vertex cost, and the flowers, stems, spikes and reeds are most of the
+  // course's vertices while being far too small for a shadow on them to read: they keep the plain
+  // material (as before), and the shade falls on the land, the water and the trees, which carry it.
+  const plain=()=>new T.MeshLambertMaterial({color:0xffffff});
+  if(O.lump0.length)  grp.add(ophBatch(L0, O.lump0, plain(), 420));
+  if(O.stem.length)   grp.add(ophBatch(G.stem, O.stem, plain(), 420));
+  if(O.spike.length)  grp.add(ophBatch(G.spike, O.spike, plain(), 520));
+  if(O.blade.length)  grp.add(ophBatch(G.blade, O.blade, ophSwayMat(0.45, true), 420));
   if(O.strand.length) grp.add(ophBatch(G.strand, O.strand, ophSwayMat(1.1), 700));
   if(O.bridge)        grp.add(ophBatch(new T.BoxGeometry(1,1,1), O.bridge));
   if(O.garland)       grp.add(ophBatch(ophLumpGeo(0,2.3), O.garland));
