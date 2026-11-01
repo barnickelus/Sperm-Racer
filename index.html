@@ -1409,8 +1409,8 @@
      for Start. Quick Race is the lobby in its open-room states (search, wait, found, joined, fail) in the 04 tile's yellow; the plain lobby is
      the 05 tile's green. Everything here is under body.hz: Classic (sr_home=classic) keeps the old look. The new elements (.hzs-*, #hzmp)
      are display:none there, and the lobby's controls are moved into #hzmp only while body.hz is on (setupMP). No backdrop-filter; the only
-     animation is the three small dots of "Searching" (none under reduced motion). The lobby is opaque.
-     Text stays 11px or larger; every control is 44px or larger. */
+     animation is the three small dots of "Searching" (none under reduced motion). The lobby is opaque, and the loop draws nothing behind
+     it (HZV.cover). Text stays 11px or larger; every control is 44px or larger. */
   .hzs-bar,.hzs-rl,.hzm{display:none;}
   .hzm-slot{display:contents;}
   body.hz{--hz-yel:#FFD84A;}
@@ -67861,7 +67861,7 @@ let last=performance.now();
 // The Horizon home draws it only into its window (HZV.rect, kept by setupHomeStyle): a smaller rectangle, so it can afford a sharper 75%,
 // still every other frame, and still fewer pixels than the full-screen 60% (the rest of the page is one clear to the cabinet's black).
 const MENU_RES=0.6, HZ_RES=0.75; let menuLo=false, menuMode=0, menuTick=0;
-const HZV={shown:false, dirty:true, tick:0, rect:{x:0,y:0,w:0,h:0,a:1}, measure:null};
+const HZV={shown:false, dirty:true, tick:0, rect:{x:0,y:0,w:0,h:0,a:1}, measure:null, cover:false};   // cover: the Horizon lobby is up, opaque, over the whole screen (setupMP)
 const HZ_BG=0x0E0806;   // = --hz-bg
 function menuK(){ return menuMode===2?HZ_RES:menuMode===1?MENU_RES:1; }
 function menuRes(m){ if(m===menuMode) return; menuMode=m; menuLo=m>0; renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES*menuK()); }
@@ -67916,6 +67916,7 @@ function frame(now){
   }
   const tsec=now/1000;
   { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
+  if(HZV.cover && state==='menu'){ diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the Horizon lobby covers the screen: nothing behind it is seen, so nothing is drawn
   // the Horizon home: the course is drawn into its window only (its rectangle re-read on any layout change, and now and then anyway)
   const hzWin=HZV.shown && state==='menu' && !!HZV.measure;
   if(hzWin && (HZV.dirty || ++HZV.tick>=90)){ HZV.tick=0; HZV.measure(); }
@@ -69086,6 +69087,7 @@ function netInviteURL(){
   function hzOn(){ return document.body.classList.contains('hz'); }
   const TRANS_SHORT={local:'Same browser', peer:'Peer-to-peer', relay:'Hosted relay'};
   function hzPaint(){
+    HZV.cover=hzOn() && !mpEl.classList.contains('hidden');   // the lobby is opaque: the loop need not draw the course behind it
     if(!hzOn()) return;
     const ps=[...NET.players.values()], n=ps.length, inRoom=!!(NET.t && NET.lobby && NET.room);
     const quick=MPUI.quick && (NET.finding || NET.open || !NET.t);   // (a Quick Race that fell back to hosting a coded room is the plain lobby)
@@ -69117,6 +69119,7 @@ function netInviteURL(){
       for(const e of $$('mplist').querySelectorAll('.hzm-e')) e.remove(); $$('mpjoin').removeAttribute('aria-expanded'); }
     hzPaint();
   };
+  new MutationObserver(()=>{ HZV.cover=hzOn() && !mpEl.classList.contains('hidden'); }).observe(mpEl,{attributes:true,attributeFilter:['class']});
   // Join with code, in the page: the room row's code becomes a field. Letters and digits only, upper case; Enter (the keyboard's Go) joins,
   // Esc or Cancel puts the code back. The same join as the system prompt's in Classic.
   function joinOpen(pre){
