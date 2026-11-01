@@ -44071,7 +44071,11 @@ function beadHoop(out, cx,cy,cz, r, step, col, thick){
  * Beads are instanced in district chunks; the scenery bead is a lower-poly sphere than the
  * racer's (it is never closer than a few car lengths, and the gloss reads the same).
  * ---------------------------------------------------------------------------------- */
-let PERLA_FLOOR_Y=-2;
+let PERLA_FLOOR_Y=-2, PERLA_Q=null;
+// The plinth's pegs, the piers, the tunnel and gate, the light housings, and every static bead are
+// queued by kind (c: cubes, b: beads) and flushed as two chunked batches at the end of the scenery,
+// one gloss material each: draw calls are main-thread time every frame.
+function perlaQueue(k, L){ const Q=PERLA_Q[k]; for(const v of L) Q.push(v); }
 const PERLA_HOR=0x1e1228, PERLA_MAG=0xff3fa4, PERLA_BLU=0x3f7dff;
 function perlaFloorLevel(inS){ let lo=1e9;
   for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
@@ -44154,7 +44158,7 @@ function perlaDeck(inS, tunIdx){
       for(;d0<dl;d0+=3.4, n++){ if(inT(i)) continue; const f=d0/dl, k=(n%6);
         P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:2.8, sy:3.0, sz:2.8, ry, c:k<3?0xe0217f:k<5?0xf4e8f0:0xf2c230}); }
       d0-=dl; } }
-  pixBatch(P, perlaGloss(), 900, VOX_GEO, 0);
+  perlaQueue('c', P);
 }
 // THE PIERS: gloss black stepped columns with a cap under both shoulders
 function perlaPiers(){
@@ -44166,7 +44170,7 @@ function perlaPiers(){
     const n=Math.max(1,Math.round((drop-3)/8));
     for(let k=0;k<n;k++){ const h=(drop-3)/n, w=8+k*1.8;
       L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w*0.8, ry, c:k%2?0x2a1c36:0x1e1426}); } }
-  pixBatch(L, perlaGloss({shininess:90, specular:0x8080a0}), 1400, VOX_GEO, 0);
+  perlaQueue('c', L);
 }
 // TUNNEL: strung bead hoops on peg legs - plumb legs at 31 (inner face ~28.9, clear of 28.2),
 // a tombstone crown, gold and white at the mouths, the colourways cycling through the throat
@@ -44182,7 +44186,7 @@ function perlaTunnel(tunIdx){
         pegs.push({x, y:(y0+top)/2, z, s:3.4, sy:top-y0, sz:3.4, ry, c:0x1e1426}); }
       const pts=[]; for(let a=0;a<=20;a++){ const th=Math.PI*(a/20); pts.push([Math.cos(th)*LAT, top+Math.sin(th)*CR]); }
       pts.forEach(([off,y],k)=>B.push({x:s.p.x+s.n.x*off, y, z:s.p.z+s.n.z*off, s:mouth?5.6:4.6, c:cw[k%2]})); } }
-  pixBatch(B, perlaGloss(), 0, PERLA_BEAD, 0); pixBatch(pegs, perlaGloss({shininess:90}), 0, VOX_GEO, 0);
+  perlaQueue('b', B); perlaQueue('c', pegs);
 }
 // THE START: peg posts outside both walls and on the floor, a beam strung with big beads, and
 // START spelt in beads on the face the grid looks at
@@ -44199,7 +44203,7 @@ function perlaGate(inS){
   for(let w=0;w<word.length;w++){ const G=PIX_FONT[word[w]];
     for(let r=0;r<7;r++) for(let cc=0;cc<5;cc++){ if(G[r][cc]!=='#') continue;
       const p=at(-((w*6+cc)-(W-1)/2)*px, bot+BH/2+(3-r)*px); B.push({x:p.x-s.t.x*2.4, y:p.y, z:p.z-s.t.z*2.4, s:px*1.15, c:0xf4e8f0}); } }
-  pixBatch(pegs, perlaGloss({shininess:90}), 0, VOX_GEO, 0); pixBatch(B, perlaGloss(), 0, PERLA_BEAD, 0);
+  perlaQueue('c', pegs); perlaQueue('b', B);
 }
 // where the chase camera sees a spot longest: dead ahead within 24 degrees at 300-950 units
 function perlaSpots(n, clr, sep){
@@ -44278,7 +44282,7 @@ function perlaScenery(inS, ccx, ccz){
         stand.push({x:(ex+x-fx*12)/2, y:F+5.5, z:(ez+z-fz*12)/2, s:1.2, sy:len, sz:1.2, q:q.clone(), c:0x2a2830}); }
       // the pool it throws on the board, toward the road
       pool.push({x:x+fx*60, z:z+fz*60, yaw, w:strip?70:150, d:strip?150:120, c:gel.clone().multiplyScalar(strip?0.55:0.75)}); }
-    pixBatch(house, perlaGloss({shininess:60, specular:0x404040}), 1400, VOX_GEO, 0);
+    perlaQueue('c', house);
     pixBatch(stand, new T.MeshLambertMaterial({color:0xffffff}), 1400, VOX_GEO, 0);
     const fm=new T.MeshBasicMaterial({map:perlaBoxTex(), color:0xffffff});
     pixBatch(face, fm, 1400, VOX_GEO, 0);
@@ -44299,7 +44303,9 @@ function perlaScenery(inS, ccx, ccz){
       for(let j=0;j<cnt;j++){ a+=(R()-0.5)*0.5; x+=Math.cos(a)*3.5; z+=Math.sin(a)*3.5; if(!pixClear(x,z,2)) break;
         B.push({x, y:PERLA_FLOOR_Y+1.7, z, s:3.6, c:cw[(j%5===4)?2:(j%2)]}); ok++; }
       if(ok) n++; }
-    pixBatch(B, perlaGloss(), 1400, PERLA_BEAD, 0); }
+    perlaQueue('b', B); }
+  // every static gloss peg and every static bead on the course, flushed once (see perlaQueue)
+  pixBatch(PERLA_Q.c, perlaGloss(), 2400, VOX_GEO, 0); pixBatch(PERLA_Q.b, perlaGloss(), 2400, PERLA_BEAD, 0); PERLA_Q=null;
   return P; }
 function perlaTick(P, tsec){ if(P.turn) P.turn.rotation.y=P.ry0+tsec*0.045; }   // a turn every two and a half minutes
 // Studio vs. the game's normal biological lighting. Set EXPLICITLY on every buildTrack,
@@ -50310,7 +50316,7 @@ function buildTrack(idx){
     tessaPiers();
   } else if(bead){
     // Perla: the studio backdrop, the floor level, the plinth's piers (THE BEAD BOARD)
-    PERLA_FLOOR_Y=perlaFloorLevel(innerSign);
+    PERLA_FLOOR_Y=perlaFloorLevel(innerSign); PERLA_Q={c:[], b:[]};
     skyDome=perlaSky(); trackGroup.add(skyDome);
     TRACK_PULSE.perla={};
     perlaPiers();
