@@ -41724,6 +41724,27 @@ function macroSky(){
     streak(cx2, cy2, r2, 'rgba(44,24,66,0.9)', 0.42);
     streak(cx2+14, cy2-9, r2*0.72, 'rgba(255,140,90,0.9)', 0.18);  // lit underside faces the glow
   }
+  /* THE EVENING EFFECT. Monet's dusks over the pond are not a gradient: they are banks of
+     violet cloud lying low across the afterglow, each lit salmon and gold along its underside,
+     and thin rose wisps high above catching the last of it. The banks sit in the band just over
+     the glow (where every frame's top third is looking), built of overlapping streaks so their
+     tops are soft and their lit lower edges are the crisp thing; irregular in size and spacing,
+     with one or two larger masses so the band has an accent. The wisps go high and faint. */
+  { const R=harbRnd(0x5C1E5);
+    for(let i=0;i<16;i++){
+      const cx2=R()*1024, cy2=284+Math.pow(R(),1.4)*70, big=R()<0.18, r2=(big?44:22)+R()*(big?30:22);
+      for(let k=0;k<3;k++){ const ox=(R()-0.5)*r2*3.2, oy=(R()-0.3)*r2*0.5;
+        streak(cx2+ox, cy2+oy+r2*0.25, r2*(0.7+R()*0.5), 'rgba(52,26,72,0.95)', 0.24+R()*0.14); }
+      streak(cx2+r2*0.4, cy2-r2*0.28, r2*0.8, 'rgba(255,150,104,0.95)', 0.20+R()*0.12);   // the lit underside
+      streak(cx2-r2*0.6, cy2-r2*0.36, r2*0.45, 'rgba(255,206,140,0.95)', 0.16);           // and its hottest edge
+    }
+    for(let i=0;i<9;i++){ const sx3=R()*1024, sy3=372+R()*90, r3=10+R()*12;
+      x.save(); x.translate(((sx3%1024)+1024)%1024, sy3); x.scale(9,1);
+      for(const ox of [-1024/9,0,1024/9]){ const rg3=x.createRadialGradient(ox,0,0,ox,0,r3);
+        rg3.addColorStop(0,'rgba(240,150,170,0.9)'); rg3.addColorStop(1,'rgba(0,0,0,0)');
+        x.globalAlpha=0.10+R()*0.08; x.fillStyle=rg3; x.fillRect(ox-r3,-r3,r3*2,r3*2); }
+      x.globalAlpha=1; x.restore(); }
+  }
   // THE MOON: crisp warm-white disc, a soft halo, and an offset dusk disc carving a
   // gentle gibbous shade. Kept well clear of the wrap line, high in the view.
   blob(690, 442, 64, 'rgba(255,238,214,0.95)', 0.30);              // halo
@@ -41735,7 +41756,12 @@ function macroSky(){
     const bx=(i*307)%1024, by=420+((i*67)%80), r=7+((i*37)%14);
     blob(bx,by,r,'rgba(255,220,190,1)', 0.16+((i*13)%12)/100);
   }
-  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.needsUpdate=true;
+  // flipY OFF. Everything above is laid out as the note at the top says — canvas BOTTOM is the
+  // zenith — but a CanvasTexture flips by default and a SphereGeometry puts uv.y=1 at its top, so
+  // the sheet went on upside down: the moon, the cloud streaks and the embers all hung below the
+  // horizon, under the pond, and the dusk gradient ran the wrong way up. Unflipped, the sky is the
+  // one that was painted.
+  const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.flipY=false; t.needsUpdate=true;
   const m=new T.Mesh(new T.SphereGeometry(1150,32,20),
     new T.MeshBasicMaterial({map:t, side:T.BackSide, fog:false, depthWrite:false}));
   m.frustumCulled=false; return m;
@@ -42407,10 +42433,11 @@ function lilyScenery(MK, inS, G){
   const pop=[], crown=[], trunk=[];
   for(let row=0;row<9;row++){
     const a0=row*0.698+R()*0.25, span=0.32+R()*0.3, off=18+R()*34;
-    for(let a=a0;a<a0+span;a+=(15+R()*14)/(MK.shoreR(a)+off)){
+    for(let a=a0;a<a0+span;a+=(R()<0.15?34+R()*30:12+R()*16)/(MK.shoreR(a)+off)){
       const rr=MK.shoreR(a)+off+Math.sin(a*9+row)*14+(R()-0.5)*6, x=cx+Math.cos(a)*rr, z=cz+Math.sin(a)*rr, y=MK.shore(x,z);
       if(y===null) continue;
-      const h=55+R()*42, w=6.4+R()*2.8;
+      // (heights and girths spread wide: a row of matched flames is a fence)
+      const h=44+Math.pow(R(),0.8)*62, w=5.4+R()*3.8;
       pop.push({x, y:y+h*0.52, z, s:w, sy:h*0.5, sz:w, ry:R()*6.28, c:LILY.tree[(R()*2)|0]});
       trunk.push({x, y:y+2, z, s:0.8, sy:5, c:0x201a20});
     }
@@ -42506,6 +42533,21 @@ function lilyScenery(MK, inS, G){
     P.flies.push({p:pc, m, ph:cl*2.3, f:0.37+cl*0.23});
   }
 }
+// Wisteria florets: pale open flowers over a shaded ground, a light upper lip on each. Tiled
+// round the raceme (wraps 3 x 4); built once a page.
+let LILY_FLORET=null;
+function lilyFloretTex(){
+  if(LILY_FLORET) return LILY_FLORET;
+  const N=64, c=document.createElement('canvas'); c.width=c.height=N; const x=c.getContext('2d'), R=harbRnd(0xF1043E);
+  x.fillStyle='#a4a0b4'; x.fillRect(0,0,N,N);
+  for(let k=0;k<70;k++){ const px=R()*N, py=R()*N, r=2.2+R()*2.4;
+    for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){ const X=px+ox, Y=py+oy; if(X<-r||X>N+r||Y<-r||Y>N+r) continue;
+      x.fillStyle='rgba(70,64,92,0.55)'; x.beginPath(); x.arc(X+0.6,Y+0.9,r,0,6.283); x.fill();
+      x.fillStyle=R()<0.3?'#ffffff':'#ece6f6'; x.beginPath(); x.ellipse(X,Y,r,r*0.8,0,0,6.283); x.fill();
+      x.fillStyle='rgba(255,236,170,0.8)'; x.beginPath(); x.arc(X-r*0.15,Y-r*0.25,r*0.28,0,6.283); x.fill(); } }
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(3,4); t.encoding=T.sRGBEncoding;
+  LILY_FLORET=t; return t;
+}
 // flush the shared bags: one draw per family for the whole lap
 function lilyFlush(G, MK){
   const add=m=>{ trackGroup.add(m); return m; };
@@ -42537,17 +42579,33 @@ function lilyFlush(G, MK){
   if(G.az.length){ add(lilyCells(G.lump, G.azLeaf, lilyMat(24,0x2a3a30,{vc:true,lam:1}), 440)); add(lilyCells(G.lump2, G.az, lilyMat(34,0x8a4a6a,{vc:true}), 440)); }
   // a wisteria raceme: a tapering bunch, its rings pinched alternately so it reads as
   // florets rather than as a smooth cone (smooth cones read as icicles)
-  const hang=(()=>{ const g=new T.CylinderGeometry(1,0.38,1,5,4).translate(0,-0.5,0), p=g.attributes.position;
-    for(let k=0;k<p.count;k++){ const y=p.getY(k), ring=Math.round(-y*4), a=Math.atan2(p.getZ(k),p.getX(k));
-      const f=(ring===4?0.3:ring%2?0.78:1.0)*(1+0.16*Math.sin(a*3+ring*1.7)); p.setX(k,p.getX(k)*f); p.setZ(k,p.getZ(k)*f); }
-    g.computeVertexNormals(); return lilyShade(g,(x,y)=>0.5+0.5*(1+y)); })();
-  if(G.rac.length) add(lilyCells(hang, G.rac, lilyMat(18,0x3a2a4a,{vc:true, sway:0.6, lam:1}), 430));
+  // (deeper pinches than before, and the florets painted on: a smooth cone of one purple, lit
+  // facet by facet, read as an icicle or a crystal at any length — it is the broken surface of
+  // open flowers that says wisteria. The sheet is pale florets over a shaded ground, wrapped
+  // three times round and four down, so the raceme's own shading still runs top to tip.)
+  // A teardrop, not a cone: fullest just under the stalk where the open florets are, drawn in to
+  // a ROUND tip of buds, the rings alternately pinched (florets), and the whole spray drooping in a
+  // gentle curve rather than hanging plumb — a straight pointed cone is an icicle at any colour.
+  const hang=(()=>{ const RG=6, g=new T.CylinderGeometry(1,1,1,5,RG).translate(0,-0.5,0), p=g.attributes.position;
+    for(let k=0;k<p.count;k++){ const y=p.getY(k), t=-y, ring=Math.round(t*RG), a=Math.atan2(p.getZ(k),p.getX(k));
+      const prof=t<0.22 ? 0.72+1.27*t : 1.0-0.84*Math.pow((t-0.22)/0.78,1.5);
+      const f=prof*(ring===RG?0.35:ring%2?0.74:1.0)*(1+0.18*Math.sin(a*3+ring*1.7));
+      p.setX(k,p.getX(k)*f+0.30*t*t); p.setZ(k,p.getZ(k)*f); }
+    g.computeVertexNormals(); return lilyShade(g,(x,y)=>0.62+0.38*(1+y)); })();
+  if(G.rac.length){ const rm=lilyMat(18,0x3a2a4a,{vc:true, sway:0.6, lam:1}); rm.map=lilyFloretTex(); rm.color.setScalar(1.5); add(lilyCells(hang, G.rac, rm, 430)); }   // (lifted by the sheet's mean)
   if(G.wLeaf.length) add(lilyCells(G.lump, G.wLeaf, lilyMat(24,0x3a3a4a,{vc:true,lam:1}), 450));
   if(G.culm.length) add(lilyCells(lilyShade(new T.CylinderGeometry(1,1.12,1,6,14,true).translate(0,0.5,0),
       (x,y)=>{ const b=(y*14)%2; return (0.55+0.45*y)*(b<0.25?1.0:0.8); }), G.culm, lilyMat(60,0x80c0a0,{vc:true}), 900));
   if(G.bLeaf.length) add(lilyCells(blade, G.bLeaf, lilyMat(20,0x2a4a3a,{sway:0.4, dbl:true, lam:1}), 430));
-  const popG=new T.SphereGeometry(1,7,9), pp=popG.attributes.position;
-  for(let k=0;k<pp.count;k++){ const y=pp.getY(k), f=y>0?1-0.42*y*y:1-0.15*(-y); pp.setX(k,pp.getX(k)*f); pp.setZ(k,pp.getZ(k)*f); }
+  /* Monet's poplars are LOMBARDY poplars: a narrow flame, fullest a third of the way up and drawn
+     to a point, its edge broken by the sprays. The old egg with a round crown read as a row of
+     capsules standing on the far shore. Same instances and rows; the silhouette is the change. */
+  const popG=new T.SphereGeometry(1,7,11), pp=popG.attributes.position;
+  for(let k=0;k<pp.count;k++){ const x=pp.getX(k), y=pp.getY(k), z=pp.getZ(k), t=(y+1)/2, a=Math.atan2(z,x);
+    const prof=t<0.3 ? 0.62+0.38*Math.sin(t/0.3*Math.PI/2) : Math.pow(1-(t-0.3)/0.7, 1.35);
+    const rag=1+0.14*Math.sin(a*3+y*9.0)*Math.sin(y*17.0+a*2)+0.06*Math.sin(a*5-y*23.0);
+    const r0=Math.hypot(x,z)||1, f=prof*rag/r0*Math.sqrt(Math.max(0,1-y*y));
+    pp.setX(k,x*f); pp.setZ(k,z*f); }
   popG.computeVertexNormals(); lilyShade(popG,(x,y)=>0.6+0.4*(y+1)/2);
   if(G.pop.length) add(lilyCells(popG, G.pop, lilyMat(4,0x101410,{vc:true,lam:1})));
   if(G.crown.length) add(lilyCells(G.lump, G.crown, lilyMat(4,0x101410,{vc:true,lam:1})));
@@ -45916,7 +45974,7 @@ function paintifyScene(root, pulse){
  */
 function paintSky(){
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uT:{value:0} },
+    uniforms:{ uT:{value:0}, uStroke:{value:paintStrokeTex()} },
     // vP has to be the WORLD position, not the object position. The dome sits at the
     // world origin while the camera roams several hundred units around the circuit, so
     // shading off the object position anchors the whole gradient — horizon included — to
@@ -45925,13 +45983,13 @@ function paintSky(){
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP; uniform float uT;
+      varying vec3 vP; uniform float uT; uniform sampler2D uStroke;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),
                    mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
       float fbm(vec2 p){ float v=0.0,a=0.5;
-        for(int i=0;i<4;i++){ v+=a*vn(p); p*=2.11; a*=0.5; } return v; }
+        for(int i=0;i<3;i++){ v+=a*vn(p); p*=2.11; a*=0.5; } return v+0.03125; }   // (3 octaves: the 4th was a 1/16 ripple nobody saw; its mean is added back)
       void main(){
         vec3 d=normalize(vP - cameraPosition); float el=d.y;   // view direction, so the horizon stays level
         float az=atan(d.z, d.x);
@@ -45943,14 +46001,24 @@ function paintSky(){
         c=mix(c, vec3(0.842,0.812,0.726), smoothstep(0.0,-0.16,el));
         // High cloud: warm lit tops, cool grey bellies, deliberately LOW contrast — this
         // is an overcast-bright day, not a dramatic one. Drifts on uT.
-        float cl=fbm(vec2(az*1.9 + uT*0.0055, el*5.2 + 3.1));
+        if(el>0.02){ float cl=fbm(vec2(az*1.9 + uT*0.0055, el*5.2 + 3.1));   // (none below 0.02: skipped there)
         float cm=smoothstep(0.46,0.78,cl)*smoothstep(0.02,0.30,el);
         c=mix(c, vec3(0.868,0.848,0.792), cm*0.55);
-        c=mix(c, vec3(0.612,0.622,0.618), smoothstep(0.62,0.86,cl)*smoothstep(0.10,0.42,el)*0.30);
+        c=mix(c, vec3(0.612,0.622,0.618), smoothstep(0.62,0.86,cl)*smoothstep(0.10,0.42,el)*0.30); }
         // the sun: a soft disc with a wide, dirty halo, never a clean circle
         float sd=distance(d, normalize(vec3(0.22,0.30,-0.92)));
         c=mix(c, vec3(0.980,0.962,0.884), smoothstep(0.44,0.0,sd)*0.42);
         c=mix(c, vec3(1.000,0.992,0.940), smoothstep(0.055,0.0,sd)*(0.72+0.10*sin(uT*0.27)));
+        // BRUSHWORK. The sky is the largest surface in the picture and it was a perfect
+        // gradient, which no painter ever laid: here are the broad strokes it was put on with —
+        // the same mixture dragged across a shade lighter and darker, warm against cool, long
+        // and horizontal (paintStrokeTex). A few percent either way: the value plan is the
+        // gradient's, the strokes only say it was painted. Faded out at the horizon so the seam
+        // with the fogged water stays exact, and up at the zenith where nobody looks.
+        if(el>0.014 && el<1.0){ vec3 s=texture2D(uStroke, vec2(az*0.95493, el*2.4+0.17)).rgb;
+          float k=smoothstep(0.014,0.09,el)*(1.0-smoothstep(0.7,1.0,el));
+          c*=1.0+(s.r-0.5)*0.10*k;
+          c+=vec3(0.012,0.004,-0.011)*(s.g-0.5)*2.0*k; }
         // --- far hills: one value step off the sky, nothing more ---
         float hh=0.0315 + 0.0225*sin(az*2.3+0.7) + 0.0125*sin(az*5.1+2.2) + 0.0060*sin(az*11.0+4.0);
         float hill=smoothstep(hh+0.0045, hh-0.0045, el)*smoothstep(-0.004,0.004,el);
@@ -45972,8 +46040,116 @@ function paintSky(){
         c=mix(c, vec3(0.402,0.386,0.336), mast*0.55);
         gl_FragColor=vec4(c,1.0);
       }`});
+  // noPaint: the scene pass (paintifyScene) converts every material in trackGroup it is not told
+  // to leave alone, and this one was being turned into a canvas-mapped Lambert sphere — so the
+  // horizon, the far shore, the fleet's picket and the sun described above had never been seen.
+  mat.userData.noPaint=true;
   const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat);   // < camera.far (1400)
   m.frustumCulled=false; return m;
+}
+/* THE BRUSH. One tileable sheet of loaded-brush strokes, three independent fields in its three
+   channels so one fetch carries all of it:
+     R  value: long strokes a shade lighter or darker than the ground they cross, each a bundle
+        of bristle tracks with a ragged, tapering start and finish — the mark a flat makes
+        dragged sideways through wet paint;
+     G  temperature: a second, looser set, read as warm against cool (broken colour);
+     B  the LIGHT: short, separate, sharp-ended dabs, only ever lighter — the broken highlights
+        a painter lays across water where the sun's path falls (paintWater's glitter mask).
+   Strokes run along x (the sheet is mapped with x across the line of sight on the water, and
+   round the horizon on the sky). Built once a page; mipmapped, so it greys out to its own mean
+   in the distance instead of shimmering. */
+let PAINT_STROKE=null;
+function paintStrokeTex(){
+  if(PAINT_STROKE) return PAINT_STROKE;
+  const N=256, R=harbRnd(0x0175EA);
+  const layer=(n, len, wid, light, dab)=>{ const c=document.createElement('canvas'); c.width=c.height=N;
+    const g=c.getContext('2d'); g.fillStyle='rgb(128,128,128)'; g.fillRect(0,0,N,N); g.lineCap='butt';
+    for(let k=0;k<n;k++){
+      const x0=R()*N, y0=R()*N, L=len[0]+R()*len[1], W=wid[0]+R()*wid[1], a=(R()-0.5)*0.12;
+      const up=light ? true : R()<0.5, v=up ? 150+R()*95 : 30+R()*70, nb=Math.max(3,(W/1.6)|0);
+      const ca=Math.cos(a), sa=Math.sin(a);
+      // the bundle as TWO paths, alternate bristles in each (one stroke() per path, not per bristle and
+      // wrap copy: this sheet is painted the first time the course is built, so it is home-preview time).
+      // Bristles in one path sit 3.2px apart and are at most 2.2 wide, so they never merge into a band.
+      for(let h=0;h<2;h++){
+        const al=(dab?0.55:0.22)+R()*(dab?0.4:0.3);
+        g.strokeStyle=`rgba(${v|0},${v|0},${v|0},${al.toFixed(3)})`; g.lineWidth=0.8+R()*1.4; g.beginPath();
+        for(let b=h;b<nb;b+=2){
+          const off=(b/(nb-1)-0.5)*W, s0=R()*L*0.18, s1=L*(0.8+R()*0.2);
+          for(const ox of [-N,0,N]) for(const oy of [-N,0,N]){
+            const X=x0+ox, Y=y0+oy+off; if(X+L<0||X-L>N||Y<-W||Y>N+W) continue;
+            g.moveTo(X+ca*s0, Y+sa*s0); g.lineTo(X+ca*s1, Y+sa*s1); } }
+        g.stroke(); } }
+    return g.getImageData(0,0,N,N).data; };
+  const r=layer(320,[40,110],[5,9],false,false), gg=layer(140,[60,140],[8,12],false,false), bb=layer(240,[8,26],[2,4],true,true);
+  const c=document.createElement('canvas'); c.width=c.height=N; const x=c.getContext('2d'), img=x.createImageData(N,N);
+  for(let i=0;i<N*N*4;i+=4){ img.data[i]=r[i]; img.data[i+1]=gg[i]; img.data[i+2]=bb[i]; img.data[i+3]=255; }
+  x.putImageData(img,0,0);
+  const t=new T.CanvasTexture(c); t.wrapS=t.wrapT=T.RepeatWrapping;
+  t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
+  PAINT_STROKE=t; return t;
+}
+/* THE WATER, painted. The shared ground plane was the harbour, and it was one flat Lambert
+   value: the largest surface in the frame, and the one with no paint on it. This replaces it
+   (same plane, same colour, same light, so the value ladder is where it was) and lays on it
+   what a plein-air painter puts on slack water:
+     - the strokes: the brush sheet's value field, broad and horizontal, anchored to the water
+       (so they pass under you at the speed of the ground) and aligned across the line to the
+       sun, the way wind-ruffled water is ruled;
+     - the SUN'S PATH: a column of broken light, the sheet's dabs lit only where the reflected
+       view ray meets the hazy sun in the sky dome (paintSky's direction) — so it always lies
+       between you and the sun, widens and breaks up toward you, and is simply absent when you
+       drive away from it. The one bright note on the water, and the thing that says HARBOUR AT
+       MID-MORNING rather than "beige floor"; it shimmers as the swell (uT) slides the dabs.
+   Lambert lighting is per vertex and the plane is one quad, so the light is as flat as it was;
+   the paint goes on in the fragment, two fetches. */
+const PAINT_SUN=new T.Vector3(0.22,0.30,-0.92).normalize();
+function paintWater(sc, uT){
+  const g=new T.PlaneGeometry(2400*sc,2400*sc,1,1); g.rotateX(-Math.PI/2);
+  const m=new T.MeshLambertMaterial({color:0x8a8470});
+  m.userData.noPaint=true;
+  const U={uT};                          // the sky's own clock (frame() advances it), by reference
+  const az=new T.Vector2(PAINT_SUN.x, PAINT_SUN.z).normalize();
+  m.onBeforeCompile=sh=>{ sh.uniforms.uStroke={value:paintStrokeTex()}; sh.uniforms.uT=U.uT;
+    // (r128 uploads cameraPosition only to Phong/Standard/Toon/Shader materials — on a Lambert it is
+    // (0,0,0) — so the eye is recovered from viewMatrix, which every material gets. The view vector
+    // is linear across the plane, so as a varying it is exact.)
+    sh.vertexShader='varying vec3 vHW; varying vec3 vHV;\n'+sh.vertexShader.replace('#include <project_vertex>',
+      `#include <project_vertex>
+  vHW=(modelMatrix*vec4(transformed,1.0)).xyz;
+  { vec3 t3=viewMatrix[3].xyz; vHV=vHW+vec3(dot(viewMatrix[0].xyz,t3), dot(viewMatrix[1].xyz,t3), dot(viewMatrix[2].xyz,t3)); }`);
+    sh.fragmentShader=`varying vec3 vHW; varying vec3 vHV; uniform sampler2D uStroke; uniform float uT;
+      const vec2 SA=vec2(${az.x.toFixed(4)},${az.y.toFixed(4)}), SB=vec2(${(-az.y).toFixed(4)},${az.x.toFixed(4)});
+      const vec3 SUN=vec3(${PAINT_SUN.x.toFixed(4)},${PAINT_SUN.y.toFixed(4)},${PAINT_SUN.z.toFixed(4)});
+      `+sh.fragmentShader
+      .replace('#include <map_fragment>',`#include <map_fragment>
+        vec2 wq=vec2(dot(vHW.xz,SB), dot(vHW.xz,SA));
+        wq.y+=sin(wq.x*0.0041+wq.y*0.0013)*26.0+sin(wq.x*0.011-1.3)*7.0;   // the strokes swell and bend a little: hand-laid, not ruled
+        // Water is painted ACROSS the line of sight. One world-anchored set of strokes is right
+        // looking along it and wrong looking across it (they run off to a vanishing point, like
+        // speed lines), so there are two sets at right angles, each fixed to the water, and each
+        // fragment takes the one that lies across its own view ray. Nothing swims when you turn.
+        vec2 vq=normalize(vHV.xz+1e-4);
+        float wA=smoothstep(0.35,0.65,abs(dot(vq,SA)));
+        // (one fetch except in the narrow band of headings where the two sets cross-fade)
+        vec3 st;
+        if(wA<0.002) st=texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb;
+        else if(wA>0.998) st=texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb;
+        else st=mix(texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb, texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb, wA);
+        diffuseColor.rgb*=1.0+(st.r-0.5)*0.26+(st.g-0.5)*vec3(0.05,0.0,-0.06);`)
+      .replace('#include <fog_fragment>',`
+        { vec3 V=normalize(vHV); vec3 Rf=vec3(V.x,-V.y,V.z);
+          vec2 rh=normalize(Rf.xz+1e-5), sh2=normalize(SUN.xz);
+          float daz=1.0-dot(rh,sh2), del=Rf.y-SUN.y;
+          float path=exp(-daz/0.010)*exp(-del*del/0.09);
+          // (dabs a few units long and about one across: any finer and the mipmap averages them
+          // away before they reach the threshold; a soft ramp, so far off they melt into a sheen)
+          if(path>0.004){ float dab=texture2D(uStroke, vec2(wq.x/70.0+uT*0.006, wq.y/30.0)).b;   // (only on the path)
+            gl_FragColor.rgb+=vec3(0.34,0.30,0.21)*path*clamp((dab-0.52)*3.2,0.0,1.0); } }
+        #include <fog_fragment>`); };
+  m.customProgramCacheKey=()=>'paintWater';
+  const w=new T.Mesh(g,m); w.position.y=-2;
+  return w;
 }
 
 /* ---------------- THE HARBOUR: Sienna's dressing kit ----------------------------------
@@ -46126,6 +46302,98 @@ function harbGullGeo(){
     0,0,0,  0.55,0.10,0.34, 1,0.34,-0.30 ],3));
   g.computeVertexNormals(); return g;
 }
+/* TIMBER, member by member: a box from point a to point b, w thick (its local y runs a->b), in
+   the harbour's painted tooth. One instanced batch for a whole structure. */
+function harbBeams(list){
+  const m=new T.InstancedMesh(new T.BoxGeometry(1,1,1), harbMat(0xffffff), list.length); m.frustumCulled=false;
+  const o=new T.Object3D(), c=new T.Color(), U=new T.Vector3(0,1,0), d=new T.Vector3();
+  const X=new T.Vector3(), Z=new T.Vector3(), M=new T.Matrix4();
+  list.forEach((v,i)=>{ d.set(v.b[0]-v.a[0], v.b[1]-v.a[1], v.b[2]-v.a[2]); const L=d.length()||1; d.multiplyScalar(1/L);
+    o.position.set((v.a[0]+v.b[0])/2, (v.a[1]+v.b[1])/2, (v.a[2]+v.b[2])/2);
+    // flat members (planks, boards) carry their thin axis (local z) as near vertical as they can
+    if(v.flat){ Z.set(0,1,0).addScaledVector(d,-d.y); if(Z.lengthSq()<1e-6) Z.set(1,0,0); Z.normalize(); X.crossVectors(d,Z);
+      o.quaternion.setFromRotationMatrix(M.makeBasis(X,d,Z)); }
+    else o.quaternion.setFromUnitVectors(U,d);
+    o.scale.set(v.w, L+(v.ext||0), v.d||v.w); o.updateMatrix(); m.setMatrixAt(i,o.matrix);
+    c.setHex(v.c); m.setColorAt(i,c); });
+  m.instanceMatrix.needsUpdate=true; m.instanceColor.needsUpdate=true; return m;
+}
+/* THE NET SHED (Sienna's tunnel). The shared tunnel was a run of pink-turned-brown torus rings
+   whose inner face stood at 23 laterally — inside the 28.2 corridor, so a kart on the outside of
+   the deck drove through every one of them. A harbour has its own covered way: an open timber
+   shed on piles over the water, the kind fish are landed and nets mended under. Bents of two
+   piles and a tie beam, a pitched roof of rafters and loose boards with daylight between them,
+   long braces, purlins tying the bays. In the oil it is the one passage of real dark: the deck
+   runs from the pale haze into a striped shade of boards and light and out again — compression
+   and release, done with value alone.
+   CLEARANCE: piles stand at 31.5 either side (the tunnel's corridor is 28.2 both ways, and the
+   fascia overhang ends at 23.6), tie beams and everything above them at +23 over the banked
+   deck surface at that lateral (chase cam +13, mega +18). The piles go down to the water. */
+function harbShed(innerSign){
+  const tn=TRACKS[selTrack].tunnels||[], R=harbRnd(0x5ED0B7), B=[], WL=-2.6, PL=31.5;
+  const TIM=[0x3a3226,0x2e2820,0x413a30,0x352d22], BRD=[0x4a4234,0x3e372b,0x544a3a,0x2f291f];
+  const surf=(s,lat)=>s.p.y+Math.sin(s.bank||0)*lat;
+  const P=(s,lat,y)=>[s.p.x+s.n.x*lat, y, s.p.z+s.n.z*lat];
+  const pick=a=>a[(R()*a.length)|0];
+  for(const [ua,ub] of tn){
+    const i0=Math.floor(ua*STEPS)+1, i1=Math.floor(ub*STEPS)-1, bents=[];
+    for(let i=i0;i<=i1;i+=5+((R()*3)|0)) bents.push(i);
+    if(bents[bents.length-1]<i1-2) bents.push(i1);
+    const tops=[];
+    for(const i of bents){ const s=SAMP[i%STEPS];
+      const yl=surf(s,-PL)+23.5, yr=surf(s,PL)+23.5, ym=Math.max(yl,yr)+10.5+R()*1.5;
+      for(const [lat,y] of [[-PL,yl],[PL,yr]]){
+        B.push({a:P(s,lat,WL), b:P(s,lat,y+1.2), w:1.6+R()*0.4, c:pick(TIM)});                       // the pile
+        B.push({a:P(s,lat*1.18,WL), b:P(s,lat,y-8), w:0.8, c:pick(TIM)}); }                          // a raking shore
+      B.push({a:P(s,-PL-1.2,yl), b:P(s,PL+1.2,yr), w:1.3, d:1.6, flat:1, c:pick(TIM)});               // tie beam
+      const L=P(s,-PL-2.5,yl+0.4), Rr=P(s,PL+2.5,yr+0.4), K=P(s,0,ym);
+      B.push({a:L, b:K, w:1.0, d:1.2, c:pick(TIM)}); B.push({a:Rr, b:K, w:1.0, d:1.2, c:pick(TIM)});  // rafters
+      B.push({a:P(s,0,(yl+yr)/2), b:K, w:0.7, c:pick(TIM)});                                          // king post
+      tops.push({s, L, Rr, K, yl, yr});
+    }
+    // purlins and boards, bay by bay (the road curves, so each bay is its own)
+    for(let k=0;k<tops.length-1;k++){ const A=tops[k], Bt=tops[k+1];
+      for(const f of [0.0,0.35,0.7,1.0]) for(const [a,b] of [[A.L,A.K],[A.Rr,A.K]]){
+        const q=[a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f+0.8, a[2]+(b[2]-a[2])*f];
+        const a2=(a===A.L?Bt.L:Bt.Rr);
+        const q2=[a2[0]+(Bt.K[0]-a2[0])*f, a2[1]+(Bt.K[1]-a2[1])*f+0.8, a2[2]+(Bt.K[2]-a2[2])*f];
+        B.push({a:q, b:q2, w:0.6, c:pick(TIM)}); }
+      // loose boards across the purlins: some missing, so the roof is striped with daylight
+      const nb=10+((R()*3)|0);
+      for(const side of [0,1]) for(let j=0;j<nb;j++){ if(R()<0.14) continue;
+        const f=(j+0.5)/nb, a=side?A.Rr:A.L, a2=side?Bt.Rr:Bt.L;
+        const p0=[a[0]+(A.K[0]-a[0])*f, a[1]+(A.K[1]-a[1])*f+1.4, a[2]+(A.K[2]-a[2])*f];
+        const p1=[a2[0]+(Bt.K[0]-a2[0])*f, a2[1]+(Bt.K[1]-a2[1])*f+1.4, a2[2]+(Bt.K[2]-a2[2])*f];
+        B.push({a:p0, b:p1, w:3.1+R()*0.8, d:0.35, ext:1.5+R()*2, flat:1, c:pick(BRD)}); }
+      // a long diagonal brace on each side, every other bay
+      if(k%2===0) for(const lat of [-PL,PL]) B.push({a:P(A.s,lat,lat<0?A.yl-6:A.yr-6), b:P(Bt.s,lat,lat<0?Bt.yl+0.5:Bt.yr+0.5), w:0.7, c:pick(TIM)});
+    }
+  }
+  if(!B.length) return null;
+  return harbBeams(B);
+}
+/* THE START: a timber footbridge over the causeway, the way harbour causeways are crossed by the
+   quay's own walkway. Two pile trestles standing in the water clear of the corridor (outside at
+   34, infield at 54 — the shared gate stood its posts at 25, inside the 28.2 wall), a deck and
+   handrails spanning between them at +23 over the banked road, X-braced legs. One more
+   silhouette in the fleet's vocabulary instead of a white plastic bar. */
+function harbFootbridge(innerSign){
+  const s=SAMP[2], R=harbRnd(0xF00B21), B=[], WL=-2.6;
+  const TIM=[0x3a3226,0x2e2820,0x413a30], surf=lat=>s.p.y+Math.sin(s.bank||0)*lat;
+  const P=(lat,y,dt)=>[s.p.x+s.n.x*lat+s.t.x*(dt||0), y, s.p.z+s.n.z*lat+s.t.z*(dt||0)];
+  const lo=-34*innerSign, hi=54*innerSign;                    // outside, infield
+  let top=-1e9; for(let l=-34;l<=54;l+=2) top=Math.max(top, surf(l*innerSign)+23);
+  const pick=()=>TIM[(R()*TIM.length)|0];
+  for(const lat of [lo,hi]) for(const dt of [-3.2,3.2]){
+    B.push({a:P(lat,WL,dt), b:P(lat,top+5.6,dt), w:1.7, c:pick()}); }
+  for(const lat of [lo,hi]){ B.push({a:P(lat,WL+4,-3.2), b:P(lat,top-1,3.2), w:0.7, c:pick()}); B.push({a:P(lat,WL+4,3.2), b:P(lat,top-1,-3.2), w:0.7, c:pick()}); }
+  const lw=Math.min(lo,hi)-2.5, hw=Math.max(lo,hi)+2.5;
+  for(const dt of [-2.6,2.6]) B.push({a:P(lw,top,dt), b:P(hw,top,dt), w:1.5, d:1.3, c:pick()});        // stringers
+  for(let l=lw;l<=hw;l+=1.4) B.push({a:P(l,top+0.9,-3.4), b:P(l,top+0.9,3.4), w:1.2, d:0.4, flat:1, c:R()<0.5?0x4a4234:0x3e372b});   // planks
+  for(const dt of [-3.3,3.3]){ B.push({a:P(lw,top+5,dt), b:P(hw,top+5,dt), w:0.5, c:pick()});
+    for(let l=lw;l<=hw+0.01;l+=(hw-lw)/12) B.push({a:P(l,top+0.9,dt), b:P(l,top+5.4,dt), w:0.5, c:pick()}); }
+  return harbBeams(B);
+}
 
 /* ============== THE STREAM: Ophelia's dressing kit ============== *
  * The first course anyone plays, dressed as the setting of Millais' OPHELIA (1851-52):
@@ -46180,13 +46448,52 @@ function ophLumpGeo(detail, seed){
     v.multiplyScalar(0.76+(h-Math.floor(h))*0.42); p.setXYZ(i,v.x,v.y,v.z); }
   g.computeVertexNormals(); return g;
 }
-function ophMat(){ return new T.MeshLambertMaterial({color:0xffffff}); }
+function ophMat(){ return ophLand(new T.MeshLambertMaterial({color:0xffffff})); }
+/* CLOUD SHADOWS. The fair-weather cumulus in ophSky cast their shade on the valley: broad soft
+   patches, a few hundred units across, drifting downwind with the sky's own clouds at about five
+   units a second. A cloud shadow takes the SUN away and leaves the sky, so it scales only the
+   direct term (vLightFront) and the hemisphere fill is untouched: shadowed meadow stays green,
+   just cooler and a step down — the value plan moves, the colour does not. Per vertex (the ground
+   grid is 20 units, the shadows 300 with 60-unit soft edges, so there is nothing finer to resolve),
+   on the shared OPH_T clock, so the land, every prop and the stream's bed all agree. On the grid
+   it is the slow breathing of a summer afternoon; at racing speed it is big shapes of light and
+   shade sliding past in the corner of the eye, which is what makes the meadows read as open land
+   under a sky rather than a lawn under a lamp. */
+const OPH_CLOUD_GLSL=`
+uniform float uOphT;
+float ophCH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float ophCN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  return mix(mix(ophCH(i),ophCH(i+vec2(1.0,0.0)),f.x), mix(ophCH(i+vec2(0.0,1.0)),ophCH(i+vec2(1.0,1.0)),f.x), f.y); }
+float ophCloud(vec2 w){ vec2 p=w/270.0+vec2(uOphT*0.0195, uOphT*0.008);
+  float n=ophCN(p)*0.64+ophCN(p*2.37+vec2(5.2,1.3))*0.36;      // (mean 0.49, sd 0.15: ~45% under cloud)
+  return smoothstep(0.47,0.60,n); }
+`;
+function ophLand(m, key){
+  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey;
+  m.onBeforeCompile=(sh,r)=>{ if(prev && prev!==T.Material.prototype.onBeforeCompile) prev(sh,r);
+    sh.uniforms.uOphT=OPH_T;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL)
+      .replace('#include <lights_lambert_vertex>',`#include <lights_lambert_vertex>
+      { vec4 cw=vec4(position,1.0);
+        #ifdef USE_INSTANCING
+          cw=instanceMatrix*cw;
+        #endif
+        cw=modelMatrix*cw; float cs=1.0-0.55*ophCloud(cw.xz);
+        vLightFront*=cs;
+        #ifdef DOUBLE_SIDED
+          vLightBack*=cs;
+        #endif
+      }`); };
+  const base=(pk && pk!==T.Material.prototype.customProgramCacheKey) ? pk.call(m) : '';
+  m.customProgramCacheKey=()=>'ophLand'+(key||'')+base;
+  return m;
+}
 // Wind. Displaces in WORLD space after the instance transform, weighted by |local y| so a
 // blade's root (y=0) is pinned and its tip (|y|=1) moves. The phase comes from the
 // instance's own position, so a clump sways together and the next clump is out of step —
 // a breeze crossing the bank, not a metronome.
-function ophSwayMat(amp){
-  const m=ophMat();
+function ophSwayMat(amp, noCloud){
+  const m=new T.MeshLambertMaterial({color:0xffffff});
   m.onBeforeCompile=sh=>{ sh.uniforms.uT=OPH_T;
     sh.vertexShader='uniform float uT;\n'+sh.vertexShader.replace('#include <project_vertex>',
 `vec4 mvPosition = vec4( transformed, 1.0 );
@@ -46200,7 +46507,7 @@ function ophSwayMat(amp){
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`); };
   m.customProgramCacheKey=()=>'ophSway'+amp;
-  return m;
+  return noCloud ? m : ophLand(m);       // the cloud shade, chained after the sway (not on the reeds: see ophFlush)
 }
 /* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
    (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
@@ -46327,7 +46634,7 @@ function ophGroundMat(side){
     OPH_GRASS=ophCanvasTex(c); OPH_GRASS.encoding=T.sRGBEncoding; }
   const m=new T.MeshLambertMaterial({map:OPH_GRASS, vertexColors:true, side:side||T.FrontSide});
   m.color.setRGB(1.36,1.36,1.36);                 // cancels the sheet's mean (~0.73 linear)
-  return m;
+  return ophLand(m, 'g');                         // the cloud shadows cross the meadow (see ophLand)
 }
 function ophTerrain(F, ccx, ccz){
   const N=144, W=2900, V=(N+1)*(N+1), P=new Float32Array(V*3), Cc=new Float32Array(V*3), UV=new Float32Array(V*2), c=new T.Color();
@@ -46466,22 +46773,24 @@ function ophWaterMat(lap){
       uBank:{value:new T.Color(0x1a2c16).convertSRGBToLinear()},
       uPd:{value:Pd}, uPs:{value:Ps}, uFlow:{value:OPH.flow} }]),
     vertexShader:`
-      attribute vec3 aS; varying vec3 vS; varying vec3 vW;
+      attribute vec3 aS; varying vec3 vS; varying vec3 vW; varying float vCl;
+      ${OPH_CLOUD_GLSL}
       #include <fog_pars_vertex>
-      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz;
+      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz);
         vec4 mvPosition=viewMatrix*w; gl_Position=projectionMatrix*mvPosition;
         #include <fog_vertex>
       }`,
     fragmentShader:`
       uniform sampler2D uDeep, uShal, uRip; uniform float uT, uPd, uPs, uFlow;
-      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW;
+      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW; varying float vCl;
       #include <fog_pars_fragment>
       void main(){
         float ak=abs(vS.x), fv=uT*uFlow;
         float deep=1.0-smoothstep(20.5,25.5,ak);
         vec3 dC=texture2D(uDeep, vec2(vS.x/46.0+0.5, (vS.y-fv)/uPd)).rgb;
         vec3 sC=texture2D(uShal, vec2(vS.x/uPs, vS.y/uPs)).rgb;
-        vec3 base=pow(mix(sC,dC,deep), vec3(2.2));
+        // the bed through the water is sunlit: a passing cloud shadow takes it down a step
+        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl);
         vec3 V=normalize(cameraPosition-vW);
         float rp=texture2D(uRip, vec2(vS.x/37.0, (vS.y-fv*1.15)/61.0)).r;
         float rq=texture2D(uRip, vec2(vS.x/23.0+0.37, (vS.y-fv*0.8)/97.0+0.5)).r;
@@ -46498,6 +46807,7 @@ function ophWaterMat(lap){
       }`,
     fog:true, side:T.DoubleSide });
   m.uniforms.uDeep.value=ophDeepTex(); m.uniforms.uShal.value=ophShalTex(); m.uniforms.uRip.value=ophRipTex();
+  m.uniforms.uOphT=OPH_T;                // the shared clock, by reference (merge() above would have cloned it)
   return m;
 }
 /* THE SKY. High summer afternoon: pale warm haze at the horizon (the lightest value in the
@@ -46556,7 +46866,9 @@ const OPH_PAL={
   willowDk:[0x4f6e40,0x5a7a48,0x46643a],                   // the shaded mass inside a crown
   strand:[0x93b06c,0xa6bc7c,0x86a45e,0x7c9a58],
   wood:[0x2f4a26,0x3a5a2c,0x27401f,0x45652f,0x324e28],
+  woodLit:[0x4e7434,0x587e38,0x46692e,0x5f843c],         // the sunlit upper masses of a hedgerow crown
   hill:[0x2e4630,0x34503a,0x28402c,0x3a5640],
+  hillLit:[0x46603e,0x4e6a44,0x405a3a],                     // the far wood's sunlit crowns
   pollard:[0x8aa27a,0x9cb38a,0x7a946a,0xa4b890],
   reed:[0x5e7a36,0x6f8a3e,0x87965a,0x4f6a2e,0x7c8c48],
   loose:[0xa8307e,0x962c74,0xb8408a,0x8e3478],
@@ -46664,15 +46976,29 @@ function ophPollard(F, O, R, x, z){
     s:3+R()*2, sy:2.4+R(), sz:3+R()*2, ry:R()*6, c:_ophPick(R,OPH_PAL.pollard)});
   return true;
 }
-// Hedgerow oak / elm: short trunk, big faceted crown. Dark: these are the frame.
+/* Hedgerow oak / elm. These are the frame, so they stay dark — but they were five big
+   single-value facets parked on a stub of trunk, and over a hill crest (trunk hidden behind
+   it) they read as boulders hanging in the sky. What says TREE at two hundred units is the
+   silhouette and the light, not detail: a clear bole under a lifted crown, two limbs into it,
+   and the crown built as a DOME of smaller masses — scalloped edge against the haze, the
+   upper masses in sunlit green and the under-masses in shade, so it has a top and a bottom. */
 function ophTree(F, O, R, x, z, sc){
-  const q=F.near(x,z); if(q.t<30 || !harbClearOK(x,z,16*sc)) return false;
-  const gy=F.H(x,z,q), h=(7+R()*6)*sc, r=(1.6+R())*sc, tc=_ophPick(R,OPH_PAL.trunk);
-  O.trunk.push({x,y:gy-1,z,s:r,sy:h+4,sz:r,ry:R()*6,c:tc});
-  const n=5+((R()*5)|0);
-  for(let k=0;k<n;k++){ const pr=(8+R()*7)*sc;
-    O.lump.push({x:x+(R()-0.5)*14*sc, y:gy+h+pr*0.5+R()*12*sc, z:z+(R()-0.5)*14*sc,
-                 s:pr, sy:pr*0.8, sz:pr*(0.8+R()*0.3), ry:R()*6, c:_ophPick(R,OPH_PAL.wood)}); }
+  // (cleared by the crown's own spread: its rim masses reach CR plus their own radius)
+  const CR=(12+R()*6)*sc, q=F.near(x,z); if(q.t<30 || !harbClearOK(x,z,CR+8*sc)) return false;
+  const gy=F.H(x,z,q), h=(10+R()*6)*sc, r=(1.5+R()*0.8)*sc, tc=_ophPick(R,OPH_PAL.trunk);
+  O.trunk.push({x,y:gy-1,z,s:r,sy:h+5,sz:r,ry:R()*6,c:tc});
+  const top=gy+h;
+  // two limbs out of the bole into the crown: the fork is what a lifted crown hangs from
+  for(let k=0;k<2;k++){ const a=R()*6.283, tl=0.45+R()*0.35;
+    const d=new T.Vector3(Math.sin(tl)*Math.cos(a), Math.cos(tl), Math.sin(tl)*Math.sin(a));
+    O.trunk.push({x, y:top-1, z, q:new T.Quaternion().setFromUnitVectors(_ophUp,d), s:r*0.6, sy:CR*0.75, sz:r*0.55, c:tc}); }
+  // (six to nine masses: a dome needs no more, and every extra layer is overdraw where a copse fills the frame)
+  const n=6+((R()*4)|0);
+  for(let k=0;k<n;k++){ const a=R()*6.283, f=Math.sqrt(R()), rr=f*CR, pr=(6+R()*4.5)*sc*(1.15-0.3*f);
+    const y=top+CR*0.3+(1-f*f)*CR*0.55+(R()-0.5)*3*sc, hi=(y-top)/(CR*0.85);
+    O.lump.push({x:x+Math.cos(a)*rr, y, z:z+Math.sin(a)*rr*0.9,
+                 s:pr, sy:pr*0.82, sz:pr*(0.85+R()*0.3), ry:R()*6, rx:(R()-0.5)*0.4,
+                 c:_ophPick(R, hi>0.62 ? OPH_PAL.woodLit : OPH_PAL.wood)}); }
   return true;
 }
 /* THE BANK. Clumps on an irregular cadence, typed by a slow noise along the lap so each
@@ -46703,7 +47029,7 @@ function ophVerge(F, O, innerSign){
           O.stem.push({x,y:c0.y-0.3,z,s:0.12,sy:h,c:0x5a6a34});
           O.stem.push({x,y:c0.y+h-0.3,z,s:0.46,sy:2.4,c:0x4a3222}); }            // bulrush heads
       } else if(type==='loose'){
-        const t=4.2+R()*7, g=t<5.5?0.65:1, np=2+((R()*5)|0), c0=at(t,j0);
+        const t=4.2+R()*7, g=t<5.5 ? 0.65*(0.7+R()*0.3) : 0.75+R()*0.45, np=2+((R()*5)|0), c0=at(t,j0);
         for(let p=0;p<np;p++){ const px=c0.x+(R()-0.5)*6, pz=c0.z+(R()-0.5)*6;
           const gy=F.H(px,pz);
           O.lump0.push({x:px,y:gy+0.6,z:pz,s:1.3,sy:1.5,sz:1.2,ry:R()*6,c:_ophPick(R,OPH_PAL.leaf)});
@@ -46746,7 +47072,9 @@ function ophVerge(F, O, innerSign){
           O.lump0.push({x:c1.x, y:c1.y+0.15, z:c1.z, s:r, sy:0.5, sz:r*(0.7+R()*0.4), ry:R()*6,
                         c:R()<0.78?_ophPick(R,OPH_PAL.forget):0x4a7a30}); }
       }
-      i += 2+((R()*5)|0);
+      // DRIFTS, not a picket: mostly close-set with an open gap now and then, so a run of one
+      // plant reads as a stand with a shape rather than a fence of matching clumps
+      i += R()<0.2 ? 8+((R()*12)|0) : 1+((R()*4)|0);
     }
   }
 }
@@ -46838,10 +47166,14 @@ function ophFlush(O, grp){
   const G=ophGeos(), L1=ophLumpGeo(1,1.0), L0=ophLumpGeo(0,1.7);
   if(O.trunk.length)  grp.add(ophBatch(G.trunk, O.trunk));
   if(O.lump.length)   grp.add(ophBatch(L1, O.lump));
-  if(O.lump0.length)  grp.add(ophBatch(L0, O.lump0, null, 420));
-  if(O.stem.length)   grp.add(ophBatch(G.stem, O.stem, null, 420));
-  if(O.spike.length)  grp.add(ophBatch(G.spike, O.spike, null, 520));
-  if(O.blade.length)  grp.add(ophBatch(G.blade, O.blade, ophSwayMat(0.45), 420));
+  // The cloud shade is a per-vertex cost, and the flowers, stems, spikes and reeds are most of the
+  // course's vertices while being far too small for a shadow on them to read: they keep the plain
+  // material (as before), and the shade falls on the land, the water and the trees, which carry it.
+  const plain=()=>new T.MeshLambertMaterial({color:0xffffff});
+  if(O.lump0.length)  grp.add(ophBatch(L0, O.lump0, plain(), 420));
+  if(O.stem.length)   grp.add(ophBatch(G.stem, O.stem, plain(), 420));
+  if(O.spike.length)  grp.add(ophBatch(G.spike, O.spike, plain(), 520));
+  if(O.blade.length)  grp.add(ophBatch(G.blade, O.blade, ophSwayMat(0.45, true), 420));
   if(O.strand.length) grp.add(ophBatch(G.strand, O.strand, ophSwayMat(1.1), 700));
   if(O.bridge)        grp.add(ophBatch(new T.BoxGeometry(1,1,1), O.bridge));
   if(O.garland)       grp.add(ophBatch(ophLumpGeo(0,2.3), O.garland));
@@ -46919,11 +47251,22 @@ function ophScenery(F, O, innerSign, ccx, ccz){
     const d=toeAt(i,sd)+70+Math.pow(R(),0.8)*520, cx=s.p.x+s.n.x*sd*d, cz=s.p.z+s.n.z*sd*d;
     const nt=2+((R()*7)|0);
     for(let t=0;t<nt;t++) ophTree(F,O,R, cx+(R()-0.5)*70, cz+(R()-0.5)*70, 0.9+R()*0.8); }
-  // the wooded ring on the hills — the far edge, graded out by the long fog
-  for(let k=0;k<230;k++){ const a=R()*6.283, r=760+R()*560, x=ccx+Math.cos(a)*r, z=ccz+Math.sin(a)*r;
-    if(!harbClearOK(x,z,70)) continue;
-    const pr=24+R()*28;
-    O.lump.push({x, y:F.H(x,z)+pr*0.28, z, s:pr, sy:pr*0.72, sz:pr*(0.8+R()*0.4), ry:R()*6, c:_ophPick(R,OPH_PAL.hill)}); }
+  /* THE WOODED RING on the hills — the far edge, graded out by the long fog. It was 230 single
+     faceted masses, 50-100 across, half-sunk in the slopes: a dark polyhedron on a skyline is a
+     boulder whatever green it is painted, and from the stream they lined every crest like a
+     moraine. Now it is parkland wood: clumps of two or three trees, each a bole under a crown of
+     three masses — a domed top a step lighter where the sun is on it, two shoulders in shade —
+     so the skyline is scalloped and stands on legs. Same batches as the rest of the valley. */
+  for(let k=0;k<120;k++){ const a=R()*6.283, r=760+R()*560, x0=ccx+Math.cos(a)*r, z0=ccz+Math.sin(a)*r;
+    if(!harbClearOK(x0,z0,80)) continue;
+    const nt=2+(R()<0.5?1:0);
+    for(let t=0;t<nt;t++){ const x=x0+(R()-0.5)*56, z=z0+(R()-0.5)*56, gy=F.H(x,z);
+      const CR=11+R()*8, h=7+R()*7, tc=_ophPick(R,OPH_PAL.trunk), a1=R()*6.283;
+      O.trunk.push({x, y:gy-2, z, s:2.1, sy:h+CR*0.6, sz:2.1, ry:R()*6, c:tc});
+      O.lump.push({x, y:gy+h+CR*0.95, z, s:CR*0.82, sy:CR*0.68, sz:CR*0.8, ry:R()*6, c:_ophPick(R,OPH_PAL.hillLit)});
+      for(const da of [0, Math.PI+(R()-0.5)*1.2]){ const aa=a1+da;
+        O.lump.push({x:x+Math.cos(aa)*CR*0.62, y:gy+h+CR*0.5, z:z+Math.sin(aa)*CR*0.62,
+                     s:CR*0.68, sy:CR*0.58, sz:CR*0.7, ry:R()*6, c:_ophPick(R,OPH_PAL.hill)}); } } }
   // poppy and ox-eye daisy drifts just over the bank crest
   for(let d=0;d<34;d++){ const i=(R()*STEPS)|0, s=SAMP[i], sd=R()<0.5?1:-1;
     const t=16+R()*26, L=toeAt(i,sd)+t, cx=s.p.x+s.n.x*sd*L, cz=s.p.z+s.n.z*sd*L;
@@ -47110,9 +47453,22 @@ function edenSky(){
         // thin veils of high cloud, barely lighter than the sky they cross
         float cl=fbm(vec2(az*2.6+uT*0.0015, el*8.0));
         c=mix(c, ${edenG3(0x1c2150)}, smoothstep(0.58,0.85,cl)*smoothstep(0.06,0.22,el)*(1.0-smoothstep(0.55,0.95,el))*0.45);
-        // stars: one cell in a few hundred, twinkling on its own slow period
+        /* THE MILKY WAY. A night garden under a clear sky has one great shape overhead, and this
+           sky had none: a band of faint cool light rising slant from the horizon, clumped and split
+           by a dark rift of dust, thick with fine stars. Held under the horizon band's value (the
+           brightest the sky may be, so the silhouettes keep their ground) and faded into the haze
+           low down; the seam of its long axis is set below the horizon where it is never seen. */
+        float mw=0.0;
+        { vec3 gn=normalize(vec3(0.33,0.82,0.47)), up=vec3(0.0,1.0,0.0);     // (its crest ~35 degrees up: in frame on most headings)
+          vec3 e1=normalize(up-gn*gn.y), e2=cross(gn,e1);
+          float b=dot(d,gn);
+          mw=exp(-b*b/0.020)*smoothstep(0.03,0.30,el);
+          if(mw>0.03){ float gl=atan(dot(d,e2),dot(d,e1));          // (the noise only where the band shows)
+          float clump=fbm(vec2(gl*3.2, b*16.0)), rift=smoothstep(0.50,0.72,vn(vec2(gl*5.0+3.7, b*30.0)))*exp(-b*b/0.0035);
+          c+=(${edenG3(0x1a2040)}*(0.45+0.9*clump)+${edenG3(0x2a1e48)}*smoothstep(0.55,0.8,clump))*mw*(1.0-0.8*rift)*0.42; } }
+        // stars: one cell in a few hundred, twinkling on its own slow period (thicker in the Milky Way)
         if(el>0.07){ vec2 sp=vec2(az*90.0, el*90.0), ci=floor(sp); float h=h21(ci);
-          if(h>0.982){ vec2 f=fract(sp)-0.5-(vec2(h21(ci+3.1),h21(ci+7.7))-0.5)*0.5;
+          if(h>0.982-0.05*mw){ vec2 f=fract(sp)-0.5-(vec2(h21(ci+3.1),h21(ci+7.7))-0.5)*0.5;
             float s=smoothstep(0.16,0.0,length(f))*(0.35+0.65*fract(h*91.0));
             s*=0.72+0.28*sin(uT*(0.6+fract(h*37.0)*1.4)+h*60.0);
             c+=vec3(0.70,0.80,1.0)*s*smoothstep(0.07,0.30,el)*(1.0-0.5*cl); } }
@@ -47343,9 +47699,17 @@ function edenTerrain(F, pools){
   const n1=(x,z)=>0.5+0.5*Math.sin(x*0.011+Math.sin(z*0.007)*2.0)*Math.sin(z*0.013+Math.sin(x*0.005)*1.7);
   const n2=(x,z)=>0.5+0.5*Math.sin(x*0.031+z*0.017+Math.sin(z*0.023)*1.5)*Math.sin(z*0.029-x*0.012+1.1);
   const TL=4, mat=new T.MeshLambertMaterial({vertexColors:true});
-  mat.onBeforeCompile=sh=>{
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 aGlow; varying vec3 vGlow;')
-      .replace('#include <begin_vertex>','#include <begin_vertex>\nvGlow=aGlow;');
+  /* THE GARDEN BREATHES TOWARD ITS HEART. The ground's light (moss, verge, the fruit's pools)
+     swells and ebbs in long, slow rings that travel inward to the shrine — one ring every ~600
+     units, about fifty a second, a fifth either way. Never a flash: from the road it is the
+     land brightening a little ahead and settling behind, as if the garden were drawing you in.
+     Per vertex on the 26-unit grid, on the shared clock; nothing else is touched. */
+  const hx=F.shrine?F.shrine.x:0, hz=F.shrine?F.shrine.z:0;
+  mat.onBeforeCompile=sh=>{ sh.uniforms.uT=EDEN_T;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 aGlow; varying vec3 vGlow; uniform float uT;')
+      .replace('#include <begin_vertex>',`#include <begin_vertex>
+        { float dr=length(position.xz-vec2(${hx.toFixed(1)},${hz.toFixed(1)}));
+          vGlow=aGlow*(0.84+0.36*(0.5+0.5*sin(dr*0.0105+uT*0.52))); }`);
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow;')
       .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vGlow;');
   };
@@ -47723,6 +48087,23 @@ function edenPlan(F, tunIdx){
       if(!F.wet(mx,mz,26) && F.near(mx,mz,200).d-mr*1.25>=28.4) G.moss.push({x:mx,y:F.h(mx,mz)+mr*0.12,z:mz,s:mr,sy:mr*(0.32+R()*0.2),sz:mr*(0.7+R()*0.5),ry:R()*6.28,c:[0x0f5a4c,0x13664a,0x0e4c5a,0x1a7a5a][(R()*4)|0],k:chunk(i)}); }
     i+=1+((R()*4)|0)+(R()<0.2?((R()*6)|0):0);
   }
+  /* THE GATEWAY. Every family above starts a little way into the run, so the garden's front door
+     was the root arch standing on an empty lawn — and the start is the one place everyone looks
+     at for a while: the home window, the grid, the countdown. A planted threshold: a stand of
+     giant mushrooms on the open side, a pair of lit fruit trees set back to frame the arch, a
+     drift of glowing flowers under them. Its own stream of numbers, added last, so nothing else
+     in the garden moves; every piece takes the same corridor and footprint checks as the rest. */
+  { const Q=harbRnd(0x6A7E5);
+    const plant=[[5,-62,'g'],[9,-84,'g'],[3,-104,'s'],[13,72,'g'],[2,-150,'t'],[6,128,'t'],[18,-58,'s'],[20,96,'s']];
+    for(const [i,lat,kind] of plant){ const [x,z]=at(Math.min(N-1,i),lat);
+      if(kind==='t'){ const H=96+Q()*30, Rt=3.2+H*0.045, CR=H*0.62;
+        if(ok(x,z,CR*0.7,Rt*3) && edenTree(F,G,x,z,H,Rt,Q,0,{pods:2, poolK:1.4})) take(x,z,CR*0.7); continue; }
+      const giant=kind==='g', h=giant?30+Q()*22:8+Q()*7, cr=giant?h*(0.5+Q()*0.15):h*0.5;
+      const col=[EDEN.teal,EDEN.cyan,0x2a9ad8,EDEN.violet][(Q()*4)|0];
+      if(ok(x,z,cr*0.8) && edenShroom(F,G,x,z,h,cr,col,Q,0,giant)) take(x,z,cr*0.8);
+      for(let j=0;j<5;j++){ const a=Q()*6.28, d=cr*(1.1+Q()*1.4), x2=x+Math.cos(a)*d, z2=z+Math.sin(a)*d;
+        if(ok(x2,z2,2.5) && F.near(x2,z2,300).d>=36) edenFlower(F,G,x2,z2,6+Q()*8,Q,0); } }   // (36: the drifts' own setback)
+  }
   return G;
 }
 
@@ -47844,6 +48225,17 @@ function edenGate(F){
    road, crowned in fruit and ringed pods; and the finish fruit (the shared egg, re-dressed)
    resting in a cradle of leaves at the foot of the run-out. */
 /* FLUSH: every family above, as chunked instanced batches. */
+/* A MOSS CUSHION. The moss was a smooth squashed sphere, and a field of glossy flat ovals reads as
+   stepping stones laid on a lawn. Moss grows in a cushion of little domes: the same vertex count,
+   pushed out in bumps over the top and pulled in at the rim so the edge is soft and scalloped.
+   Displaced by position, not by index, so the sphere's seam stays closed. */
+function edenMossGeo(){
+  const g=new T.SphereGeometry(1,8,5), p=g.attributes.position, v=new T.Vector3();
+  for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i); const a=Math.atan2(v.z,v.x), up=Math.max(0,v.y);
+    const b=0.5+0.5*Math.sin(a*4+v.y*5.0)*Math.sin(a*3-1.1+v.y*3.0);
+    v.multiplyScalar((0.86+0.26*b*up+0.08*Math.sin(a*7))*(v.y<0.05?0.92:1)); p.setXYZ(i,v.x,v.y,v.z); }
+  g.computeVertexNormals(); return g;
+}
 function edenFlush(F){
   const G=F.G, mats={};
   EDEN_CHUNKS=[];
@@ -47877,7 +48269,7 @@ function edenFlush(F){
   edenBatch(new T.SphereGeometry(1,8,6), cap, G.vpod.filter(v=>v.glow));
   edenBatch(new T.SphereGeometry(1,12,7), rock, G.rock);
   edenBatch(new T.SphereGeometry(1,7,5), lobe, G.bush);
-  edenBatch(new T.SphereGeometry(1,7,5), moss, G.moss);
+  edenBatch(edenMossGeo(), moss, G.moss);
   edenBatch(new T.CylinderGeometry(1,1,1,5,1), vineM, G.vine);
   // arches: a half torus, open below; mouth rims of the log are a wider sweep
   edenBatch(edenRootArcGeo(0.058,0x2007), bark, G.arch.filter(a=>!a.wide));
@@ -50564,6 +50956,10 @@ function buildTrack(idx){
   } else if(paint){
     skyDome=paintSky(); trackGroup.add(skyDome);
     TRACK_PULSE.paintSky=skyDome.material;
+    // the harbour is painted water now (paintWater), not the shared plane: it is put back for
+    // every other course by the shared visibility line above, which runs on every build
+    groundPlane.visible=false;
+    trackGroup.add(paintWater(TRACKS[idx].sc||1, skyDome.material.uniforms.uT));
     // The causeway spine. Darkened hard from 0x6a6a52: this is the deepest note in the
     // scene and it sits directly under the lightest large plane, which is the one place a
     // painting can put its maximum value contrast and have it mean something structural.
@@ -51608,6 +52004,8 @@ function buildTrack(idx){
   const s0=SAMP[0];
   if(oph){
     ophBridge(OK.F, OK.O, innerSign);     // a plank footbridge with a garland; flushed below
+  } else if(paint){
+    trackGroup.add(harbFootbridge(innerSign));   // the quay's footbridge over the causeway (see harbFootbridge)
   } else if(loom){
     loomGate(innerSign);
   } else if(felt){
@@ -52035,6 +52433,9 @@ function buildTrack(idx){
   } else if(macro){
     // the wisteria walk and the bamboo grove (see lilyTunnels)
     lilyTunnels(MK, innerSign, MK.G);
+  } else if(paint){
+    // the net shed on its piles (see harbShed); the shared rings stood inside the corridor
+    const sh=harbShed(innerSign); if(sh) trackGroup.add(sh);
   } else if(loom){
     loomTunnels(tun, innerSign);
   } else if(felt){
@@ -52580,7 +52981,12 @@ function buildTrack(idx){
     };
     for(let k=0;k<190;k++){
       const sp2=farSpot(250); if(!sp2) continue;
-      const aer=0.58+R()*0.24;                       // uniformly far, uniformly dissolved
+      // Uniformly far, and held as ONE soft mass between the dome's shore band and the sky.
+      // With the band finally drawn (paintSky), shapes fogged all the way to the haze colour
+      // stood as white cut-outs in front of a darker shore — recession backwards; unfogged they
+      // came forward as hard boxes. So they take the haze only part of the way (farMat below):
+      // the edges stay lost, the values sit a step above the band, and nearer ones are darker.
+      const aer=0.16+R()*0.18;
       const w=26+R()*90, dh=9+R()*24, dz=16+R()*46, ry=R()*6.283;
       c.setHex(pick([0x8a8370,0x7d7768,0x948d78,0x6f6a5c])).lerp(SKYC,aer);
       sheds.push({x:sp2.x, y:-2+dh*0.5, z:sp2.z, s:w, sy:dh, sz:dz, ry, c:c.getHex()});
@@ -52592,16 +52998,36 @@ function buildTrack(idx){
                      s:w*0.56, sy:dh*0.46, sz:dz*0.60, ry, c:c.getHex()});
       }
     }
-    for(let k=0;k<3;k++){                            // the three tall things
+    // The three tall things, and they are WORKING ones: a warehouse chimney, a standing crane
+    // and the harbour light (the old three were one box-and-pyramid repeated, which read as
+    // steeples). A horizon with one vertical accent on it is where the eye goes and stays.
+    for(let k=0;k<3;k++){
       const sp2=farSpot(330); if(!sp2) continue;
       const hh=60+R()*46, ry=R()*3.1, rr=8+R()*7;
-      c.setHex(0x77705e).lerp(SKYC,0.56);
-      sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr, sy:hh, sz:rr, ry, c:c.getHex()});
-      c.setHex(0x6a6352).lerp(SKYC,0.52);
-      spires.push({x:sp2.x, y:-2+hh+11, z:sp2.z, s:rr*1.25, sy:24, sz:rr*1.25, ry, c:c.getHex()});
+      c.setHex(0x77705e).lerp(SKYC,0.12);
+      if(k===0){        // chimney: tall and slim, a lip at the top
+        sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr*0.55, sy:hh, sz:rr*0.55, ry, c:c.getHex()});
+        sheds.push({x:sp2.x, y:-2+hh+1, z:sp2.z, s:rr*0.75, sy:2.4, sz:rr*0.75, ry, c:c.getHex()}); }
+      else if(k===1){   // crane: a tower, its jib out over the water and the counter-jib back
+        sheds.push({x:sp2.x, y:-2+hh*0.5, z:sp2.z, s:rr*0.6, sy:hh, sz:rr*0.6, ry, c:c.getHex()});
+        sheds.push({x:sp2.x+Math.cos(ry)*hh*0.22, y:-2+hh-2, z:sp2.z-Math.sin(ry)*hh*0.22, s:hh*0.75, sy:2.6, sz:2.6, ry, c:c.getHex()});
+        sheds.push({x:sp2.x+Math.cos(ry)*hh*0.5, y:-2+hh-16, z:sp2.z-Math.sin(ry)*hh*0.5, s:0.6, sy:26, sz:0.6, ry, c:c.getHex()}); }
+      else {            // the harbour light: a tapering tower and its lantern room
+        sheds.push({x:sp2.x, y:-2+hh*0.42, z:sp2.z, s:rr, sy:hh*0.84, sz:rr, ry, c:c.getHex()});
+        c.setHex(0x6a6352).lerp(SKYC,0.08);
+        sheds.push({x:sp2.x, y:-2+hh*0.84+3.5, z:sp2.z, s:rr*0.6, sy:7, sz:rr*0.6, ry, c:c.getHex()});
+        spires.push({x:sp2.x, y:-2+hh*0.84+9, z:sp2.z, s:rr*0.55, sy:5, sz:rr*0.55, ry, c:c.getHex()}); }
     }
-    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), harbMat(0xffffff), sheds));
-    trackGroup.add(harbBatch(new T.ConeGeometry(1,1,4), harbMat(0xffffff), spires));
+    // the haze taken only two-thirds of the way: past the fog's far end the town still holds a
+    // value of its own, a step above the band behind it
+    const farMat=harbMat(0xffffff);
+    farMat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace('#include <fog_fragment>',
+      `#ifdef USE_FOG
+        gl_FragColor.rgb=mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, fogDepth)*0.66);
+      #endif`); };
+    farMat.customProgramCacheKey=()=>'harbFar';
+    trackGroup.add(harbBatch(new T.BoxGeometry(1,1,1), farMat, sheds));
+    trackGroup.add(harbBatch(new T.ConeGeometry(1,1,4), farMat, spires));
 
     const sailMat=harbMat(0xffffff,{});
     trackGroup.add(harbBatch(HULLG, harbMat(0xffffff), hulls));
