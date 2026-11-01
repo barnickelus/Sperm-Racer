@@ -35038,7 +35038,11 @@ function saltyVox(){
  * Everything is batched through tessaBatch: one shared shader, chunked by district so whole
  * districts frustum-cull, one uniform for all the motion. Clearance: pixClear, every leg.
  * ---------------------------------------------------------------------------------- */
-let TESSA_FLOOR_Y=-2, TESSA_U=null, TESSA_MAT=null, TESSA_SALTY=null;
+let TESSA_FLOOR_Y=-2, TESSA_U=null, TESSA_MAT=null, TESSA_SALTY=null, TESSA_Q=null;
+// Every static tile on the course - piers, gate, parapets, tunnel, statues, districts, gallery - is
+// queued and flushed as ONE chunked batch at the end of the scenery (2,400-unit districts): a draw
+// call is main-thread time every frame, and per-family batches put twice as many in view.
+function tessaQueue(L){ for(const v of L) TESSA_Q.push(v); }
 const TESSA_HOR=0x5a4854;               // the sky's horizon band (raw: the dome is a raw shader too)
 function tessaFloorLevel(inS){ let lo=1e9;
   for(const s of SAMP){ const b=s.bn.y; lo=Math.min(lo, s.p.y+b*inS*54-6.5, s.p.y-b*inS*35-6.5); }
@@ -35227,7 +35231,7 @@ function tessaDeck(inS, tunIdx){
       for(;d0<dl;d0+=3.8, n++){ if(inT(i)) continue; const f=d0/dl;
         P.push({x:qa.x+(qb.x-qa.x)*f, y:qa.y+(qb.y-qa.y)*f+1.2, z:qa.z+(qb.z-qa.z)*f, s:3.0, sy:3.0, sz:3.3, ry, c:((n>>2)&1)?0xb81e34:0xe8e0d0}); }
       d0-=dl; } }
-  tessaBatch(P, 1800);
+  tessaQueue(P);
 }
 // THE VIADUCT: stepped tile piers on an irregular stride, each with a cap under both shoulders
 function tessaPiers(){
@@ -35240,7 +35244,7 @@ function tessaPiers(){
     const n=Math.max(1,Math.round((drop-3)/8));
     for(let k=0;k<n;k++){ const h=(drop-3)/n, w=8+k*1.6;
       L.push({x:s.p.x, y:top-3-h*(k+0.5), z:s.p.z, s:w, sy:h+0.02, sz:w, ry, c:k%2?0x3e5a7a:0x2a3a5c}); } }
-  tessaBatch(L, 2000);
+  tessaQueue(L);
 }
 // TUNNEL: tile arches with tombstone legs plumb at 31 (inner face 29.3, clear of the 28.2 wall),
 // gold-keyed portals at the mouths - the first cut's purple canyon, made legal
@@ -35255,7 +35259,7 @@ function tessaTunnel(tunIdx){
       cell.forEach(([off,y],k)=>{ const key=Math.abs(off)<3&&y>top+8;
         arch.push({x:s.p.x+s.n.x*off, y, z:s.p.z+s.n.z*off, s:4.4, sy:4.4, sz:mouth?7:4.4, ry,
           c:mouth?(key?0xf2c84a:0x4a2a8a):(k%2?0x7046b0:0x8e62d6)}); }); } }
-  tessaBatch(arch, 0);
+  tessaQueue(arch);
 }
 // THE START: a tile gantry, posts outside both walls and on the floor, START in cream tiles
 function tessaGate(inS){
@@ -35272,7 +35276,7 @@ function tessaGate(inS){
     for(let r=0;r<7;r++) for(let cc=0;cc<5;cc++){ if(G[r][cc]!=='#') continue;
       const p=at(-((w*6+cc)-(W-1)/2)*px, bot+BH/2+(3-r)*px);
       L.push({x:p.x-s.t.x*2.3, y:p.y, z:p.z-s.t.z*2.3, s:px, sy:px, sz:1.0, ry, c:0xf4e8c8, sh:1}); } }
-  tessaBatch(L, 0);
+  tessaQueue(L);
 }
 // THE PORTRAIT: Salty, drawn small and soft on a canvas (the soft edges ARE the in-between tile
 // colours a Close is built from), then read back one cell per tile. Four faces, four grounds.
@@ -35415,7 +35419,8 @@ function tessaScenery(inS, ccx, ccz){
       if(!pixClear(x,z,w*0.75)) continue;
       lows.push({x, y:TESSA_FLOOR_Y+w*0.25, z, s:w, sy:w*0.5, sz:w, ry:R()*1.57, c:PL[(k*7)%PL.length]}); } }
   // as few meshes as will still let the far districts cull: every draw is main-thread time a frame
-  tessaBatch(towers.concat(mesas, lows, cols, plinths, gal), 2000);
+  tessaQueue(towers); tessaQueue(mesas); tessaQueue(lows); tessaQueue(cols); tessaQueue(plinths); tessaQueue(gal);
+  tessaBatch(TESSA_Q, 2400); TESSA_Q=null;   // everything static on the course, in one chunked batch
   return P; }
 // the shimmer runs off one uniform; the pylon turns once in about four minutes (set from the
 // clock, never accumulated, so a stalled frame cannot make it jump)
@@ -50299,7 +50304,7 @@ function buildTrack(idx){
     pixPiers();
   } else if(mosaic){
     // Tessa: the tiled sky, the floor level, one set of shader uniforms, the piers (TESSELLATION)
-    TESSA_FLOOR_Y=tessaFloorLevel(innerSign); TESSA_U=null; TESSA_MAT=null; tessaUniforms();
+    TESSA_FLOOR_Y=tessaFloorLevel(innerSign); TESSA_U=null; TESSA_MAT=null; TESSA_Q=[]; tessaUniforms();
     skyDome=tessaSky(); trackGroup.add(skyDome);
     TRACK_PULSE.tessa={u:TESSA_U};
     tessaPiers();
