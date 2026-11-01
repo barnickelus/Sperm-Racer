@@ -44404,7 +44404,7 @@ function paintSky(){
         return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),
                    mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
       float fbm(vec2 p){ float v=0.0,a=0.5;
-        for(int i=0;i<4;i++){ v+=a*vn(p); p*=2.11; a*=0.5; } return v; }
+        for(int i=0;i<3;i++){ v+=a*vn(p); p*=2.11; a*=0.5; } return v+0.03125; }   // (3 octaves: the 4th was a 1/16 ripple nobody saw; its mean is added back)
       void main(){
         vec3 d=normalize(vP - cameraPosition); float el=d.y;   // view direction, so the horizon stays level
         float az=atan(d.z, d.x);
@@ -44416,10 +44416,10 @@ function paintSky(){
         c=mix(c, vec3(0.842,0.812,0.726), smoothstep(0.0,-0.16,el));
         // High cloud: warm lit tops, cool grey bellies, deliberately LOW contrast — this
         // is an overcast-bright day, not a dramatic one. Drifts on uT.
-        float cl=fbm(vec2(az*1.9 + uT*0.0055, el*5.2 + 3.1));
+        if(el>0.02){ float cl=fbm(vec2(az*1.9 + uT*0.0055, el*5.2 + 3.1));   // (none below 0.02: skipped there)
         float cm=smoothstep(0.46,0.78,cl)*smoothstep(0.02,0.30,el);
         c=mix(c, vec3(0.868,0.848,0.792), cm*0.55);
-        c=mix(c, vec3(0.612,0.622,0.618), smoothstep(0.62,0.86,cl)*smoothstep(0.10,0.42,el)*0.30);
+        c=mix(c, vec3(0.612,0.622,0.618), smoothstep(0.62,0.86,cl)*smoothstep(0.10,0.42,el)*0.30); }
         // the sun: a soft disc with a wide, dirty halo, never a clean circle
         float sd=distance(d, normalize(vec3(0.22,0.30,-0.92)));
         c=mix(c, vec3(0.980,0.962,0.884), smoothstep(0.44,0.0,sd)*0.42);
@@ -44430,7 +44430,7 @@ function paintSky(){
         // and horizontal (paintStrokeTex). A few percent either way: the value plan is the
         // gradient's, the strokes only say it was painted. Faded out at the horizon so the seam
         // with the fogged water stays exact, and up at the zenith where nobody looks.
-        { vec3 s=texture2D(uStroke, vec2(az*0.95493, el*2.4+0.17)).rgb;
+        if(el>0.014 && el<1.0){ vec3 s=texture2D(uStroke, vec2(az*0.95493, el*2.4+0.17)).rgb;
           float k=smoothstep(0.014,0.09,el)*(1.0-smoothstep(0.7,1.0,el));
           c*=1.0+(s.r-0.5)*0.10*k;
           c+=vec3(0.012,0.004,-0.011)*(s.g-0.5)*2.0*k; }
@@ -44540,8 +44540,11 @@ function paintWater(sc, uT){
         // fragment takes the one that lies across its own view ray. Nothing swims when you turn.
         vec2 vq=normalize(vHV.xz+1e-4);
         float wA=smoothstep(0.35,0.65,abs(dot(vq,SA)));
-        vec3 st=mix(texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb,
-                    texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb, wA);
+        // (one fetch except in the narrow band of headings where the two sets cross-fade)
+        vec3 st;
+        if(wA<0.002) st=texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb;
+        else if(wA>0.998) st=texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb;
+        else st=mix(texture2D(uStroke, vec2(wq.y/130.0+0.37, wq.x/52.0)).rgb, texture2D(uStroke, vec2(wq.x/130.0, wq.y/52.0)).rgb, wA);
         diffuseColor.rgb*=1.0+(st.r-0.5)*0.26+(st.g-0.5)*vec3(0.05,0.0,-0.06);`)
       .replace('#include <fog_fragment>',`
         { vec3 V=normalize(vHV); vec3 Rf=vec3(V.x,-V.y,V.z);
@@ -44550,8 +44553,8 @@ function paintWater(sc, uT){
           float path=exp(-daz/0.010)*exp(-del*del/0.09);
           // (dabs a few units long and about one across: any finer and the mipmap averages them
           // away before they reach the threshold; a soft ramp, so far off they melt into a sheen)
-          float dab=texture2D(uStroke, vec2(wq.x/70.0+uT*0.006, wq.y/30.0)).b;
-          gl_FragColor.rgb+=vec3(0.34,0.30,0.21)*path*clamp((dab-0.52)*3.2,0.0,1.0); }
+          if(path>0.004){ float dab=texture2D(uStroke, vec2(wq.x/70.0+uT*0.006, wq.y/30.0)).b;   // (only on the path)
+            gl_FragColor.rgb+=vec3(0.34,0.30,0.21)*path*clamp((dab-0.52)*3.2,0.0,1.0); } }
         #include <fog_fragment>`); };
   m.customProgramCacheKey=()=>'paintWater';
   const w=new T.Mesh(g,m); w.position.y=-2;
