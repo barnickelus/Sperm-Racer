@@ -53955,6 +53955,16 @@ function wlAdd(t){
   _tox+=_wlx; _toy+=(Y[i]+(Y[i+1]-Y[i])*k)*S;
 }
 const TAIL_SLOPE=0.5;   // max lateral slope (dx/dz) the styled swims may reach; ~27 degrees. From the chase camera a 45-degree swing reads as bent wire, not a swim
+/* JUAN'S SWIM, for every tail. Juan's short bead cone (juanWiggle) swims on the same clock as every
+   other tail (r.phase speeds up and slows with the kart), but its proportions are different: it is
+   11.45 long and carries the stock lag per unit (0.714 rad), so about 1.3 waves, at 0.42 of the
+   stock amplitude, and each ring turns to follow the bend. That reads as one smooth S that sweeps
+   and visibly quickens with speed. The stock 21-long tail carries 2.4 waves at full amplitude, which
+   at speed folds into a Z of bent wire. Drawn to Juan's proportions, a 21-long tail carries the same
+   1.3 waves (lag x 11.45/21 = 0.545) at 0.42 x 21/11.45 = 0.77 of the amplitude: the same shape and
+   the same bend angles, scaled to the tail. The tube's rings also turn square to the bend, as Juan's
+   do, so the tube keeps its thickness through the S instead of shearing thin. Juan himself is unchanged. */
+const TAIL_SWIM={lag:0.545, amp:0.77};
 // x and y offset of the spine at fraction t, `lag` radians behind the head; st=null is the
 // plain sine, bit-for-bit what the tail always did
 function tailOffset(lag, t, phase, amp, st){
@@ -53978,6 +53988,7 @@ function wiggleTail(g, phase, amp, lift, st){
   lift=lift||0; st=st||null;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
   const jt=g.userData.juanTail; _WL.s=jt ? (jt.len||(jt.len=Math.abs(jt.rings[0].z-jt.rings[jt.rings.length-1].z)))/WL_LEN : g.userData.tailData ? 1 : 0.95;   // the lash is built for the 21-long tube: the 20-long ring tails and Juan's cone take it to scale
   if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
+  const LK=TAIL_SWIM.lag; amp*=TAIL_SWIM.amp;   // every other tail swims to Juan's proportions (TAIL_SWIM)
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -53986,7 +53997,7 @@ function wiggleTail(g, phase, amp, lift, st){
   if(bt){
     const {mesh,rings,dummy}=bt; let i=0;
     for(const rg of rings){
-      tailOffset(rg.ph, rg.t, phase, amp, st);
+      tailOffset(rg.ph*LK, rg.t, phase, amp, st);
       const sway=_tox, zy=_toy, z=-2 - rg.t*20 + _wlz;
       for(let j=0;j<rg.n;j++){
         const u=j/rg.n*Math.PI*2+(rg.a0||0);
@@ -54005,7 +54016,7 @@ function wiggleTail(g, phase, amp, lift, st){
     const {mesh,pos,R,S,cx,cz,cr}=wt, cy=wt.cy||(wt.cy=new Float32Array(R)), ly=i=>3.2+lift*(i/(R-1))*(i/(R-1))+cy[i];
     for(let i=0;i<R;i++){
       const t=i/(R-1);
-      tailOffset(i*0.55*(20/R), t, phase, amp, st); cx[i]=_tox; cy[i]=_toy;
+      tailOffset(i*0.55*(20/R)*LK, t, phase, amp, st); cx[i]=_tox; cy[i]=_toy;
       cz[i]=-2 - t*20 + _wlz;
       cr[i]=1.5*(1-t)*(1-t)+0.28;
     }
@@ -54030,7 +54041,7 @@ function wiggleTail(g, phase, amp, lift, st){
     const {mesh,rings,dummy}=vt;
     let i=0;
     for(const r of rings){
-      tailOffset(r.ph, r.t, phase, amp, st);
+      tailOffset(r.ph*LK, r.t, phase, amp, st);
       const sway=_tox, zy=_toy, z=-2 - r.t*20 + _wlz, ry=(sway-_wlx)*0.12 - _wla;   // a lash turns each cube with the chain's heading
       for(const o of r.offs){
         dummy.position.set(sway+o[0], 3.2+lift*r.t*r.t+zy+o[1], z);
@@ -54045,15 +54056,19 @@ function wiggleTail(g, phase, amp, lift, st){
   const d=g.userData.tailData; if(!d) return;
   const {pos,ringZ,ringR,rings,sides,y,geo,outlinePos,outlineGeo}=d;
   const tailS=g.userData.tailS;
+  // first the spine (sway, lift and the lash's pull and heading per ring), then the rings around it
+  const SX=d.sx||(d.sx=new Float32Array(rings+1)), SY=d.sy||(d.sy=new Float32Array(rings+1)), SZ=d.sz||(d.sz=new Float32Array(rings+1)), SA=d.sa||(d.sa=new Float32Array(rings+1));
+  for(let i=0;i<=rings;i++){ tailOffset(i*0.5*LK, i/rings, phase, amp, st); SX[i]=_tox; SY[i]=_toy; SZ[i]=_wlz; SA[i]=_wla; }
   let p=0;
   for(let i=0;i<=rings;i++){
     const t=i/rings;
-    tailOffset(i*0.5, t, phase, amp, st);
-    const cx=_tox, oy=_toy;                     // more sway toward the tip
+    const cx=SX[i], oy=SY[i];                   // more sway toward the tip
     const sy=tailS?tailS(t)*_TW.pg:0;           // Chad's tail carries a fixed upward S
-    const cz=ringZ[i]+_wlz, r=ringR[i], ro=r+TAIL_OUTLINE_W;
-    // mid-lash each ring turns square to the bent chain (1 and 0 the rest of the time: the same numbers as ever)
-    const ca=_WL.on?Math.cos(_wla):1, sa=_WL.on?Math.sin(_wla):0;
+    const cz=ringZ[i]+SZ[i], r=ringR[i], ro=r+TAIL_OUTLINE_W;
+    // each ring turns square to the bend, as Juan's do (mid-lash: to the bent chain), so the tube keeps its
+    // thickness through the S instead of shearing thin. At rest the bend is 0 and the rings face straight back as ever.
+    const a0=i>0?i-1:0, a1=i<rings?i+1:rings, yaw=_WL.on ? SA[i] : -Math.atan((SX[a1]-SX[a0])/(ringZ[a1]-ringZ[a0]));
+    const ca=Math.cos(yaw), sa=Math.sin(yaw);
     for(let j=0;j<=sides;j++){
       const ang=j/sides*Math.PI*2, cb=Math.cos(ang), c=cb*ca, s=Math.sin(ang), cs=cb*sa;
       pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
