@@ -38384,6 +38384,18 @@ function hanaSea(cx, cz){
        foot of the falls.
    The same grid answers groundAt(x,z) exactly (same triangle split as the mesh), so every
    prop placed later stands on the drawn surface, not on an approximation of it. */
+/* THE NEAR SAMPLES OF A POINT. The ground grids (Namie's hanaField, Rosalie's shField) asked every road sample, for every one of
+   their tens of thousands of points, whether it lay within reach (d² ≤ cut) — nearly all did not. The samples are binned by cells
+   as wide as that reach, so a point asks only the nine cells round it: every sample within reach is among them, in ascending
+   order as before, so the same sample wins the same ties and the heights come out bit for bit the same. */
+function nearBins(SJ, cut){
+  const B=Math.ceil(Math.sqrt(cut)), bins=new Map(), K=(a,b)=>(a+32768)*65536+(b+32768);
+  SJ.forEach((s,j)=>{ const k=K(Math.floor(s.x/B),Math.floor(s.z/B)); let l=bins.get(k); if(!l) bins.set(k,l=[]); l.push(j); });
+  const cands=new Map(), none=[];
+  return (x,z)=>{ const cx=Math.floor(x/B), cz=Math.floor(z/B), k=K(cx,cz); let c=cands.get(k); if(c) return c;
+    c=[]; for(let a=-1;a<=1;a++) for(let b=-1;b<=1;b++){ const l=bins.get(K(cx+a,cz+b)); if(l) for(const j of l) c.push(j); }
+    c.sort((p,q)=>p-q); if(!c.length) c=none; cands.set(k,c); return c; };
+}
 function hanaField(inS, ccx, ccz, tunIdx){
   const CS=10, N=SAMP.length; HANA_CC=[ccx,ccz];
   const inTun=j=>tunIdx.some(([a,b])=>j>=a&&j<=b);
@@ -38398,11 +38410,11 @@ function hanaField(inS, ccx, ccz, tunIdx){
   const fbm=(x,z)=>arcFbm(x,z);
   const island=(x,z)=>{ const r2=(x-ccx)**2+(z-ccz)**2, hd2=(x-HILL.x)**2+(z-HILL.z)**2;
     return 12+58*Math.exp(-r2/(2*250*250))+34*(fbm(x/160+3,z/160+7)-0.45)+78*Math.exp(-hd2/(2*80*80)); };
-  const H=new Float32Array(NX*NZ), INK=new Float32Array(NX*NZ);
+  const H=new Float32Array(NX*NZ), INK=new Float32Array(NX*NZ), nearJ=nearBins(SJ,72000);
   for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){
-    const x=x0+ix*CS, z=z0+iz*CS;
+    const x=x0+ix*CS, z=z0+iz*CS, NJ=nearJ(x,z);
     let nd=1e9, nj=-1, hi=1e9, corr=false;
-    for(let j=0;j<N;j++){
+    for(let q=0;q<NJ.length;q++){ const j=NJ[q];
       const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
       if(d2>72000) continue;
       const d=Math.sqrt(d2); if(d<nd){ nd=d; nj=j; }
@@ -38435,7 +38447,7 @@ function hanaField(inS, ccx, ccz, tunIdx){
   // clearance of a point from the WHOLE corridor (another leg can pass closer than the one
   // a prop was hung off); a prop is legal where clear(x,z,its half-extent) >= 1
   const clear=(x,z,r)=>{ let m=1e9;
-    for(const s of SJ){ const dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>62500) continue;
+    for(const j of nearJ(x,z)){ const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>62500) continue;
       const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
       const v=Math.sqrt(d2)-lim; if(v<m) m=v; }
     return m-(r||0); };
@@ -40544,11 +40556,11 @@ function shField(inS, ccx, ccz, tunIdx, deckFn){
   let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const s of SJ){ x0=Math.min(x0,s.x); x1=Math.max(x1,s.x); z0=Math.min(z0,s.z); z1=Math.max(z1,s.z); }
   x0=Math.floor((x0-460)/CS)*CS; x1+=460; z0=-260; z1+=440;
   const NX=Math.ceil((x1-x0)/CS)+1, NZ=Math.ceil((z1-z0)/CS)+1;
-  const H=new Float32Array(NX*NZ), INK=new Float32Array(NX*NZ);
+  const H=new Float32Array(NX*NZ), INK=new Float32Array(NX*NZ), nearJ=nearBins(SJ,90000);   // (see nearBins: the same samples, in the same order)
   for(let iz=0;iz<NZ;iz++) for(let ix=0;ix<NX;ix++){
-    const x=x0+ix*CS, z=z0+iz*CS, base=shBase(x,z);
+    const x=x0+ix*CS, z=z0+iz*CS, base=shBase(x,z), NJ=nearJ(x,z);
     let nd=1e9, nj=-1, hi=1e9, corr=false;
-    for(let j=0;j<N;j++){
+    for(let q=0;q<NJ.length;q++){ const j=NJ[q];
       const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz;
       if(d2>90000) continue;
       const d=Math.sqrt(d2); if(d<nd){ nd=d; nj=j; }
@@ -40577,7 +40589,7 @@ function shField(inS, ccx, ccz, tunIdx, deckFn){
     return (fx+fz<=1) ? a+(b-a)*fx+(c-a)*fz : d+(c-d)*(1-fx)+(b-d)*(1-fz); };
   const footAt=(x,z,r)=>Math.min(groundAt(x,z),groundAt(x-r,z-r),groundAt(x+r,z-r),groundAt(x-r,z+r),groundAt(x+r,z+r));
   const clear=(x,z,r)=>{ let m=1e9;
-    for(const s of SJ){ const dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>90000) continue;
+    for(const j of nearJ(x,z)){ const s=SJ[j], dx=x-s.x, dz=z-s.z, d2=dx*dx+dz*dz; if(d2>90000) continue;
       const lat=dx*s.nx+dz*s.nz, lim=(lat*inS>0)?(s.tun?HW*1.28:HW*2.2):HW*1.28;
       const v=Math.sqrt(d2)-lim; if(v<m) m=v; }
     return m-(r||0); };
@@ -41854,27 +41866,31 @@ function irisClear(F, x, z, r, margin){
    a kart flies ~64 over the launch (Iris's ramps resolve to samples ~320 and ~432; the arcs
    cover the flight from each, as built by the jump-ramp section from her pills/extraRamp). */
 const IRIS_JUMPS=[[314,368],[428,472]];
+// (It is asked for seven points of every triangle of every trial rock — hundreds of thousands of times a build — so its cells are
+// keyed by number, not by a string made for each of the 25 looked up, and the jump flags are read once. Same cells, same order.)
+const IRIS_K=(a,b)=>(a+32768)*65536+(b+32768);
 function irisCorrHit(F, x, y, z, clr){
-  if(!F.SB){ F.SB=new Map(); F.SJ.forEach((s,i)=>{ const k=Math.floor(s.x/40)+','+Math.floor(s.z/40); if(!F.SB.has(k)) F.SB.set(k,[]); F.SB.get(k).push(i); }); }
-  const cx=Math.floor(x/40), cz=Math.floor(z/40), inS=F.inS;
-  for(let a=-2;a<=2;a++) for(let b=-2;b<=2;b++){ const l=F.SB.get((cx+a)+','+(cz+b)); if(!l) continue;
-    for(const i of l){ const s=F.SJ[i], dx=x-s.x, dz=z-s.z;
+  if(!F.SB){ F.SB=new Map(); F.SJ.forEach((s,i)=>{ const k=IRIS_K(Math.floor(s.x/40),Math.floor(s.z/40)); if(!F.SB.has(k)) F.SB.set(k,[]); F.SB.get(k).push(i); });
+    F.JMP=new Uint8Array(F.SJ.length); F.SJ.forEach((s,i)=>{ F.JMP[i]=IRIS_JUMPS.some(([p,q])=>i>=p&&i<=q)?1:0; }); }
+  const cx=Math.floor(x/40), cz=Math.floor(z/40), inS=F.inS, SB=F.SB, SJ=F.SJ, JMP=F.JMP;
+  for(let a=-2;a<=2;a++) for(let b=-2;b<=2;b++){ const l=SB.get(IRIS_K(cx+a,cz+b)); if(!l) continue;
+    for(let n=0;n<l.length;n++){ const i=l[n], s=SJ[i], dx=x-s.x, dz=z-s.z;
       if(Math.abs(dx*s.tx+dz*s.tz)>5.5) continue;
       const lat=dx*s.nx+dz*s.nz, inner=lat*inS>0, lim=(inner&&!s.tun)?HW*2.2:HW*1.28;
       if(Math.abs(lat)>=lim) continue;
-      const h=y-(s.y+s.sb*lat), need=IRIS_JUMPS.some(([p,q])=>i>=p&&i<=q)?80:clr;
+      const h=y-(s.y+s.sb*lat), need=JMP[i]?80:clr;
       if(h>-0.5 && h<need) return inner?1:-1; } }
   return 0;
 }
 // every triangle of a trial builder (corners, centroid, edge midpoints) against the corridor
 function irisTestB(F, T2, clr){
   const hit={inner:0, outer:0};
+  const at=(x,y,z)=>{ const h=irisCorrHit(F,x,y,z,clr); if(h>0) hit.inner++; else if(h<0) hit.outer++; };   // (no point arrays made per triangle)
   for(const b of T2.buckets.values()){ const P=b.P, I=b.I;
     for(let t=0;t<I.length;t+=3){ const a=I[t]*3, c=I[t+1]*3, d=I[t+2]*3;
-      const pts=[[P[a],P[a+1],P[a+2]],[P[c],P[c+1],P[c+2]],[P[d],P[d+1],P[d+2]],
-        [(P[a]+P[c]+P[d])/3,(P[a+1]+P[c+1]+P[d+1])/3,(P[a+2]+P[c+2]+P[d+2])/3],
-        [(P[a]+P[c])/2,(P[a+1]+P[c+1])/2,(P[a+2]+P[c+2])/2],[(P[c]+P[d])/2,(P[c+1]+P[d+1])/2,(P[c+2]+P[d+2])/2],[(P[a]+P[d])/2,(P[a+1]+P[d+1])/2,(P[a+2]+P[d+2])/2]];
-      for(const q of pts){ const h=irisCorrHit(F,q[0],q[1],q[2],clr); if(h>0) hit.inner++; else if(h<0) hit.outer++; } } }
+      at(P[a],P[a+1],P[a+2]); at(P[c],P[c+1],P[c+2]); at(P[d],P[d+1],P[d+2]);
+      at((P[a]+P[c]+P[d])/3,(P[a+1]+P[c+1]+P[d+1])/3,(P[a+2]+P[c+2]+P[d+2])/3);
+      at((P[a]+P[c])/2,(P[a+1]+P[c+1])/2,(P[a+2]+P[c+2])/2); at((P[c]+P[d])/2,(P[c+1]+P[d+1])/2,(P[c+2]+P[d+2])/2); at((P[a]+P[d])/2,(P[a+1]+P[d+1])/2,(P[a+2]+P[d+2])/2); } }
   return hit;
 }
 function irisMerge(B, T2){
@@ -47945,11 +47961,13 @@ function edenField(){
   for(let i=0;i<N;i+=2){ const p=SAMP[i].p, k=K(Math.floor(p.x/CS), Math.floor(p.z/CS));
     let L=cell.get(k); if(!L) cell.set(k,L=[]); L.push(i); }
   if((N-1)%2){ const p=SAMP[N-1].p, k=K(Math.floor(p.x/CS), Math.floor(p.z/CS)); let L=cell.get(k); if(!L) cell.set(k,L=[]); L.push(N-1); }
+  // each cell's samples as flat arrays (the same points, in the same order): near is asked for every vertex of the ground, twice
+  for(const [k,L] of cell){ const n=L.length, X=new Float64Array(n), Z=new Float64Array(n); for(let j=0;j<n;j++){ X[j]=SAMP[L[j]].p.x; Z[j]=SAMP[L[j]].p.z; } cell.set(k,{I:L,X,Z}); }
   function near(x,z,maxR){
     const r=Math.ceil((maxR||300)/CS), cx=Math.floor(x/CS), cz=Math.floor(z/CS);
     let bi=-1, bd=1e18;
-    for(let a=-r;a<=r;a++) for(let b=-r;b<=r;b++){ const L=cell.get(K(cx+a,cz+b)); if(!L) continue;
-      for(let j=0;j<L.length;j++){ const p=SAMP[L[j]].p, dx=p.x-x, dz=p.z-z, d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=L[j]; } } }
+    for(let a=-r;a<=r;a++) for(let b=-r;b<=r;b++){ const c=cell.get(K(cx+a,cz+b)); if(!c) continue; const I=c.I, X=c.X, Z=c.Z;
+      for(let j=0;j<I.length;j++){ const dx=X[j]-x, dz=Z[j]-z, d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=I[j]; } } }
     if(bi<0) return {d:1e9, y:0, i:-1, lat:0};
     let bd2=1e18, by=0, bk=bi;
     for(let k=Math.max(0,bi-3);k<Math.min(N-1,bi+3);k++){ const A=SAMP[k].p, B=SAMP[k+1].p;
