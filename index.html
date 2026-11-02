@@ -53113,11 +53113,13 @@ function buildTrack(idx){
     // The probe is the road's own triangles, but only the stretch under this pad: the vertex walk below reaches at most 40
     // samples either way, so the triangles a vertex can land on lie within those segments, and the road does not pass within
     // 1.5 of itself anywhere else (that would be a collision, not an overpass). Same vertices, same triangles, same hits —
-    // without testing the whole road for each of the pad's 91 vertices (that was 1.5 s of Iris's 2 s build).
+    // without testing the whole road for each of the pad's 91 vertices. The stretch is set as the road geometry's drawRange,
+    // which the raycast honours, so no object is made per pad (a new object draws random numbers for its uuid, and a build's
+    // random draws must stay in step for the scene to hash the same). A pad astride the loop's seam keeps the whole road.
     let probe=null;
-    if(padProbe){ const W=46, sub=[];
-      for(let q=-W;q<=W;q++){ const j=trackLoop ? (((i+q)%LAST)+LAST)%LAST : i+q; if(j<0||j>=LAST) continue; const b=j*6; sub.push(ridx[b],ridx[b+1],ridx[b+2],ridx[b+3],ridx[b+4],ridx[b+5]); }
-      const sg=new T.BufferGeometry(); sg.setAttribute('position',geo.attributes.position); sg.setIndex(sub); probe=new T.Mesh(sg,padProbe.material); }
+    if(padProbe){ const W=46, lo=i-W, hi=i+W;
+      if(lo>=0 && hi<LAST) geo.setDrawRange(lo*6,(hi-lo+1)*6); else geo.setDrawRange(0,Infinity);
+      probe=padProbe; }
     // The strip is DRAPED on the road rather than laid as a rigid plane: an 18-long flat card
     // cannot follow a crest, a dip, a bend or a bank that is still twisting, so on those samples
     // one end sank into the road and the chevrons were cut off. Each vertex is placed on the
@@ -53169,6 +53171,7 @@ function buildTrack(idx){
     const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana && !sho) trackGroup.add(halo);
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
   }
+  geo.setDrawRange(0,Infinity);   // (the whole road draws again)
   if(padProbe) padProbe.material.dispose();
 
   // ---- jump ramps: placed just BEFORE the sharpest corners so a jump cuts the corner ----
