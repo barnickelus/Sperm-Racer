@@ -53092,6 +53092,14 @@ function buildTrack(idx){
   const padRay=new T.Raycaster(), _padV=new T.Vector3(), _padDn=new T.Vector3(0,-1,0);
   for(const f of padStations(TRACKS[idx])){   // Eve lays her own (a run, not a lap)
     const i=Math.floor(f*(STEPS-1)); const s=SAMP[i%STEPS];
+    // The probe is the road's own triangles, but only the stretch under this pad: the vertex walk below reaches at most 40
+    // samples either way, so the triangles a vertex can land on lie within those segments, and the road does not pass within
+    // 1.5 of itself anywhere else (that would be a collision, not an overpass). Same vertices, same triangles, same hits —
+    // without testing the whole road for each of the pad's 91 vertices (that was 1.5 s of Iris's 2 s build).
+    let probe=null;
+    if(padProbe){ const W=46, sub=[];
+      for(let q=-W;q<=W;q++){ const j=trackLoop ? (((i+q)%LAST)+LAST)%LAST : i+q; if(j<0||j>=LAST) continue; const b=j*6; sub.push(ridx[b],ridx[b+1],ridx[b+2],ridx[b+3],ridx[b+4],ridx[b+5]); }
+      const sg=new T.BufferGeometry(); sg.setAttribute('position',geo.attributes.position); sg.setIndex(sub); probe=new T.Mesh(sg,padProbe.material); }
     // The strip is DRAPED on the road rather than laid as a rigid plane: an 18-long flat card
     // cannot follow a crest, a dip, a bend or a bank that is still twisting, so on those samples
     // one end sank into the road and the chevrons were cut off. Each vertex is placed on the
@@ -53124,8 +53132,8 @@ function buildTrack(idx){
       // S-bends) the strip's quads are not planar and its diagonals sit up to ~0.6 off the
       // smooth model, enough to bury the chevrons between them. Nearest hit to the model only,
       // so an overpass above never captures a vertex.
-      if(padProbe){ _padV.set(px+lx*lat, py+ly*lat+4, pz+lz*lat); padRay.set(_padV, _padDn);
-        let best=null; for(const h of padRay.intersectObject(padProbe,false)){
+      if(probe){ _padV.set(px+lx*lat, py+ly*lat+4, pz+lz*lat); padRay.set(_padV, _padDn);
+        let best=null; for(const h of padRay.intersectObject(probe,false)){
           const e=Math.abs(h.point.y-(py+ly*lat)); if(e<1.5 && (!best || e<best.e)) best={y:h.point.y, e}; }
         if(best) PP.setY(k, best.y+0.3); }
     }
@@ -67976,7 +67984,7 @@ function previewSoon(delay){
 function previewNow(){
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
   if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
-  if(PREVIEW.built!==selTrack){ const b0=performance.now(); buildTrack(selTrack); buildRacers(); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; }
+  if(PREVIEW.built!==selTrack){ const b0=performance.now(); buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; }   // (true: the preview keeps the racers it has; only the course is new)
   PREVIEW.pending=false; PREVIEW.hold=0;
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
   let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
@@ -69783,11 +69791,47 @@ function makeDam(width,hgt=9){
 
 // Modify buildRacers to use chosenType for "You"
 const _origBuildRacers = buildRacers;
-buildRacers = function(){
+// reuse (the home preview, see previewNow): the racers already on the scene keep their models and shadows and are only seated on the
+// new course's grid; a slot whose racer changed (a new pick) is the one slot rebuilt. Six character models were being built from
+// scratch on every flick of the course strip — up to half a second of the stall on an iPad — for a preview whose cast had not changed.
+// A race start never passes it: every race builds its own fresh line-up and state.
+buildRacers = function(reuse){
+  // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
+  // more of a "race war" than the original 4, without going so wide it costs frame
+  // budget or crowds the starting grid off the road).
+  // During a Circuit Cup the same lineup carries across every circuit.
+  let lineup, netSlots=null;
+  if(NET.on && NET.lineup){
+    // Humans first, in the host's order, with the LOCAL player pulled to slot 0 because a
+    // pile of code downstream (camera, HUD, engine audio, item roulette) keys off racers[0]
+    // being you. Padding with AI is the host's lobby choice, not a default.
+    const mine=NET.lineup.filter(p=>p.id===NET.self);
+    const rest=NET.lineup.filter(p=>p.id!==NET.self);   // the other humans, then the host's AI slots (ai:true)
+    netSlots=[...mine, ...rest];
+    lineup=netSlots.map(p=>SPERM_TYPES.find(t=>t.id===p.typeId)||SPERM_TYPES[0]);
+    if(NET.fillAI){   // (a no-op when the host sent its AI slots; kept for a grid that arrives short)
+      const taken=new Set(lineup.map(t=>t.id));
+      const pool=SPERM_TYPES.filter(t=>!taken.has(t.id) && !t.hidden);
+      for(let i=pool.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
+      while(lineup.length<6 && pool.length){ lineup.push(pool.shift()); netSlots.push(null); }
+    }
+  }
+  else if(gpActive && gpLineup){ lineup=gpLineup; }
+  else {
+    const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
+    for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
+    lineup=[chosenType, others[0], others[1], others[2], others[3], others[4]];
+    // the preview keeps the opponents it has (a fresh draw would only mean rebuilding them); the pick itself is slot 0
+    if(reuse && racers.length===6){ const old=racers.slice(1).map(r=>SPERM_TYPES.find(t=>t.id===r.id));
+      if(old.every(t=>t && !t.hidden && t.id!==chosenType.id)) lineup=[chosenType, ...old]; }
+  }
+  // the racers whose model stays: the same character in the same slot, built for a local line-up (never a lobby's)
+  const held=lineup.map((t,k)=>{ const r=racers[k]; return (reuse && !netSlots && r && r.obj && r.shadow && !r.netId && !r.remote && !r.human && r.id===t.id) ? r : null; });
+
   // rings live on the scene, not on the racer group, so they have to be removed by hand or
   // they accumulate one set per race
   for(const r of racers){ if(r._ring){ scene.remove(r._ring); disposeObject(r._ring); } }
-  for(const r of racers){ if(r.obj){scene.remove(r.obj);disposeObject(r.obj);} if(r.shadow){scene.remove(r.shadow);disposeObject(r.shadow);} if(r._dshadow){scene.remove(r._dshadow);disposeObject(r._dshadow);} if(r._drings){scene.remove(r._drings);disposeObject(r._drings);} }
+  for(const r of racers){ const h=held.includes(r); if(r.obj&&!h){scene.remove(r.obj);disposeObject(r.obj);} if(r.shadow&&!h){scene.remove(r.shadow);disposeObject(r.shadow);} if(r._dshadow){scene.remove(r._dshadow);disposeObject(r._dshadow);} if(r._drings){scene.remove(r._drings);disposeObject(r._drings);} }
   for(const it of items){ scene.remove(it.mesh); disposeObject(it.mesh); }
   for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
   for(const p of projectiles){ scene.remove(p.mesh); disposeObject(p.mesh); }
@@ -69831,40 +69875,13 @@ buildRacers = function(){
   // (dental dams are no longer course-authored: the membrane is now only the Dental Dam
   // item, dropped behind a racer as a trap — see useItem)
 
-  // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
-  // more of a "race war" than the original 4, without going so wide it costs frame
-  // budget or crowds the starting grid off the road).
-  // During a Circuit Cup the same lineup carries across every circuit.
-  let lineup, netSlots=null;
-  if(NET.on && NET.lineup){
-    // Humans first, in the host's order, with the LOCAL player pulled to slot 0 because a
-    // pile of code downstream (camera, HUD, engine audio, item roulette) keys off racers[0]
-    // being you. Padding with AI is the host's lobby choice, not a default.
-    const mine=NET.lineup.filter(p=>p.id===NET.self);
-    const rest=NET.lineup.filter(p=>p.id!==NET.self);   // the other humans, then the host's AI slots (ai:true)
-    netSlots=[...mine, ...rest];
-    lineup=netSlots.map(p=>SPERM_TYPES.find(t=>t.id===p.typeId)||SPERM_TYPES[0]);
-    if(NET.fillAI){   // (a no-op when the host sent its AI slots; kept for a grid that arrives short)
-      const taken=new Set(lineup.map(t=>t.id));
-      const pool=SPERM_TYPES.filter(t=>!taken.has(t.id) && !t.hidden);
-      for(let i=pool.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=pool[i]; pool[i]=pool[j]; pool[j]=tmp; }
-      while(lineup.length<6 && pool.length){ lineup.push(pool.shift()); netSlots.push(null); }
-    }
-  }
-  else if(gpActive && gpLineup){ lineup=gpLineup; }
-  else {
-    const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
-    for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
-    lineup=[chosenType, others[0], others[1], others[2], others[3], others[4]];
-  }
-
-  const _mk=[];
   racers=lineup.map((t,k)=>{
     const np = netSlots ? netSlots[k] : null;
     const you = netSlots ? (np && np.id===NET.self) : (k===0);
     const s=SAMP[2];
     const lane=(k-(lineup.length-1)/2)*7.5;   // centered grid, spacing tightened from 9 to fit 6 within HW=22
-    const obj=makeCell(t.hue, t.id);        // full character model for everyone (you + opponents)
+    const keep=held[k];
+    const obj=keep ? keep.obj : makeCell(t.hue, t.id);        // full character model for everyone (you + opponents)
     // start the grid well behind the start/finish gantry (built at SAMP[0], ~y+14, full
     // road width) instead of almost on top of it — spawning this close put the chase
     // camera and the countdown's orbit cam right in the gate geometry for the opening
@@ -69889,12 +69906,12 @@ buildRacers = function(){
     const mzG=MAZE?mzStartSlot(MAZE, (MAZE.sym>1&&np)?np.k:k, lineup.length):null;   // the maze: its antechamber grid, three abreast (six gates: the field split over them)
     if(mzG) pos.set(mzG.x,HOVER_H,mzG.z);
     obj.position.copy(pos);
-    scene.add(obj);
+    if(!keep) scene.add(obj);
     // soft ground shadow disc that grounds the racer
-    const shadow=new T.Mesh(new T.PlaneGeometry(9,9),
+    const shadow=keep ? keep.shadow : new T.Mesh(new T.PlaneGeometry(9,9),
       new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0.7,
         polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2}));   // wins depth ties with the road
-    shadow.rotation.x=-Math.PI/2; scene.add(shadow);
+    if(!keep){ shadow.rotation.x=-Math.PI/2; scene.add(shadow); }
     return {you, id:t.id, name:(np&&np.name)||t.name, hue:t.hue, obj, shadow,
       netId: np ? np.id : null,
       // nk: the kart's key on the wire — its slot in the host's lineup, the same on every peer.
@@ -70032,11 +70049,17 @@ function paintSummary(){
 }
 function paintRacer(){
   const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
-  let svg=OP_SVG[t.id]||'';
-  // the roster card holds the same art: give the tile's copy its own ids so clip paths / gradients stay unambiguous
-  (svg.match(/ id="[^"]+"/g)||[]).forEach(m=>{ const id=m.slice(5,-1);
-    svg=svg.split(' id="'+id+'"').join(' id="'+id+'_t"').split('url(#'+id+')').join('url(#'+id+'_t)').split('href="#'+id+'"').join('href="#'+id+'_t"'); });
-  a.innerHTML=svg||'<span style="display:block;width:34px;height:34px;margin:8px 2px;border-radius:50%;background:hsl('+t.hue+' 85% 62%)"></span>';
+  // The tile's card is a whole roster SVG, re-id'd and parsed on every pick. The Horizon home hides it (#hzdeck #racerbtn .rt-art), so
+  // there it is left alone, and painted when it can be seen again (the Classic switch, setupHomeStyle's apply, calls back here).
+  if(document.body.classList.contains('hz')) a.dataset.for='';
+  else if(a.dataset.for!==t.id){
+    let svg=OP_SVG[t.id]||'';
+    // the roster card holds the same art: give the tile's copy its own ids so clip paths / gradients stay unambiguous
+    (svg.match(/ id="[^"]+"/g)||[]).forEach(m=>{ const id=m.slice(5,-1);
+      svg=svg.split(' id="'+id+'"').join(' id="'+id+'_t"').split('url(#'+id+')').join('url(#'+id+'_t)').split('href="#'+id+'"').join('href="#'+id+'_t"'); });
+    a.innerHTML=svg||'<span style="display:block;width:34px;height:34px;margin:8px 2px;border-radius:50%;background:hsl('+t.hue+' 85% 62%)"></span>';
+    a.dataset.for=t.id;
+  }
   n.textContent=t.name;
   $('racerbtn').style.setProperty('--hue',t.hue);
   if(hzHooks) hzHooks.racer();
@@ -71440,11 +71463,13 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const tile=44+6, n=Math.max(1,Math.floor((w+6)/tile)-1);
     let i=pool.indexOf(chosenType); if(i<0) i=0;
     const p0=Math.min(Math.floor(i/n)*n,Math.max(0,pool.length-n));
-    const key=n+'|'+p0+'|'+chosenType.id+'|'+pool.length;
-    if(key===rkKey&&!force) return; rkKey=key;
+    const key=n+'|'+p0+'|'+pool.length;
+    // the same page of racers: a pick within it moves the outline, and the eight portraits are not made (and decoded) again
+    if(key===rkKey&&!force){ for(const b of rk.children){ if(!b._t) continue; const on=b._t===chosenType; b.classList.toggle('on',on); b.setAttribute('aria-label',b._t.name+(on?' (your racer)':'')); } return; }
+    rkKey=key;
     rk.textContent='';
     for(const t of pool.slice(p0,p0+n)){
-      const b=document.createElement('button'); b.type='button'; b.className='hz-rt nojoy'+(t===chosenType?' on':'');
+      const b=document.createElement('button'); b.type='button'; b.className='hz-rt nojoy'+(t===chosenType?' on':''); b._t=t;
       b.setAttribute('aria-label',t.name+(t===chosenType?' (your racer)':'')); b.title=t.name;
       const a=art(t); if(a) b.style.backgroundImage=a; else b.style.background='hsl('+t.hue+' 70% 45%)';
       b.onclick=()=>pickRacer(t); rk.appendChild(b);
@@ -71504,6 +71529,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     if(hb){ hb.textContent='Home style: '+(h?'Horizon':'Classic'); hb.classList.toggle('on',h); hb.setAttribute('aria-pressed',h?'true':'false'); }
     sync();
     if(h){ rkKey=''; paintRacerHz(); paintCourseHz(selTrack); }
+    else paintRacer();   // the Classic tile's card, left unpainted while Horizon hid it
     if(trackRecentre) trackRecentre();   // the strip changed size: centre the pick again (a scroll from a stale position would pick another course)
   }
   if(hb) hb.onclick=()=>{ const h=!document.body.classList.contains('hz'); try{ localStorage.setItem('sr_home',h?'horizon':'classic'); }catch(_){} apply(h); };
