@@ -67998,6 +67998,14 @@ function diagTick(now, ms){
 const PREVIEW={built:-1, timer:0, hold:0, pending:false};
 function previewHold(ms){ PREVIEW.hold=Math.max(PREVIEW.hold, performance.now()+ms); }
 function previewTune(on){ const w=$('hzwin'); if(w) w.classList.toggle('tuning',on); }
+// THE WINDOW FOLLOWS THE PICK. A new racer takes slot 0 of the preview's line-up once the picks have been still for a moment (one
+// model built; the other five stay, see buildRacers' reuse). A course build already pending will seat the new pick itself.
+function previewRacerNow(){
+  clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=0;
+  if(state!=='menu' || $('start').classList.contains('hidden') || PREVIEW.pending || !chosenType) return;
+  if(racers.length && racers[0].id!==chosenType.id) buildRacers(true);
+}
+function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=setTimeout(previewRacerNow, delay); }
 function previewSoon(delay){
   clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
   PREVIEW.timer=setTimeout(previewNow, delay);
@@ -70756,7 +70764,8 @@ function setupTrackPick(){
   $('coursenext').onclick=()=>toCard(ord[Math.min(ord.length-1,posOf(nearest())+1)],true);
   // whenever the home screen (re)appears, show what is actually selected (a Circuit Cup or a lobby may have moved selTrack)
   new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ mark(selTrack); toCard(selTrack,false); paintSummary();
-    if(state==='menu' && PREVIEW.built!==selTrack) previewSoon(120); } })   // (the pick moved on while the deck was away: a lobby, a cup)
+    if(state==='menu' && PREVIEW.built!==selTrack) previewSoon(120);   // (the pick moved on while the deck was away: a lobby, a cup)
+    else if(state==='menu') previewRacerSoon(120); } })   // (or the racer did: the roster)
     .observe($('start'),{attributes:true,attributeFilter:['class']});
   mark(selTrack); toCard(selTrack,false); paintSummary();
 }
@@ -71474,7 +71483,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
   function pickRacer(t){
     if(!t||isLocked(t)) return; if(chosenType===t) return;
     chosenType=t; try{ localStorage.setItem('sr_racer',t.id); }catch(_){}
-    selMark(t); paintRacer();
+    selMark(t); paintRacer(); previewRacerSoon(PREVIEW_DELAY);
     if(window.netAnnouncePick) netAnnouncePick();
   }
   function paintStrip(force){
