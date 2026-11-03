@@ -1821,6 +1821,18 @@
   body.hz #hzmp #chinfo .ch-st .lead{color:var(--hz-gold);}
   body.hz #hzmp #chinfo .ch-note{color:var(--hz-grey);opacity:1;}
   @media (orientation:landscape) and (max-height:560px){ body.hz .hzm-chal{padding-top:5px;} body.hz #hzmp #chinfo{font-size:11px;} body.hz #hzmp #chinfo .ch-who{font-size:13px;} }
+  /* the results screen: a series' standings under the board (#besttime) */
+  .ser-line{font-size:12px;letter-spacing:.04em;line-height:1.5;}
+  .ser-line b{color:#fff;}
+  .ser-tbl{display:inline-grid;grid-template-columns:auto auto auto;column-gap:14px;row-gap:2px;margin-top:6px;font-size:12px;letter-spacing:.02em;text-align:left;}
+  .ser-tbl .lead{color:var(--signal,#6df2d0);}
+  body.hz .ser-line b,body.hz .ser-tbl .lead{color:var(--hz-gold);}
+  /* the spectator's strip over the race (see SPEC) */
+  #specbar{position:fixed;left:50%;top:calc(10px + env(safe-area-inset-top));z-index:12;transform:translateX(-50%);display:none;align-items:center;gap:10px;max-width:calc(100% - 32px);
+    padding:8px 14px;border:1px solid rgba(255,255,255,.25);border-radius:22px;background:rgba(2,12,16,.72);color:#fff;font-size:12px;letter-spacing:.06em;white-space:nowrap;pointer-events:none;}
+  #specbar b{font-weight:700;} #specbar i{font-style:normal;opacity:.75;}
+  body.spectating #specbar{display:flex;}
+  body.spectating #item,body.spectating #whipbtn,body.spectating #dm,body.spectating #driftL,body.spectating #fireL,body.spectating #drift,body.spectating #fire,body.spectating #steer,body.spectating #throttle{display:none!important;}
 </style>
 </head>
 <body>
@@ -68675,6 +68687,7 @@ function netLeave(quiet){
   if(NET._openJoin){ const f=NET._openJoin; NET._openJoin=null; f(false); }
   NET.open=false; NET.openDue=0; NET.openT=null; NET.openAt=0; NET.order=[];
   NET._go=null; NET.goSeen=false; NET.ready.clear();
+  serAutoStop();           // (a series' next race never starts from a room we have left)
   if(!quiet) chalDrop();   // leaving for good (Back, Main menu, a new Connection) ends the challenge on this screen; a quiet leave is a re-join
   netRaceDoneUI();
 }
@@ -68684,16 +68697,17 @@ function netBroadcastRoster(){
     players:[...NET.players.values()].filter(p=>!p.gone).map(p=>({id:p.id,name:p.name,typeId:p.typeId}))};
   if(NET.open){ m.open=1; m.openT=+Math.max(0,(NET.openDue-performance.now())/1000).toFixed(1); }
   if(NET.on) m.on=1;     // a latecomer learns the race is already running
-  if(chalIsRoom()){ m.chal=chalMeta(CHAL.live); m.diff=difficulty; }   // the challenge this room runs (rules, standings), so every screen agrees
+  if(chalIsRoom()){ m.chal=chalMeta(CHAL.live); m.diff=difficulty; if(SER) m.ser=SER; }   // the challenge this room runs (rules, standings), so every screen agrees
   netSend(m);
 }
-// a client: the challenge the host's roster / start describes (the link's own ghost, if we opened one, stays ours)
-function chalAdopt(meta, diff){
+// a client: the challenge the host's roster / start describes, and its standings (the link's own ghost, if we opened one, stays ours)
+function chalAdopt(meta, diff, ser){
   const ch=chalFromMeta(meta); if(!ch) return;
   ch.code=NET.room;
   if(CHAL.live && CHAL.live.code===NET.room){ ch.g=CHAL.live.g; ch.gtext=CHAL.live.gtext; }
   CHAL.live=ch;
   if(diff && DIFF[diff]!=null) difficulty=diff;
+  if(ser && typeof ser==='object' && ser.wins && ser.names) SER=ser;
   chalPaint();
 }
 
@@ -68744,7 +68758,7 @@ function netRecv(m){
         chalYield(m.host);
       }
       NET.fillAI=m.fillAI; NET.hostId=m.host||m.from;
-      if(m.chal) chalAdopt(m.chal, m.diff);   // the challenge this room runs, and its standings
+      if(m.chal) chalAdopt(m.chal, m.diff, m.ser);   // the challenge this room runs, and its standings
       for(const q of m.players)
         if(!NET.players.has(q.id))
           NET.players.set(q.id, {id:q.id, name:q.name, typeId:q.typeId, last:performance.now()});
@@ -68780,7 +68794,7 @@ function netRecv(m){
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
       selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
-      if(m.chal) chalAdopt(m.chal, m.diff);
+      if(m.chal) chalAdopt(m.chal, m.diff, m.ser);
       mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:mzModeOf(TRACKS[m.track])}:null;   // the host's maze, exactly (its start: the course's own)
       netBeginRace();
       break;
@@ -68821,6 +68835,9 @@ function netRecv(m){
       const e=NET.ents.get(m.id); if(e){ NET.ents.delete(m.id); e.life=0; }
       break;
     }
+    case 'ser':                    // the host: a challenge series' standings after a race (see SER)
+      if(!NET.host && m.ser && m.ser.wins && m.ser.names && chalIsRoom()){ SER=m.ser; serResultsPaint(); netRenderLobby(); }
+      break;
     case 'hb': break;              // liveness only; the timestamp above is the payload
     case 'bye': netDropPeer(m.id); break;
   }
@@ -68998,6 +69015,7 @@ function netReadyCheck(){
 /* ---- starting a networked race ---- */
 function netHostStart(){
   if(!NET.host) return;
+  serBeforeStart();   // a challenge series: the next race's course (and a decided series starts over)
   if(NET.open && NET.lobby){ NET.fillAI=true; netOpenPost(true); clearInterval(NET._openPost); NET._openPost=null; }   // off the open list
   const ps=[...NET.players.values()].filter(p=>!p.gone);
   const lineup=ps.map((p,k)=>({id:p.id, typeId:p.typeId, name:p.name, k}));
@@ -69013,7 +69031,7 @@ function netHostStart(){
   // the maze travels with the grid: its number and start mode (the host's choice), so every screen builds the same one
   const maze=TRACKS[selTrack]&&TRACKS[selTrack].maze ? (mzSeedNext=mzSeedNext||mzPlan(TRACKS[selTrack])) : undefined;
   const st={t:'start', track:selTrack, seed:maze?mzSeedOf(maze.no):undefined, maze:maze?{no:maze.no, mode:maze.mode}:undefined, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self};
-  if(chalIsRoom()){ st.chal=chalMeta(CHAL.live); st.diff=difficulty; }
+  if(chalIsRoom()){ st.chal=chalMeta(CHAL.live); st.diff=difficulty; if(SER) st.ser=SER; }
   netSend(st);
   netBeginRace();
 }
@@ -69316,6 +69334,7 @@ function netRaceDoneUI(){
   if(NET.on && NET.auth){
     ab.disabled=!NET.host; ab.style.opacity=NET.host?'':'0.6';
     ab.textContent=NET.host?'Rematch':'Waiting for host…';
+    serButtons();   // (a challenge series: "Next race →" / "New series")
     if(gp) gp.style.display='none';
   } else { ab.disabled=false; ab.style.opacity=''; ab.textContent='Race again';
            if(gp && !gpActive && state==='done') gp.style.display=''; }   // the host left us on the results screen
@@ -69561,12 +69580,13 @@ function chalLoadGhost(ch){
   const g={n:ch.g.n, ty:ch.g.ty, c:ch.g.c, t:ch.g.t, hz:ch.g.hz, d:ch.gtext, samples:null};
   GH.loaded=g; ghostDecode(ch.gtext).then(s=>{ if(s && GH.loaded===g) g.samples=s; else if(GH.loaded===g){ GH.loaded=null; ch.g=null; ch.gtext=null; chalPaint(); } });
 }
-function chalDrop(){ CHAL.live=null; CHAL._tok++; CHAL._wait=null; GH.loaded=null; chalPaint(); }
-// the host runs the challenge's rules: its course (the series' current one), its difficulty, its AI fill
+function chalDrop(){ CHAL.live=null; CHAL._tok++; CHAL._wait=null; GH.loaded=null; SER=null; serAutoStop(); chalPaint(); }
+// the host runs the challenge's rules: its course (the series' first), its difficulty, its AI fill; the standings start empty
 function chalApplyRules(ch){
   const i=TRACKS.findIndex(x=>x.name===ch.t[0]); if(i>=0) selTrack=i;
   if(DIFF[ch.d]!=null) difficulty=ch.d;
   NET.fillAI=!!ch.ai;
+  SER=serNew(ch);
 }
 // the host whose roster says so is the host; the other one (greater id) steps down and says hello again
 function chalYield(hostId){
@@ -69609,6 +69629,93 @@ function chalPaint(){
   if(typeof serLobbyHTML==='function') h+=serLobbyHTML();
   if(el.innerHTML!==h) el.innerHTML=h;
 }
+/* ---- the series: Best of N and the Cup -------------------------------------------------------
+ * The host keeps SER and sends it with every roster and start (and as 'ser' at each finish), so
+ * every screen shows the same standings. A race goes to the first HUMAN across the line (the AI
+ * pad the grid and score nothing). Best of N: a win each race, the series to the first with the
+ * majority. Cup: the five courses in order, Circuit Cup points by place among the humans (6-4-2-1),
+ * most points takes it (wins, then name, break a tie). Newcomers enter the standings with their
+ * first race. After a race the host's results screen counts down to the next one (Rematch starts
+ * it now); once the series is decided the card names the winner and Rematch begins a new series. */
+var SER=null;   // {f, need, race, idx, wins:{id:n}, pts:{id:n}, names:{id:name}, last:[{id,n,p,t}], done, winner}
+const SER_AUTO=15, SER_UI={timer:null, due:0};
+function serNew(ch){ return {f:ch.f, need:CHAL_FMT[ch.f].need, race:1, idx:0, wins:{}, pts:{}, names:{}, last:[], done:false, winner:null}; }
+function serCourse(){ return (CHAL.live && SER) ? CHAL.live.t[SER.f==='cup' ? Math.min(SER.idx, CHAL.live.t.length-1) : 0] : null; }
+function serTotal(){ return !SER ? 0 : SER.f==='cup' ? CHAL.live.t.length : SER.need*2-1; }
+// the table: by wins (cup: points), then points, then name; ids the host knows of
+function serOrder(){
+  if(!SER) return [];
+  const ids=Object.keys(SER.names);
+  const key=id=>SER.f==='cup' ? [SER.pts[id]||0, SER.wins[id]||0] : [SER.wins[id]||0, SER.pts[id]||0];
+  return ids.map(id=>({id, n:SER.names[id], w:SER.wins[id]||0, p:SER.pts[id]||0, me:id===NET.self, k:key(id)}))
+    .sort((a,b)=>b.k[0]-a.k[0] || b.k[1]-a.k[1] || a.n.localeCompare(b.n));
+}
+function serLeaderLine(){   // "Chris 1 – Alex 1" (cup: "Chris 10 · Alex 6")
+  const o=serOrder(); if(!o.length) return '';
+  return SER.f==='cup' ? o.map(x=>chalEsc(x.n)+' '+x.p).join(' · ') : o.map(x=>chalEsc(x.n)+' '+x.w).join(' – ');
+}
+function serWhatNext(){
+  if(!SER) return '';
+  if(SER.done) return SER.winner ? chalEsc(SER.names[SER.winner]||'—')+' wins the series' : 'series over';
+  return SER.f==='cup' ? 'race '+SER.race+' of '+serTotal()+' · '+chalEsc(serCourse()||'') : 'race '+SER.race+' of up to '+serTotal();
+}
+// the lobby's standings (under the challenge line): nothing before the first race
+function serLobbyHTML(){
+  if(!SER || !chalIsRoom()) return '';
+  const o=serOrder(); if(!o.length) return '<span class="ch-note">'+serWhatNext()+'</span>';
+  return '<div class="ch-st">'+o.map((x,i)=>'<span class="'+(i===0?'lead':'')+'">'+chalEsc(x.n)+(x.me?' (you)':'')+'</span><span>'+(SER.f==='cup'?x.p+' pts':x.w+' win'+(x.w===1?'':'s'))+'</span><span>'+(SER.f==='cup'?(x.w?'🥚'.repeat(Math.min(5,x.w)):'–'):(x.p+' pts'))+'</span>').join('')+'</div>'
+    +'<span class="ch-note">'+serWhatNext()+'</span>';
+}
+// host: a race is over — the humans' places decide it
+function serRaceDone(ranked){
+  if(!SER || SER.done || !NET.host) return;
+  const humans=ranked.filter(r=>r.human && r.netId && !r.spectator);
+  humans.forEach((r,i)=>{ SER.names[r.netId]=r.name; SER.wins[r.netId]=SER.wins[r.netId]||0; SER.pts[r.netId]=(SER.pts[r.netId]||0)+(GP_PTS[i]||0); });
+  if(humans[0]) SER.wins[humans[0].netId]++;
+  SER.last=humans.map((r,i)=>({id:r.netId, n:r.name, p:i+1, t:isFinite(r.finishT)?+r.finishT.toFixed(2):null}));
+  SER.race++;
+  if(SER.f==='cup'){ SER.idx++; if(SER.idx>=CHAL.live.t.length){ SER.done=true; SER.winner=(serOrder()[0]||{}).id||null; } }
+  else { const w=Object.keys(SER.wins).find(id=>SER.wins[id]>=SER.need); if(w){ SER.done=true; SER.winner=w; } }
+  netSend({t:'ser', ser:SER});
+  if(!SER.done) serAutoArm();
+}
+// host: the next race starts by itself in SER_AUTO seconds (Rematch starts it now; leaving cancels)
+function serAutoArm(){
+  serAutoStop(); SER_UI.due=performance.now()+SER_AUTO*1000;
+  SER_UI.timer=setInterval(()=>{
+    if(!NET.host || !NET.on || !NET.auth || state!=='done' || !SER || SER.done){ serAutoStop(); return; }
+    if(performance.now()>=SER_UI.due){ serAutoStop(); netHostStart(); return; }
+    serResultsPaint();
+  }, 500);
+}
+function serAutoStop(){ clearInterval(SER_UI.timer); SER_UI.timer=null; SER_UI.due=0; }
+// host: the course of the next race (the cup moves on; a decided series starts over)
+function serBeforeStart(){
+  if(!chalIsRoom() || !SER) return;
+  serAutoStop();
+  if(SER.done) SER=serNew(CHAL.live);
+  const i=TRACKS.findIndex(x=>x.name===serCourse()); if(i>=0) selTrack=i;
+  if(DIFF[CHAL.live.d]!=null) difficulty=CHAL.live.d;
+}
+// the results screen: the standings under the board, the headline when the series is decided, the host's countdown
+function serResultsPaint(){
+  if(!SER || !chalIsRoom() || state!=='done') return;
+  const bt=document.getElementById('besttime'), tag=document.getElementById('ftag'), hd=document.getElementById('fhead'); if(!bt) return;
+  const ch=CHAL.live, raceNo=Math.max(1, SER.race-1);
+  tag.textContent=ch.n+'’s challenge · '+chalFmtName(ch)+' · race '+raceNo+(SER.done?' · final':'');
+  if(SER.done && SER.winner){ const me=SER.winner===NET.self; hd.textContent=me?'You win the series!':(SER.names[SER.winner]||'—')+' wins the series!'; }
+  const left=SER_UI.due ? Math.max(0, Math.ceil((SER_UI.due-performance.now())/1000)) : null;
+  const next=SER.done ? (NET.host?'Rematch starts a new series':'the host may start a new series')
+    : NET.host ? (left!=null ? 'next race in '+left+' s' : 'next race: Rematch') : 'waiting for the host';
+  bt.innerHTML='<div class="ser-line"><b>'+chalEsc(chalFmtName(ch))+'</b> · '+serLeaderLine()+' · '+next+'</div>'
+    +(SER.f==='cup' ? '<div class="ser-tbl">'+serOrder().map((x,i)=>'<span class="'+(i===0?'lead':'')+'">'+ord(i+1)+' '+chalEsc(x.n)+(x.me?' (you)':'')+'</span><span>'+x.p+' pts</span><span>'+(x.w?'🥚'.repeat(Math.min(5,x.w)):'–')+'</span>').join('')+'</div>' : '');
+  serButtons();
+}
+function serButtons(){
+  const ab=document.getElementById('againbtn'); if(!ab || !SER || !chalIsRoom() || !(NET.on && NET.auth)) return;
+  if(NET.host) ab.textContent=SER.done ? 'New series' : (SER.f==='cup' ? 'Next: '+(serCourse()||'')+' →' : 'Next race →');
+}
+
 // ---- the sheet: format, the deck's picks, AI fill, the ghost, your name, Send ----
 (function setupChal(){
   const $c=id=>document.getElementById(id), sh=$c('chsheet'); if(!sh) return;
@@ -69729,6 +69836,7 @@ function endRace(){
       bd.appendChild(row);
     });
     normalBtns(''); $('nextgpbtn').style.display='none';
+    if(chalIsRoom() && NET.on && NET.auth && NET.host) serRaceDone(ranked);   // a challenge series: the host counts the race (serResultsPaint below shows it)
     // best-time tracking (per track, persists across sessions) — every race counts for something
     const bt=$('besttime');
     if(me.finished && isFinite(me.finishT)){
@@ -69760,6 +69868,7 @@ function endRace(){
   // networked: a last snapshot (and the host's last batch, with the AI's times) so the finish
   // is on record everywhere, then the room STAYS OPEN for a rematch — see netRaceDoneUI
   if(NET.on){ netSendSnap(); netSendBatch(); NET.done=true; netRaceDoneUI(); }
+  serResultsPaint();   // a challenge series: the standings under the board (a client repaints when the host's 'ser' lands)
   if(((!wasUnlocked && localStorage.getItem('sr_gp_done')) || podUnlocked) && !gpActive) setupSelect(true);   // rebuild cards so the unlock shows without a reload (a cup does it when it lets go of its racer)
 }
 /* ============== THE CIRCUIT CUP ==============
@@ -72013,6 +72122,9 @@ window.srNet={
   // the challenge this room runs (see CHAL), and the invite link as the share button would send it
   get chal(){ const c=CHAL.live; return c?{code:c.code, name:c.n, format:c.f, courses:c.t.slice(), diff:c.d, ai:c.ai, ghost:c.g?Object.assign({loaded:!!(GH.loaded&&GH.loaded.samples)},c.g):null, score:c.s.slice(), room:chalIsRoom()}:null; },
   get inviteURL(){ return NET.room?netInviteURL():null; },
+  // a challenge series' standings as this screen has them (the host's copy is the truth; see SER)
+  get series(){ return SER?{format:SER.f, need:SER.need, race:SER.race, idx:SER.idx, done:SER.done, winner:SER.winner?(SER.names[SER.winner]||SER.winner):null, course:serCourse(),
+    table:serOrder().map(x=>({name:x.n, wins:x.w, pts:x.p, me:x.me})), last:SER.last.slice(), autoIn:SER_UI.due?+Math.max(0,(SER_UI.due-performance.now())/1000).toFixed(1):null}:null; },
   // ghosts: this race's recording (samples so far, and the pack once the race is over), the ghosts on the scene, your best per course
   get ghost(){ return {recording:GH.rec?GH.rec.s.length:null, samples:GH.rec?GH.rec.s.map(s=>s.slice()):null, last:GH.last?{name:GH.last.meta.n, course:GH.last.meta.c, time:GH.last.meta.t, samples:GH.last.samples.length, chars:GH.last.bytes, kind:GH.last.d?GH.last.d[0]:null}:null,
     playing:GH.play.map(p=>({name:p.g.n, course:p.g.c, time:p.g.t, samples:p.g.samples.length, x:+p.obj.position.x.toFixed(1), z:+p.obj.position.z.toFixed(1), visible:p.obj.visible})),
@@ -72025,7 +72137,7 @@ window.srNet={
     route:Math.round(MAZE.L), cells:MAZE.NC, deadEnds:MAZE.dead.length, gates:MAZE.gates.length, boxes:MAZE.boxes.length, pads:MAZE.pads.length,
     alt:MAZE.alt?{share:+MAZE.alt.share.toFixed(2), ratio:+MAZE.alt.ratio.toFixed(2)}:null,
     karts:racers.map(r=>({name:r.name, you:!!r.you, cell:r._mzCell, remain:Math.round(r._mzR||0), skill:+(r.skill||1).toFixed(3)}))}; },
-  get race(){ return {state, laps:lapsOf(), time:+raceTime.toFixed(2), auth:NET.auth, hostId:NET.hostId||null,
+  get race(){ return {state, course:TRACKS[selTrack]?TRACKS[selTrack].name:null, laps:lapsOf(), time:+raceTime.toFixed(2), auth:NET.auth, hostId:NET.hostId||null,
     karts:racers.map(r=>({name:r.name, id:r.id, you:!!r.you, nk:r.nk,
       remote:!!r.remote, human:!!r.human, netId:r.netId||null, lap:r.lap, prog:+(r.prog||0).toFixed(3),
       x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1), item:r.item||null, pend:r._pend!=null,
@@ -72034,6 +72146,18 @@ window.srNet={
     boxes:items.map(it=>it.live?1:0),
     ents:hazards.concat(projectiles).filter(e=>e.nid).map(e=>({id:e.nid, kind:e.dam?'dam':e.slick?'slick':e.glue?'glue':e.spd?'shot':'cyst',
       owner:e.owner?e.owner.nk:null, x:+e.x.toFixed(1), z:+e.z.toFixed(1), life:+e.life.toFixed(2)}))}; },
+};
+/* A test lever, only on ?dev=1 (never on a plain load): end the running race on this screen in a given order, as if every
+   kart had crossed the line now — the way the series and spectator tests get through a race in seconds on a software GPU.
+   Your own kart takes the real finish (placeFinish); the others are simply marked finished half a second apart. */
+if(new URLSearchParams(location.search).get('dev')==='1') window.srDev={
+  finishAll(order){
+    if(state!=='race') return false;
+    const rank=r=>{ const i=order?order.indexOf(r.name):-1; return i<0?99:i; };
+    [...racers].filter(r=>!r.spectator).sort((a,b)=>rank(a)-rank(b)).forEach((r,i)=>{ if(r.finished) return; const t=raceTime+0.5*i;
+      if(r.you) placeFinish(r); else r.finished=true; r.finishT=t; });
+    return true;
+  },
 };
 })();
 </script>
