@@ -67719,7 +67719,9 @@ function camHold(me){
 }
 function updateCameraCore(dt){
   const me=racers.find(r=>r.you); if(!me)return;
-  const fp=camMode==='fp' && state==='race' && !me.finished;
+  // a spectator's kart is marked finished (it is never scored) and rides someone else's: it gets the chase view,
+  // never the victory orbit and never first person (which would hide the kart it sits in)
+  const fp=camMode==='fp' && state==='race' && !me.finished && !me.spectator;
   if(me.obj) me.obj.visible=!fp && !me.spectator;   // first person: you are the eyes, not the body (a spectator's kart is never drawn)
   if(!fp) _fpYaw=null;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
@@ -67787,7 +67789,7 @@ function updateCameraCore(dt){
   // victory orbit after you finish: the camera circles the whole character — starting
   // dead-ahead on the FACE (grin/wink/woo gestures play there), sweeping around and
   // back to front over the celebration. Waits for the finish FOV punch to play out.
-  if(state==='race' && me.finished && finishPunchT<=0){
+  if(state==='race' && me.finished && !me.spectator && finishPunchT<=0){
     if(me._orbT===undefined) me._orbT=0; me._orbT+=dt;
     // sweep an arc ACROSS the face — never behind the head: the camera pans from
     // front-left to front-right and back (±60deg around dead-ahead), face always framed
@@ -67866,7 +67868,10 @@ function updateCameraCore(dt){
   const hold=camHold(me);   // up and back while the start pack / a finishing rival is on top of the chase spot
   const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-16:(boost?-18:-19))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
   const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?7:(boost?9.5:9))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold,0));
-  camera.position.lerp(want, Math.min(1,4*dt));
+  // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
+  // (the menu, or thirty units of road away) would sweep it through the scenery
+  if(me._camSnap){ camera.position.copy(want); me._camSnap=false; }
+  else camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
     camera.position.x += (Math.random()*2-1)*camShake;
     camera.position.y += (Math.random()*2-1)*camShake;
@@ -67985,7 +67990,7 @@ const ord=n=>['','1st','2nd','3rd','4th'][n]||n+'th';
 function fmt(s){const m=Math.floor(s/60);return `${String(m).padStart(2,'0')}:${(s%60).toFixed(1).padStart(4,'0')}`;}
 function syncLeader(){
   const lb=$('leader'); if(!lb) return;
-  const order=[...racers].sort((a,b)=>a.place-b.place);
+  const order=racers.filter(r=>!r.spectator).sort((a,b)=>a.place-b.place);   // (a spectator is not in the race it watches)
   const sig=order.map(r=>r._li+(r.finished?'f':'')).join('|');
   if(sig===lb._sig) return; lb._sig=sig;     // only rebuild when standings change
   lb.innerHTML=order.map((r,i)=>
@@ -69808,6 +69813,7 @@ function specLabel(){ const w=document.getElementById('specwho'); if(w && SPEC.t
 // per frame, in updateRacer's place: ride the followed kart
 function specTick(r){
   const t=specPick(); if(!t) return;
+  if(r._specT!==t){ r._specT=t; r._camSnap=true; }   // a new kart to ride (arrival, a tap, the lead changing): the chase camera cuts to it rather than sweeping across the course
   r.x=t.x; r.y=t.y; r.z=t.z; r.head=t.head; r.spd=t.spd; r.slip=t.slip||0; r._bank=t._bank||0; r.surfY=t.surfY; r.air=t.air; r.idx=t.idx;
   r.lap=t.lap; r.prog=t.prog; r.total=t.total; r.boostT=t.boostT; r.place=t.place; r.drift=0; r.item=null; r.spinT=0; r.glueT=0;
   if(r.obj) r.obj.visible=false; if(r.shadow) r.shadow.visible=false;
