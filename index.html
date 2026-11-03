@@ -2053,6 +2053,7 @@
         <button class="go alt tile on" id="hapticbtn">Vibration: ON</button>
         <button class="go alt tile" id="handbtn" style="display:none">Controls: Right-handed</button>
         <button class="go alt tile" id="homebtn">Home style: Horizon</button>
+        <button class="go alt tile" id="ghostbtn" aria-pressed="false">Ghost: my best OFF</button>
         <button class="go alt tile" id="diagbtn">Frame stats: OFF</button>
       </div>
     </div>
@@ -68048,6 +68049,7 @@ function frame(now){
     for(const r of racers)updateRacer(r,dt);
     collide(); rank();
     netTick(dt);    // after the step, so a snapshot carries this frame's positions and hits, not the last one's
+    ghostTick();    // the run's recorder, and the ghosts' poses (not racers: nothing above sees them)
     for(const r of racers) if(r._wh) whipTick(r);
     // once YOU'RE done, don't leave the winner floating in dead air while AI stragglers
     // dribble home — give it a few seconds of orbit-cam glory, then call the race,
@@ -68235,6 +68237,125 @@ function frame(now){
   if(!held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
   diagTick(now, performance.now()-_f0);
   requestAnimationFrame(frame);
+}
+
+/* ============== GHOSTS ==================================================================
+ * Every race records the local human's run: a sample every 1/GH_HZ s of race time (x, y, z,
+ * heading), kept as plain numbers until the finish and only then packed. The pack is what a
+ * challenge link carries (see CHAL): positions quantised to 0.1, the heading to 2°, x/z as
+ * second-order deltas and y / heading as first-order ones, each a zigzag varint, the bytes
+ * base64url ('r' + text), or run through CompressionStream('deflate') first when the browser
+ * has it ('z' + text; typically a third smaller). Your best run per course lives in
+ * localStorage as sr_ghost_<course>, replaced only by a faster finish.
+ *
+ * Playback is a translucent racer (makeCell, every material cloned at opacity 0.45, no
+ * shadow) that is NOT a racer: it is not in `racers`, so physics, items, AI, ranking and the
+ * network never see it; it is only posed from the samples (Catmull-Rom between them) by
+ * raceTime. A loaded challenge ghost shows in a solo race on its course; your own best shows
+ * when "Ghost: my best" (More) is on. Never on a maze (a different maze every race). */
+const GH_HZ=5, GH_Q=10, GH_YQ=4, GH_HQ=90/Math.PI;   // samples per second; quanta per unit for x/z, for y, per radian (2°)
+const GH={rec:null, play:[], last:null, mine:false, loaded:null};   // rec: this race's samples; play: the ghosts on the scene; last: this race's pack; loaded: a challenge's ghost
+const GH_B64='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function b64uEnc(bytes){
+  let s=''; for(let i=0;i<bytes.length;i+=3){ const n=(bytes[i]<<16)|((bytes[i+1]||0)<<8)|(bytes[i+2]||0);
+    s+=GH_B64[n>>18&63]+GH_B64[n>>12&63]+(i+1<bytes.length?GH_B64[n>>6&63]:'')+(i+2<bytes.length?GH_B64[n&63]:''); }
+  return s;
+}
+function b64uDec(s){
+  const out=[]; let bits=0, acc=0;
+  for(const ch of s){ const v=GH_B64.indexOf(ch); if(v<0) continue; acc=(acc<<6)|v; bits+=6; if(bits>=8){ bits-=8; out.push((acc>>bits)&255); acc&=(1<<bits)-1; } }
+  return Uint8Array.from(out);
+}
+function vzPush(out,v){ let u=v<0?(-v*2-1):v*2; while(u>=128){ out.push((u%128)|128); u=Math.floor(u/128); } out.push(u); }
+function vzRead(b,st){ let u=0, sh=1, c; do{ c=b[st.i++]; u+=(c&127)*sh; sh*=128; }while((c&128) && st.i<b.length); return (u%2)?-(u+1)/2:u/2; }
+const GH_HW=Math.round(2*Math.PI*GH_HQ);   // a full turn in heading quanta
+function ghostPack(samples){
+  const out=[]; vzPush(out,samples.length);
+  let px=0,pz=0,dx=0,dz=0,py=0,ph=0;
+  for(const s of samples){
+    const X=Math.round(s[0]*GH_Q), Y=Math.round(s[1]*GH_YQ), Z=Math.round(s[2]*GH_Q), H=Math.round(s[3]*GH_HQ);
+    const ndx=X-px, ndz=Z-pz; vzPush(out,ndx-dx); vzPush(out,ndz-dz); dx=ndx; dz=ndz; px=X; pz=Z;
+    vzPush(out,Y-py); py=Y;
+    let dh=H-ph; dh=((dh%GH_HW)+GH_HW+GH_HW/2)%GH_HW-GH_HW/2; vzPush(out,dh); ph+=dh;
+  }
+  return Uint8Array.from(out);
+}
+function ghostUnpack(b){
+  const st={i:0}, n=vzRead(b,st), s=[];
+  let px=0,pz=0,dx=0,dz=0,py=0,ph=0;
+  for(let k=0;k<n && st.i<b.length;k++){
+    dx+=vzRead(b,st); dz+=vzRead(b,st); px+=dx; pz+=dz; py+=vzRead(b,st); ph+=vzRead(b,st);
+    s.push([px/GH_Q, py/GH_YQ, pz/GH_Q, ph/GH_HQ]);
+  }
+  return s;
+}
+async function ghostZip(u8){ try{ if(typeof CompressionStream==='undefined') return null; const cs=new CompressionStream('deflate'); const w=cs.writable.getWriter(); w.write(u8); w.close(); return new Uint8Array(await new Response(cs.readable).arrayBuffer()); }catch(e){ return null; } }
+async function ghostUnzip(u8){ try{ if(typeof DecompressionStream==='undefined') return null; const ds=new DecompressionStream('deflate'); const w=ds.writable.getWriter(); w.write(u8); w.close(); return new Uint8Array(await new Response(ds.readable).arrayBuffer()); }catch(e){ return null; } }
+// samples -> the link text ('r…' raw, or 'z…' deflated when that is smaller)
+async function ghostEncode(samples){
+  const raw=ghostPack(samples), z=await ghostZip(raw);
+  return (z && z.length<raw.length) ? 'z'+b64uEnc(z) : 'r'+b64uEnc(raw);
+}
+async function ghostDecode(text){
+  if(typeof text!=='string' || text.length<2) return null;
+  let b=b64uDec(text.slice(1));
+  if(text[0]==='z'){ b=await ghostUnzip(b); if(!b) return null; } else if(text[0]!=='r') return null;
+  const s=ghostUnpack(b); return s.length>1 ? s : null;
+}
+const ghostKey=t=>'sr_ghost_'+t.name;
+function ghostBestOf(t){ try{ const g=JSON.parse(localStorage.getItem(ghostKey(t))||'null'); return g&&g.d&&isFinite(g.t)?g:null; }catch(_){ return null; } }
+// the recorder, armed at every race start (countdown); a sample each 1/GH_HZ s of race time while you drive
+function ghostArm(){ GH.rec=(MAZE||!racers.some(r=>r.you&&!r.spectator)) ? null : {s:[], n:0, track:selTrack}; }
+// the race is over: pack this run, keep it as this race's ghost (a reply link may carry it), and as your best on the course if it is
+function ghostFinish(me){
+  const rec=GH.rec; GH.rec=null;
+  if(!rec || !me || me.spectator || !me.finished || !isFinite(me.finishT) || rec.s.length<2 || rec.track!==selTrack) return;
+  const t=TRACKS[selTrack], g={v:1, n:(NET.name||(document.getElementById('mpname')||{}).value||'').trim()||'You', ty:me.id, c:t.name, t:+me.finishT.toFixed(2), hz:GH_HZ, at:Date.now()};
+  GH.last={meta:g, samples:rec.s, d:null, bytes:0};
+  ghostEncode(rec.s).then(d=>{ if(GH.last && GH.last.meta===g){ GH.last.d=d; GH.last.bytes=d.length;
+      const best=ghostBestOf(t); if(!best || g.t<best.t){ try{ localStorage.setItem(ghostKey(t), JSON.stringify(Object.assign({d}, g))); }catch(_){} } } });
+}
+// the ghosts for this race: the loaded challenge ghost on its course (solo only), and your best when the toggle is on
+function ghostSpawn(){
+  ghostClear(); ghostArm();
+  if(MAZE || NET.on || !SAMP || !SAMP.length) return;
+  const t=TRACKS[selTrack], want=[];
+  if(GH.loaded && GH.loaded.samples && GH.loaded.c===t.name) want.push(GH.loaded);
+  if(GH.mine){ const b=ghostBestOf(t); if(b && !(want[0] && want[0].t===b.t && want[0].n===b.n)) want.push({n:'My best', ty:b.ty, t:b.t, hz:b.hz||GH_HZ, c:t.name, d:b.d}); }
+  for(const g of want){
+    if(g.samples) ghostAdd(g);
+    else ghostDecode(g.d).then(s=>{ if(s && state!=='menu' && TRACKS[selTrack]===t){ g.samples=s; ghostAdd(g); } });   // (your best is unpacked in the countdown)
+  }
+}
+function ghostAdd(g){
+  const t=SPERM_TYPES.find(x=>x.id===g.ty)||SPERM_TYPES[0];
+  const obj=makeCell(t.hue, t.id);
+  obj.traverse(o=>{
+    o.castShadow=false; o.receiveShadow=false;
+    if(o.material){ const ms=Array.isArray(o.material)?o.material:[o.material];
+      const nm=ms.map(m=>{ const c=m.clone(); c.transparent=true; c.opacity=Math.min(m.transparent?m.opacity:1, 0.45); c.depthWrite=false; return c; });
+      o.material=Array.isArray(o.material)?nm:nm[0]; }
+  });
+  const plate=nameSprite((g.n||'ghost')+' · ghost', t.hue); plate.position.set(0,12.5,0); plate.renderOrder=999; obj.add(plate);
+  const p={g, obj, hz:g.hz||GH_HZ};
+  ghostPose(p, 0); scene.add(obj); GH.play.push(p);
+}
+function ghostClear(){ for(const p of GH.play){ scene.remove(p.obj); disposeObject(p.obj); } GH.play.length=0; }
+// where the ghost is at race time t: Catmull-Rom through the samples round it, the heading eased across the gap; it holds at its finish
+function ghostPose(p, t){
+  const s=p.g.samples, n=s.length; if(!n) return;
+  const u=Math.max(0, t*p.hz), i0=Math.min(n-1, Math.floor(u)), f=Math.min(1, u-i0);
+  const P=k=>s[Math.max(0,Math.min(n-1,k))], a=P(i0-1), b=P(i0), c=P(i0+1), d=P(i0+2);
+  const cr=(p0,p1,p2,p3)=>0.5*((2*p1)+(-p0+p2)*f+(2*p0-5*p1+4*p2-p3)*f*f+(-p0+3*p1-3*p2+p3)*f*f*f);
+  let dh=c[3]-b[3]; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832;
+  p.obj.position.set(cr(a[0],b[0],c[0],d[0]), cr(a[1],b[1],c[1],d[1]), cr(a[2],b[2],c[2],d[2]));
+  p.obj.rotation.set(0, b[3]+dh*f, 0);
+  p.obj.visible = u < n+2*p.hz;   // gone a couple of seconds after it crossed the line
+}
+function ghostTick(){
+  const rec=GH.rec;
+  if(rec){ const me=racers.find(r=>r.you); if(me && !me.finished && rec.track===selTrack && raceTime>=rec.n/GH_HZ){ rec.s.push([me.x,me.y,me.z,me.head]); rec.n++; } }
+  for(const p of GH.play) ghostPose(p, raceTime);
 }
 
 /* ============== MULTIPLAYER ==============================================================
@@ -69320,6 +69441,7 @@ function endRace(){
   document.body.classList.remove('final-lap');   // stop the red pulse on the results screen
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   const me=racers.find(r=>r.you);
+  ghostFinish(me);   // this run's ghost (and your best on the course, if it is)
   const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));   // (a dead heat — six gates make mirror-image runs — in the same order on every screen)
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
@@ -69447,7 +69569,7 @@ function cupStop(){
 function cupHomeShow(){
   CUP_SCREENS.forEach(k=>$(k).classList.add('hidden'));
   $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
-  cupStop(); state='menu';
+  cupStop(); state='menu'; ghostClear();
   $('start').classList.remove('hidden');
   if(cupDirty){ cupDirty=false; buildTrack(selTrack); buildRacers(); }
 }
@@ -69714,6 +69836,7 @@ countdown = function(){
   $('cdmaze').textContent=[gpActive&&gpRun?gpRun.name+' · race '+(gpRun.idx+1)+' of '+gpRun.courses.length:'', mzRace?mzLabel(mzLastOf(TRACKS[selTrack])):''].filter(Boolean).join(' · ');   // (the labyrinth: which maze; a cup: which race)
   buildTrack(selTrack);     // build the chosen circuit, then place racers on it
   buildRacers(); // will use chosenType now
+  ghostSpawn();  // the recorder for this run, and any ghost to race (a challenge's, or your best)
   // every race starts on its course's record, if it has one (unless a station is somehow still playing, in
   // which case startMusic below keeps it, and the tuning has to keep describing it)
   if(!musicTimer) onCourseSong=soundtrack==='course' && !!courseStyleId();
@@ -69825,6 +69948,7 @@ const _origBuildRacers = buildRacers;
 // scratch on every flick of the course strip — up to half a second of the stall on an iPad — for a preview whose cast had not changed.
 // A race start never passes it: every race builds its own fresh line-up and state.
 buildRacers = function(reuse){
+  ghostClear();   // a new grid: whatever ghost was on the scene goes with the old one
   // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
   // more of a "race war" than the original 4, without going so wide it costs frame
   // budget or crowds the starting grid off the road).
@@ -70974,6 +71098,12 @@ document.body.classList.toggle('lefty',handLeft);
   let on=false; try{ on=localStorage.getItem('sr_diag')==='1'; }catch(_){}
   set(on); b.onclick=()=>{ set(!DIAG.on); try{ localStorage.setItem('sr_diag',DIAG.on?'1':'0'); }catch(_){} };
 })();
+// More: "Ghost: my best" — your fastest run on the course, as a translucent racer beside you (off by default; sr_ghost_mine)
+(function setupGhost(){ const b=$('ghostbtn'); if(!b) return;
+  const set=o=>{ GH.mine=o; b.textContent='Ghost: my best '+(o?'ON':'OFF'); b.classList.toggle('on',o); b.setAttribute('aria-pressed',o?'true':'false'); };
+  let on=false; try{ on=localStorage.getItem('sr_ghost_mine')==='1'; }catch(_){}
+  set(on); b.onclick=()=>{ set(!GH.mine); try{ localStorage.setItem('sr_ghost_mine',GH.mine?'1':'0'); }catch(_){} };
+})();
 (function setupHand(){ const b=$('handbtn'); if(!b) return;
   const paint=()=>{ b.textContent='Controls: '+(handLeft?'Left-handed':'Right-handed'); b.classList.toggle('on',handLeft); };
   b.onclick=()=>{ handLeft=!handLeft; document.body.classList.toggle('lefty',handLeft); try{ localStorage.setItem('sr_hand',handLeft?'l':'r'); }catch(_){} paint(); };
@@ -71611,6 +71741,12 @@ window.srNet={
         drums:curStyle.drums||null, hihat:curStyle.hihat, beatGroup:curStyle.beatGroup,
         tempoMul:curStyle.tempoMul, stab:curStyle.stab?curStyle.stab.inst:null, swing:curStyle.swing||0},
       mel:curStyle.mel, melB:curStyle.melB, bass:curStyle.bass}; },
+  // ghosts: this race's recording (samples so far, and the pack once the race is over), the ghosts on the scene, your best per course
+  get ghost(){ return {recording:GH.rec?GH.rec.s.length:null, samples:GH.rec?GH.rec.s.map(s=>s.slice()):null, last:GH.last?{name:GH.last.meta.n, course:GH.last.meta.c, time:GH.last.meta.t, samples:GH.last.samples.length, chars:GH.last.bytes, kind:GH.last.d?GH.last.d[0]:null}:null,
+    playing:GH.play.map(p=>({name:p.g.n, course:p.g.c, time:p.g.t, samples:p.g.samples.length, x:+p.obj.position.x.toFixed(1), z:+p.obj.position.z.toFixed(1), visible:p.obj.visible})),
+    mine:GH.mine, best:TRACKS.map(t=>{ const g=ghostBestOf(t); return g?{course:t.name, time:g.t, chars:g.d.length}:null; }).filter(Boolean)}; },
+  // the ghost codec itself (pure functions: samples <-> link text), so a test can measure a pack without driving a three-minute race
+  ghostCodec:{pack:ghostPack, unpack:ghostUnpack, encode:ghostEncode, decode:ghostDecode},
   // the labyrinth being raced (null on every other course): its seed, whether it validated, and where everyone is in it
   get maze(){ if(!MAZE) return null; return {no:MAZE.no, mode:MAZE.mode, entrances:MAZE.entPs.length, myGate:MAZE.myGate, gateRoutes:MAZE.entPs.map(p=>+MAZE.D[p].toFixed(3)),
     seed:MAZE.baseSeed, attempt:MAZE.attempt, valid:MAZE.valid, errors:MAZE.errors.slice(),
