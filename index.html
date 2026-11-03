@@ -1832,7 +1832,7 @@
     padding:8px 14px;border:1px solid rgba(255,255,255,.25);border-radius:22px;background:rgba(2,12,16,.72);color:#fff;font-size:12px;letter-spacing:.06em;white-space:nowrap;pointer-events:none;}
   #specbar b{font-weight:700;} #specbar i{font-style:normal;opacity:.75;}
   body.spectating #specbar{display:flex;}
-  body.spectating #item,body.spectating #whipbtn,body.spectating #dm,body.spectating #driftL,body.spectating #fireL,body.spectating #drift,body.spectating #fire,body.spectating #steer,body.spectating #throttle{display:none!important;}
+  body.spectating #item,body.spectating #whipbtn,body.spectating #dm,body.spectating #driftL,body.spectating #fireL,body.spectating #drift,body.spectating #fire,body.spectating #steer,body.spectating #throttle,body.spectating #joystick{display:none!important;}
 </style>
 </head>
 <body>
@@ -1882,6 +1882,7 @@
   <div id="drift-meter"><div id="drift-fill"></div></div>
   <div id="banner"></div>
   <div id="toast"></div>
+  <div id="specbar" aria-live="polite"><b>Watching</b><span id="specwho"></span><i>tap to switch · you’re in the next race</i></div>
 
   <div class="pad" id="steer"><button class="btn" id="bl">◀</button><button class="btn" id="br">▶</button></div>
   <div class="pad" id="act"><button class="btn" id="drift">Drift</button></div>
@@ -65929,6 +65930,7 @@ function useItem(r){
 function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
 
 function updateRacer(r,dt){
+  if(r.spectator){ specTick(r); return; }   // the spectator's hidden kart rides the one it watches (see SPEC); nothing below applies
   // A remote human's kart is authored on their machine; here it is pure playback.
   if(r.remote){ netApplySnap(r,dt); return; }
   if(r.finished){                      // everyone coasts to a stop after finishing —
@@ -66699,6 +66701,7 @@ function collide(){
   // kart-kart soft separation + AI auto-whip
   for(let i=0;i<racers.length;i++)for(let j=i+1;j<racers.length;j++){
     const a=racers[i],b=racers[j];
+    if(a.spectator||b.spectator) continue;   // the spectator's kart sits on the one it watches: no body to trade paint with
     const dx=b.x-a.x,dz=b.z-a.z,d=Math.hypot(dx,dz);
     const rad=(a.megaT>0||b.megaT>0)?10:7;    // mega body is physically bigger
     if(d<rad&&d>0.01){ const push=(rad-d)/2, ux=dx/d,uz=dz/d;
@@ -66852,7 +66855,7 @@ function collide(){
 /* ranking */
 const OVERTAKE_CALLS=['OVERTAKE!','PASSED HIM!','MOVING UP!','TAKEN!'];
 function rank(){
-  const order=[...racers].sort((a,b)=>{
+  const order=racers.filter(r=>!r.spectator).sort((a,b)=>{   // (a spectator's kart holds no place; it borrows the watched kart's)
     if(a.finished&&b.finished)return a.finishT-b.finishT;
     if(a.finished)return -1; if(b.finished)return 1;
     return b.total-a.total;
@@ -67709,7 +67712,7 @@ function camHold(me){
 function updateCameraCore(dt){
   const me=racers.find(r=>r.you); if(!me)return;
   const fp=camMode==='fp' && state==='race' && !me.finished;
-  if(me.obj) me.obj.visible=!fp;                // first person: you are the eyes, not the body
+  if(me.obj) me.obj.visible=!fp && !me.spectator;   // first person: you are the eyes, not the body (a spectator's kart is never drawn)
   if(!fp) _fpYaw=null;
   const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
   // Grid intro: HOLD ON THE FACE, then pull back to the driving view.
@@ -68688,6 +68691,7 @@ function netLeave(quiet){
   NET.open=false; NET.openDue=0; NET.openT=null; NET.openAt=0; NET.order=[];
   NET._go=null; NET.goSeen=false; NET.ready.clear();
   serAutoStop();           // (a series' next race never starts from a room we have left)
+  specEnd();               // (nor is anyone still watching one)
   if(!quiet) chalDrop();   // leaving for good (Back, Main menu, a new Connection) ends the challenge on this screen; a quiet leave is a re-join
   netRaceDoneUI();
 }
@@ -68747,7 +68751,12 @@ function netRecv(m){
       if(fresh) NET.players.set(m.id, {id:m.id, name:m.name, typeId:m.typeId, last:performance.now()});
       else Object.assign(NET.players.get(m.id), {name:m.name, typeId:m.typeId});
       // answer so the newcomer learns about us too (mesh transports have no join event)
-      if(NET.host){ if(fresh) netOpenArrival(); netBroadcastRoster(); }
+      if(NET.host){ if(fresh) netOpenArrival(); netBroadcastRoster();
+        // mid-race: the newcomer watches this one (see SPEC) and is on the grid of the next
+        if(fresh && NET.on && !NET.done && (state==='race'||state==='count')){
+          const lm={t:'late', to:m.id, track:selTrack, maze:MAZE?{no:MAZE.no, mode:MAZE.mode}:undefined, fillAI:NET.fillAI, lineup:NET.lineup, host:NET.self, elapsed:+raceTime.toFixed(2)};
+          if(chalIsRoom()){ lm.chal=chalMeta(CHAL.live); lm.diff=difficulty; if(SER) lm.ser=SER; }
+          netSend(lm); } }
       else netSend({t:'hello', id:NET.self, name:NET.name, typeId:(chosenType&&chosenType.id)||'guido'});
       netRenderLobby();
       break;
@@ -68793,10 +68802,18 @@ function netRecv(m){
     case 'start':
       if(NET.host) break;
       if(state==='race'||state==='count') break;   // not while we are still driving the last one
+      specEnd();                                   // (a spectator of the last race is on this grid)
       selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
       if(m.chal) chalAdopt(m.chal, m.diff, m.ser);
       mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:mzModeOf(TRACKS[m.track])}:null;   // the host's maze, exactly (its start: the course's own)
       netBeginRace();
+      break;
+    case 'late':                                   // the host: its race is running — watch it (see SPEC), and line up for the next
+      if(NET.host || m.to!==NET.self || NET.on || state==='race' || state==='count' || !Array.isArray(m.lineup)) break;
+      selTrack=m.track; NET.fillAI=m.fillAI; NET.lineup=m.lineup; NET.hostId=m.host||m.from;
+      if(m.chal) chalAdopt(m.chal, m.diff, m.ser);
+      mzSeedNext=(m.maze && m.maze.no>=0)?{no:m.maze.no|0, mode:mzModeOf(TRACKS[m.track])}:null;
+      specBegin(m); netBeginRace();
       break;
     case 's': {                               // a human's own kart
       const q=NET.players.get(m.from); if(q) q.snap=m;
@@ -68992,7 +69009,7 @@ function netOpenHandover(){                        // the host left the lobby: t
  * holds its lights until every human has said 'ready' (or NET_READY_WAIT has passed), then sends
  * 'go'. A peer that hears 'go' before it is built starts the moment it is. */
 function netHoldStart(begin){
-  if(!NET.on || !NET.auth) return false;
+  if(!NET.on || !NET.auth || NET.spectate) return false;   // (a spectator joins a race that is already on: no lights to hold)
   if(NET.host){
     NET._go=begin; NET._readyT=performance.now();
     setTimeout(()=>netReadyCheck(), NET_READY_WAIT+50);
@@ -69072,7 +69089,7 @@ function netSnapOf(r){
 }
 function netSendSnap(){
   const me=racers.find(r=>r.you);
-  if(me) netSend(Object.assign({t:'s'}, netSnapOf(me)));
+  if(me && !me.spectator) netSend(Object.assign({t:'s'}, netSnapOf(me)));   // (a spectator's kart is never on the wire)
 }
 // host only: every kart it simulates besides its own (the AI, and any human's kart it has
 // taken over), plus where its projectiles are, in one packet
@@ -69716,6 +69733,47 @@ function serButtons(){
   if(NET.host) ab.textContent=SER.done ? 'New series' : (SER.f==='cup' ? 'Next: '+(serCourse()||'')+' →' : 'Next race →');
 }
 
+/* ---- spectating a race in progress ------------------------------------------------------------
+ * A hello that lands mid-race gets 'late' from the host (track, lineup, maze, elapsed time, the
+ * challenge and its standings). The newcomer builds the course and the host's lineup — every kart
+ * remote, none its own — and one SPECTATOR KART of its own: {you:true, spectator:true}, a hidden
+ * model that is never on the wire (nk -1, no snapshots), never scored (finished from the start,
+ * left out of rank(), the board and the series), skipped by updateRacer and the kart-kart push,
+ * and parked each frame ON the kart being watched. So the chase camera, HUD, minimap, engine and
+ * banners — all keyed off racers.find(r=>r.you) — simply show that kart, with no second code path.
+ * It follows the leading human (1.5 s of hysteresis); a tap on the screen switches to the next.
+ * The lap counter and clock come from the host's snapshots and 'late''s elapsed time. At the
+ * finish the spectator sees the results like everyone, and the host's next start has it on the grid
+ * (it is in NET.players since its hello). */
+var SPEC={on:null, target:null, manual:false, _lead:null, _leadT:0};
+function specBegin(m){ SPEC.on={elapsed:+m.elapsed||0, at:performance.now()}; SPEC.target=null; SPEC.manual=false; SPEC._lead=null; NET.spectate=true; }
+function specElapsed(){ return SPEC.on ? SPEC.on.elapsed+(performance.now()-SPEC.on.at)/1000 : 0; }
+function specEnd(){ SPEC.on=null; SPEC.target=null; NET.spectate=false; document.body.classList.remove('spectating'); }
+function specPick(){
+  const hs=racers.filter(r=>!r.spectator && r.human), pool=hs.length?hs:racers.filter(r=>!r.spectator);
+  if(!pool.length) return null;
+  if(SPEC.manual && SPEC.target && pool.includes(SPEC.target)) return SPEC.target;
+  const lead=[...pool].sort((a,b)=>a.place-b.place)[0], now=performance.now();
+  if(lead!==SPEC._lead){ SPEC._lead=lead; SPEC._leadT=now; }
+  if(!SPEC.target || !pool.includes(SPEC.target) || (lead!==SPEC.target && now-SPEC._leadT>1500)) SPEC.target=lead;
+  return SPEC.target;
+}
+function specCycle(){
+  const pool=racers.filter(r=>!r.spectator && r.human); if(pool.length<2) return;
+  SPEC.target=pool[(pool.indexOf(SPEC.target)+1)%pool.length]; SPEC.manual=true; specLabel();
+}
+function specLabel(){ const w=document.getElementById('specwho'); if(w && SPEC.target && w.textContent!==SPEC.target.name) w.textContent=SPEC.target.name; }
+// per frame, in updateRacer's place: ride the followed kart
+function specTick(r){
+  const t=specPick(); if(!t) return;
+  r.x=t.x; r.y=t.y; r.z=t.z; r.head=t.head; r.spd=t.spd; r.slip=t.slip||0; r._bank=t._bank||0; r.surfY=t.surfY; r.air=t.air; r.idx=t.idx;
+  r.lap=t.lap; r.prog=t.prog; r.total=t.total; r.boostT=t.boostT; r.place=t.place; r.drift=0; r.item=null; r.spinT=0; r.glueT=0;
+  if(r.obj) r.obj.visible=false; if(r.shadow) r.shadow.visible=false;
+  if(state==='race' && !document.body.classList.contains('spectating')) document.body.classList.add('spectating');
+  specLabel();
+}
+addEventListener('pointerdown', e=>{ if(!NET.spectate || state!=='race') return; if(e.target && e.target.closest && e.target.closest('button,.btn,.nojoy')) return; specCycle(); }, {passive:true});
+
 // ---- the sheet: format, the deck's picks, AI fill, the ghost, your name, Send ----
 (function setupChal(){
   const $c=id=>document.getElementById(id), sh=$c('chsheet'); if(!sh) return;
@@ -69818,7 +69876,8 @@ function endRace(){
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   const me=racers.find(r=>r.you);
   ghostFinish(me);   // this run's ghost (and your best on the course, if it is)
-  const ranked=[...racers].sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));   // (a dead heat — six gates make mirror-image runs — in the same order on every screen)
+  document.body.classList.remove('spectating');   // (a spectator's strip comes down with the results; see SPEC)
+  const ranked=racers.filter(r=>!r.spectator).sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));   // (a dead heat — six gates make mirror-image runs — in the same order on every screen; a spectator's kart is not on the board)
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
   $('besttime').textContent='';   // cleared each finish; only the single-race branch repopulates it
@@ -69828,8 +69887,8 @@ function endRace(){
   if(gpActive && gpRun){
     toTrophy=cupRaceDone();                                        // the Circuit Cup: points, eggs, the table, the next race or the trophy
   } else {
-    $('fhead').textContent=ord(me.place)+' place';
-    $('ftag').textContent=(MAZE?mzLabel({no:MAZE.no, mode:MAZE.mode})+' · ':'')+(me.place===1?'specimen dominant':'race complete');   // the labyrinth: which maze it was
+    $('fhead').textContent=me.spectator?'Race over':ord(me.place)+' place';
+    $('ftag').textContent=(MAZE?mzLabel({no:MAZE.no, mode:MAZE.mode})+' · ':'')+(me.spectator?'you watched · you’re in the next race':me.place===1?'specimen dominant':'race complete');   // the labyrinth: which maze it was
     ranked.forEach((r,i)=>{
       const row=document.createElement('div'); row.className='row'+(r.you?' you':'');
       row.innerHTML=`<span class="pos">${ord(i+1)}</span><span class="nm">${r.name}</span><b>${fmt(r.finishT)}</b>`;
@@ -69851,7 +69910,7 @@ function endRace(){
     } else bt.textContent='';
     // secondary, faster unlock path — a full Circuit Cup is a long ask just to see the
     // locked roster; 3 podium finishes in single races gets there much sooner too
-    if(me.finished && me.place<=3){
+    if(me.finished && me.place<=3 && !me.spectator){
       const nextLock=SPERM_TYPES.filter(isLocked).sort((a,b)=>a.reward-b.reward)[0];
       if(nextLock){
         const podiums=(parseInt(localStorage.getItem('sr_podiums'))||0)+1;
@@ -70228,19 +70287,20 @@ countdown = function(){
     if(n>0){cd.textContent=n;pulse();SFX.count(false);setTimeout(tick,750);}
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
     else{
-      $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now(); raceTime=0;
+      $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now(); raceTime=NET.spectate?specElapsed():0;   // (a spectator joins the host's clock)
       startEngine(); lockOrient(); startMusic();
-      if(sliderMode){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; document.body.classList.add('slider'); }
+      if(sliderMode && !NET.spectate){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; document.body.classList.add('slider'); }
       // rocket start: reward holding the throttle/stick the instant the lights go
       const me=racers.find(r=>r.you);
       const launching = isTouch ? joyActive : (keys.has('arrowup')||keys.has('w'));
-      if(me && launching){ me.boostT=Math.max(me.boostT,1.3); showBanner('Rocket Start!'); }
+      if(me && me.spectator) showBanner('Watching');
+      else if(me && launching){ me.boostT=Math.max(me.boostT,1.3); showBanner('Rocket Start!'); }
       else showBanner('Go!');
       kickShake(0.5);
     }
   };
-  // networked, the lights wait for the other humans' builds (netHoldStart); solo they go now
-  const begin=()=>{ NET._go=null; cd.textContent='3'; pulse(); SFX.count(false); setTimeout(tick,750); };
+  // networked, the lights wait for the other humans' builds (netHoldStart); solo they go now; a spectator skips them (the race is on)
+  const begin=()=>{ NET._go=null; if(NET.spectate){ n=0; tick(); return; } cd.textContent='3'; pulse(); SFX.count(false); setTimeout(tick,750); };
   if(netHoldStart(begin)) cd.textContent='…'; else begin();
 };
 
@@ -70461,6 +70521,15 @@ buildRacers = function(reuse){
       ...((you || (np && !np.ai && np.id!==NET.self)) ? (t.stats||{}) : {})
     };
   });
+  // a spectator (see SPEC): the host's lineup has no slot of ours, so a hidden kart of our own rides the one we watch
+  if(NET.spectate && netSlots && !racers.some(r=>r.you)){
+    const t=chosenType||SPERM_TYPES[0], s0=SAMP[2], obj=makeCell(t.hue,t.id); obj.visible=false; scene.add(obj);
+    const shadow=new T.Mesh(new T.PlaneGeometry(9,9), new T.MeshBasicMaterial({map:TEX_SHADOW,transparent:true,depthWrite:false,opacity:0})); shadow.visible=false; shadow.rotation.x=-Math.PI/2; scene.add(shadow);
+    racers.push({you:true, spectator:true, id:t.id, name:NET.name||'You', hue:t.hue, obj, shadow, netId:NET.self, nk:-1, remote:false, human:false,
+      x:s0.p.x, z:s0.p.z, y:s0.p.y+HOVER_H, surfY:s0.p.y, _bank:0, head:Math.atan2(s0.t.x,s0.t.z), spd:0, idx:2, prog:0, lap:0, total:0,
+      drift:0, driftDir:0, driftCharge:0, hop:0, slip:0, boostT:0, spinT:0, item:null, aiDelay:0, wob:0,
+      finished:true, finishT:Infinity, place:racers.length+1, phase:0, _li:racers.length, skill:1});
+  }
   // Mark the humans AFTER the array exists, so the marker can read the final name and hue.
   // Only in a networked race: in single player everyone but you is AI and a nameplate over
   // your own kart would just sit in the middle of the screen.
@@ -71600,7 +71669,7 @@ let quitArm=false, quitTimer=null;
 function quitToHome(){
   clearTimeout(quitTimer); quitArm=false;
   $('quitbtn').textContent='✕'; $('quitbtn').classList.remove('armed');
-  state='menu'; if(NET.on) netLeave(); stopEngine(); stopMusic(); unlockOrient();
+  state='menu'; if(NET.on) netLeave(); specEnd(); stopEngine(); stopMusic(); unlockOrient();
   document.body.classList.remove('final-lap');
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   cupHomeShow();   // finish / select / countdown hidden, the home screen up; a cup lets go of its racer, difficulty and course (its run is saved)
@@ -72138,7 +72207,7 @@ window.srNet={
     alt:MAZE.alt?{share:+MAZE.alt.share.toFixed(2), ratio:+MAZE.alt.ratio.toFixed(2)}:null,
     karts:racers.map(r=>({name:r.name, you:!!r.you, cell:r._mzCell, remain:Math.round(r._mzR||0), skill:+(r.skill||1).toFixed(3)}))}; },
   get race(){ return {state, course:TRACKS[selTrack]?TRACKS[selTrack].name:null, laps:lapsOf(), time:+raceTime.toFixed(2), auth:NET.auth, hostId:NET.hostId||null,
-    karts:racers.map(r=>({name:r.name, id:r.id, you:!!r.you, nk:r.nk,
+    karts:racers.map(r=>({name:r.name, id:r.id, you:!!r.you, spectator:!!r.spectator, nk:r.nk,
       remote:!!r.remote, human:!!r.human, netId:r.netId||null, lap:r.lap, prog:+(r.prog||0).toFixed(3),
       x:+r.x.toFixed(1), z:+r.z.toFixed(1), spd:+r.spd.toFixed(1), item:r.item||null, pend:r._pend!=null,
       spinT:+(r.spinT||0).toFixed(2), glueT:+(r.glueT||0).toFixed(2), shieldT:+(r.shieldT||0).toFixed(2), megaT:+(r.megaT||0).toFixed(2),
