@@ -1821,6 +1821,13 @@
   body.hz #hzmp #chinfo .ch-st .lead{color:var(--hz-gold);}
   body.hz #hzmp #chinfo .ch-note{color:var(--hz-grey);opacity:1;}
   @media (orientation:landscape) and (max-height:560px){ body.hz .hzm-chal{padding-top:5px;} body.hz #hzmp #chinfo{font-size:11px;} body.hz #hzmp #chinfo .ch-who{font-size:13px;} }
+  /* the lobby's "Race X's ghost now" (in #chinfo) and the scorecard a reply carries */
+  #chinfo .ch-ghostgo{display:block;width:100%;margin:8px 0 2px!important;min-height:48px;font-size:12px;}
+  #chinfo .ch-score{margin-top:8px;}
+  body.hz #hzmp #chinfo .ch-ghostgo{border:2px solid var(--hz-gold);border-radius:12px;background:#120A08;color:var(--hz-ink);font:700 14px/1.2 var(--hz-mono);text-transform:none;letter-spacing:0;
+    box-shadow:0 0 14px -2px var(--hz-gold),inset 0 0 18px -8px var(--hz-gold);}
+  body.hz #hzmp #chinfo .ch-ghostgo:active{background:#1c110c;transform:none;}
+  body.hz #hzmp #chinfo .ch-score span:nth-child(3n+3){text-align:right;}
   /* the results screen: a series' standings under the board (#besttime) */
   .ser-line{font-size:12px;letter-spacing:.04em;line-height:1.5;}
   .ser-line b{color:#fff;}
@@ -2274,6 +2281,7 @@
   <div id="besttime" style="font-size:12px;letter-spacing:.1em;color:var(--ink);margin:2px 0 14px;min-height:1.4em;"></div>
   <div id="fbtns" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:560px">
     <button class="go" id="againbtn">Race again</button>
+    <button class="go" id="replybtn" style="display:none">Reply with your run &#8599;</button>
     <button class="go alt" id="samemazebtn" style="display:none">Same maze</button>
     <button class="go alt" id="changebtn">Change racer</button>
     <button class="go alt" id="gpbtn">Circuit Cup</button>
@@ -69595,7 +69603,7 @@ function chalIsRoom(){ return !!(CHAL.live && NET.t && NET.room===CHAL.live.code
 function chalLoadGhost(ch){
   GH.loaded=null; if(!ch || !ch.g || !ch.gtext) return;
   const g={n:ch.g.n, ty:ch.g.ty, c:ch.g.c, t:ch.g.t, hz:ch.g.hz, d:ch.gtext, samples:null};
-  GH.loaded=g; ghostDecode(ch.gtext).then(s=>{ if(s && GH.loaded===g) g.samples=s; else if(GH.loaded===g){ GH.loaded=null; ch.g=null; ch.gtext=null; chalPaint(); } });
+  GH.loaded=g; ghostDecode(ch.gtext).then(s=>{ if(s && GH.loaded===g){ g.samples=s; chalPaint(); } else if(GH.loaded===g){ GH.loaded=null; ch.g=null; ch.gtext=null; chalPaint(); } });
 }
 function chalDrop(){ CHAL.live=null; CHAL._tok++; CHAL._wait=null; GH.loaded=null; SER=null; serAutoStop(); chalPaint(); }
 // the host runs the challenge's rules: its course (the series' first), its difficulty, its AI fill; the standings start empty
@@ -69633,7 +69641,7 @@ async function chalEnter(ch, hostNow){
   if(!ok){ NET.status('Could not reach the relay — check your connection, then try again.'); chalPaint(); return; }
   chalApplyRules(ch); netBroadcastRoster(); $c('mpshare').style.display='block';
   const mine=chalName($c('mpname').value)===ch.n;
-  NET.status(mine ? 'Your room is open — friends arrive through the link' : 'Waiting for '+ch.n+' and friends — share the link again if you like');
+  NET.status(mine ? 'Your room is open — friends arrive through the link' : 'Waiting for '+ch.n+' and friends — share the link again if you like'+(ch.g?', or race their ghost while you wait':''));
   netRenderLobby();
 }
 // the lobby's 03 row (Horizon) / card (Classic): whose challenge, the format, the course(s), the difficulty, then the standings
@@ -69644,7 +69652,38 @@ function chalPaint(){
   if(!on){ el.innerHTML=''; return; }
   let h='<b class="ch-who">'+chalEsc(ch.n)+'’s challenge</b><span class="ch-what">'+chalEsc(chalFmtName(ch))+' · '+chalEsc(chalCourses(ch))+' · '+chalEsc(ch.d)+(ch.ai?'':' · humans only')+'</span>';
   if(typeof serLobbyHTML==='function') h+=serLobbyHTML();
+  // the asynchronous side (see chalReply): the scorecard the link carries, and the ghost to race while nobody else is here
+  if(ch.s && ch.s.length) h+='<div class="ch-st ch-score"><span class="lead">Scorecard</span><span></span><span></span>'+ch.s.map(e=>'<span>'+chalEsc(e.n)+'</span><span>'+chalEsc(e.c)+'</span><span>'+fmt(e.t)+'</span>').join('')+'</div>';
+  if(ch.g && GH.loaded && GH.loaded.samples && NET.host && NET.players.size<=1 && !NET.on)
+    h+='<button type="button" class="go nojoy ch-ghostgo" id="chghostgo">Race '+chalEsc(ch.g.n)+'’s ghost now</button>'
+      +'<span class="ch-note">'+chalEsc(ch.g.n)+' ran '+fmt(ch.g.t)+' on '+chalEsc(ch.g.c)+' — race it alone and send your run back</span>';
   if(el.innerHTML!==h) el.innerHTML=h;
+}
+// nobody online: a solo race against the ghost in the link (the room is left quietly; the challenge stays on this screen for the reply)
+function chalGhostRace(){
+  const ch=CHAL.live; if(!ch || !ch.g || !GH.loaded || !GH.loaded.samples) return;
+  initAudio(); netLeave(true);
+  const i=TRACKS.findIndex(x=>x.name===ch.g.c); if(i>=0) selTrack=i;
+  if(DIFF[ch.d]!=null) difficulty=ch.d;
+  CHAL.solo=true;
+  document.getElementById('mp').classList.add('hidden');
+  countdown();
+}
+// the reply: the same code and rules, the scorecard so far (one line per name and course, the better time kept) and YOUR run as the ghost
+async function chalReply(){
+  const ch=CHAL.live, last=GH.last; if(!ch || !last || !last.d) return;
+  const name=chalName((document.getElementById('mpname')||{}).value)||last.meta.n||'A friend';
+  const s=ch.s.map(e=>Object.assign({},e));
+  const put=e=>{ const i=s.findIndex(x=>x.n===e.n && x.c===e.c); if(i<0) s.push(e); else if(e.t<s[i].t) s[i]=e; };
+  if(ch.g) put({n:ch.g.n, c:ch.g.c, t:ch.g.t});
+  put({n:name, c:last.meta.c, t:last.meta.t});
+  const r={code:ch.code, n:ch.n, f:ch.f, t:ch.t, d:ch.d, ai:ch.ai, at:ch.at, g:{n:name, ty:last.meta.ty, c:last.meta.c, t:last.meta.t, hz:GH_HZ}, gtext:last.d, s:s.slice(-40)};
+  const url=chalLink(r), prev=ch.g;
+  const text=name+' raced your ghost on '+last.meta.c+': '+fmt(last.meta.t)+(prev?' vs your '+fmt(prev.t):'')+' — race theirs back in Race Wars. Tap to play.';
+  let sent=false;
+  if(navigator.share){ try{ await navigator.share({title:'Race Wars', text, url}); sent=true; }catch(e){ if(e && e.name==='AbortError') return; } }
+  if(!sent){ if(navigator.clipboard && navigator.clipboard.writeText){ try{ await navigator.clipboard.writeText(url); showToast('Reply link copied — paste it in the chat','t-gold'); }catch(e){ showToast('Could not copy the link','t-red'); } } else showToast('Sharing is not available here','t-red'); }
+  CHAL.live=r;   // (another run and another Reply build on this scorecard; the ghost you raced stays loaded for "Race again")
 }
 /* ---- the series: Best of N and the Cup -------------------------------------------------------
  * The host keeps SER and sends it with every roster and start (and as 'ser' at each finish), so
@@ -69822,6 +69861,8 @@ addEventListener('pointerdown', e=>{ if(!NET.spectate || state!=='race') return;
   };
   $c('chalbtn').onclick=open; $c('mpchal').onclick=open;
   $c('chdone').onclick=close; $c('chback').onclick=close;
+  $c('chinfo').addEventListener('click', e=>{ if(e.target && e.target.closest && e.target.closest('#chghostgo')) chalGhostRace(); });   // (the row is re-rendered; the handler is on the row)
+  $c('replybtn').onclick=()=>chalReply();
   addEventListener('keydown',e=>{ if(e.key==='Escape' && !sh.classList.contains('hidden')) close(); });
 })();
 
@@ -69881,6 +69922,7 @@ function endRace(){
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
   $('besttime').textContent='';   // cleared each finish; only the single-race branch repopulates it
+  $('replybtn').style.display='none';   // (a reply only after a solo race against a challenge's ghost, below)
   bd.className='board'; $('finish').classList.remove('cupfin'); $('mainbtn').textContent='Main menu';   // (a cup race's table and labels are put back each finish)
 
   let toTrophy=false;
@@ -69908,6 +69950,12 @@ function endRace(){
         bt.textContent = `Best on ${TRACKS[selTrack].name}: ${fmt(prev)}  (+${fmt(me.finishT-prev)})`;
       }
     } else bt.textContent='';
+    // a solo race against a challenge's ghost: how you did against it, and Reply (once this run's pack is ready; see chalReply)
+    { const rb=$('replybtn'), solo=!!(CHAL.solo && CHAL.live && CHAL.live.g && me.finished && isFinite(me.finishT) && !me.spectator && !NET.on);
+      rb.style.display=solo?'':'none'; rb.disabled=true;
+      if(solo){ const g=CHAL.live.g, d=me.finishT-g.t;
+        bt.textContent=(bt.textContent?bt.textContent+'  ':'')+'vs '+g.n+'’s ghost '+fmt(g.t)+(d<=0?' — you beat it by '+Math.abs(d).toFixed(1)+' s':' — '+d.toFixed(1)+' s behind');
+        const arm=()=>{ if(state!=='done') return; if(GH.last && GH.last.d) rb.disabled=false; else setTimeout(arm,150); }; arm(); } }
     // secondary, faster unlock path — a full Circuit Cup is a long ask just to see the
     // locked roster; 3 podium finishes in single races gets there much sooner too
     if(me.finished && me.place<=3 && !me.spectator){
@@ -70007,6 +70055,7 @@ function cupHomeShow(){
   CUP_SCREENS.forEach(k=>$(k).classList.add('hidden'));
   $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
   cupStop(); state='menu'; ghostClear();
+  if(CHAL.solo){ CHAL.solo=false; chalDrop(); }   // (home after a solo race against a challenge's ghost: the challenge is done with)
   $('start').classList.remove('hidden');
   if(cupDirty){ cupDirty=false; buildTrack(selTrack); buildRacers(); }
 }

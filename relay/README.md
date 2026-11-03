@@ -85,6 +85,20 @@ is that server, written for Cloudflare.
 - Anything else under `/open` is 404. `scratchpad/mp_relay_srv.js` (the Node stand-in used by
   the tests) implements the same endpoints with the identical `openRegistry()` function.
 
+## Optional follow-up: a preview card for challenge links
+
+A challenge link (`index.html?c=CODE.META[.GHOST]`, see MULTIPLAYER.md) needs nothing from the
+relay: the room is an ordinary echo room and the rules travel in the link and the host's roster.
+iMessage and WhatsApp show the page's generic title and icon for it, because GitHub Pages serves
+one static `index.html` whose Open Graph tags cannot name the challenger or the course.
+
+If a per-link card ("Chris challenges you · Best of 3 on Felicity") is ever wanted, it is a small
+addition here, not in the game: a `GET /c/<CODE>.<META>` route on the worker that decodes `META`
+and answers an HTML page with `og:title` / `og:description` / `og:image` built from it and an
+immediate redirect (meta refresh or a script) to the game's URL with the same `?c=` query. The
+sheet would then share `https://<relay>/c/…` instead of the page URL. Nothing else changes: the
+game already accepts the query, and the relay still stores nothing.
+
 ## Limits
 
 - No authentication: anyone with the code can join. The game's host is the authority over

@@ -43,6 +43,53 @@ race starts by itself. Nobody has to press anything, and the button always leads
 
 Codes avoid `I`, `O`, `0` and `1`, because they get read aloud over voice chat.
 
+## Challenge your friends (one link in the chat)
+
+**Invite · Friends** on the home (the chip beside More) or **Challenge · Friends** in the lobby opens
+the challenge sheet: a format (*Single race · Best of 3 · Best of 5 · Cup: 5 courses*), the deck's
+course and difficulty, *AI racers* on or off (on by default for every format; AI never score), your
+best run on the course as a ghost if you have one, your name, **Send**. Send puts the link on the
+iOS share sheet (elsewhere it is copied), then opens the room for you, so you are first in.
+
+The link is `index.html?c=CODE.META[.GHOST]` (plus `&net=` / `&relay=` like an invite link):
+`CODE` is a fresh room code, `META` a base64url JSON `{v, n, f, t, d, ai, at, g?, s?}` (challenger,
+format, course names, difficulty, AI fill, the minute it was made, the ghost's meta, a scorecard),
+`GHOST` the packed run (see the GHOSTS block in `index.html`; about 1 KB a minute of racing, 3 KB
+for a three-minute race). Only `A-Z a-z 0-9 - _ .` appear, so iMessage and WhatsApp never mangle
+it. The room is coded and never listed on `/open`: it is the group's own, and the code never changes.
+
+Opening the link joins `CODE`:
+
+- **Someone is there, lobby open** — you are in their lobby. Row 03 shows *Chris's challenge ·
+  Best of 3 · Felicity · medium* and the standings; the host's roster and start carry the rules
+  (`chal`, `diff`) and the standings (`ser`), so every screen agrees.
+- **Nobody there (yet)** — after about six seconds with no roster that lists you, *you* host that
+  same code with the challenge's rules applied (course, difficulty, AI fill), and the lobby says
+  *Waiting for Chris and friends — share the link again if you like*. Whoever is first in hosts.
+  Two people who open the link in the same breath can both host the echo room for a moment: each
+  hears the other's roster, and the one with the greater id steps down and says hello again.
+- **A race is running** — the host answers your hello with `late` (track, lineup, maze, elapsed
+  time, series) and you watch it: a hidden spectator kart (`spectator:true`, never on the wire, never
+  scored, skipped by the physics, the ranking and the board) rides the kart you follow, so the
+  camera, HUD, minimap and engine simply show that kart; a tap switches to the next human. The
+  strip says *Watching · Alex · tap to switch · you're in the next race*; at the finish you see the
+  results with everyone and the host's next start has you on the grid.
+
+**Series.** The host keeps `SER`: a race goes to the first *human* across the line; Best of N to
+the first with the majority; the Cup runs its five courses in order with Circuit Cup points by
+place among the humans (6-4-2-1), most points taking it. After each race the results screen shows
+*Best of 3 · Chris 1 – Alex 1 · next race in 12 s*: the host's **Next race →** starts it now, or it
+starts by itself; clients wait for the host. Once decided, the card says who won the series and
+the host's button becomes **New series**. Newcomers enter the standings with their first race.
+
+**Nobody online? Race the ghost.** When the link carries a ghost and nobody answers, the lobby
+also offers *Race Chris's ghost now*: a solo race with the challenger's run beside you. At the
+finish, **Reply** makes a new link with the same code and rules, the scorecard so far (name,
+course, time per player) and *your* ghost, to send back; opening a reply shows the scorecard and
+lets the other side race the newest ghost.
+
+Nothing here needs the relay to know anything: a challenge room is an ordinary echo room.
+
 ## Ownership model
 
 **Each human simulates its own kart** and broadcasts a snapshot at 15 Hz; everyone else
@@ -132,6 +179,8 @@ the other clients; on mesh transports (`local`, `relay`) everyone hears everyone
 | `gone` | host → all | `id` | entity retired (spent or expired) |
 | `hb` | anyone → all | — | liveness, once a second |
 | `bye` | anyone → all | `id` | leaving (also sent on `pagehide`) |
+| `late` | host → one | `to,track,maze,fillAI,lineup,host,elapsed,chal,diff,ser` | your hello landed mid-race: watch this one (a spectator kart, see *Challenge your friends*) |
+| `ser` | host → all | `ser` | a challenge series' standings after a race (also carried in `roster` and `start` as `ser`, with the challenge's `chal` and `diff`) |
 
 Cost: a snapshot is ~190 bytes. With six karts the host sends its own `s` plus an `S` with
 four or five entries, about 12 KB/s out at 15 Hz; a client sends about 2.5 KB/s. The host's
