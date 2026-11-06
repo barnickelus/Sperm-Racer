@@ -34046,17 +34046,25 @@ function opNeon(d, col, w){
 }
 // Card art for the beaded racer: one circle per bead plus an offset white highlight,
 // because the gloss is what identifies the material — flat dots would read as pixel art.
+// Each row is strung on a thread (drawn first, so it shows in the gaps), each bead casts a small shadow and has a rim a
+// shade darker than itself: without them a white bead vanished into the cream card and the faces fell apart into dots.
+function opShade(hex,k){ const n=parseInt(hex.slice(1),16), o=[0x2a,0x17,0x12], c=[n>>16&255,n>>8&255,n&255].map((v,i)=>Math.round(v+(o[i]-v)*k));
+  return '#'+c.map(v=>v.toString(16).padStart(2,'0')).join(''); }
 function opBeads(rows, pal, cell, ox, oy){
-  let s='';
+  let thread='', shadow='', beads='';
   rows.forEach((row,y)=>{
+    let a=-1, b=-1; for(let x=0;x<row.length;x++) if(pal[row[x]]){ if(a<0) a=x; b=x; }
+    const cy=oy+y*cell+cell/2;
+    if(b>a) thread+=`<path d="M${ox+a*cell+cell/2},${cy} H${ox+b*cell+cell/2}" stroke="#6a4a36" stroke-width="${(cell*0.12).toFixed(2)}" opacity=".55"/>`;
     for(let x=0;x<row.length;x++){
       const c=pal[row[x]]; if(!c) continue;
-      const cx=ox+x*cell+cell/2, cy=oy+y*cell+cell/2, r=cell*0.46;
-      s+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${c}"/>`;
-      s+=`<circle cx="${cx-r*0.32}" cy="${cy-r*0.34}" r="${r*0.26}" fill="#ffffff" opacity=".75"/>`;
+      const cx=ox+x*cell+cell/2, r=cell*0.44;
+      shadow+=`<circle cx="${(cx+cell*0.07).toFixed(1)}" cy="${(cy+cell*0.11).toFixed(1)}" r="${r.toFixed(2)}"/>`;
+      beads+=`<circle cx="${cx}" cy="${cy}" r="${r.toFixed(2)}" fill="${c}" stroke="${opShade(c,.42)}" stroke-width="${(cell*0.08).toFixed(2)}"/>`;
+      beads+=`<circle cx="${(cx-r*0.32).toFixed(1)}" cy="${(cy-r*0.34).toFixed(1)}" r="${(r*0.26).toFixed(2)}" fill="#ffffff" opacity=".75"/>`;
     }
   });
-  return s;
+  return `<g fill="#2a1712" opacity=".28">${shadow}</g>${thread}${beads}`;
 }
 // Card art for the mosaic racer: the SAME technique in 2D — each cell is a tile with a
 // contrasting inner mark, so the card mixes optically at card size just like the model.
@@ -34076,15 +34084,26 @@ function opMosaic(rows, pal, cell, ox, oy){
 }
 // Card art for the voxel racer: a literal pixel grid rather than cel linework, so the
 // select screen advertises what the model actually looks like. One rect per cell.
+// Each block is bevelled (a light top-left edge, a dark bottom-right one) and the silhouette gets the cards' warm outline,
+// so the blocks read as voxels rather than as a flat spreadsheet of colour.
 function opPix(rows, pal, cell, ox, oy){
-  let s='';
+  let s='', lit='', dark='', edge='';
+  const at=(x,y)=>y>=0 && y<rows.length && x>=0 && x<rows[y].length && !!pal[rows[y][x]];
+  const b=Math.max(1, cell*0.14).toFixed(2);
   rows.forEach((row,y)=>{
     for(let x=0;x<row.length;x++){
       const c=pal[row[x]]; if(!c) continue;
-      s+=`<rect x="${ox+x*cell}" y="${oy+y*cell}" width="${cell}" height="${cell}" fill="${c}"/>`;
+      const px=ox+x*cell, py=oy+y*cell;
+      s+=`<rect x="${px}" y="${py}" width="${cell}" height="${cell}" fill="${c}"/>`;
+      lit+=`M${px},${py+cell}V${py}H${px+cell}`; dark+=`M${px+cell},${py}V${py+cell}H${px}`;
+      if(!at(x,y-1)) edge+=`M${px},${py}H${px+cell}`; if(!at(x,y+1)) edge+=`M${px},${py+cell}H${px+cell}`;
+      if(!at(x-1,y)) edge+=`M${px},${py}V${py+cell}`; if(!at(x+1,y)) edge+=`M${px+cell},${py}V${py+cell}`;
     }
   });
-  return s;
+  return `<g transform="translate(${(cell*0.12).toFixed(2)},${(cell*0.18).toFixed(2)})" opacity=".22">${s.replace(/fill="[^"]+"/g,'fill="#2a1712"')}</g>`+s+
+    `<path d="${lit}" fill="none" stroke="#fff" stroke-width="${b}" opacity=".13" transform="translate(${b/2},${b/2})"/>`+
+    `<path d="${dark}" fill="none" stroke="#000" stroke-width="${b}" opacity=".1" transform="translate(${-b/2},${-b/2})"/>`+
+    `<path d="${edge}" fill="none" stroke="${OP_OUT}" stroke-width="2.4" stroke-linecap="square"/>`;
 }
 
 // Mosaic Seamus's backdrop: rings of neon diamonds, twelve to a ring, turning against each other
@@ -34747,8 +34766,8 @@ const OP_ART={
     'HHSSSSSSSSSSSSHH','HHSSEESSSSEESSHH','HHKSEESSSSEESKHH','HHKSSSSNNSSSSKHH',
     'HHKKSSSNNSSSKKHH','.HKKSSMMMMSSKKH.','..HKKSSSSSSKKH..','...JJJJJJJJJJJJ.',
     '..JJJJJJJJJJJJ..','....JJJJJJJJ....',
-  ], {C:['#b6ff1c','#ff2fb4'], c:['#6fcf10','#19e8ff'], H:['#8a3dff','#19e8ff'], S:['#ff2fb4','#b6ff1c'],
-      K:['#ff8a1c','#8a3dff'], E:['#f2fff8','#19e8ff'], N:['#ff4f7a','#f2fff8'], M:['#10041c','#ff2fb4'],
+  ], {C:['#b6ff1c','#ff2fb4'], c:['#6fcf10','#19e8ff'], H:['#8a3dff','#19e8ff'], S:['#ff7fb0','#ffc2da'],
+      K:['#ff8a1c','#8a3dff'], E:['#f2fff8','#10041c'], N:['#e8346a','#ff7fb0'], M:['#10041c','#ff2fb4'],
       J:['#19e8ff','#ff8a1c']}, 10, 20, 46)}
     <g fill="none" stroke="#fff" stroke-width="1.4" opacity=".85"><path d="M30,38 l6,-8 l6,8 l-6,8 Z M168,52 l5,-7 l5,7 l-5,7 Z M20,150 l5,-7 l5,7 l-5,7 Z M176,170 l6,-8 l6,8 l-6,8 Z"/></g>`,
   // Beaded Pepe — every bead a glossy circle with its own highlight, rows following the
