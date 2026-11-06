@@ -54694,12 +54694,16 @@ function wiggleTail(g, phase, amp, lift, st){
 function celShade(g){
   g.traverse(o=>{
     if(o.isMesh && o.material && o.material.isMeshPhongMaterial && !o.material.userData.keepPhong){   // keepPhong: hard-specular metal stays Phong
-      const old=o.material;
+      // Full colour, the face kit's way (fkSkin): the authored colour decoded to linear, lit through the grey toon steps (SC_GRAD).
+      // On the single-channel GRAD only the red channel took the light, so every racer built from plain Phong parts came out
+      // pink or orange: straw hats orange, a black beret brown, an afro red, Antonio's tan skin pink.
+      const old=o.material, lin=old.color.clone().convertSRGBToLinear();
       o.material=new T.MeshToonMaterial({
-        color:old.color.clone(),
-        emissive:(old.emissive?old.emissive.clone():new T.Color(0x000000)),
+        color:lin.clone().multiplyScalar(FK_SKIN_K),
+        emissive:(old.emissive?old.emissive.clone():new T.Color(0x000000)).add(lin.clone().multiplyScalar(FK_SKIN_E)),
         map:old.map||null,                       // preserve tattoo/stripe tail textures
-        gradientMap:GRAD, side:old.side          // MeshToonMaterial has no flatShading prop (r128)
+        emissiveMap:old.map||null,               // (the glow follows the texture, so it never lifts a pattern's darks to grey)
+        gradientMap:SC_GRAD, side:old.side       // MeshToonMaterial has no flatShading prop (r128)
       });
     }
   });
