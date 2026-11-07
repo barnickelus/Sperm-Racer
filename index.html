@@ -66634,7 +66634,9 @@ function wlFxInit(){
 function wlTake(list){ let b=list[0]; for(const e of list){ if(e.t>=e.life) return e; if(e.t>b.t) b=e; } return b; }   // a free one, else the oldest
 function wlRing(r,lp,col,s1,life){ const e=wlTake(_wlFx.ring); e.r=r; e.lp.copy(lp); e.t=0; e.life=life; e.s1=s1; e.m.material.color.setHex(col); e.m.visible=true; }
 function wlStar(r,lp,col,s1,life){ const e=wlTake(_wlFx.star); e.r=r; e.lp.copy(lp); e.t=0; e.life=life; e.s1=s1; e.m.material.color.setHex(col); e.m.visible=true; }
-function wlPop(r,lp,kind,k){ const e=wlTake(_wlFx.pop); e.r=r; e.lp.copy(lp); e.t=0; e.life=0.48; e.k=k; e.rot=(wlRnd()-0.5)*0.3; e.m.material.map=_wlFx.tex[kind]; e.m.visible=true; }
+function wlPop(r,lp,kind,k){ const e=wlTake(_wlFx.pop); e.r=r; e.lp.copy(lp); e.t=0; e.life=0.48; e.k=k; e.rot=(wlRnd()-0.5)*0.3;
+  const own=kind==='crack' && fxRacerTex(r.id,'whip');   // a racer with a whip mark of his own lands it in that (square, and held a little longer)
+  e.sq=!!own; if(own){ e.life=0.7; e.rot*=0.5; } e.m.material.map=own||_wlFx.tex[kind]; e.m.visible=true; }
 function wlDizzy(v){ const e=wlTake(_wlFx.diz); e.r=v; e.t=0; e.ph=wlRnd()*6.3; e.m.visible=true; }
 function wlSparks(r,wp,n,col,size){   // a spray off the tip, carried along with the kart
   const vx=Math.sin(r.head)*r.spd*0.8, vz=Math.cos(r.head)*r.spd*0.8;
@@ -66656,7 +66658,8 @@ function wlFxTick(dt){
     if(u>=1 || !e.r){ e.m.visible=false; continue; }
     const o=e.r.obj; wlW(o,e.lp,e.m.position); const d=Math.sqrt(cp.distanceToSquared(e.m.position));
     const pop=rm ? 1 : (e.t<0.09 ? Math.sin(e.t/0.09*Math.PI*0.5)*1.3 : 1+0.3*Math.exp(-(e.t-0.09)*16)*Math.cos((e.t-0.09)*30));
-    const sz=d*_wlTan*0.5*e.k*pop; e.m.scale.set(sz,sz*0.5,1); e.m.position.y+=sz*0.4+d*_wlTan*0.08*e.t;   // a fixed share of the screen's height, whatever the distance
+    const sz=d*_wlTan*0.5*e.k*pop; if(e.sq){ const q=sz*(e.r.you?1.05:0.85); e.m.scale.set(q,q,1); e.m.position.y+=q*0.3+d*_wlTan*0.06*e.t; }   // (a racer's own mark carries a word and a prop: it needs the room)
+    else { e.m.scale.set(sz,sz*0.5,1); e.m.position.y+=sz*0.4+d*_wlTan*0.08*e.t; }   // a fixed share of the screen's height, whatever the distance
     e.m.material.rotation=rm?0:e.rot; e.m.material.opacity=1-ldSmooth(0.6,1,u); }
   for(const e of F.diz){ if(!e.m.visible) continue; e.t+=dt; const u=e.t/e.life, v=e.r;
     if(u>=1 || !v){ e.m.visible=false; continue; }
@@ -67285,6 +67288,69 @@ function emDrawWall(kind){
   else return null;
   return c;
 }
+/* ---- A racer's own comic marks: Daryl's pen (burst, Ben-Day dots, ink with a hard shadow, hand lettering on a 128
+ * grid drawn at 256 px) in the cards' warm outline, the racer's colours, one of their props and their own words.
+ *   whip: on the crack of a whip that lands (in place of the generic CRACK!), at the impact
+ *   hit:  over their head when they spin out (in place of the generic grawlix balloon)
+ * Drawn once per kind on first use, then cached; their own dice, so the game's Math.random is left alone. ---- */
+const FX_OUT='#2a1712';
+const FX_RACER={
+  guido:{ whip:'BADA-BING!', hit:'AY!', outer:'#ff8a1a', inner:'#ffd24a', dotO:'#b8520a', dotI:'#ff9a1a', word:'#fffdf2', hitDot:'#ff8a1a', hitWord:'#ff8a1a', prop:'chain' },
+};
+function fxDrawRacer(id,kind){
+  const S=FX_RACER[id]; if(!S) return null;
+  const c=document.createElement('canvas'); c.width=c.height=256; const x=c.getContext('2d'); x.scale(2,2);
+  let sd=17; for(const ch of id+kind) sd=(sd*31+ch.charCodeAt(0))%2147483647;
+  const rnd=()=>(sd=(sd*16807)%2147483647)/2147483647, jit=a=>(rnd()*2-1)*a, TAU=Math.PI*2, OUT=FX_OUT;
+  x.lineJoin='round'; x.lineCap='round';
+  const path=(pts,sharp)=>{ const n=pts.length; x.beginPath();
+    if(sharp) pts.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));
+    else { const mid=i=>{ const a=pts[i%n], b=pts[(i+1)%n]; return [(a[0]+b[0])/2,(a[1]+b[1])/2]; };
+      let m=mid(n-1); x.moveTo(m[0],m[1]); for(let i=0;i<n;i++){ m=mid(i); x.quadraticCurveTo(pts[i][0],pts[i][1],m[0],m[1]); } }
+    x.closePath(); };
+  const spikes=(cx,cy,rx,ry,n,ri,w)=>{ const p=[]; for(let i=0;i<n*2;i++){ const a=(i+jit(0.28))/(n*2)*TAU-Math.PI/2, k=(i%2?ri:1)*(1+jit(w)); p.push([cx+Math.cos(a)*rx*k, cy+Math.sin(a)*ry*k]); } return p; };
+  const ink=(col,lw)=>{ x.lineWidth=lw||9; x.strokeStyle=OUT; x.shadowColor=OUT; x.shadowOffsetX=3; x.shadowOffsetY=5; x.stroke(); x.shadowColor='rgba(0,0,0,0)'; x.fillStyle=col; x.fill(); };
+  const dots=(col,step,rmax,f)=>{ x.save(); x.clip(); x.fillStyle=col;
+    for(let j=0;j*step/2<132;j++) for(let i=-1;i*step<132;i++){ const px=i*step+(j&1)*step/2, py=j*step/2;
+      const r=rmax*Math.max(0,Math.min(1,f(px,py))); if(r<0.7) continue; x.beginPath(); x.arc(px,py,r,0,TAU); x.fill(); }
+    x.restore(); };
+  const line=(ax,ay,bx,by,lw)=>{ x.beginPath(); x.moveTo(ax,ay); x.quadraticCurveTo((ax+bx)/2+jit(1.5),(ay+by)/2+jit(1.5),bx,by); x.lineWidth=lw; x.strokeStyle=OUT; x.stroke(); };
+  const letter=(t,cx,cy,maxW,maxH,col,rot,sh)=>{ x.save(); x.font='900 100px '+EM_WALL_FONT; const m=x.measureText(t);
+    const gh=(m.actualBoundingBoxAscent+m.actualBoundingBoxDescent)||72, a=m.actualBoundingBoxAscent||72, d=m.actualBoundingBoxDescent||0;
+    let k=maxH/gh, sx=Math.min(1.1,maxW/(m.width*k)); if(sx<0.8){ k*=sx/0.8; sx=0.8; }
+    x.font='900 '+(100*k).toFixed(2)+'px '+EM_WALL_FONT; const lw=Math.max(3,gh*k*0.17), y=(a-d)*k/2;
+    x.translate(cx,cy); x.rotate(rot||0); x.transform(1,0,-0.17,1,0,0); x.scale(sx,1); x.textAlign='center'; x.textBaseline='alphabetic';
+    x.lineJoin='round'; x.lineWidth=lw; x.strokeStyle=OUT; x.fillStyle=OUT;
+    if(sh){ x.strokeText(t,sh,y+sh); x.fillText(t,sh,y+sh); }
+    x.strokeText(t,0,y); x.fillStyle=col; x.fillText(t,0,y); x.restore(); };
+  const props={
+    chain(){   // a gold chain swung round the burst, and its cornicello
+      for(let i=0;i<22;i++){ const a=-0.2+i/21*Math.PI*1.25, cx=70+Math.cos(a)*56, cy=66+Math.sin(a)*50;
+        x.save(); x.translate(cx,cy); x.rotate(a+(i%2?Math.PI/2:0)); x.beginPath(); x.ellipse(0,0,4.6,2.6,0,0,TAU);
+        x.lineWidth=3.6; x.strokeStyle=OUT; x.stroke(); x.lineWidth=1.8; x.strokeStyle='#ffd24a'; x.stroke(); x.restore(); }
+      x.beginPath(); x.moveTo(22,110); x.quadraticCurveTo(10,124,24,126); x.quadraticCurveTo(20,118,28,112); x.closePath(); ink('#ffd24a',3); },
+  };
+  if(kind==='whip'){
+    for(const [y0,l] of [[40,20],[56,26],[72,20]]) line(2,y0,2+l,y0+3,5);   // the swing it came from
+    path(spikes(70,64,52,49,12,0.66,0.09),true); x.lineJoin='miter'; x.miterLimit=2.5; ink(S.outer,8);
+    dots(S.dotO,7,2.6,(px,py)=>(px+py-110)*0.012);
+    path(spikes(70,65,42,37,12,0.74,0.07),true); x.lineWidth=4; x.strokeStyle=OUT; x.stroke(); x.fillStyle=S.inner; x.fill();
+    dots(S.dotI,6,2.3,(px,py)=>(px+py-120)*0.012);
+    x.lineJoin='round'; if(props[S.prop]) props[S.prop]();
+    const long=S.whip.length>7; letter(S.whip,69,66,long?112:90,long?24:30,S.word,-0.1,4);
+  } else if(kind==='hit'){   // a jagged balloon with a tail, in their colours
+    const jag=[]; for(let i=0;i<22;i++){ const a=i/22*TAU, k=i%2?0.86:1.04; jag.push([64+Math.cos(a)*55*k*(1+jit(0.03)), 54+Math.sin(a)*40*k*(1+jit(0.03))]); }
+    const tl=[[48,86],[56,124],[76,86]]; path(tl,true); x.lineJoin='miter'; x.miterLimit=4; ink('#fffdf2',8);
+    path(jag,true); ink('#fffdf2',8); path(tl,true); x.fillStyle='#fffdf2'; x.fill();
+    path(jag,true); dots(S.hitDot,7,2.5,(px,py)=>(py-50)*0.03);
+    letter(S.hit,64,56,S.hit.length>5?104:80,S.hit.length>5?28:36,S.hitWord,0.04,4);
+  } else return null;
+  return c;
+}
+const _fxRacerTex={};
+function fxRacerTex(id,kind){ const k=id+':'+kind;
+  if(!(k in _fxRacerTex)){ const c=FX_RACER[id]?fxDrawRacer(id,kind):null; _fxRacerTex[k]=c&&new T.CanvasTexture(c); }
+  return _fxRacerTex[k]; }
 function emWallTex(kind){ const w=_em.wall||(_em.wall={});
   if(!(kind in w)){ const c=emDrawWall(kind); w[kind]=c&&new T.CanvasTexture(c); }
   return w[kind]; }
@@ -67320,7 +67386,7 @@ function emote(r,L,kind){
   if(!r.you && (ai>=2 || !free)) return;                       // at most two AI bubbles at once
   if(!free){ free=_em.spr[0]; for(const sp of _em.spr) if(sp.userData.em.t>free.userData.em.t) free=sp; }   // the player's own always shows
   L.ecd=L.t; const e=free.userData.em; e.r=r; e.t=0; e.kind=kind; e.ai=!r.you;
-  const wt=r.id==='wall'&&emWallTex(kind); e.wall=!!wt;   // Daryl talks in comic-strip balloons
+  const wt=(r.id==='wall'&&emWallTex(kind)) || (kind==='hit'&&fxRacerTex(r.id,'hit')); e.wall=!!wt;   // Daryl talks in comic-strip balloons; a racer with marks of his own reacts in them
   free.material.map=wt||_em.tex[kind]; free.visible=true; emTop(r);
 }
 function emoteTick(dt){
