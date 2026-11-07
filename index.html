@@ -45709,15 +45709,20 @@ function perlaArtTex(){
       if(seg(x,y,-0.36,-0.15,0.04,0.78)<0.055 || seg(x,y,0.32,-0.25,0.04,0.78)<0.055) return 0x3a8a3a; return 0; }];
   const NB=36, TS=256, c=document.createElement('canvas'); c.width=TS*4; c.height=TS*2; const g=c.getContext('2d'), cell=TS/NB;
   const col=new T.Color(), w=new T.Color(0xffffff), css=cc=>'#'+cc.getHexString();
+  // every circle of one colour goes into one path, filled once at the end (in draw order: bodies,
+  // then highlights, then holes): ~31,000 separate fills was most of a cold build
+  const layers=[new Map(), new Map(), new Map()];
+  const dot=(L,cs,x,y,r)=>{ let p=layers[L].get(cs); if(!p) layers[L].set(cs, p=new Path2D()); p.moveTo(x+r,y); p.arc(x,y,r,0,Math.PI*2); };
   ART.forEach((fn,k)=>{ const ox=(k%4)*TS, oy=((k/4)|0)*TS, G=[];
     for(let j=0;j<NB;j++){ G.push([]); for(let i=0;i<NB;i++) G[j].push(fn((i+0.5)/NB*2-1, 1-(j+0.5)/NB*2)); }
     for(let j=0;j<NB;j++) for(let i=0;i<NB;i++){ const v=G[j][i]; if(!v) continue;
       const edge=!(G[j-1]&&G[j-1][i])||!(G[j+1]&&G[j+1][i])||!G[j][i-1]||!G[j][i+1];
       col.setHex(v); if(edge) col.multiplyScalar(0.62);
       const x=ox+(i+0.5)*cell, y=oy+(j+0.5)*cell;
-      g.fillStyle=css(col); g.beginPath(); g.arc(x,y,cell*0.56,0,Math.PI*2); g.fill();           // fused: the beads run together
-      g.fillStyle=css(col.clone().lerp(w,0.4)); g.beginPath(); g.arc(x-cell*0.17,y-cell*0.17,cell*0.15,0,Math.PI*2); g.fill();
-      g.fillStyle=css(col.clone().multiplyScalar(0.42)); g.beginPath(); g.arc(x,y,cell*0.16,0,Math.PI*2); g.fill(); } });
+      dot(0, css(col), x, y, cell*0.56);                                // fused: the beads run together
+      dot(1, css(col.clone().lerp(w,0.4)), x-cell*0.17, y-cell*0.17, cell*0.15);
+      dot(2, css(col.clone().multiplyScalar(0.42)), x, y, cell*0.16); } });
+  for(const L of layers) for(const [cs,p] of L){ g.fillStyle=cs; g.fill(p); }
   const t=new T.CanvasTexture(c); t.encoding=T.sRGBEncoding; t.anisotropy=Math.min(4, renderer.capabilities.getMaxAnisotropy());
   return (PERLA_ART_TEX=t); }
 // THE EASELS: a picture 120-240 tall on the ledge of a black A-frame easel leaning back a little,
