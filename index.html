@@ -70171,6 +70171,9 @@ function chalLoadGhost(ch){
   const g={n:ch.g.n, ty:ch.g.ty, c:ch.g.c, t:ch.g.t, hz:ch.g.hz, d:ch.gtext, samples:null};
   GH.loaded=g; ghostDecode(ch.gtext).then(s=>{ if(s && GH.loaded===g){ g.samples=s; chalPaint(); } else if(GH.loaded===g){ GH.loaded=null; ch.g=null; ch.gtext=null; chalPaint(); } });
 }
+// done with a solo race against a challenge's ghost: the challenge goes, and your own difficulty comes back.
+// Every way off the results except "again" (home, change racer, a new race, the cup) passes through here.
+function chalSoloEnd(){ if(!CHAL.solo) return; CHAL.solo=false; chalDrop(); if(CHAL._home){ difficulty=CHAL._home.diff; CHAL._home=null; } }
 function chalDrop(){ CHAL.live=null; CHAL._tok++; CHAL._wait=null; GH.loaded=null; SER=null; serAutoStop(); chalPaint(); }
 // the host runs the challenge's rules: its course (the series' first), its difficulty, its AI fill; the standings start empty
 function chalApplyRules(ch){
@@ -70230,6 +70233,7 @@ function chalGhostRace(){
   const ch=CHAL.live; if(!ch || !ch.g || !GH.loaded || !GH.loaded.samples) return;
   initAudio(); netLeave(true);
   const i=TRACKS.findIndex(x=>x.name===ch.g.c); if(i>=0) selTrack=i;
+  if(!CHAL._home) CHAL._home={diff:difficulty};   // the ghost race borrows the challenge's difficulty: given back after (chalSoloEnd)
   if(DIFF[ch.d]!=null) difficulty=ch.d;
   CHAL.solo=true;
   document.getElementById('mp').classList.add('hidden');
@@ -70522,7 +70526,7 @@ function endRace(){
       }
     } else bt.textContent='';
     // a solo race against a challenge's ghost: how you did against it, and Reply (once this run's pack is ready; see chalReply)
-    { const rb=$('replybtn'), solo=!!(CHAL.solo && CHAL.live && CHAL.live.g && me.finished && isFinite(me.finishT) && !me.spectator && !NET.on);
+    { const rb=$('replybtn'), solo=!!(CHAL.solo && CHAL.live && CHAL.live.g && CHAL.live.g.c===TRACKS[selTrack].name && me.finished && isFinite(me.finishT) && !me.spectator && !NET.on);
       rb.style.display=solo?'':'none'; rb.disabled=true;
       if(solo){ const g=CHAL.live.g, d=me.finishT-g.t;
         bt.textContent=(bt.textContent?bt.textContent+'  ':'')+'vs '+g.n+'’s ghost '+fmt(g.t)+(d<=0?' — you beat it by '+Math.abs(d).toFixed(1)+' s':' — '+d.toFixed(1)+' s behind');
@@ -70626,7 +70630,7 @@ function cupHomeShow(){
   CUP_SCREENS.forEach(k=>$(k).classList.add('hidden'));
   $('finish').classList.add('hidden'); $('select').classList.add('hidden'); $('cd').classList.add('hidden');
   cupStop(); state='menu'; ghostClear();
-  if(CHAL.solo){ CHAL.solo=false; chalDrop(); }   // (home after a solo race against a challenge's ghost: the challenge is done with)
+  chalSoloEnd();   // (home after a solo race against a challenge's ghost: the challenge is done with)
   $('start').classList.remove('hidden');
   if(cupDirty){ cupDirty=false; buildTrack(selTrack); buildRacers(); }
 }
@@ -72271,6 +72275,7 @@ $('startbtn').onclick = () => {
     }
   }catch(_){}
   if(NET.on) netLeave();             // a solo race must not inherit a stale room
+  chalSoloEnd();                     // ...nor the last challenge's ghost
   cupStop();
   $('start').classList.add('hidden');
   countdown();                       // straight in with the picks already on the deck
@@ -72285,8 +72290,8 @@ $('samemazebtn').onclick=()=>{ cupStop(); const last=mzLastOf(TRACKS[selTrack]);
   mzSeedNext={no:last.no, mode:last.mode};
   if(NET.on && NET.auth){ if(NET.host) netHostStart(); else mzSeedNext=null; return; }
   if(NET.on) netLeave(); countdown(); };
-$('changebtn').onclick=()=>{ cupStop(); if(NET.on) netLeave(); stopMusic(); state='menu'; showSelect(); };
-$('gpbtn').onclick=()=>{ initAudio(); cupOpen(); };
+$('changebtn').onclick=()=>{ chalSoloEnd(); cupStop(); if(NET.on) netLeave(); stopMusic(); state='menu'; showSelect(); };
+$('gpbtn').onclick=()=>{ initAudio(); chalSoloEnd(); cupOpen(); };
 $('nextgpbtn').onclick=()=>{ if(gpRun) cupPre(); };   // the next race of the cup: its card first
 $('mainbtn').onclick=()=>{ if(NET.on) netLeave(); stopMusic(); cupHomeShow(); };   // (a cup keeps its place: it is saved after every race)
 
