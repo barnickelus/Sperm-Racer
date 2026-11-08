@@ -66277,6 +66277,11 @@ function updateRacer(r,dt){
   // A remote human's kart is authored on their machine; here it is pure playback.
   if(r.remote){ netApplySnap(r,dt); return; }
   if(r.finished){                      // everyone coasts to a stop after finishing —
+    // the status timers only tick in the racing branch below, so a kart that crossed the line
+    // boosting, spun or mega kept that glow / spin / giant size for good: they run down here too
+    if(r.boostT>0) r.boostT=Math.max(0,r.boostT-dt); if(r.spinT>0) r.spinT=Math.max(0,r.spinT-dt);
+    if(r.megaT>0) r.megaT=Math.max(0,r.megaT-dt); if(r.glueT>0) r.glueT=Math.max(0,r.glueT-dt);
+    if(r.shieldT>0) r.shieldT=Math.max(0,r.shieldT-dt); if(r._roll>0) r._roll-=dt;
     if(MAZE){ mzCoast(r,dt); return; }   // (in the maze: a lazy orbit round the egg)
     r.spd*=Math.pow(0.1,dt);           // the player used to keep driving, which meant the
     r.x+=Math.sin(r.head)*r.spd*dt;    // victory camera was chasing a moving target and
@@ -70472,9 +70477,13 @@ function countdown(){
   };
   setTimeout(tick,750);
 }
+function racersSettle(){ for(const r of racers){ r.boostT=0; r.spinT=0; r.megaT=0; r.glueT=0; r.shieldT=0; r._roll=0; } }
 function endRace(){
   const wasUnlocked=!!localStorage.getItem('sr_gp_done'); let podUnlocked=false;
   state='done'; stopEngine(); unlockOrient(); stopMusic();
+  // nothing ticks the racers from here on: no boost glow, spin, giant kart or roulette is carried
+  // onto the results screen and the home window behind it
+  racersSettle();
   document.body.classList.remove('final-lap');   // stop the red pulse on the results screen
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   const me=racers.find(r=>r.you);
@@ -72287,6 +72296,7 @@ function quitToHome(){
   clearTimeout(quitTimer); quitArm=false;
   $('quitbtn').textContent='✕'; $('quitbtn').classList.remove('armed');
   state='menu'; if(NET.on) netLeave(); specEnd(); stopEngine(); stopMusic(); unlockOrient();
+  racersSettle();   // (the home window keeps these karts until the next race: no mega shake behind the menu)
   document.body.classList.remove('final-lap');
   $('throttle').style.display='none'; document.body.classList.remove('slider');
   cupHomeShow();   // finish / select / countdown hidden, the home screen up; a cup lets go of its racer, difficulty and course (its run is saved)
