@@ -51035,8 +51035,9 @@ function vicSky(){
           float ph=atan(dot(d,sy),dot(d,sx)), f=fract(ph/6.2831853*uRayN), fw=fwidth(f)+1e-4;
           float r=smoothstep(1.0-uDuty-fw,1.0-uDuty+fw,f)*(1.0-smoothstep(1.0-fw*2.0,1.0,f));
           r*=1.0-smoothstep(uRayR*0.7,uRayR,th); c=mix(c,uRayC,r*uRay*step(-0.03,el)); }
-        if(uBand>0.001){ float b=abs(dot(d,uBandN)), aa=fwidth(b)+1e-4; c=mix(c,uBandC,(1.0-smoothstep(0.055-aa,0.055+aa,b))*uBand*step(-0.02,el)); }
+        // the disc, and the avant-garde's black bar always across it (a lone red disc on a pale field is a nation's flag)
         if(uSunR>0.001){ float aa=fwidth(th)+1e-4; c=mix(c,uSunC,1.0-smoothstep(uSunR-aa,uSunR+aa,th)); }
+        if(uBand>0.001){ float b=abs(dot(d,uBandN)), aa=fwidth(b)+1e-4; c=mix(c,uBandC,(1.0-smoothstep(0.055-aa,0.055+aa,b))*uBand*step(-0.02,el)); }
         if(uMtn>0.001){ float da=mod(az-uMtnA+3.14159265,6.2831853)-3.14159265;
           float hg=max(max(0.0,0.17-abs(da)*0.55), max(max(0.0,0.10-abs(da-0.40)*0.6), max(0.0,0.085-abs(da+0.46)*0.5)));
           hg+=(h1(vec2(floor(az*120.0),3.0))-0.5)*0.004*step(0.002,hg);
@@ -51055,13 +51056,13 @@ function vicGrain(){ if(VIC_GRAIN) return VIC_GRAIN; const c=document.createElem
     for(const [dx,dy] of [[0,0],[128,0],[-128,0],[0,128],[0,-128]]){ g.beginPath(); g.ellipse(x+dx,y+dy,r*(1+R()*2),r,R()*3,0,7); g.fill(); } }
   return (VIC_GRAIN=c); }
 function vicGround(ccx, ccz){
-  const N=72, S=6400, g=new T.PlaneGeometry(S,S,N,N); g.rotateX(-Math.PI/2); g.translate(ccx, VIC_GY, ccz);
+  const N=52, S=6400, g=new T.PlaneGeometry(S,S,N,N); g.rotateX(-Math.PI/2); g.translate(ccx, VIC_GY, ccz);
   const pa=g.attributes.position, col=new Float32Array(pa.count*3);
   const GC=[VIC_P.HF.khaki, VIC_P.CO.cream, 0x3e3070, VIC_P.DA.ground, VIC_P.PM.tan].map(vicLin);
-  const sub=[]; for(let i=0;i<STEPS;i+=3) sub.push(SAMP[i]);
+  const sub=[]; for(let i=0;i<STEPS;i+=4) sub.push(SAMP[i]);
   for(let k=0;k<pa.count;k++){ const x=pa.getX(k), z=pa.getZ(k); let bi=0, bd=1e18;
     for(let j=0;j<sub.length;j++){ const p=sub[j].p, dx=p.x-x, dz=p.z-z, d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=j; } }
-    const c=GC[vicStageOf(bi*3)]; col[k*3]=c.r; col[k*3+1]=c.g; col[k*3+2]=c.b; }
+    const c=GC[vicStageOf(bi*4)]; col[k*3]=c.r; col[k*3+1]=c.g; col[k*3+2]=c.b; }
   g.setAttribute('color', new T.BufferAttribute(col,3));
   const tx=vicTex(vicGrain()); tx.repeat.set(S/70, S/70);
   trackGroup.add(new T.Mesh(g, new T.MeshBasicMaterial({vertexColors:true, map:tx}))); }
@@ -51177,6 +51178,9 @@ function vicBoard(B, CA, x, z, yaw, w, h, R, o){
     B.box(b.x, VIC_GY+1.4, b.z, 5,2.8,4, yaw, 0x9a8a62); } }
 // an extruded outline (a THREE.Shape), stood up facing yaw, placed by its local (0,0) at x,y,z
 function vicShapeGeo(sh, depth){ return new T.ExtrudeGeometry(sh, {depth, bevelEnabled:false, curveSegments:8}).toNonIndexed(); }
+// constant source geometry, made once a session: the batches only read it (it is never in the scene, so a rebuild never disposes it)
+const VIC_GC={};
+function vicGeoC(key, make){ return VIC_GC[key]||(VIC_GC[key]=make()); }
 function vicStand(B, geo, x, y, z, yaw, col, o){ o=o||{}; const M=new T.Matrix4().makeRotationY(yaw).setPosition(x,y,z);
   if(o.roll) M.multiply(new T.Matrix4().makeRotationZ(o.roll)); if(o.s) M.multiply(new T.Matrix4().makeScale(o.s,o.s,o.s));
   if(o.dz) M.multiply(new T.Matrix4().makeTranslation(0,0,o.dz));
@@ -51199,14 +51203,12 @@ function vicShed(B, x, z, yaw){
   for(const sd of [-1,1]) box(0, 13, sd*(D/2+0.35), 14, 18, 0.7, H.navy,'flat');
   // the sawtooth: four teeth, glazing to the north light, slopes in flag red
   const sh=new T.Shape(); sh.moveTo(0,0); sh.lineTo(0,12); sh.lineTo(D/4,0); sh.closePath();
-  const tg=vicShapeGeo(sh, W);
+  const tg=vicGeoC('saw', ()=>vicShapeGeo(sh, W));
   for(let k=0;k<4;k++){ const L=new T.Matrix4().makeTranslation(0,Hh,-D/2+k*D/4).multiply(new T.Matrix4().makeRotationY(-Math.PI/2)).multiply(new T.Matrix4().makeTranslation(0,0,-W/2));
     B.geo(tg, M.clone().multiply(L), k%2?H.red:H.redD); }
-  tg.dispose();
   // a stack in red and cream
-  const cg=new T.CylinderGeometry(4.5,5,1,12).toNonIndexed();
-  for(let k=0;k<6;k++){ const p=at(W*0.3, Hh+4+k*8, D*0.32); B.geo(cg, vicM(p.x,p.y,p.z, 1,8,1), k%2?H.cream:H.red); }
-  cg.dispose(); }
+  const cg=vicGeoC('stack', ()=>new T.CylinderGeometry(4.5,5,1,12).toNonIndexed());
+  for(let k=0;k<6;k++){ const p=at(W*0.3, Hh+4+k*8, D*0.32); B.geo(cg, vicM(p.x,p.y,p.z, 1,8,1), k%2?H.cream:H.red); } }
 function vicBunting(B, i){
   const H=VIC_P.HF, a=vicAt(i,-34,0), b=vicAt(i,55,0), cols=[H.red,H.cream,H.navy];
   for(const p of [a,b]){ B.box(p.x, (VIC_GY+p.y+50)/2, p.z, 1.8, p.y+50-VIC_GY, 1.8, 0, H.wood); B.box(p.x,p.y+50.5,p.z, 3.2,1.2,3.2, 0, H.navy); }
@@ -51228,13 +51230,12 @@ function vicHomeFront(P, B, CA, CB, inS, tun){
   for(const [key,w,h] of bb){ const c=vicPlace(P,0,w*0.6,{min:20, max:150, seen:true}); if(c) vicBoard(B, CA, c.x, c.z, c.face, w, h, VIC_RA[key], {lift:12}); }
   { const c=vicPlace(P,0,40,{min:14, max:90, seen:true}); if(c) vicBoard(B, CA, c.x, c.z, c.face, 64, 64, VIC_RA.arm, {lift:8, post:H.navy, frame:H.navy}); }
   // stars on masts, and a monumental V
-  const sg=vicShapeGeo(vicStarShape(13,5.4), 2.4), sg2=vicShapeGeo(vicStarShape(15.5,6.6), 2.4);
+  const sg=vicGeoC('star1', ()=>vicShapeGeo(vicStarShape(13,5.4), 2.4)), sg2=vicGeoC('star2', ()=>vicShapeGeo(vicStarShape(15.5,6.6), 2.4));
   for(let n=0;n<5;n++){ const c=vicPlace(P,0,16,{min:8, max:240}); if(!c) continue; const h=46+((n*17)%30);
     B.box(c.x, VIC_GY+h/2, c.z, 2.4, h, 2.4, 0, H.navy); vicStand(B, sg, c.x, VIC_GY+h+12, c.z, c.face, H.cream, {dz:0.6}); vicStand(B, sg2, c.x, VIC_GY+h+12, c.z, c.face, H.navy, {dz:-1.6}); }
-  sg.dispose(); sg2.dispose();
   { const c=vicPlace(P,0,40,{min:24, max:120, seen:true}); if(c){ const v=new T.Shape(); v.moveTo(-30,70); v.lineTo(-14,70); v.lineTo(0,24); v.lineTo(14,70); v.lineTo(30,70); v.lineTo(8,0); v.lineTo(-8,0); v.closePath();
-    const vg=vicShapeGeo(v,9); B.box(c.x, VIC_GY+5, c.z, 54, 10, 22, c.face, H.navy); vicStand(B, vg, c.x, VIC_GY+10, c.z, c.face, H.red, {dz:-4.5}); vg.dispose();
-    for(const sd of [-1,1]) vicStand(B, vicShapeGeo(vicStarShape(6,2.5),1.5), c.x+Math.cos(c.face)*sd*20, VIC_GY+5, c.z-Math.sin(c.face)*sd*20, c.face, H.cream, {dz:11.2}); } }
+    const vg=vicGeoC('vee', ()=>vicShapeGeo(v,9)); B.box(c.x, VIC_GY+5, c.z, 54, 10, 22, c.face, H.navy); vicStand(B, vg, c.x, VIC_GY+10, c.z, c.face, H.red, {dz:-4.5});
+    for(const sd of [-1,1]) vicStand(B, vicGeoC('star3', ()=>vicShapeGeo(vicStarShape(6,2.5),1.5)), c.x+Math.cos(c.face)*sd*20, VIC_GY+5, c.z-Math.sin(c.face)*sd*20, c.face, H.cream, {dz:11.2}); } }
 }
 
 /* ---- II: CONSTRUCTIVIST ---- */
@@ -51270,12 +51271,12 @@ function vicConstruct(P, B, CA, CB, inS, tun){
   for(let n=0;n<3;n++){ const c=vicPlace(P,1,26,{side:n===1?1:-1, min:20, max:120, seen:true, a:20}); if(c) vicMegaphone(P, B, c.x, c.z, c.face); }
   // wedges, discs and gears, giant, in the middle distance
   for(let n=0;n<3;n++){ const c=vicPlace(P,1,50,{min:60, max:320}); if(!c) continue; const sh=new T.Shape(); sh.moveTo(-34,0); sh.lineTo(34,0); sh.lineTo(-10+n*8,170+n*30); sh.closePath();
-    const g=vicShapeGeo(sh, 22); vicStand(B, g, c.x, VIC_GY, c.z, c.face+0.5, n%2?C.blk:C.red, {roll:-0.32+n*0.3, dz:-11}); g.dispose(); }
-  for(let n=0;n<2;n++){ const c=vicPlace(P,1,62,{min:60, max:260}); if(!c) continue; const R1=64-n*16, gb=new T.CylinderGeometry(R1,R1,5,40).toNonIndexed(), gr=new T.CylinderGeometry(R1*0.72,R1*0.72,5,40).toNonIndexed();
+    const g=vicGeoC('wedge'+n, ()=>vicShapeGeo(sh, 22)); vicStand(B, g, c.x, VIC_GY, c.z, c.face+0.5, n%2?C.blk:C.red, {roll:-0.32+n*0.3, dz:-11}); }
+  for(let n=0;n<2;n++){ const c=vicPlace(P,1,62,{min:60, max:260}); if(!c) continue; const R1=64-n*16, gb=vicGeoC('disc'+n, ()=>new T.CylinderGeometry(R1,R1,5,40).toNonIndexed()), gr=vicGeoC('discr'+n, ()=>new T.CylinderGeometry(R1*0.72,R1*0.72,5,40).toNonIndexed());
     const M=new T.Matrix4().makeRotationY(c.face).setPosition(c.x, VIC_GY+R1+4, c.z).multiply(new T.Matrix4().makeRotationX(Math.PI/2));
-    B.geo(gb, M, n?C.red:C.blk); B.geo(gr, M.clone().multiply(new T.Matrix4().makeTranslation(0,3.2,0)), n?C.cream:C.red); gb.dispose(); gr.dispose(); }
-  for(let n=0;n<4;n++){ const c=vicPlace(P,1,36,{min:30, max:240}); if(!c) continue; const Rg=24+n*6, g=vicShapeGeo(vicGearShape(Rg,10+n*2,6,Rg*0.3), 7);
-    vicStand(B, g, c.x, VIC_GY+Rg*0.72, c.z, c.face+0.3, n%2?C.red:C.blk, {dz:-3.5}); g.dispose(); }
+    B.geo(gb, M, n?C.red:C.blk); B.geo(gr, M.clone().multiply(new T.Matrix4().makeTranslation(0,3.2,0)), n?C.cream:C.red); }
+  for(let n=0;n<4;n++){ const c=vicPlace(P,1,36,{min:30, max:240}); if(!c) continue; const Rg=24+n*6, g=vicGeoC('gear'+n, ()=>vicShapeGeo(vicGearShape(Rg,10+n*2,6,Rg*0.3), 7));
+    vicStand(B, g, c.x, VIC_GY+Rg*0.72, c.z, c.face+0.3, n%2?C.red:C.blk, {dz:-3.5}); }
   // the photomontage hand and the tilted type
   { const c=vicPlace(P,1,60,{side:-1, min:10, max:70, seen:true}); if(c){ B.box(c.x,VIC_GY+38,c.z, 3,76,3, 0, C.blk); CA.card(c.x, VIC_GY+92, c.z, c.face, 110, 110, VIC_RA.hand, 0.18); } }
   { const c=vicPlace(P,1,64,{min:16, max:140, seen:true}); if(c) vicBoard(B, CA, c.x, c.z, c.face, 120, 60, VIC_RA.faster, {lift:16, roll:-0.16, post:C.blk, frame:C.blk}); }
@@ -51285,32 +51286,41 @@ function vicConstruct(P, B, CA, CB, inS, tun){
 // a monumental racer: plinth, the head raised to the light, a swim cap with a star, the tail curled round a banner pole
 // or lifting a book. Gouache: the warm stone where the dawn falls, a cool violet where it does not.
 function vicStatue(B, x, z, yaw, s, book){
-  const D=VIC_P.DA, M=new T.Matrix4().makeRotationY(yaw).setPosition(x,VIC_GY,z), lit=0xf8d6a4, sh=0xb87c80;
-  const W=(a,b,c)=>new T.Vector3(a*s,b*s,c*s).applyMatrix4(M);
-  const put=(geo, L, col, col2)=>{ B.geo(geo, M.clone().multiply(L), col, 'paint', col2); geo.dispose(); };
-  put(new T.BoxGeometry(36*s,22*s,36*s).toNonIndexed(), new T.Matrix4().makeTranslation(0,11*s,0), 0xe8c094, 0xa07078);
-  put(new T.BoxGeometry(40*s,4*s,40*s).toNonIndexed(), new T.Matrix4().makeTranslation(0,24*s,0), 0xdcae7c, 0x8e6070);
-  { const g=new T.BoxGeometry(37*s,7*s,0.6*s).toNonIndexed(); B.geo(g, M.clone().multiply(new T.Matrix4().makeTranslation(0,15*s,18.4*s)), D.red, 'flat'); g.dispose(); }
-  const head=new T.Matrix4().makeTranslation(0,52*s,2*s).multiply(new T.Matrix4().makeRotationX(-0.55));
-  put(new T.SphereGeometry(1,20,14).toNonIndexed(), head.clone().multiply(new T.Matrix4().makeScale(17*s,15*s,19*s)), lit, sh);
-  put(new T.SphereGeometry(1,16,8,0,Math.PI*2,0,Math.PI*0.5).toNonIndexed(), head.clone().multiply(new T.Matrix4().makeTranslation(0,3*s,-1*s)).multiply(new T.Matrix4().makeScale(17.6*s,13.5*s,19.6*s)), D.red, 0x7a2030);
-  { const g=new T.ExtrudeGeometry(vicStarShape(4*s,1.7*s),{depth:1.2*s,bevelEnabled:false}).toNonIndexed();
-    B.geo(g, head.clone().multiply(new T.Matrix4().makeTranslation(0,9*s,15.5*s)).multiply(new T.Matrix4().makeRotationX(-0.5)), D.gold, 'flat'); g.dispose(); }
-  for(const e of [-1,1]){ const g=new T.SphereGeometry(1,10,8).toNonIndexed();
-    B.geo(g, head.clone().multiply(new T.Matrix4().makeTranslation(e*6*s,2*s,15.6*s)).multiply(new T.Matrix4().makeScale(4.2*s,5*s,2.4*s)), 0xfff6e6, 'paint', 0xd8b8b0);
-    B.geo(g, head.clone().multiply(new T.Matrix4().makeTranslation(e*6*s,3.6*s,17.6*s)).multiply(new T.Matrix4().makeScale(2*s,2.4*s,1*s)), 0x3a2a3a, 'flat'); g.dispose();
-    const b=new T.BoxGeometry(6*s,1.4*s,1.4*s).toNonIndexed(); B.geo(b, head.clone().multiply(new T.Matrix4().makeTranslation(e*6*s,6.2*s,16.4*s)).multiply(new T.Matrix4().makeRotationZ(e*0.25)), 0x5a4050, 'flat'); b.dispose(); }
-  { const g=new T.TorusGeometry(5*s,0.9*s,5,10,Math.PI*0.8).toNonIndexed(); B.geo(g, head.clone().multiply(new T.Matrix4().makeTranslation(0,-5*s,15.2*s)).multiply(new T.Matrix4().makeRotationZ(Math.PI*1.1)), 0x5a3a3a, 'flat'); g.dispose(); }
-  // the tail: down off the back of the head, round, and up
-  const tip=book? new T.Vector3(16,78,8) : new T.Vector3(-20,40,10);
-  const pts=[new T.Vector3(0,44,-14), new T.Vector3(4,34,-22), new T.Vector3(16,28,-14), new T.Vector3(18,32,0), tip.clone().lerp(new T.Vector3(18,32,0),0.4), tip].map(p=>p.multiplyScalar(s));
-  const curve=new T.CatmullRomCurve3(pts);
-  for(let q=0;q<3;q++){ const a=q/3, b=(q+1)/3, seg=new T.CatmullRomCurve3([0,1,2,3,4].map(k=>curve.getPoint(a+(b-a)*k/4)));
-    put(new T.TubeGeometry(seg, 10, (6.5-q*1.8)*s, 8, false).toNonIndexed(), new T.Matrix4(), lit, sh); }
-  if(book){ for(const e of [-1,1]){ const g=new T.BoxGeometry(11*s,1.2*s,15*s).toNonIndexed(); B.geo(g, M.clone().multiply(new T.Matrix4().makeTranslation(tip.x*s+e*5.2*s,tip.y*s+3*s,tip.z*s)).multiply(new T.Matrix4().makeRotationZ(-e*0.35)), e<0?0xf6ead2:0xe8d8b8, 'step'); g.dispose(); }
-    const g=new T.BoxGeometry(2*s,2.4*s,15.4*s).toNonIndexed(); B.geo(g, M.clone().multiply(new T.Matrix4().makeTranslation(tip.x*s,tip.y*s+1.6*s,tip.z*s)), D.red,'flat'); g.dispose(); }
-  else { const a=W(tip.x,tip.y-16,tip.z), b=W(tip.x,tip.y+64,tip.z); B.beam(a,b,1.8,0x5a3a2a);
-    const t0=W(tip.x,tip.y+64,tip.z), t1=W(tip.x,tip.y+40,tip.z), f0=W(tip.x+1,tip.y+62,tip.z+30), f1=W(tip.x+1,tip.y+44,tip.z+26), f2=W(tip.x+1,tip.y+53,tip.z+16);
+  const D=VIC_P.DA, M=new T.Matrix4().makeRotationY(yaw).setPosition(x,VIC_GY,z), lit=0xf4bc68, sh=0x9c5e5c;   // gilded bronze in the dawn: gold lights, a warm plum shade
+  const put=(geo, L, col, col2, mode)=>{ const keep=!!geo.userData.vicKeep, g=geo.index?geo.toNonIndexed():geo; B.geo(g, M.clone().multiply(L), col, mode||'paint', col2); if(!keep){ g.dispose(); if(g!==geo) geo.dispose(); } };
+  const unit=(k,mk)=>vicGeoC(k, ()=>{ const g=mk().toNonIndexed(); g.userData.vicKeep=true; return g; }), BOX=unit('ubox',()=>new T.BoxGeometry(1,1,1)), SPH=unit('usph',()=>new T.SphereGeometry(1,22,16)), SPS=unit('usps',()=>new T.SphereGeometry(1,12,8));
+  const Bx=(w,h,d,L,col,col2,mode)=>put(BOX, L.clone().multiply(new T.Matrix4().makeScale(w,h,d)), col, col2, mode);
+  const Tm=(a,b,c)=>new T.Matrix4().makeTranslation(a*s,b*s,c*s);
+  // a stepped plinth with a red band on its face
+  Bx(44*s,8*s,44*s, Tm(0,4,0), 0xe2b88c, 0x8a5c66);
+  Bx(34*s,18*s,34*s, Tm(0,17,0), 0xecc69a, 0x9a6a72);
+  Bx(38*s,3*s,38*s, Tm(0,27.5,0), 0xdcae7c, 0x8e6070);
+  Bx(34.6*s,6*s,0.8*s, Tm(0,17,17.2), D.red, 0, 'flat');
+  // the head: round, raised to the light; everything on its face sits ON the surface, along its own direction
+  const R=17, H=29+R+2, head=Tm(0,H,0).multiply(new T.Matrix4().makeRotationX(-0.5)), on=(dx,dy,dz,r)=>{ const v=new T.Vector3(dx,dy,dz).normalize().multiplyScalar(r*s); return v; };
+  put(SPH, head.clone().multiply(new T.Matrix4().makeScale(R*s,R*s,R*s)), lit, sh);
+  { const cap=new T.SphereGeometry((R+0.9)*s,20,10,0,Math.PI*2,0,Math.PI*0.42); put(cap, head.clone().multiply(new T.Matrix4().makeRotationX(-0.55)), D.red, 0x7a1c26); }
+  { const v=on(0,0.72,0.69,R+1.2), g=new T.ExtrudeGeometry(vicStarShape(4.2*s,1.8*s),{depth:1*s,bevelEnabled:false});
+    put(g, head.clone().multiply(new T.Matrix4().makeTranslation(v.x,v.y,v.z)).multiply(new T.Matrix4().makeRotationX(-0.8)), 0xffe6a0, 0, 'flat'); }
+  for(const e of [-1,1]){ const v=on(e*0.36,0.14,0.92,R), q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1), v.clone().normalize());
+    const L=new T.Matrix4().compose(v, q, new T.Vector3(4.8*s,5.8*s,2.2*s)); put(SPS, head.clone().multiply(L), 0xfff4e0, 0xd8b090);
+    const v2=on(e*0.33,0.24,0.92,R+1.6), L2=new T.Matrix4().compose(v2, q, new T.Vector3(2.3*s,2.8*s,1.2*s)); put(SPS, head.clone().multiply(L2), 0x3a2430, 0, 'flat');
+    const v3=on(e*0.37,0.43,0.83,R+0.6), L3=new T.Matrix4().compose(v3, q.clone().multiply(new T.Quaternion().setFromAxisAngle(new T.Vector3(0,0,1), -e*0.32)), new T.Vector3(8.5*s,2*s,2.4*s));
+    put(BOX, head.clone().multiply(L3), 0x6a3a2a, 0, 'flat'); }
+  { const v=on(0,-0.36,0.93,R-0.2), q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1), v.clone().normalize());
+    const L=new T.Matrix4().compose(v, q, new T.Vector3(1,1,1)).multiply(new T.Matrix4().makeRotationZ(Math.PI*1.12));
+    put(new T.TorusGeometry(6.5*s,1.3*s,6,12,Math.PI*0.76), head.clone().multiply(L), 0x5a2a2a, 0, 'flat'); }
+  // the tail: off the back of the head, down round the plinth's top and up in an S to what it carries; tapered as a racer's is
+  const tip=book? new T.Vector3(12,H+34,16) : new T.Vector3(24,H+30,4);
+  const pts=[new T.Vector3(0,H-4,-R*0.8), new T.Vector3(-6,33,-R*1.5), new T.Vector3(10,32,-R*1.4), new T.Vector3(22,40,-10), new T.Vector3(26,H+6,-2), tip].map(p=>p.multiplyScalar(s));
+  { const curve=new T.CatmullRomCurve3(pts), TS=40, RS=10, g=new T.TubeGeometry(curve, TS, 1, RS, false), pa=g.attributes.position, c=new T.Vector3(), v=new T.Vector3();
+    for(let k=0;k<pa.count;k++){ const ring=Math.floor(k/(RS+1)), t=ring/TS, r=(8.5*(1-t)+2.2)*s; curve.getPointAt(Math.min(1,t), c); v.fromBufferAttribute(pa,k).sub(c).multiplyScalar(r).add(c); pa.setXYZ(k,v.x,v.y,v.z); }
+    put(g, new T.Matrix4(), lit, sh); }
+  const W=(p,dx,dy,dz)=>new T.Vector3(p.x+dx*s,p.y+dy*s,p.z+dz*s).applyMatrix4(M), tp=tip.clone().multiplyScalar(1/s);
+  if(book){ for(const e of [-1,1]) Bx(12*s,1.4*s,16*s, Tm(tp.x+e*5.6,tp.y+4,tp.z).multiply(new T.Matrix4().makeRotationZ(-e*0.38)), e<0?0xfff2dc:0xf0dcc0, 0xc8a890);
+    Bx(2.2*s,2.6*s,16.4*s, Tm(tp.x,tp.y+2.4,tp.z), D.red, 0, 'flat'); }
+  else { B.beam(W(tp,0,-26,0), W(tp,0,52,0), 2*s, 0x5a3a2a);
+    const t0=W(tp,0,52,0), t1=W(tp,0,26,0), f0=W(tp,0,49,34), f1=W(tp,0,30,30), f2=W(tp,0,40,18);
     B.tri(t0,f0,f2,D.red,1); B.tri(t0,f2,t1,D.red,0.86); B.tri(t1,f2,f1,D.redD,1); } }
 function vicFlag(P, B, inS){
   const [i0,i1]=vicRange(3); let bi=i0+40, bc=-1;
@@ -51364,7 +51374,7 @@ function vicDawn(P, B, CA, CB, inS, tun){
     if(j%8===0){ B.box(a.x,a.y+7,a.z, 0.6,14,0.6, ry, 0x5a3a2a); const t=a.clone().setY(a.y+14), f=vicFrame(j);
       B.tri(t, t.clone().setY(t.y-6), t.clone().addScaledVector(f.F,-8).setY(t.y-3), D.red, 1); } }, tun);
   vicFlag(P, B, inS);
-  for(let n=0;n<4;n++){ const c=vicPlace(P,3,34,{side:n===2?1:-1, min:16, max:110, seen:true, a:24}); if(c) vicStatue(B, c.x, c.z, c.face+(n%2?0.5:-0.5), 1.25+0.2*(n%2), n%2===1); }
+  for(let n=0;n<4;n++){ const c=vicPlace(P,3,34,{side:n===2?1:-1, min:16, max:110, seen:true, a:24}); if(c){ vicStatue(B, c.x, c.z, c.face+(n%2?0.3:-0.3), 1.3+0.18*(n%2), n%2===1); (P.statues=P.statues||[]).push(c); } }
   // the parade's massed banners on the fields
   for(let n=0;n<2;n++){ const c=vicPlace(P,3,60,{min:50, max:260}); if(!c) continue;
     for(let r=0;r<2;r++) for(let q=0;q<5;q++){ const ox=(q-2)*20, oz=r*22-11, x=c.x+Math.cos(c.face)*ox+Math.sin(c.face)*oz, z=c.z-Math.sin(c.face)*ox+Math.cos(c.face)*oz, h=34+((q+r)%3)*6;
@@ -51397,12 +51407,11 @@ function vicPublic(P, B, CA, CH, inS, tun){
     const b=vicAt(j+3,w,0); if(vicStageOf(j+3)===4) str(a.clone().setY(a.y+7), b.clone().setY(b.y+7));
     if((n++)%4===0) str(a.clone().setY(a.y+7), P.tips[n%5]); });
   // the puppets: racers on strings, dangling over the field
-  const pg=vicShapeGeo(vicSpermShape(7), 1.6);
+  const pg=vicGeoC('puppet', ()=>vicShapeGeo(vicSpermShape(7), 1.6));
   for(let k=0;k<10;k++){ const c=vicPlace(P,4,20,{min:10, max:220, a:10, b:20}); if(!c) continue; const s=1.1+R()*0.9, y=VIC_GY+30*s+6+R()*8, roll=(R()-0.5)*0.5;
     vicStand(B, pg, c.x, y, c.z, c.face, k%3?M.brn:M.brnD, {s, roll});
     const head=new T.Vector3(c.x, y+6*s, c.z), tail=new T.Vector3(c.x+Math.cos(c.face)*Math.sin(roll)*20*s, y-24*s, c.z-Math.sin(c.face)*Math.sin(roll)*20*s);
     str(head, P.tips[k%5]); str(tail, P.tips[(k+2)%5]); }
-  pg.dispose();
   { const c=vicPlace(P,4,70,{min:20, max:150, seen:true, b:40}); if(c) vicBoard(B, CA, c.x, c.z, c.face, 124, 62, VIC_RA.awaits, {lift:14, post:M.ink, frame:M.ink}); }
 }
 
