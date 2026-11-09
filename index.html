@@ -18902,7 +18902,9 @@ SONG_ENGINE.songs.continuity=(function(){
 
   /* THE PLANNER. env.vic is this station's memory: the set it is playing (arr), the one before (prev), the half-bar
      it changed on (since), whether it changed ahead of the listener (antic), a cut it has rolled a fill toward (pend),
-     and how long the listener's set was when they entered it (len0, for the builds). */
+     and how long the listener's set was when they entered it (len0, for the builds). A prediction that failed (a
+     fill that led nowhere, an early change taken back) blocks the next one for that cut until the listener is really
+     getting closer (block), so a racer spinning on the line does not set the band rocking between two sets. */
   function plan(n,R,env){
     const lite=!!(env && env.lite), L=VIC_LISTEN, sd=(env && env.sd) || 60/132/4, H=8*sd, barT=env && env.barT!=null ? env.barT : 0;
     let st=env.vic;
@@ -18912,6 +18914,8 @@ SONG_ENGINE.songs.continuity=(function(){
     if(cur!==st.seen){ st.seen=cur; st.len0=fin(L.toCut)?L.toCut:0; }
     else if(fin(L.toCut) && L.toCut>st.len0) st.len0=L.toCut;
     if(cur===st.arr) st.antic=false;
+    if(st.block && (st.block.set!==cur || (fin(L.toCut) && L.toCut<st.block.toCut-30))) st.block=null;
+    const blockHere=()=>{ st.block={set:cur, toCut:fin(L.toCut) ? L.toCut : 0}; };
     const nxt=setOf(L.next, SETS[(SETS.indexOf(cur)+1)%SETS.length]);
     const tCut=(fin(L.toCut) && L.toCut>=0 && fin(L.speed) && L.speed>2) ? L.toCut/L.speed : Infinity;
     const tc=tCut-((env && env.ahead!=null) ? env.ahead : 0.3);              // from this downbeat to the cut, if nothing changes
@@ -18923,13 +18927,15 @@ SONG_ENGINE.songs.continuity=(function(){
       if(p.intro) at0={to:st.arr, pre:true};
       else if(cur===p.to) at0={to:p.to, pre:true};                                            // crossed on time
       else if(cur===p.from && nxt===p.to && tc<0.55*H) at0={to:p.to, pre:true, antic:true};   // the cut is right on this bar line
+      else if(!(fin(tc) && tc<1.45*H)) blockHere();                                           // not even in this bar now: the fill was only a fill
+                                                                                              // (a little late, it changes on beat 3 instead, below)
     }
     if(!at0 && cur!==st.arr){
-      const waiting=st.antic && cur===st.prev && nxt===st.arr && hb-st.since<6;   // the music went ahead; the cut is still coming
-      if(!waiting) at0={to:cur};
+      const waiting=st.antic && cur===st.prev && nxt===st.arr && hb-st.since<4;   // the music went ahead; the cut is still coming
+      if(!waiting){ if(st.antic && cur===st.prev) blockHere(); at0={to:cur}; }               // the cut never came: back
     }
     const a0=at0 ? at0.to : st.arr, since0=at0 ? hb : st.since;
-    if(a0===cur && nxt!==cur && fin(tc) && loc.pos>=0){
+    if(a0===cur && nxt!==cur && fin(tc) && loc.pos>=0 && !st.block){
       if(tc<0.45*H){ if(!at0 && hb-st.since>=2) at0={to:nxt, antic:true}; }
       else if(tc<1.45*H){ if(hb+1-since0>=2) at8={to:nxt, pre:true, antic:true}; }
       else if(tc<2.45*H){ if(hb+2-since0>=2) preN={n:n+1, to:nxt, from:cur}; }
