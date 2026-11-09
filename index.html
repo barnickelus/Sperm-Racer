@@ -4041,8 +4041,27 @@ function dialOf(id){
 }
 function effectiveStyleId(id){
   const cs=onCourseSong && courseStyleId(); if(cs) return cs;
+  return racerStyleId(id);
+}
+// a racer's own station: where they are tuned on their dial (home or an alt), never the course record
+function racerStyleId(id){
   const alts=altsFor(id), idx=altIndex[id]||0;
   return (alts.length && idx>0 && alts[idx-1]) ? alts[idx-1] : id;
+}
+/* WHOSE SONG. The race plays the course (its record, or your station where it has none); the
+   moments that are about a racer play theirs: YOUR station from the moment you cross the line,
+   through the victory orbit, and the WINNER's station on the results (every screen of an online
+   race ranks alike, so the whole room hears the winner's song). songFor overrides the race's
+   own choice until the next race or the menus; the dial clears it. */
+let songFor=null;
+function homeStyleOf(r){
+  if(r.you && chosenType) return racerStyleId(chosenType.id);   // yours as you tuned it
+  const id=r.id; return MUSIC_STYLES[id] ? id : (SR_BASE[id] && MUSIC_STYLES[SR_BASE[id]] ? SR_BASE[id] : null);
+}
+function switchSong(styleId){
+  if(!styleId || !MUSIC_STYLES[styleId]) return;
+  songFor=styleId; if(!musicOn || !actx) return;
+  stopMusic(); startMusic();   // (a produced record picks up on its next bar, back at normal tempo)
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
@@ -4063,7 +4082,7 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   }
   ensureMusicFx();
   const tk=TRACKS[selTrack]||{}; musicRoot=tk.key||0;     // per-track key
-  const styleId=effectiveStyleId(chosenType&&chosenType.id);
+  const styleId=songFor || effectiveStyleId(chosenType&&chosenType.id);
   /* COURSE SONG, CHARACTER ARRANGEMENT.
      A course can carry its own tune (`song:{mel,melB,bass}`). When it does, every racer
      plays THAT tune — but through their own arrangement, so the same melody arrives as
@@ -66678,6 +66697,7 @@ function placeFinish(r){
       finishPunchT=1.2;                          // camera zoom-punch, bigger than a boost kick
       r.celebT=6;                                // celebration pose: grin, bounce, spinning star eyes
       showBanner(trackLoop ? ord(r.place)+'!' : 'Fertilized!'); kickShake(1.3); SFX.finish(); stopEngine(); buzz(HAPTIC.finish);
+      if(!r.spectator) switchSong(homeStyleOf(r));   // the hero shot is yours: so is the song (see WHOSE SONG)
       flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
       playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
@@ -68698,6 +68718,9 @@ function hzDraw(){
 }
 function frame(now){
   const _f0=performance.now();
+  // the race's music (its course, your finish, the winner's results) plays in a race and on its results only:
+  // the menus are reached by many doors (home, the cup's screens, change racer...), and they have their own record
+  if(state==='menu'){ if(musicTimer) stopMusic(); songFor=null; }
   if(SEL3D.vis){ last=now; SEL3D.frame(now); diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
   const dt=Math.min(0.033,(now-last)/1000); last=now;
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
@@ -70486,7 +70509,7 @@ function countdown(){
 function racersSettle(){ for(const r of racers){ r.boostT=0; r.spinT=0; r.megaT=0; r.glueT=0; r.shieldT=0; r._roll=0; } }
 function endRace(){
   const wasUnlocked=!!localStorage.getItem('sr_gp_done'); let podUnlocked=false;
-  state='done'; stopEngine(); unlockOrient(); stopMusic();
+  state='done'; stopEngine(); unlockOrient();   // (the music plays on: the winner's song, below)
   // nothing ticks the racers from here on: no boost glow, spin, giant kart or roulette is carried
   // onto the results screen and the home window behind it
   racersSettle();
@@ -70495,7 +70518,9 @@ function endRace(){
   const me=racers.find(r=>r.you);
   ghostFinish(me);   // this run's ghost (and your best on the course, if it is)
   document.body.classList.remove('spectating');   // (a spectator's strip comes down with the results; see SPEC)
-  const ranked=racers.filter(r=>!r.spectator).sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));   // (a dead heat — six gates make mirror-image runs — in the same order on every screen; a spectator's kart is not on the board)
+  const ranked=racers.filter(r=>!r.spectator).sort((a,b)=>a.finishT-b.finishT || (a.nk||0)-(b.nk||0));
+  { const w=ranked[0] && homeStyleOf(ranked[0]);   // the results play the winner's song (yours, if you won: it is already on)
+    if(w && (songFor!==w || !musicTimer)) switchSong(w); }   // (a dead heat — six gates make mirror-image runs — in the same order on every screen; a spectator's kart is not on the board)
   const bd=$('board'); bd.innerHTML='';
   const normalBtns=v=>{ $('againbtn').style.display=v; $('changebtn').style.display=v; $('gpbtn').style.display=v; };
   $('besttime').textContent='';   // cleared each finish; only the single-race branch repopulates it
@@ -70889,6 +70914,7 @@ function setupSelect(keepPick){
 const _origCountdown = countdown;
 countdown = function(){
   if(state==='count') return;   // double-tap on Lock in: one build, one tick chain
+  stopMusic(); songFor=null;    // the last race's results song ends; this race starts on its own (see WHOSE SONG)
   MENU_MUSIC.leave();           // the menus' record fades out before the course is built (see MENU_MUSIC)
   SEL3D.drop();   // the select stage's models go before the track and the grid are built
   initAudio();
@@ -72154,7 +72180,7 @@ setupFullscreen();
   setBtn(b,'Music',musicOn?'ON':'OFF',musicOn);
   b.onclick=()=>{ musicOn=!musicOn; setBtn(b,'Music',musicOn?'ON':'OFF',musicOn);
     try{ localStorage.setItem('sr_music',musicOn?'1':'0'); }catch(_){}
-    if(!musicOn) stopMusic(); else if(state==='race') startMusic();
+    if(!musicOn) stopMusic(); else if(state==='race'||state==='done') startMusic();
     MENU_MUSIC.sync(0.3); }; })();      // and the menus' record (see MENU_MUSIC)
 // which station a race starts on: its course's own record where it has one, or always the racer's
 (function setupSoundtrack(){ const b=$('sndbtn'); if(!b)return;
@@ -72214,6 +72240,7 @@ function seekStation(dir){
   const id=chosenType&&chosenType.id; const d=dialOf(id), n=d.n; if(n<2)return;
   const i=((d.i+dir)%n+n)%n;   // wraps both directions: (course record <->) home <-> alt1 <-> alt2 <-> ...
   if(d.cs){ onCourseSong=i===0; if(i>0) altIndex[id]=i-1; } else altIndex[id]=i;
+  songFor=null;   // the dial is the player choosing: it wins over the finish / winner's song
   noiseBurst(0.18,0.22,3000); setTimeout(()=>noiseBurst(0.1,0.15,5200),90);   // radio-seek static
   const b=$(dir>0?'radioNext':'radioPrev');
   b.classList.add('tuning'); setTimeout(()=>b.classList.remove('tuning'),350);
