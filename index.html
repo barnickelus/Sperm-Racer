@@ -4058,10 +4058,25 @@ function homeStyleOf(r){
   if(r.you && chosenType) return racerStyleId(chosenType.id);   // yours as you tuned it
   const id=r.id; return MUSIC_STYLES[id] ? id : (SR_BASE[id] && MUSIC_STYLES[SR_BASE[id]] ? SR_BASE[id] : null);
 }
-function switchSong(styleId){
+function switchSong(styleId, bar){
   if(!styleId || !MUSIC_STYLES[styleId]) return;
   songFor=styleId; if(!musicOn || !actx) return;
-  stopMusic(); startMusic();   // (a produced record picks up on its next bar, back at normal tempo)
+  songBar=bar==null?null:bar;
+  stopMusic(); startMusic();   // (a produced record picks up on its next bar, back at normal tempo, or at `bar`)
+  songBar=null;
+}
+let songBar=null;   // a produced record's starting bar for the next startMusic (switchSong only)
+/* FINAL-LAP SONGS. A racer can claim the last lap: from the "Final Lap" banner their own record
+   plays, cued to the bar that makes the lap its climax. Only for the player, and only when they
+   are tuned to that record (an alt station they chose stays as it is).
+   Guido Tony: "Gold Chain Tarantella" from bar 58, the last two bars of the breakdown (the riser
+   and a beat of dead air), so Chorus 2 slams in ~4 s into the lap, then the key-change chorus
+   carries the rest of it (16 bars, ~30 s at the final stretch's tempo); his fist pumps both. */
+const FINAL_LAP_SONG={guido:{style:'guido', bar:58}};
+function finalLapSong(me){
+  const f=me && !me.spectator && chosenType && FINAL_LAP_SONG[chosenType.id]; if(!f) return;
+  if(homeStyleOf(me)!==f.style) return;
+  switchSong(f.style, f.bar);
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
@@ -4169,7 +4184,7 @@ function startProducedStation(tk){
   h.setKey(curStyle.course ? 0 : (k>6?k-12:k));    // a course record is already in its course's key
   const fresh=state!=='race' || performance.now()-tStart<2000;
   if(fresh) producedResume={};
-  h.start({bar:fresh?0:(producedResume[id]||0)});
+  h.start({bar:songBar!=null ? songBar : fresh?0:(producedResume[id]||0)});
   curStyle.courseSong=curStyle.songName||null;     // what the course asked for (deferred, see above)
   curStyle.songName=song.title;
   musicTimer=h.timer;                               // the engine's scheduler: truthy while it plays
@@ -68640,8 +68655,8 @@ function syncHUD(){
   } else { elDM.style.opacity=0; }
 
   // final-lap banner (once) — fires at the start of the final lap, as before
-  if(trackLoop && me.lap===lapsOf()-1 && !me._fl){ me._fl=true; showBanner('Final Lap','b-red'); SFX.finalLap(); rampFinalLap(); }
-  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!','b-red'); SFX.finalLap(); rampFinalLap(); }
+  if(trackLoop && me.lap===lapsOf()-1 && !me._fl){ me._fl=true; showBanner('Final Lap','b-red'); SFX.finalLap(); finalLapSong(me); rampFinalLap(); }
+  if(!trackLoop && me.prog>0.8 && !me._fl){ me._fl=true; showBanner('The Egg!','b-red'); SFX.finalLap(); finalLapSong(me); rampFinalLap(); }
   // music tempo bump (once, separately) — only once HALF a lap remains (prog>=0.5 into the
   // final lap), not from the moment the final lap starts; point-to-point tracks get an
   // analogous later trigger (prog>=0.9, roughly the last tenth of the run after the 0.8 banner)
