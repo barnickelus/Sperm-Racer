@@ -18406,24 +18406,25 @@ SONG_ENGINE.songs.continuity=(function(){
     const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); }
       if(p.spr){ const s=G(p.spr); node.connect(s); s.connect(c.thrS); } };
     const curve=(k)=>{ const n=2048, c=new Float32Array(n), d=Math.tanh(k); for(let i=0;i<n;i++){ const x=i/(n-1)*2-1; c[i]=Math.tanh(x*k)/d; } return c; };
-    const W={
-      glot:pw(Array.from({length:40},(_,i)=>Math.pow(i+1,-1.3))),                          // a voice's pulse
-      clar:pw(Array.from({length:18},(_,i)=>{ const k=i+1; return k%2 ? 1/k : 0.05/k; })),   // odd partials: a clarinet's hollow low register
-      farf:pw(Array.from({length:22},(_,i)=>{ const k=i+1; return k%2 ? 1/k : 0.45/k; })),   // a combo organ's bright tab
-      harm:pw([1,0.75,0.55,0.3,0.32,0.12,0.15,0.05,0.06]),                                    // a reed in a comb
-      ther:pw([1,0.1,0.04,0.015]),                                                            // nearly a sine: a theremin, a flute
-      dark:pw([1,0.5,0.3,0.12,0.09,0.04,0.03]),                                                // the drone's reed, stopped down
-      pno:string(1/9,1.0,28), banjo:string(0.07,0.8,30), ub:string(0.22,1.5,14), harp:string(0.3,1.6,10)};
+    // the timbres, each made the first time a set asks for it (the home front's band needs none), not all at the start
+    const W={}, wave=(k,f)=>Object.defineProperty(W,k,{configurable:true, get(){ const v=f(); Object.defineProperty(W,k,{value:v}); return v; }});
+    wave('glot',()=>pw(Array.from({length:40},(_,i)=>Math.pow(i+1,-1.3))));                        // a voice's pulse
+    wave('clar',()=>pw(Array.from({length:18},(_,i)=>{ const k=i+1; return k%2 ? 1/k : 0.05/k; }))); // odd partials: a clarinet's hollow low register
+    wave('farf',()=>pw(Array.from({length:22},(_,i)=>{ const k=i+1; return k%2 ? 1/k : 0.45/k; }))); // a combo organ's bright tab
+    wave('harm',()=>pw([1,0.75,0.55,0.3,0.32,0.12,0.15,0.05,0.06]));                                // a reed in a comb
+    wave('ther',()=>pw([1,0.1,0.04,0.015]));                                                        // nearly a sine: a theremin, a flute
+    wave('pno',()=>string(1/9,1.0,28)); wave('banjo',()=>string(0.07,0.8,30)); wave('ub',()=>string(0.22,1.5,14)); wave('harp',()=>string(0.3,1.6,10));
     /* THE STAGE. A film lot's sound stage, big and a little dead in the low end: early reflections off the floor and the
        flats, then a long tail whose top dies first. It takes the spring tank's place on every channel's spring send, and
        each set opens or closes it (the 'room' event: a cave for the mine, the sky for space, a dry machine shop). */
     const hallIR=(sec)=>{ const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), R=SONG_ENGINE.rngOf(1936);
       for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
         for(let k=0;k<16;k++){ const tt=0.009+k*0.0061+R()*0.004, i=Math.floor(tt*sr*(ch?1.05:0.96)); if(i<len) d[i]+=(R()<0.5?-1:1)*0.55*Math.exp(-tt/0.07); }
-        let y=0, lo=0, e=0;
-        for(let i=0;i<len;i++){ const tt=i/sr, fc=700+5800*Math.exp(-tt*1.6), al=1-Math.exp(-2*Math.PI*fc/sr);
+        let y=0, lo=0, e=0, dk=1, on=1, al=0;
+        const kD=Math.exp(-6.9/(sec*sr)), kO=Math.exp(-1/(0.02*sr));                             // the tail's decay, the onset's swell
+        for(let i=0;i<len;i++){ if((i&63)===0){ const fc=700+5800*Math.exp(-i/sr*1.6); al=1-Math.exp(-2*Math.PI*fc/sr); }   // its top closing, every 64 samples
           y+=al*((R()*2-1)-y); lo+=0.01*(y-lo);
-          d[i]+=(y-lo*0.6)*0.42*Math.exp(-6.9*tt/sec)*(1-Math.exp(-tt/0.02)); }
+          d[i]+=(y-lo*0.6)*0.42*dk*(1-on); dk*=kD; on*=kO; }
         for(let i=0;i<len;i++) e+=d[i]*d[i];
         const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k; }
       return buf; };
@@ -18452,7 +18453,7 @@ SONG_ENGINE.songs.continuity=(function(){
     const mkDrone=(w,lpF,q)=>{ const g=G(0), lp=F('lowpass',lpF,q||0.7), os=[0,1].map(i=>{ const o=ctx.createOscillator();
         if(typeof w==='string') o.type=w; else o.setPeriodicWave(w); o.frequency.value=98*(i?1.5:1); o.detune.value=i?3:-3; o.connect(lp); o.start(); bus.lfos.push(o); return o; });
       lp.connect(g); g.connect(C.pad.in); bus.autos.push([g.gain,0]); return {g,lp,os}; };
-    const DR={D:mkDrone(W.dark,520), S:mkDrone('sawtooth',4200,0.5)};
+    const DR={D:mkDrone('sawtooth',520), S:mkDrone('sawtooth',4200,0.5)};
     { const pk=F('peaking',2400,3); pk.gain.value=9; DR.S.lp.disconnect(); DR.S.lp.connect(pk); pk.connect(DR.S.g);
       const l=ctx.createOscillator(), lg=G(900); l.frequency.value=0.17; l.connect(lg); lg.connect(pk.frequency); l.start(); bus.lfos.push(l); }
     // shared filters: a fixed filter is the same for one hit or a hundred, so each family of hits gets one
