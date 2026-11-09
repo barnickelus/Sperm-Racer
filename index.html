@@ -4058,25 +4058,41 @@ function homeStyleOf(r){
   if(r.you && chosenType) return racerStyleId(chosenType.id);   // yours as you tuned it
   const id=r.id; return MUSIC_STYLES[id] ? id : (SR_BASE[id] && MUSIC_STYLES[SR_BASE[id]] ? SR_BASE[id] : null);
 }
-function switchSong(styleId, bar){
+function switchSong(styleId, bar, lift){
   if(!styleId || !MUSIC_STYLES[styleId]) return;
   songFor=styleId; if(!musicOn || !actx) return;
-  songBar=bar==null?null:bar;
+  songBar=bar==null?null:bar; songLift=!!lift;
   stopMusic(); startMusic();   // (a produced record picks up on its next bar, back at normal tempo, or at `bar`)
-  songBar=null;
+  songBar=null; songLift=false;
 }
-let songBar=null;   // a produced record's starting bar for the next startMusic (switchSong only)
-/* FINAL-LAP SONGS. A racer can claim the last lap: from the "Final Lap" banner their own record
-   plays, cued to the bar that makes the lap its climax. Only for the player, and only when they
-   are tuned to that record (an alt station they chose stays as it is).
-   Guido Tony: "Gold Chain Tarantella" from bar 58, the last two bars of the breakdown (the riser
-   and a beat of dead air), so Chorus 2 slams in ~4 s into the lap, then the key-change chorus
-   carries the rest of it (16 bars, ~30 s at the final stretch's tempo); his fist pumps both. */
-const FINAL_LAP_SONG={guido:{style:'guido', bar:58}};
+let songBar=null;     // a produced record's starting bar for the next startMusic (switchSong only)
+let songLift=false;   // a grid station starts on its lift (the A strain a fourth up, see SONG FORM) instead of the top
+/* FINAL-LAP SONGS. The last lap is the player's: from the "Final Lap" banner their own station
+   plays (as they have it tuned), cued so the lap is its climax. A produced record starts at its
+   FINAL_LAP_CUE bar: as a rule the last bar or two of the build before its biggest closing chorus,
+   so the lap opens on a riser or a fill and the drop lands a few seconds in, and the last chorus
+   (often a key change up) carries the rest. A record with no cue here (an alt) picks up where it
+   left off; a grid station starts on its lift, the A strain a fourth up.
+     Guido Tony 58: the breakdown's riser and its beat of dead air, then Chorus 2 and the
+       key-change chorus (his fist pumps both). Tony Dragone 62: the same, in the lair.
+     King 69 / 64-Bit Darius 69: "Build (back up to speed)" into the "Victory lap".
+     Nerd 70: two bars of Recursion into his record's own "Final Lap (in E)".
+     Sheikh 58: "The Stoop", the falcon's dive, into Theme B lifted.
+     Desi 64: the slow-mo reprise into the final chorus up a tone.
+     the rest: the build / hold fast / key change / riser bars named in each record's FORM. */
+const FINAL_LAP_CUE={guido:58, dragoTony:62, king:69, kingVox:69, nerd:70, sheikh:58, desi:64,
+  irish:60, fighter:60, mosaic:60,                          // Build → Top end (in E)
+  latin:54, dough:54, beadJuan:54,                          // the solo's last bars → Moña → Coro final
+  juan:74, hillbilly:75, felt:38, viking:86,                // Subida / key change → the top end, up a step
+  chad:74, wall:70, korean:78, parkExec:78, rick:58, wire:66, french:56,
+  sailor:70, voxel:70, beadBosun:70, beadSalty:48,          // Hold fast → Last chorus, then up a tone
+  cholo:36, bead:36, beadBandido:36,                        // Hit the switches → the drop
+  paint:38, paper:54, rasta:31, samurai:54, ukiyo:54, ryuKenji:54, rastaDragon:50, aviator:58, punk:111};
 function finalLapSong(me){
-  const f=me && !me.spectator && chosenType && FINAL_LAP_SONG[chosenType.id]; if(!f) return;
-  if(homeStyleOf(me)!==f.style) return;
-  switchSong(f.style, f.bar);
+  if(!me || me.spectator || !chosenType) return;
+  const s=homeStyleOf(me), st=s && MUSIC_STYLES[s]; if(!st) return;
+  if(st.engine) switchSong(s, FINAL_LAP_CUE[s]);
+  else switchSong(s, null, true);
 }
 function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   // 0.5 — gameplay SFX (beep/noiseBurst/engine) connect straight to masterGain at full
@@ -4152,6 +4168,8 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
   }
   if(curStyle.engine){ startProducedStation(tk); return; }
   musicStep=0; musicIvMs=(tk.tempo||210)*(curStyle.tempoMul||1);
+  if(songLift && curStyle.melB){   // the second half's opening: up(M) follows M,M,B,M (whole bars)
+    const bar=(curStyle.beatGroup||4)*4; musicStep=Math.floor((curStyle.mel.length*3+curStyle.melB.length)/bar)*bar; }
   musicTimer=setInterval(musicTick, musicIvMs); }
 /* PRODUCED STATIONS in the game. One SONG_ENGINE handle per song per AudioContext, built on
    first use and reused (its bus, echo and spring are never rebuilt); start/stop only
