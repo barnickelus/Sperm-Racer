@@ -231,6 +231,8 @@ await check('scene_profile breaks the cost down per racer and over the whole ros
 });
 
 await check('race_palette measures how far apart a racer\'s parts are on screen (Rusty: hat and hair)', async () => {
+  // a fresh race, so this is Ophelia's afternoon: later laps run into golden hour and dusk, whose warm light pulls colours together
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' })); json(await call('race_start')); json(await call('race_drive', { seconds: 3 }));
   const p = json(await call('race_palette', { cam: { azimuth: 180, elevation: 20, distance: 26, height: 3.5 } }));
   assert.equal(p.racer, 'Rusty Malone');
   const parts = Object.fromEntries(p.parts.map(x => [x.part, x]));
