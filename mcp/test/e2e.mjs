@@ -48,8 +48,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_camera', 'race_drive', 'race_film', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
-    'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_camera', 'race_drive', 'race_film', 'race_framing', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
@@ -201,7 +201,7 @@ await check('race_studio isolates the racer; race_sheet draws turnaround and exp
   assert.equal(st.studio, true); assert.equal(st.racer, 'Rusty Malone');
   const t = await call('race_sheet', { kind: 'turnaround', cell: 160, title: 'TEST' });
   const ti = image(t); save(ti, 'rusty-turnaround.jpg');
-  assert.match(t.content.find(c => c.type === 'text').text, /^8 cells · 640×\d+/);
+  assert.match(t.content.find(c => c.type === 'text').text, /^8 cells · drawn 640×\d+/);
   assert.ok(Buffer.from(ti.data, 'base64').length > 20000, 'a real sheet');
   const e = await call('race_sheet', { kind: 'expressions', cell: 140 });
   save(image(e), 'rusty-expressions.jpg');
@@ -320,6 +320,27 @@ await check('race_record films at an exact frame rate; race_audio records the mu
   const sg = json(await call('scene_graph', { root: 'slipstream', depth: 0 }));
   assert.ok(sg.root.instances >= 20, 'the wind lines are one instanced draw');
   json(await call('race_fx', { slipstream: null }));
+});
+
+await check('Eve: race_warp jumps the race, race_framing judges a shot, the profiler sees what is drawn, the garden answers', async () => {
+  json(await call('race_setup', { course: 'Eve', character: 'guido', difficulty: 'medium' })); json(await call('race_start'));
+  const w = json(await call('race_warp', { to: 0.6 }));
+  assert.equal(w.loop, false); assert.ok(Math.abs(w.you.total - 0.6) < 0.05, `you at ${w.you.total}`);
+  json(await call('race_drive', { seconds: 0.5 }));
+  const good = json(await call('race_framing', { cam: { azimuth: 160, elevation: 10, distance: 26, height: 3.5 } }));
+  assert.ok(good.fill > 0.02 && good.box, JSON.stringify(good));
+  const inside = json(await call('race_framing', { cam: { azimuth: 0, elevation: 0, distance: 1.5, height: 3 } }));
+  assert.equal(inside.ok, false, 'a lens inside the racer is not a shot: ' + JSON.stringify(inside));
+  const prof = json(await call('scene_profile', { inView: true, top: 6 }));
+  assert.ok(prof.inView.draws > 20 && prof.inView.top.length, 'counts what the camera draws');
+  assert.ok(prof.trackTop.length && prof.sceneOtherTop.length, 'names the heaviest pieces');
+  const parts = json(await call('scene_graph', { root: 'particles', depth: 0 }));
+  assert.equal(parts.root.geometry, 'InstancedBufferGeometry', 'every particle in one instanced draw');
+  assert.equal(json(await call('race_fx', { edenLive: false })).edenLive, false);
+  assert.equal(json(await call('race_fx', { edenLive: true })).edenLive, true);
+  const free = json(await call('race_camera', { mode: 'free', from: [0, 400, 0], at: [0, 0, -100], screenshot: false }));
+  assert.equal(free.mode, 'free'); assert.ok(Array.isArray(free.hazards));
+  json(await call('race_camera', { mode: 'chase', screenshot: false }));
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {

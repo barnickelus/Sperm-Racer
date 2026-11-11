@@ -379,9 +379,10 @@ tool('race_film', {
 tool('scene_profile', {
   title: 'Profile render cost',
   description: 'What each racer on the grid costs to draw (visible meshes ≈ draw calls, triangles, materials, textures), the track, and the whole scene. trackTop lists the course\'s heaviest pieces. roster:true also builds EVERY character off-screen once and measures it, build time included: the table to keep new characters within budget.',
-  inputSchema: { page: pageArg, roster: z.boolean().default(false), top: z.number().int().min(1).max(60).default(12).describe('how many of the course\'s heaviest pieces to list (trackTop)') },
+  inputSchema: { page: pageArg, roster: z.boolean().default(false), top: z.number().int().min(1).max(60).default(12).describe('how many of the course\'s heaviest pieces to list (trackTop)'),
+    inView: z.boolean().default(false).describe('also count only what the camera draws right now (frustum-tested), by the piece it belongs to') },
   annotations: { readOnlyHint: true },
-}, async ({ page, roster, top }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster, top }, 180000))));
+}, async ({ page, roster, top, inView }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster, top, inView }, 180000))));
 
 tool('race_palette', {
   title: 'Analyse a racer\'s colours',
@@ -471,7 +472,7 @@ tool('race_perf', {
 tool('race_warp', {
   title: 'Jump the race to a point',
   description: 'Jump the running race to any point, so a late part of a course, or a late hour of its light, can be looked at without driving there. `to` is in laps on a lap course (2.5 = halfway round the third lap) and a fraction of the way to the egg on a point-to-point course. You are placed there with the field `spread` units apart (you at the back by default, so the chase camera sees the pack ahead), at speed, with lap counts and checkpoints set as if driven. Eased course state, such as Ophelia\'s hour, snaps to the new point.',
-  inputSchema: { page: pageArg, to: z.number().min(0), spread: z.number().min(0).max(60).default(14), you: z.enum(['back', 'front', 'order']).default('back').describe('where you sit in the field: at the back (the chase camera sees the pack ahead), the front, or in race order') },
+  inputSchema: { page: pageArg, to: z.number().min(0), spread: z.number().min(0).max(80).default(26), you: z.enum(['back', 'front', 'order']).default('back').describe('where you sit in the field: at the back (the chase camera sees the pack ahead), the front, or in race order') },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.warp'), 'race.warp', a))));
 
 tool('race_framing', {
@@ -485,7 +486,7 @@ tool('race_framing', {
 tool('race_fx', {
   title: 'Hold an effect up',
   description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
-  inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional() },
+  inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional(), edenLive: z.boolean().optional().describe('Eve: the garden\'s living light (the racers\' wake and the egg\'s call) on or off, for an A/B look') },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));
 
 const frameZ = z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() });

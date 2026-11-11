@@ -37316,37 +37316,57 @@ function glowSprite(hex,scale){
   const s=new T.Sprite(m); s.scale.setScalar(scale||10); return s;
 }
 
-/* pooled particle system */
+/* pooled particle system — ONE draw call. Every spark, puff and confetti flake used to be a sprite of its own (a draw
+   call each: a boost or a finish put a hundred more in the frame, race_perf/scene_profile inView). They are additive,
+   so their order never mattered: now they are instances of one camera-facing quad, position / size / colour / fade
+   per instance, rewritten each frame for the live ones only. Same texture, same blending, same fog. */
 const PMAX=260;
-const pPool=[], pLive=[];
-(function initParticles(){
-  for(let i=0;i<PMAX;i++){
-    const mat=new T.SpriteMaterial({map:TEX_SPARK,transparent:true,blending:T.AdditiveBlending,depthWrite:false});
-    const sp=new T.Sprite(mat); sp.visible=false; scene.add(sp);
-    pPool.push({sp,age:0,life:1,vx:0,vy:0,vz:0,s0:1,s1:0,grav:0});
-  }
+const pPool=[], pLive=[], _pc=new T.Color();
+const PARTS=(function initParticles(){
+  const q=new T.PlaneGeometry(1,1), geo=new T.InstancedBufferGeometry();
+  geo.index=q.index; geo.setAttribute('position', q.attributes.position); geo.setAttribute('uv', q.attributes.uv);
+  const A=(n)=>{ const a=new T.InstancedBufferAttribute(new Float32Array(PMAX*n), n); a.setUsage(T.DynamicDrawUsage); return a; };
+  const iPos=A(3), iSc=A(1), iCol=A(4); geo.setAttribute('iPos',iPos); geo.setAttribute('iSc',iSc); geo.setAttribute('iCol',iCol); geo.instanceCount=0;
+  const mat=new T.ShaderMaterial({ uniforms:T.UniformsUtils.merge([T.UniformsLib.fog, { map:{ value:null } }]),
+    vertexShader:`attribute vec3 iPos; attribute float iSc; attribute vec4 iCol; varying vec2 vUv; varying vec4 vCol;
+      #include <fog_pars_vertex>
+      void main(){ vUv=uv; vCol=iCol; vec4 mvPosition=modelViewMatrix*vec4(iPos,1.0); mvPosition.xy+=position.xy*iSc;
+        gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`uniform sampler2D map; varying vec2 vUv; varying vec4 vCol;
+      #include <common>
+      #include <fog_pars_fragment>
+      void main(){ vec4 t=texture2D(map,vUv); gl_FragColor=vec4(vCol.rgb*t.rgb, t.a*vCol.a);
+        #include <encodings_fragment>
+        #include <fog_fragment>
+      }`,
+    transparent:true, blending:T.AdditiveBlending, depthWrite:false, fog:true });
+  mat.uniforms.map.value=TEX_SPARK;
+  const mesh=new T.Mesh(geo, mat); mesh.frustumCulled=false; mesh.name='particles'; scene.add(mesh);
+  for(let i=0;i<PMAX;i++) pPool.push({ x:0,y:0,z:0, r:1,g:1,b:1, age:0,life:1,vx:0,vy:0,vz:0,s0:1,s1:0,grav:0,op0:1 });
+  return { mesh, geo, iPos, iSc, iCol };
 })();
 function emit(x,y,z,opt){
   const p=pPool.pop(); if(!p)return;
-  p.sp.visible=true; p.sp.position.set(x,y,z);
-  p.sp.material.color.set(opt.color||0xffffff);
+  p.x=x; p.y=y; p.z=z; _pc.set(opt.color||0xffffff); p.r=_pc.r; p.g=_pc.g; p.b=_pc.b;
   p.age=0; p.life=opt.life||0.5;
   p.vx=opt.vx||0; p.vy=opt.vy||0; p.vz=opt.vz||0;
   p.s0=opt.s0||4; p.s1=(opt.s1!=null)?opt.s1:0; p.grav=opt.grav||0;
-  p.sp.scale.setScalar(p.s0);
-  p.sp.material.opacity=opt.op!=null?opt.op:1;
-  p.op0=p.sp.material.opacity;
+  p.op0=opt.op!=null?opt.op:1;
   pLive.push(p);
 }
 function updateParticles(dt){
+  const P=PARTS, pos=P.iPos.array, sc=P.iSc.array, col=P.iCol.array; let n=0;
   for(let i=pLive.length-1;i>=0;i--){
     const p=pLive[i]; p.age+=dt; const t=p.age/p.life;
-    if(t>=1){ p.sp.visible=false; pLive.splice(i,1); pPool.push(p); continue; }
-    p.vy-=p.grav*dt;
-    p.sp.position.x+=p.vx*dt; p.sp.position.y+=p.vy*dt; p.sp.position.z+=p.vz*dt;
-    const sc=p.s0+(p.s1-p.s0)*t; p.sp.scale.setScalar(sc);
-    p.sp.material.opacity=p.op0*(1-t);
+    if(t>=1){ pLive.splice(i,1); pPool.push(p); continue; }
+    p.vy-=p.grav*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt;
+    pos[n*3]=p.x; pos[n*3+1]=p.y; pos[n*3+2]=p.z; sc[n]=p.s0+(p.s1-p.s0)*t;
+    col[n*4]=p.r; col[n*4+1]=p.g; col[n*4+2]=p.b; col[n*4+3]=p.op0*(1-t); n++;
   }
+  P.geo.instanceCount=n; P.mesh.visible=n>0;
+  if(n){ P.iPos.needsUpdate=true; P.iSc.needsUpdate=true; P.iCol.needsUpdate=true; }
 }
 function burst(x,y,z,color,n,spread,life,size){
   for(let k=0;k<n;k++){
@@ -50185,6 +50205,42 @@ const edenSm=t=>{ t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); };
    two slow incommensurate sines keyed to where it stands, height-squared so the base never
    moves; vc — geometry vertex colours (the fern's red streak); map — a texture that is also
    its own emissive map (the ringed pods). */
+/* THE GARDEN ANSWERS — light that lives. Two things move through every small light in the garden (fruit, beads, cap
+   rims, gills, and the glowing caps, cups, moss, pods and curls), and both are computed per light ON THE GPU from a
+   handful of shared uniforms, so they cost no draw calls and almost no CPU:
+   · THE WAKE. Each racer leaves its last six positions (every 0.18 s) in uWake; a light near any of them flares and
+     swells, and lets go as the point ages. The pack lights its own way, and the leaders leave a lit path through the
+     dark for the ones behind. A light outside the pack's sphere (uPack) skips the sum.
+   · THE EGG'S CALL. A sperm finds the egg by following its chemical call; here the call is light. On every heartbeat a
+     ring rolls out from the shrine across the whole garden (uCall: the egg, and the call's phase — the bars of Eve's
+     own song when it is playing, on the music clock; her slow lub-dub when it is not). Faint at the start, it swells
+     as you climb the gradient toward her (uCallK.x), and when you reach her a single great bloom sweeps the garden
+     (uCallK.zw). The egg's own pulse keeps the same time. */
+const EDEN_LIVE={ uWake:{value:Array.from({length:36},()=>new T.Vector4(0,-1e5,0,99))}, uPack:{value:new T.Vector4(0,-1e5,0,0)},
+  uCall:{value:new T.Vector4(0,0,0,0)}, uCallK:{value:new T.Vector4(0.12,650,-1,0)} };
+const EDEN_LIVE_GLSL=`
+uniform vec4 uWake[36]; uniform vec4 uPack; uniform vec4 uCall; uniform vec4 uCallK;
+varying float vLive; varying float vGold;
+float edenLive(vec3 wp, out float wk, out float gold){
+  wk=0.0;
+  if(distance(wp,uPack.xyz)<uPack.w){ for(int i=0;i<36;i++){ vec4 q=uWake[i]; vec3 d=wp-q.xyz; wk+=exp(-dot(d,d)*0.00045-q.w*0.85); } }
+  wk=min(wk,1.6);
+  // fr: 0 as the ring's front passes this light, climbing to 1 by the next — a bright front, and a short afterglow behind it
+  float de=distance(wp.xz,uCall.xz), fr=fract(uCall.w-de/uCallK.y), f=min(fr,1.0-fr);
+  float ring=(exp(-f*f*150.0)+0.4*exp(-fr*7.0))*uCallK.x*1.7*exp(-de/5200.0);
+  float bloom=0.0; if(uCallK.z>0.0){ float bd=(de-uCallK.z)/230.0; bloom=(exp(-bd*bd)+0.25*step(de,uCallK.z)*exp(-(uCallK.z-de)/900.0))*uCallK.w; }   // the front, and the garden it leaves glowing behind it
+  gold=min(1.0, ring*0.22+bloom*0.55);   // the egg's own pearl-gold rides the call, and floods the bloom
+  return wk*2.4+ring+bloom;
+}`;
+const EDEN_LIVE_VTX=`
+  { float wk;
+    #ifdef USE_INSTANCING
+      vec3 eo=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;
+    #else
+      vec3 eo=(modelMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;
+    #endif
+    float gd; vLive=edenLive(eo, wk, gd); vGold=gd; SWELL }`;
+function edenLiveUniforms(sh){ for(const k in EDEN_LIVE) sh.uniforms[k]=EDEN_LIVE[k]; }
 function edenMat(o){
   o=o||{};
   const m=new T.MeshPhongMaterial({color:0xffffff, shininess:o.shin!=null?o.shin:38,
@@ -50195,7 +50251,8 @@ function edenMat(o){
   m.userData.edenU=U;
   m.onBeforeCompile=sh=>{
     sh.uniforms.uT=EDEN_T; sh.uniforms.uGlow=U.uGlow;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;');
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;'+(o.live?EDEN_LIVE_GLSL:''));
+    if(o.live){ edenLiveUniforms(sh); sh.vertexShader=sh.vertexShader.replace('#include <project_vertex>', EDEN_LIVE_VTX.replace('SWELL','')+'\n#include <project_vertex>'); }
     if(o.sway) sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
       { float ph=0.0;
         #ifdef USE_INSTANCING
@@ -50203,18 +50260,26 @@ function edenMat(o){
         #endif
         float hh=max(0.0,transformed.y), a=${o.sway.toFixed(4)}*hh*hh;
         transformed.x+=a*sin(uT*0.83+ph); transformed.z+=a*0.7*sin(uT*0.61+ph*1.7+1.3); }`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;')
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;'+(o.live?'\nvarying float vLive; varying float vGold;':''))
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
       #if defined(USE_COLOR)
         totalEmissiveRadiance+=vColor.rgb*uGlow;
-      #endif`);
+      #endif
+      ${o.live?'totalEmissiveRadiance=totalEmissiveRadiance*(1.0+vLive*0.8)+vec3(1.0,0.78,0.42)*vGold*(uGlow+0.15)*1.3;':''}`);
   };
-  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0);
+  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0)+(o.live?'-live':'');
   return m;
 }
 // pure light: fruit, rims, gills, beads. Unlit, fogged, coloured per instance.
 function edenGlowMat(o){ o=o||{};
-  return new T.MeshBasicMaterial({color:0xffffff, side:o.side||T.FrontSide}); }
+  const m=new T.MeshBasicMaterial({color:0xffffff, side:o.side||T.FrontSide});
+  m.onBeforeCompile=sh=>{ edenLiveUniforms(sh);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>'+EDEN_LIVE_GLSL)
+      .replace('#include <project_vertex>', EDEN_LIVE_VTX.replace('SWELL','transformed*=1.0+0.22*min(wk,1.0);')+'\n#include <project_vertex>');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vLive; varying float vGold;')
+      .replace('#include <fog_fragment>','gl_FragColor.rgb=mix(gl_FragColor.rgb*(1.0+vLive*0.75), vec3(1.0,0.86,0.58)*(1.0+vLive*0.3), vGold*0.8);\n#include <fog_fragment>'); };
+  m.customProgramCacheKey=()=>'eden-glow-live';
+  return m; }
 
 /* One InstancedMesh per tenth of the course, each with its own world-space bounding sphere,
    so the frustum drops the nine-tenths of the garden that are behind you or round the
@@ -51076,16 +51141,16 @@ function edenFlush(F){
   const bark=mats.bark=edenMat({shin:10, spec:0x221c34, glow:0.05, tex:edenBarkTex()});
   const lobe=mats.lobe=edenMat({shin:16, spec:0x22484c, glow:0.10});
   const fruit=mats.fruit=edenGlowMat();
-  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42});
+  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42, live:true});
   const stem=mats.stem=edenMat({shin:30, spec:0x3a3a5a, glow:0.10});
   const glowM=mats.glow=edenGlowMat({side:T.DoubleSide});
-  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a});
+  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a, live:true});
   const leaf=mats.leaf=edenMat({shin:40, spec:0x2a5a4a, glow:0.10, side:T.DoubleSide});
-  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide});
-  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50});
+  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide, live:true});
+  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50, live:true});
   const rock=mats.rock=edenMat({shin:70, spec:0x4a4a7a, glow:0.0});
-  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34});
-  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20});
+  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34, live:true});
+  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20, live:true});
   edenBatch(new T.CylinderGeometry(0.78,1,1,9,1), bark, G.trunk);
   edenBatch(new T.SphereGeometry(1,10,7), lobe, G.lobe);
   edenBatch(new T.SphereGeometry(1,10,8), fruit, G.fruit);
@@ -51436,9 +51501,10 @@ function edenEggMat(){
   m.customProgramCacheKey=()=>'eden-egg';
   return m;
 }
-// idle: pearl light from within on a slow double heartbeat (lub-dub every 1.6 s)
+// idle: pearl light from within on a slow double heartbeat (lub-dub every 1.6 s) — on the call's clock when the garden keeps
+// one (edenLive: the bars of her song), so the egg beats in time with the rings it sends out
 function edenEggPulse(e, tsec){
-  const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
+  const ph=EDEN_CALL.on ? (EDEN_CALL.ph%1)*1.6 : tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
   const s=1+0.025*b; e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.12;
   e.material.color.setRGB(0.93,0.89,0.86);
   e.material.emissive.setRGB(0.26+0.24*b, 0.21+0.19*b, 0.17+0.13*b);
@@ -51547,10 +51613,35 @@ function applyEdenLighting(){
   fill.color.setHex(0x8a4ad8); fill.intensity=0.26; fill.position.set(md.z*120, 30, -md.x*120);
   flesh.color.setHex(0xff6a2a);flesh.intensity=0.20; flesh.position.set(0,-30,0);
 }
+const EDEN_CALL={ on:false, ph:0, gain:1 };   // gain: race_fx edenLive can switch the living light off, for an A/B look   // the egg's call: its phase in heartbeats (see THE GARDEN ANSWERS)
+function edenLive(E, dt, tsec){
+  const L=EDEN_LIVE, W=L.uWake.value, H=E._wake||(E._wake={ t:0, buf:[] });
+  // the wake: every 0.18 s each racer's position goes into its own ring of six; ages count up every frame
+  H.t+=dt; if(H.t>=0.18){ H.t=0; let k=0; for(const r of racers){ if(k>=6) break; if(!r.obj || !isFinite(r.x) || r.spectator) continue;
+      const ring=H.buf[k]||(H.buf[k]=[]); ring.unshift([r.x, (isFinite(r.y)?r.y:0)+2, r.z, 0]); if(ring.length>6) ring.pop(); k++; } }
+  let i=0, cx=0, cy=0, cz=0, n=0;
+  for(const ring of H.buf) for(const p of ring){ p[3]+=dt; if(i<36){ W[i].set(p[0],p[1],p[2],p[3]); i++; cx+=p[0]; cy+=p[1]; cz+=p[2]; n++; } }
+  for(;i<36;i++) W[i].set(0,-1e5,0,99);
+  if(n && EDEN_CALL.gain>0){ cx/=n; cy/=n; cz/=n; let rr=0; for(const ring of H.buf) for(const p of ring) rr=Math.max(rr, Math.hypot(p[0]-cx,p[1]-cy,p[2]-cz)); L.uPack.value.set(cx,cy,cz,rr+140); }
+  else L.uPack.value.set(0,-1e5,0,0);
+  // the call: on the song's bars when it plays (the music clock), else the egg's own lub-dub; it swells as you near her
+  const mb=musicBeat(), per=mb&&mb.bpm ? 240/mb.bpm : 1.6;
+  EDEN_CALL.ph+=dt/per; if(mb && mb.bar!=null){ const f=EDEN_CALL.ph%1; let d=mb.bar-f; if(d>0.5) d-=1; if(d<-0.5) d+=1; EDEN_CALL.ph+=d*Math.min(1,dt*4); }
+  EDEN_CALL.on=true;
+  const egg=TRACK_PULSE.egg, me=racers.find(r=>r.you), u=me&&state!=='menu' ? Math.max(0,Math.min(1,me.idx/(SAMP.length-1))) : 0;
+  if(egg){ egg.getWorldPosition(_edV); L.uCall.value.set(_edV.x, _edV.y, _edV.z, EDEN_CALL.ph); }
+  const k=u<0.45?0:Math.min(1,(u-0.45)/0.52), amp=0.22+0.78*k*k*(3-2*k);
+  const C=L.uCallK.value; C.x+=(amp*EDEN_CALL.gain-C.x)*Math.min(1,EDEN_CALL.gain?dt*1.5:1); C.y=650;
+  // the bloom: you reached her — one great ring of light across the whole garden
+  if(eggAnim>0 && E.bloomT==null) E.bloomT=0;
+  if(E.bloomT!=null){ E.bloomT+=dt; C.z=E.bloomT*700; C.w=3.4*Math.exp(-E.bloomT/4.0); if(C.z>7000){ E.bloomT=null; C.z=-1; C.w=0; } }
+  if(state==='menu' || state==='count'){ E.bloomT=null; C.z=-1; C.w=0; if(state==='menu') H.buf.length=0; }
+}
 function edenTick(E, tsec){
   const dt=Math.min(0.1, Math.max(0, tsec-(E._lt==null?tsec:E._lt))); E._lt=tsec;
   EDEN_T.value=tsec;
   edenMood(E, dt);
+  edenLive(E, dt, tsec);
   if(E.rings) for(const r of E.rings) r.g.rotation.z=tsec*r.w;
   if(E.mist) E.mist.uAmp.value=0.85+0.15*Math.sin(tsec*0.17);
   if(E.rays) E.rays.opacity=0.16*(0.75+0.25*Math.sin(tsec*0.11)+0.1*Math.sin(tsec*0.29+1.3));
@@ -78506,6 +78597,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     return k;
   }
   const STUDIO={on:false, lights:[], course:[]};
+  const studioOff=()=>{ const S=STUDIO; if(!S.on) return; camera.layers.set(0); scene.background=S.bg; scene.fog=S.fog; for(const L of S.lights) L.parent&&L.parent.remove(L); S.lights=[];
+    for(const L of S.course) L.layers.disable(1); S.on=false; SIM.tick=null; };   // (also before any new race: a course build needs its fog and background back)
   const held=new Set();
   const hold=ks=>{ for(const k of held) keys.delete(k); held.clear(); for(const k of ks){ const q=String(k).toLowerCase(); keys.add(q); held.add(q); } };
 
@@ -78527,6 +78620,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     'race.start': async ({manual=true}={})=>{
       await waitFor(()=>state!=='load', 90000, 'the game to load');
       if(state==='count'||state==='race'){ state='menu'; }       // a race already running: abandon it for the new one
+      studioOff();                                               // (the studio takes the fog away: a course can't be built without it)
       SIM.manual=!!manual; SIM.cam=null; SIM.t=performance.now()/1000; hold([]);
       if(NET.on) netLeave(); chalSoloEnd(); cupStop();
       $('start').classList.add('hidden');
@@ -78549,12 +78643,13 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
                 laps:[], spins:0, placeChanges:[], itemsPicked:[], itemsUsed:[], boosts:0, faces:{} };
       let px=m.x, pz=m.z, lap=m.lap, place=m.place, item=m.item, spin=(m.spinT||0)>0, boost=(m.boostT||0)>0, lapT=t0;
       let ended='time';
-      for(let i=0;i<n;i++){
+      // whole frames, not just the race: the course's own world runs every step too (Victoria's posters tearing as the pack
+      // passes, Eve's garden answering it), so a drive leaves the course exactly as playing it would; nothing is drawn
+      SIM.busy=true;
+      try{ for(let i=0;i<n;i++){
         if(state!=='race'){ ended='race over'; break; }
         hold(autopilot ? [...autoKeys(m,i), ...extra] : extra);
-        raceStep(dt);
-        SIM.t+=dt;
-        if(state==='race'||state==='done'){ syncObjects(dt, SIM.t); updateCamera(dt); }
+        SIM.t+=dt; { const t1=performance.now(); frameStep(t1, dt, SIM.t, t1, !cupPause, false); }
         M.steps++; M.distance+=Math.hypot(m.x-px, m.z-pz); px=m.x; pz=m.z;
         M.speedSum+=m.spd; M.minSpeed=Math.min(M.minSpeed,m.spd); M.maxSpeed=Math.max(M.maxSpeed,m.spd);
         if(m.air) M.airSeconds+=dt; else if(offOf(m)>HW) M.offRoadSeconds+=dt;
@@ -78566,7 +78661,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(m.obj && m.obj.userData.expr){ const f=m.obj.userData.expr.cur; M.faces[f]=(M.faces[f]||0)+dt; }   // what his face did, and for how long
         if(untilFinish && m.finished){ ended='finished'; break; }
         if(i%240===239) await new Promise(r=>setTimeout(r,0));   // let the page breathe (and the socket answer) on long drives
-      }
+      } } finally { SIM.busy=false; }
       hold([]);
       const secs=M.steps*dt;
       return { simulated:r1(secs), ended, raceTime:r1(raceTime), state,
@@ -78582,8 +78677,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          so whatever else lives in the scene stays out of frame without anyone having to know what it is. — */
     'race.studio': ({on=true, racer, background='#efe3c8', lighting='course'}={})=>{
       const S=STUDIO;
-      if(!on){ if(S.on){ camera.layers.set(0); scene.background=S.bg; scene.fog=S.fog; for(const L of S.lights) L.parent&&L.parent.remove(L); S.lights=[];
-        for(const L of S.course) L.layers.disable(1); S.on=false; SIM.tick=null; } return { studio:false }; }
+      if(!on){ studioOff(); return { studio:false }; }
       if(!racers.length) throw new Error('no racers on the course yet — race_start first');
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+racer+'"');
       if(!S.on){ S.bg=scene.background; S.fog=scene.fog; }
@@ -78695,7 +78789,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
 
     /* — PROFILE: what each racer costs to draw (meshes ≈ draw calls, triangles, materials, textures), and on request the
          whole roster, every character built off-screen once and measured, build time included — */
-    'race.profile': async ({roster=false, top=12}={})=>{
+    'race.profile': async ({roster=false, top=12, inView=false}={})=>{
       const cost=root=>{ let draws=0, tris=0; const mats=new Set(), tex=new Set();
         root.traverseVisible(o=>{ if(!(o.isMesh||o.isPoints||o.isLine||o.isSprite)) return; draws++;
           const g=o.geometry; if(g){ const n=g.index?g.index.count:(g.attributes.position?g.attributes.position.count:0);
@@ -78714,6 +78808,17 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         return [...g.values()].sort((a,b)=>b.draws-a.draws||b.triangles-a.triangles).slice(0,top||12); };
       if(trackGroup){ out.trackTop=roll(trackGroup); out.trackPieces=trackGroup.children.length; }
       { const other=new T.Group(); other.children=scene.children.filter(c=>c!==trackGroup && !racers.some(r=>r.obj===c)); out.sceneOtherTop=roll(other); }   // outside the track and the racers: sky, particles, effects
+      // inView: only what the camera would actually draw now (visible, on its layers, inside the frustum as three tests it),
+      // rolled up by the piece it belongs to — where this frame's draw calls really come from
+      if(inView){ camera.updateMatrixWorld(true); const fr=new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        const g=new Map(); let draws=0, tris=0;
+        scene.traverseVisible(o=>{ if(!(o.isMesh||o.isPoints||o.isLine||o.isSprite) || !o.layers.test(camera.layers)) return;
+          if(o.frustumCulled && !(o.isSprite ? fr.intersectsSprite(o) : fr.intersectsObject(o))) return;
+          let top=o; while(top.parent && top.parent!==scene && top.parent!==trackGroup) top=top.parent;
+          const owner=racers.find(r=>r.obj===top) ? 'racer: '+racers.find(r=>r.obj===top).name : (top.parent===trackGroup?'track › ':'scene › ')+sig(top);
+          const gg=o.geometry, n=gg?(gg.index?gg.index.count:(gg.attributes.position?gg.attributes.position.count:0)):0, t=o.isMesh?(n/3)*(o.isInstancedMesh?o.count:1):0;
+          const e=g.get(owner)||{ name:owner, draws:0, triangles:0 }; e.draws++; e.triangles+=Math.round(t); g.set(owner,e); draws++; tris+=t; });
+        out.inView={ draws, triangles:Math.round(tris), top:[...g.values()].sort((a,b)=>b.draws-a.draws).slice(0,top||12) }; }
       if(roster){ const list=[];
         for(const t of SPERM_TYPES){ const t0=performance.now(); let o=null, err=null;
           try{ o=makeCell(t.hue, t.id); }catch(e){ err=String(e.message||e); }
@@ -78856,7 +78961,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          there: `to` is in laps on a lap course (2.5 = halfway round the third lap), a fraction on a point-to-point one.
          You are put there and the field around you in race order (`spread` units apart), at speed, lap counts and
          checkpoints set as if driven; eased course state (Ophelia's hour) snaps to it. — */
-    'race.warp': ({to=0, spread=14, you:at='back'}={})=>{
+    'race.warp': ({to=0, spread=26, you:at='back'}={})=>{
       if(state!=='race') throw new Error('race_start first');
       if(MAZE) throw new Error('the maze has no line to warp along');
       let len=0; for(let i=1;i<STEPS;i++) len+=SAMP[i].p.distanceTo(SAMP[i-1].p); if(trackLoop) len+=SAMP[0].p.distanceTo(SAMP[STEPS-1].p);
@@ -78930,8 +79035,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
-    'race.fx': ({slipstream}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
-      return { slipstream:DRAFT_FX.force }; },
+    'race.fx': ({slipstream, edenLive}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
+      if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
+      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0 }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
