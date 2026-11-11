@@ -34,6 +34,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(process.env.SPERM_RACER_ROOT || path.join(here, '..'));
+const BASELINES = path.resolve(process.env.SPERM_RACER_MCP_BASELINES || path.join(here, 'baselines'));   // golden sheets for race_regress (per machine: a GPU and a software renderer draw differently)
 const require = createRequire(import.meta.url);
 const say = (...a) => process.stderr.write('[sperm-racer-mcp] ' + a.join(' ') + '\n');   // stdout is the MCP channel
 
@@ -133,7 +134,8 @@ async function browser() {
     let chromium;
     try { ({ chromium } = await import('playwright')); }
     catch { throw new Error('scene_open needs Playwright: run `npm install` in mcp/ (it is an optional dependency), or open the page in your own browser instead'); }
-    const args = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-background-networking'];
+    const args = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-background-networking',
+      '--autoplay-policy=no-user-gesture-required'];   // audio runs without a click, so the music (and its beat) can be tested
     const exe = process.env.CHROMIUM_PATH || findChromium();
     if (exe) return chromium.launch({ headless: true, executablePath: exe, args });
     /* No known binary: Playwright's own download if there is one, else the
@@ -177,7 +179,7 @@ async function openHeadless(rel, width, height) {
   let page;
   try { page = await joined; }
   catch (e) { await context.close(); throw new Error(e.message + (errors.length ? `\npage errors:\n  ${errors.join('\n  ')}` : '')); }
-  page.headless = { context };
+  page.headless = { context, tab };
   headless.set(page.id, page);
   page.ws.on('close', () => headless.delete(page.id));
   return page;
@@ -342,6 +344,7 @@ tool('race_sheet', {
       height: z.number().optional(), along: z.number().optional(), fov: z.number().optional(), expression: z.string().optional() })).optional(),
     cell: z.number().int().min(120).max(600).default(300), columns: z.number().int().min(1).max(10).optional(), title: z.string().optional(),
     photo: z.object({ elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), fov: z.number().optional(), along: z.number().optional() }).optional(),
+    rest: z.boolean().default(false).describe('draw a fresh build of the character in its rest pose at a fixed heading, not the live racer: the same pixels every time'),
   },
 }, async ({ page, ...a }) => {
   const p = pick(page, 'race.sheet');
@@ -378,6 +381,46 @@ tool('race_palette', {
     cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional() },
   annotations: { readOnlyHint: true },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.palette'), 'race.palette', a))));
+
+tool('scene_page', {
+  title: 'Screenshot the whole page',
+  description: 'The whole page as a player sees it (HUD, menus, overlays and the 3D canvas), not just the canvas. Headless pages only (this server owns their browser).',
+  inputSchema: { page: pageArg, fullPage: z.boolean().default(false) },
+  annotations: { readOnlyHint: true },
+}, async ({ page, fullPage }) => {
+  const p = pick(page); if (!p.headless || !p.headless.tab) throw new Error(`${p.id} is a live tab: use scene_screenshot (the canvas) instead`);
+  const buf = await p.headless.tab.screenshot({ type: 'jpeg', quality: 82, fullPage });
+  return ok({ type: 'image', data: buf.toString('base64'), mimeType: 'image/jpeg' }, text(`${p.id} · whole page`));
+});
+
+tool('race_motion', {
+  title: 'Measure how fluidly a racer moves',
+  description: 'Step the page at 1/60 s (racing on autopilot, or still) and track probes in the racer\'s own space: head, neck turn, tail tip, swaying parts, and any ud.motionProbes. Per probe: travel, RMS speed, acceleration and jerk, and "snaps" (frames of jerk far above the probe\'s median). Low jerk with few snaps reads as fluid; high jerk reads as popping or robotic. Compare a character before and after an animation change. `series:true` adds each probe\'s per-frame speed and the frames its snaps fell on, to find what causes them.',
+  inputSchema: { page: pageArg, racer: z.string().optional(), seconds: z.number().positive().max(30).default(3), still: z.boolean().default(false), autopilot: z.boolean().default(true), series: z.boolean().default(false) },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.motion'), 'race.motion', a, 120000))));
+
+tool('race_regress', {
+  title: 'Visual regression of a character',
+  description: 'Render a character\'s reference sheet (studio-lit, on a plain backdrop) and compare it with its saved golden sheet, <character>-<kind>.jpg in mcp/baselines/ (or SPERM_RACER_MCP_BASELINES): the share of pixels changed beyond a tolerance, the mean change, a heat map of where, and pass/fail against `threshold`. No golden yet, or update:true, saves this render as the golden. Run after engine changes to catch characters that changed by accident.',
+  inputSchema: { page: pageArg, character: z.string().optional().describe('character id (default: your racer)'), kind: z.enum(['turnaround', 'expressions']).default('turnaround'),
+    update: z.boolean().default(false), threshold: z.number().min(0).max(1).default(0.04) },
+}, async ({ page, character, kind, update, threshold }) => {
+  const p = pick(page, 'race.sheet');
+  const st = await call(p, 'race.state');
+  const me = st.standings.find(r => r.you); const id = character || (me && me.character);
+  if (character && me && me.character !== character) throw new Error(`race_setup the character "${character}" and race_start first (your racer is ${me && me.character})`);
+  await call(p, 'race.studio', { on: true, lighting: 'studio', background: '#e8e4dc' });
+  let s;
+  try { s = await call(p, 'race.sheet', { kind, cell: 220, rest: true, photo: kind === 'turnaround' ? { distance: 30, along: -3, height: 3.6, elevation: 8 } : {} }, 240000); }
+  finally { await call(p, 'race.studio', { on: false }); }
+  const dir = BASELINES, file = path.join(dir, `${id}-${kind}.jpg`);
+  fs.mkdirSync(dir, { recursive: true });
+  if (update || !fs.existsSync(file)) { fs.writeFileSync(file, Buffer.from(s.data, 'base64'));
+    return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text({ saved: path.relative(ROOT, file), note: update ? 'golden updated' : 'no golden yet: this render is now the golden' })); }
+  const d = await call(p, 'race.diff', { a: fs.readFileSync(file).toString('base64'), b: s.data });
+  const pass = d.changed <= threshold;
+  return ok({ type: 'image', data: d.heat, mimeType: 'image/jpeg' }, text({ character: id, kind, golden: path.relative(ROOT, file), changed: d.changed, meanDelta: d.meanDelta, threshold, pass }));
+});
 
 tool('race_select', {
   title: 'Show the character-select stage',

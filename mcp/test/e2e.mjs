@@ -1,11 +1,13 @@
 // End-to-end check for the Sperm-Racer MCP server: spawns server.mjs over stdio as Claude Code would, opens the
 // game headless through it, and plays: options, setup, a race started and driven in fixed steps on autopilot and
 // on held keys, the standings, a photo of Tex Calloway, his parts in the scene graph, the select stage. Also
-// proves the page stays inert without ?mcp and that a foreign origin can't attach.
+// proves the page stays inert without ?mcp and that a foreign origin can't attach. Later checks cover the character
+// tools: sheets, film, profile, palette, motion (Guido Tony against his Fluid copy) and visual regression.
 //
 //   cd mcp && npm install && npm test        (SHOTS=<dir> keeps the images)
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
@@ -15,10 +17,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = process.env.SHOTS || null;
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
+const GOLDEN = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-golden-'));   // race_regress's goldens, thrown away after
 
 const transport = new StdioClientTransport({
   command: process.execPath, args: [path.join(here, '..', 'server.mjs')],
-  env: { ...process.env, SPERM_RACER_MCP_PORT: '0' }, stderr: 'pipe',
+  env: { ...process.env, SPERM_RACER_MCP_PORT: '0', SPERM_RACER_MCP_BASELINES: GOLDEN }, stderr: 'pipe',
 });
 let serverLog = '';
 transport.stderr?.on('data', d => { serverLog += d; });
@@ -45,8 +48,9 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_options', 'race_palette', 'race_pose', 'race_realtime', 'race_select',
-    'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_options', 'race_palette', 'race_pose', 'race_realtime',
+    'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
+    'scene_profile', 'scene_screenshot', 'scene_stats']);
 });
 
 await check('nothing connected: tools say how to connect; a foreign origin is refused', async () => {
@@ -248,12 +252,56 @@ await check('Kasi: built, acting, and within the roster budget', async () => {
   assert.ok(tw.root.instances >= 150, 'the twists are one instanced draw (r128 reports InstancedMesh as type Mesh, with an instance count)');
 });
 
+await check('race_motion: the Fluid copy of Guido Tony moves without the snaps (same race, same seconds)', async () => {
+  const run = async (character) => {
+    json(await call('race_setup', { course: 'Ophelia', character, difficulty: 'medium' })); json(await call('race_start'));
+    json(await call('race_drive', { seconds: 2 }));
+    const m = json(await call('race_motion', { seconds: 4 }));
+    const P = Object.fromEntries(m.probes.map(p => [p.probe, p])), sw = m.probes.filter(p => p.probe.startsWith('sway'));
+    return { neck: P.neck, sway: sw.reduce((a, p) => a + p.jerk, 0) / sw.length, swaySnaps: sw.reduce((a, p) => a + p.snaps, 0), n: sw.length };
+  };
+  const a = await run('guido'), b = await run('guidoFluid');
+  assert.equal(a.n, b.n, 'the copy has the same swaying parts');
+  assert.ok(b.neck.jerk < a.neck.jerk / 4, `neck jerk ${a.neck.jerk} -> ${b.neck.jerk}`);
+  assert.ok(b.neck.snaps < a.neck.snaps / 3, `neck snaps ${a.neck.snaps} -> ${b.neck.snaps}`);
+  assert.ok(b.sway < a.sway / 4, `sway jerk ${Math.round(a.sway)} -> ${Math.round(b.sway)}`);
+  assert.ok(b.swaySnaps < a.swaySnaps / 3, `sway snaps ${a.swaySnaps} -> ${b.swaySnaps}`);
+  const s = json(await call('race_motion', { seconds: 1, series: true }));
+  assert.equal(s.probes.find(p => p.probe === 'neck').speedSeries.length, 59, 'series: one speed per frame step');
+});
+
+await check('race_regress: a rest-pose sheet is the same pixels every time; the Fluid copy matches its original; another racer fails', async () => {
+  const first = json(await call('race_regress'));   // (guidoFluid is on the grid: the last check left it there)
+  assert.match(first.note, /golden/);
+  json(await call('race_drive', { seconds: 3 }));
+  const again = json(await call('race_regress'));
+  assert.equal(again.pass, true); assert.ok(again.changed < 0.005, `changed ${again.changed} after racing on`);
+  fs.copyFileSync(path.join(GOLDEN, 'guidoFluid-turnaround.jpg'), path.join(GOLDEN, 'guido-turnaround.jpg'));
+  fs.copyFileSync(path.join(GOLDEN, 'guidoFluid-turnaround.jpg'), path.join(GOLDEN, 'punk-turnaround.jpg'));
+  json(await call('race_setup', { character: 'guido' })); json(await call('race_start'));
+  const orig = json(await call('race_regress'));
+  assert.equal(orig.pass, true, `Guido at rest is his Fluid copy at rest (changed ${orig.changed})`);
+  json(await call('race_setup', { character: 'punk' })); json(await call('race_start'));
+  const other = await call('race_regress');
+  save(image(other), 'regress-heat.jpg');
+  assert.equal(json(other).pass, false, 'Sid Spitfire is not Guido');
+});
+
+await check('scene_page shows the whole page; race_state carries the music clock', async () => {
+  const pg = await call('scene_page');
+  assert.ok(Buffer.from(image(pg).data, 'base64').length > 10000, 'a real screenshot');
+  const st = json(await call('race_state'));
+  assert.ok('music' in st);
+  if (st.music) { assert.ok(st.music.bpm > 40 && st.music.bpm < 240, `bpm ${st.music.bpm}`); assert.ok(st.music.phase >= 0 && st.music.phase < 1); }
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);
 });
 
 await client.close();
+fs.rmSync(GOLDEN, { recursive: true, force: true });
 const passed = results.filter(Boolean).length;
 console.log(`\n${passed}/${results.length} passed`);
 if (passed !== results.length) console.log('\nserver stderr:\n' + serverLog);

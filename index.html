@@ -4400,6 +4400,8 @@ function startProducedStation(tk){
   curStyle.songName=song.title;
   musicTimer=h.timer;                               // the engine's scheduler: truthy while it plays
 }
+/* The beat of whatever is playing (a produced station), or null: { bpm, phase (0..1 through the beat), bar, beats }. */
+function musicBeat(){ for(const id in producedStations){ const h=producedStations[id]; if(h.running && h.beat) return h.beat(); } return null; }
 function stopProducedStations(){
   for(const id in producedStations){ const h=producedStations[id];
     if(h.running) producedResume[id]=h.stop()+1; }
@@ -4831,6 +4833,9 @@ const SONG_ENGINE=(function(){
         disconnectTimer=setTimeout(()=>{ disconnectTimer=null;
           if(!running && gen===my && connected){ try{ bus.out.disconnect(); }catch(e){} connected=false; } },3000);
         return bar; },
+      // where the music is RIGHT NOW, on the audio clock: beats per minute as it is playing (a song's own tempo moves
+      // included), and how far through the current beat (0..1) and bar (0..1). For anything that wants to move on the beat.
+      beat(){ if(!running||!sd) return null; const st=(ctx.currentTime-barT)/sd, b=st/4; return { bpm:+(15/sd).toFixed(1), phase:((b%1)+1)%1, bar:(((st/16)%1)+1)%1, beats:b }; },
       info(){ return Object.assign({bpm:+(song.bpm*tempoScale).toFixed(1), key, voices:live.length,
         running}, planInfo||{}); },
       dispose(){ H.stop(); for(const o of bus.lfos){ try{ o.stop(); }catch(e){} } try{ bus.out.disconnect(); }catch(e){} connected=false; },
@@ -58427,7 +58432,7 @@ const TAIL_OUTLINE_W=0.32;   // constant absolute width — tapers with the tube
  * guarantees still holds. A character with no entry swims exactly as before. */
 const SR_BASE={dragon:'korean', paper:'korean', voxel:'sailor', beadSalty:'sailor', kingVox:'king', wire:'rick',
   dough:'latin', beadJuan:'latin', beadBandido:'latin', mosaic:'irish', bead:'cholo', paint:'french',
-  felt:'hillbilly', ukiyo:'samurai', cowboy:'hillbilly', outlaw:'hillbilly'};
+  felt:'hillbilly', ukiyo:'samurai', cowboy:'hillbilly', outlaw:'hillbilly', guidoFluid:'guido', punkFluid:'punk'};
 const TAIL_DEF={f:1, fv:0, a:1, sp:1, w:1, p:2, ya:0, yf:1, yph:0, sh:0, shv:0, h3:0, lean:0, hop:0, hf:1, jit:0, sweep:0, flick:0};
 const TAIL_STYLES_ON=false;
 const TAIL_STYLE={
@@ -70002,14 +70007,86 @@ function tickKasi(o, r, now){
   ksApply(o, want, Math.min(1,dt*12), t);
   // the groove: 104 bpm off the race clock. The neon kicks on the beat and flares on a boost; the underglow breathes;
   // when he's vibing (or won) his head nods on it
-  const beat=(t*104/60)%1, kick=Math.exp(-beat*7), boost=r&&(r.boostT||0)>0?1:0;
+  const mb=musicBeat(), beat=mb?mb.phase:(t*104/60)%1, beats=mb?mb.beats:t*104/60, kick=Math.exp(-beat*7), boost=r&&(r.boostT||0)>0?1:0;   // on the song's own beat when one is playing
   if(ud.ksTailMat) ud.ksTailMat.emissiveIntensity=0.55+0.55*kick+1.2*boost;
   if(ud.ksUnder){ ud.ksUnder.material.opacity=0.18+0.22*kick+0.3*boost; ud.ksUnder.scale.setScalar(4.5+1.5*kick+3*boost); }
-  if(KS_EXPR[want] && KS_EXPR[want].bob && ud.neck){ const nod=-0.16*kick+0.05, sway=0.07*Math.sin(t*104/60*Math.PI); _cbQ.setFromEuler(new T.Euler(nod, 0, sway)); ud.neck.quaternion.multiply(_cbQ); ud.neck.position.copy(NECK_PIV).sub(_cbV.copy(NECK_PIV).applyQuaternion(ud.neck.quaternion)); }
+  if(KS_EXPR[want] && KS_EXPR[want].bob && ud.neck){ const nod=-0.16*kick+0.05, sway=0.07*Math.sin(beats*Math.PI); _cbQ.setFromEuler(new T.Euler(nod, 0, sway)); ud.neck.quaternion.multiply(_cbQ); ud.neck.position.copy(NECK_PIV).sub(_cbV.copy(NECK_PIV).applyQuaternion(ud.neck.quaternion)); }
 }
+
+/* ============== FLUID KIT: a motion layer any racer can opt into ============== *
+ * Measured with race_motion: a stock racer's neck SNAPS between glance targets (dozens of jerk spikes in a few
+ * seconds), its swaying parts are sine waves plus a drag term computed from the instantaneous speed (every throttle
+ * change kicks them), and its tail amplitude jumps with speed. fluidify(g) puts a layer of physics over the pose the
+ * game asks for:
+ *   · the NECK: the game's pose eases into a target that a damped spring turns toward — glances ease in, overshoot a hair,
+ *     and settle, instead of jumping;
+ *   · SECONDARY MOTION: every swaying part (hair, locks, chains, charms) becomes a damped spring pushed by what the body
+ *     actually does — dragged back by speed, thrown forward under braking, swung out in a turn, with a slow idle in it —
+ *     so it follows through and overlaps instead of ticking along on a sine;
+ *   · the BODY: banks into turns with a lag, stretches when a boost lights and squashes when it lands (volume kept), and
+ *     breathes at rest;
+ *   · the TAIL: its swim amplitude glides between speeds instead of stepping (a hook in syncObjects).
+ * It only ever adds on top of the game's own pose, and takes last frame's addition back off when nothing reset it, so it
+ * is safe in a race, on the select stage, anywhere a racer is drawn. */
+const _flQ=new T.Quaternion(), _flQ2=new T.Quaternion(), _flV=new T.Vector3(), _flZ=new T.Vector3(0,0,1);
+function fluidify(g, o){
+  o=o||{}; const ud=g.userData;
+  const F=ud.fluid={ neck:{ q:null, w:new T.Vector3() }, k:o.neckK||70, c:o.neckC||14, sway:null, prev:null, t:null,
+    bank:0, bankV:0, sq:1, sqV:0, breath:(o.seed||1)*1.7, amp:null };
+  if(ud.sway){ F.sway=ud.sway.map(s=>Object.assign({}, s, { ax:s.bx||0, az:s.bz||0, vx:0, vz:0 })); ud.sway=null; }   // the springs take the sways over
+  const inner=ud.tick; ud.tick=(go,r,now)=>{ if(inner) inner(go,r,now); fluidTick(go,r,now); };
+  ud.motionProbes=(ud.motionProbes||[]);
+  return g;
+}
+function fluidTick(o, r, now){
+  const ud=o.userData, F=ud.fluid; if(!F) return;
+  const t=now||0, dt=F.t==null?1/60:Math.min(0.05,Math.max(0.001,t-F.t)); F.t=t;
+  // what the springs feel: forward acceleration, turn rate and speed
+  const spd=r?(r.spd||0):0, head=r?(r.head||0):0;
+  // each input runs through TWO low-pass stages, so what the springs chase never jumps and never kinks: a boost or a
+  // bump bends a target smoothly, and the springs' acceleration stays continuous (measured: this is what removes the snaps)
+  const P=F.prev||(F.prev={ spd, head, a1:0, a2:0, t1:0, t2:0, s1:Math.abs(spd), s2:Math.abs(spd) });
+  let dh=head-P.head; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832;
+  const lp=1-Math.exp(-dt*9), rawA=Math.max(-300,Math.min(300,(spd-P.spd)/dt)), rawT=Math.max(-4,Math.min(4,dh/dt));
+  P.a1+=(rawA-P.a1)*lp; P.a2+=(P.a1-P.a2)*lp; P.t1+=(rawT-P.t1)*lp; P.t2+=(P.t1-P.t2)*lp;
+  P.s1+=(Math.abs(spd)-P.s1)*lp; P.s2+=(P.s1-P.s2)*lp; P.spd=spd; P.head=head;
+  const acc=P.a2, turn=P.t2, sp=Math.min(1,P.s2/140);
+  // 1) the neck: a damped spring toward the pose the game asked for
+  const n=ud.neck;
+  if(n){ if(!F.neck.q){ F.neck.q=n.quaternion.clone(); F.neck.tq=n.quaternion.clone(); }
+    const target=_flQ2.copy(F.neck.tq.slerp(n.quaternion, 1-Math.exp(-dt*16)));   // the pose eases into a target first, so a glance's start has no corner
+    _flQ.copy(target).multiply(F.neck.q.clone().invert()); if(_flQ.w<0){ _flQ.x=-_flQ.x; _flQ.y=-_flQ.y; _flQ.z=-_flQ.z; _flQ.w=-_flQ.w; }
+    const s=Math.sqrt(Math.max(0,1-_flQ.w*_flQ.w)), ang=2*Math.acos(Math.min(1,_flQ.w));
+    if(s>1e-6) F.neck.w.addScaledVector(_flV.set(_flQ.x/s,_flQ.y/s,_flQ.z/s), ang*F.k*dt);
+    F.neck.w.multiplyScalar(Math.exp(-F.c*dt));
+    const wl=F.neck.w.length(); if(wl>1e-7){ _flQ.setFromAxisAngle(_flV.copy(F.neck.w).divideScalar(wl), wl*dt); F.neck.q.premultiply(_flQ).normalize(); }
+    n.quaternion.copy(F.neck.q); n.position.copy(NECK_PIV).sub(_flV.copy(NECK_PIV).applyQuaternion(F.neck.q)); }
+  // 2) secondary motion: springs pushed by the body
+  if(F.sway) for(const s of F.sway){
+    if(s.tw){ s.o.scale.setScalar(0.01+s.tw*Math.pow(Math.max(0,Math.sin(t*s.f+s.ph)),9)); continue; }   // glints stay glints
+    const idle=Math.sin(t*s.f*0.55+s.ph)*s.amp*0.6;
+    const tx=(s.bx||0) + s.drag*sp*0.55 - acc*0.0011*s.drag + idle;
+    const tz=(s.bz||0) - (s.side!=null?s.side:s.drag)*turn*0.14 + Math.sin(t*s.f*0.4+s.ph*1.3)*s.amp*0.4;
+    const k=s.k||48, c=s.c||6.5;
+    s.vx=(s.vx+(tx-s.ax)*k*dt)*Math.exp(-c*dt); s.ax+=s.vx*dt;
+    s.vz=(s.vz+(tz-s.az)*k*dt)*Math.exp(-c*dt); s.az+=s.vz*dt;
+    s.o.rotation.x=s.ax; s.o.rotation.z=s.az; }
+  // 3) the body: lagged bank, squash & stretch, breath — added on top of the game's own pose, last frame's addition removed first
+  F.bankV=(F.bankV+(-turn*0.075-F.bank)*55*dt)*Math.exp(-10*dt); F.bank+=F.bankV*dt;
+  const boosting=!!(r&&(r.boostT||0)>0), air=!!(r&&r.air);
+  if(boosting && !F.wasBoost) F.sqV+=1.6; if(F.wasAir && !air) F.sqV-=2.4; F.wasBoost=boosting; F.wasAir=air;
+  F.sqV=(F.sqV+(1-F.sq)*85*dt)*Math.exp(-8.5*dt); F.sq+=F.sqV*dt;
+  const sq=Math.max(0.82,Math.min(1.22,F.sq)), br=1+0.01*Math.sin(t*1.9+F.breath)*(1-sp), w=br/Math.sqrt(sq);
+  if(F.wS && o.scale.equals(F.wS)) o.scale.divide(F.mS);
+  o.scale.multiply(_flV.set(w,w,sq*br)); (F.mS||(F.mS=new T.Vector3())).set(w,w,sq*br); (F.wS||(F.wS=new T.Vector3())).copy(o.scale);
+  if(F.wQ && o.quaternion.equals(F.wQ)) o.quaternion.multiply(_flQ2.copy(F.mQ).invert());
+  _flQ.setFromAxisAngle(_flZ, F.bank); o.quaternion.multiply(_flQ); (F.mQ||(F.mQ=new T.Quaternion())).copy(_flQ); (F.wQ||(F.wQ=new T.Quaternion())).copy(o.quaternion);
+}
+const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid copies and the originals they are built from (Sid: the stiffest racer with swaying parts, by race_motion)
 
 function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
 function makeCellBuild(hue, typeId){
+  const fluidOf=(FLUID_COPIES.find(c=>c[0]===typeId)||[])[1]; if(fluidOf) typeId=fluidOf;   // a Fluid copy: the original's build, then the motion layer (fluidify, at the end)
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
   if(typeId === 'beadBandido') return makeBandidoCell(); // the Creature Lab sombrero actor
   if(typeId === 'beadBosun') return makeBosunCell();     // creature-lab iteration 3
@@ -70982,6 +71059,7 @@ function makeCellBuild(hue, typeId){
     // restoring the brighter pre-clay value and the character would never sit matte.
     g.userData.baseEmissive = g.userData.head.material.emissive.clone();
   } else if(!g.userData.real) celShade(g);   // (real: Tex Calloway is shaded physically — no toon steps, no ink line)
+  if(fluidOf) fluidify(g, { seed:hue });
   return g;
 }
 
@@ -70999,6 +71077,7 @@ const ROSTER=[
 // on the minimap/leaderboard dots, which have no art to disambiguate, only color
 const SPERM_TYPES = [
   {id:'guido', name:'Guido Tony', hue:28, desc:'Jersey\'s finest. Mad drift skills + gold chain swagger.', stats:{skill:0.96, driftMult:1.35, boostLen:1.15}},
+  {id:'guidoFluid', name:'Guido Tony · Fluid', hue:28, desc:'Jersey\'s finest. Mad drift skills + gold chain swagger. (Fluid: the same racer on a physics motion layer — springs in the neck, the hair and every charm; banks, squashes and breathes.)', stats:{skill:0.96, driftMult:1.35, boostLen:1.15}},
   {id:'irish', name:'Seamus O\'Lucky', hue:142, desc:'Lucky Irish busker with a bodhrán on his back. Items spawn more often.', stats:{skill:1.01, itemLuck:1.6, turn:1.1}},
   {id:'latin', name:'Antonio Stallion', hue:340, desc:'Swept-back mane, silk collar, a lucky gold horseshoe. Blazing straight-line speed.', stats:{skill:0.97, maxV:1.18, accel:1.25}},
   {id:'juan', name:'Juan', hue:101, desc:'Bead-stitched showman. Quick, nimble, all-round.', stats:{skill:1.0, maxV:1.08, accel:1.1, turn:1.08}},
@@ -71036,6 +71115,7 @@ const SPERM_TYPES = [
   {id:'beadBosun', name:'Bosun Pearl', hue:322, desc:'Pink beadwork under a white sailor cap and a brass anchor. Her mouth is a threaded strand that redraws itself with her mood.', stats:{skill:1.0, spinResist:0.62, turn:1.15, brake:0.8}},
   {id:'beadBandido', name:'Beaded Bandido', hue:22, desc:'Strung in glossy beads under a hand-threaded sombrero. The moustache streams in the wind and he wears his mood on his face.', stats:{skill:1.0, driftMult:1.2, turn:1.12, spinResist:0.7}},
   {id:'punk', name:'Sid Spitfire', hue:331, desc:'Red mohawk, ginger beard, a safety pin for an earring. Takes every corner like it owes him money, then glares at whoever he just passed. OI!', stats:{skill:0.97, maxV:1.16, driftMult:1.2}},
+  {id:'punkFluid', name:'Sid Spitfire · Fluid', hue:331, desc:'Red mohawk, ginger beard, a safety pin for an earring. Takes every corner like it owes him money, then glares at whoever he just passed. OI! (Fluid: the same racer on a physics motion layer — springs in the neck, the mohawk, the beard and the earring; banks, squashes and breathes.)', stats:{skill:0.97, maxV:1.16, driftMult:1.2}},
   {id:'sheikh', name:'Sheikh Tariq Al-Dhahab', hue:60, desc:'Checked shemagh, gold-trimmed bisht, a hooded falcon riding on his shoulder. Never hurries, never sweats, and somehow always has the racing line reserved. YALLA!', stats:{skill:1.0, maxV:1.14, boostLen:1.15}},
   {id:'viking', name:'Leif Laserbeard', hue:202, desc:'Brass goggles on a stud-lit leather band, a braided beard strung with beads, a gear harness over red tartan. Marches to the beat with a dead-straight face and never, ever stops. SKÅL.', stats:{skill:0.98, boostPower:1.3, spinResist:0.62, accel:0.9}},
   {id:'fighter', name:'Fionn "The Breaker" Hegarty', hue:165, desc:'Featherweight showman: a copper crop, a nose broken twice, a cauliflower ear and a gumshield grin. Shadow-boxes on the grid, throws a one-two at whoever he passes, showboats the second he leads. DING DING!', stats:{skill:0.98, accel:1.2, boostPower:1.25, spinResist:0.6, turn:0.92}},
@@ -71053,7 +71133,7 @@ function isLocked(t){ if(!t||!t.locked) return false; try{ if(localStorage.getIt
 function lockHint(t){ let n='Circuit Cup'; try{ const m=CUP_META[(t&&t.reward||1)-1]; if(m) n=m.name; }catch(_){} return '🔒 Finish the '+n; }
 function grantUnlock(t){ try{ const a=unlockedIds(); if(a.indexOf(t.id)<0){ a.push(t.id); localStorage.setItem('sr_unlocks',JSON.stringify(a)); } }catch(_){} }
 // the select grid's order: the finished characters first, then the style variants, the locked ones last
-const SEL_VARIANTS=new Set(['voxel','kingVox','wire','dough','mosaic','bead','beadSalty','beadJuan','paint','felt','paper','ukiyo','ryuKenji','dragoTony','rastaDragon','beadBosun','beadBandido']);
+const SEL_VARIANTS=new Set(['guidoFluid','punkFluid','voxel','kingVox','wire','dough','mosaic','bead','beadSalty','beadJuan','paint','felt','paper','ukiyo','ryuKenji','dragoTony','rastaDragon','beadBosun','beadBandido']);
 function selOrdered(){ const rank=t=>SEL_VARIANTS.has(t.id)?(isLocked(t)?2+(t.reward||0)/10:1):0; return SPERM_TYPES.map((t,i)=>[t,i]).sort((a,b)=>rank(a[0])-rank(b[0])||a[1]-b[1]).map(x=>x[0]); }
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Circuit Cup state (the cup module, after endRace): the live run's lineup, scores and eggs
@@ -73132,6 +73212,7 @@ function syncObjects(dt,now){
       _TW.hop=ts.hop ? ts.hop*hpm*Math.abs(Math.sin(tph*ts.hf)) : 0; _TW.pg=pgm;
     }
     const wlOn=!!(wl && wl.t>=0); if(wlOn) amp*=wlStage(wl);   // the lash bends the chain; the swim mostly steps aside for it
+    { const F=r.obj.userData.fluid; if(F){ F.amp=F.amp==null?amp:F.amp+(amp-F.amp)*Math.min(1,dt*4); amp=F.amp; } }   // (a fluid racer's swim glides between speeds)
     wiggleTail(r.obj, tph, amp, r._tailLift, ts);
     if(wlOn){ wlTipFx(r,o,wl); _WL.on=false; _wlx=_wlz=_wla=0; }
     // boost flush on head + halo — brighten the character's OWN stored base emissive
@@ -75743,7 +75824,7 @@ const cupType=id=>SPERM_TYPES.find(t=>t.id===id)||null;
 function cupLoad(key){ try{ const v=JSON.parse(localStorage.getItem(key)||'null'); return v&&typeof v==='object'&&!Array.isArray(v)?v:{}; }catch(_){ return {}; } }
 function cupSave(key,v){ try{ localStorage.setItem(key,JSON.stringify(v)); }catch(_){} }
 function cupDefs(){
-  const strip=courseStripOrder(), out=[];
+  const strip=courseStripOrder(true), out=[];   // (the cups' own order: the home strip's front pins don't reshuffle them)
   for(let k=0;(k+1)*CUP_SIZE<=strip.length;k++){   // whole cups only: a course past the last full cup waits on the strip (see TRACK_ADDED)
     const m=CUP_META[k]||{}, idx=strip.slice(k*CUP_SIZE,(k+1)*CUP_SIZE);
     out.push({id:'c'+(k+1), n:k+1, name:m.name||('Cup '+(k+1)), tag:m.tag||'', hue:m.hue!=null?m.hue:(k*57)%360, courses:idx.map(i=>TRACKS[i].name)});
@@ -77054,10 +77135,12 @@ const TRACK_LAST=['Seraphina','Delilah','Bianca','Valentina','Clara'];   // ...a
 // its racer unlock are keyed by its number): they go AFTER everything, so no existing cup changes a course or a medal. A
 // sixth cup is cut from them once there are five (cupDefs cuts whole cups only).
 const TRACK_ADDED=['Victoria'];
+const TRACK_FRONT=['Victoria'];   // the HOME strip leads with these (and a first visit starts on them); the cups keep their own order (cupDefs reads courseStripOrder(true))
 // the strip's order as TRACKS indices: Felicity ... Penelope, then the rest in TRACKS order, then TRACK_LAST. Display order only
 // (TRACKS indices stay put: saved picks and lobbies key off them). The home strip and the Circuit Cup's cups are both cut from it.
-function courseStripOrder(){
+function courseStripOrder(forCups){
   const at=n=>TRACKS.findIndex(t=>t.name===n);
+  if(!forCups){ const base=courseStripOrder(true), front=TRACK_FRONT.map(at).filter(i=>i>=0); return front.concat(base.filter(i=>!front.includes(i))); }
   return TRACK_FIRST.map(at).filter(i=>i>=0)
     .concat(TRACKS.map((t,i)=>i).filter(i=>!TRACK_LAST.includes(TRACKS[i].name)&&!TRACK_FIRST.includes(TRACKS[i].name)&&!TRACK_ADDED.includes(TRACKS[i].name)))
     .concat(TRACK_LAST.map(at).filter(i=>i>=0))
@@ -77302,11 +77385,12 @@ function setupFullscreen(){
 try{
   const tr=parseInt(localStorage.getItem('sr_track'),10);
   if(tr>=0&&tr<TRACKS.length) selTrack=tr;
-  else { const f=TRACKS.findIndex(t=>t.name===TRACK_FIRST[0]); if(f>=0) selTrack=f; }   // first visit: the strip's first card
+  else { const f=TRACKS.findIndex(t=>t.name===(TRACK_FRONT[0]||TRACK_FIRST[0])); if(f>=0) selTrack=f; }   // first visit: the strip's first card
   const df=localStorage.getItem('sr_diff'); if(df==='easy'||df==='medium'||df==='hard') difficulty=df;
   const rid=localStorage.getItem('sr_racer');
   const rt=SPERM_TYPES.find(t=>t.id===rid&&!t.hidden&&!isLocked(t)); if(rt) chosenType=rt;
 }catch(_){}
+for(const [c,b] of FLUID_COPIES) for(const R of [OP_ART,OP_SVG,FX_RACER,BARKS,SIGNATURE_ITEMS]) if(R && R[b]!==undefined && R[c]===undefined) R[c]=R[b];   // the Fluid copies wear the originals' cards, comic text, barks, signatures (before the grid is first built)
 setupSelect(true);
 setupJoystick();
 setupTrackPick();
@@ -78103,7 +78187,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
 
     'race.manual': ({manual})=>{ if(manual && !SIM.manual) SIM.t=performance.now()/1000; SIM.manual=!!manual; if(!manual) last=performance.now(); hold([]); return { manual:SIM.manual, state }; },
 
-    'race.state': ()=>({ state, manual:SIM.manual, raceTime:r1(raceTime), course:course(),
+    'race.state': ()=>({ state, manual:SIM.manual, raceTime:r1(raceTime), course:course(), music:musicBeat(),
       standings:[...racers].sort((a,b)=>a.place-b.place).map(view) }),
 
     'race.drive': async ({seconds=5, autopilot=true, keys:extra=[], untilFinish=false}={})=>{
@@ -78179,9 +78263,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
 
     /* — SHEETS: the engine draws its own reference sheet. For each cell: pose the camera (and the expression),
          let the page render it, crop the frame and lay it into one composed image with labels. — */
-    'race.sheet': async ({racer, kind='turnaround', cells, cell=300, columns, title, photo={}, background}={})=>{
+    'race.sheet': async ({racer, kind='turnaround', cells, cell=300, columns, title, photo={}, background, rest=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
-      const E=r.obj.userData.expr;
+      const live=r.obj, head0=r.head, liveParent=live.parent; let fresh=null, R0=null, E=live.userData.expr;   // (a fresh build has the same rig: its list is the live one's)
       const P=Object.assign({ elevation:8, distance:24, height:3.2, fov:34, along:-2 }, photo);
       const ANG=[['FRONT',0],['3/4 FRONT',45],['SIDE',90],['3/4 REAR',135],['REAR',180],['3/4 REAR',225],['SIDE',270],['3/4 FRONT',315]];
       let list=cells;
@@ -78194,21 +78278,34 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const sheet=document.createElement('canvas'); sheet.width=W; sheet.height=H; const g=sheet.getContext('2d');
       g.fillStyle=background||(STUDIO.on?'#'+scene.background.getHexString():'#efe3c8'); g.fillRect(0,0,W,H);
       if(title){ g.fillStyle='#2a1712'; g.font='bold 30px Georgia, serif'; g.textAlign='center'; g.fillText(title, W/2, 42); }
+      // REST: draw a FRESH build of the character instead of the live racer — its build pose, at heading 0, ticked on a fixed
+      // clock by a racer standing still — so the same character gives the same pixels every time (race_regress needs that;
+      // the live racer carries its race into the picture: its bank, a glance, the swing of its hair, the phase of its tail)
+      if(rest){ const ty=SPERM_TYPES.find(t=>t.id===r.id); if(!ty) throw new Error('no character "'+r.id+'"');
+        if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+        fresh=makeCell(ty.hue, ty.id); fresh.position.copy(live.position); fresh.traverse(o=>{ o.layers.enable(1); o.frustumCulled=false; });
+        { const ud=fresh.userData; if(ud.flame) for(const f of ud.flame) f.scale.setScalar(0); if(ud.glow){ ud.glow.scale.setScalar(12); ud.glow.material.opacity=0.6; } }   // flames out and the glow at rest, as syncObjects leaves a racer standing still
+        scene.add(fresh); if(liveParent) liveParent.remove(live); r.head=0;   // (out of the scene, not hidden: the frame loop shows a racer again every frame)
+        R0=Object.assign({}, r, { obj:fresh, spd:0, boostT:0, air:false, hop:0, spinT:0, celebT:0, slip:0, head:0, flick:0 }); }
+      const restTick=()=>{ const ud=fresh.userData; if(ud.tick) for(let k=0;k<6;k++) ud.tick(fresh, R0, 50+k/60); fresh.updateMatrixWorld(true); };
+      if(fresh) E=fresh.userData.expr;
       const held=SIM.cam, src=renderer.domElement, prevTick=SIM.tick;
       SIM.tick=()=>{ if(prevTick) prevTick(); const n=r.obj.userData.neck; if(n){ n.quaternion.identity(); n.position.set(0,0,0); } };   // a portrait: head straight, no glancing at rivals
       const grab=()=>new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{   // (inside the frame, behind the page's own draw)
         const s=Math.min(src.width,src.height); res([ (src.width-s)/2, (src.height-s)/2, s ]); }))));
-      for(let i=0;i<list.length;i++){
+      try{ for(let i=0;i<list.length;i++){
         const c=list[i], x=(i%cols)*cell, y=TOP+Math.floor(i/cols)*(cell+LAB);
         SIM.cam={ who:r.name, azimuth:c.azimuth??0, elevation:c.elevation??P.elevation, distance:c.distance??P.distance, height:c.height??P.height, fov:c.fov??P.fov, along:c.along??P.along };
         if(c.expression && E) E.set(c.expression, 30, true);
-        if(SIM.manual && racers.length){ for(let k=0;k<6;k++){ SIM.t+=1/60; syncObjects(1/60, SIM.t); } }
+        if(fresh) restTick();
+        else if(SIM.manual && racers.length){ for(let k=0;k<6;k++){ SIM.t+=1/60; syncObjects(1/60, SIM.t); } }
         await new Promise(res=>setTimeout(res, c.expression?260:60));
         const [sx,sy,s]=await grab();
         await new Promise(res=>requestAnimationFrame(()=>{ g.drawImage(src, sx, sy, s, s, x, y, cell, cell); res(); }));
         g.fillStyle='#2a1712'; g.font='bold 15px Helvetica, Arial, sans-serif'; g.textAlign='center'; g.fillText(c.label||'', x+cell/2, y+cell+22);
-      }
-      SIM.cam=held; SIM.tick=prevTick; if(E) E.set(null);
+      } } finally {   // whatever happens, the race gets its racer, its camera and its clock hook back
+        SIM.cam=held; SIM.tick=prevTick; if(E) E.set(null);
+        if(fresh){ scene.remove(fresh); disposeObject(fresh); if(liveParent && !live.parent) liveParent.add(live); r.head=head0; } }
       const url=sheet.toDataURL('image/jpeg',0.88);
       return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:W, height:H, cells:list.length };
     },
@@ -78307,6 +78404,66 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         pairs.push({ a:rows[i].part, b:rows[j].part, dE:+Math.hypot(A[0]-B[0],A[1]-B[1],A[2]-B[2]).toFixed(1) }); }
       pairs.sort((a,b)=>a.dE-b.dE);
       return { racer:r.name, pixels:total, parts:rows.map(({lab,...x})=>({ ...x, L:+lab[0].toFixed(1) })), closestPairs:pairs.slice(0,8) };
+    },
+
+    /* — MOTION: how fluidly a racer moves. Steps the page at 1/60 s (racing on autopilot, or still) and samples probes
+         IN THE RACER'S OWN SPACE (so the kart's travel is taken out and only the animation is left): the head, the neck's
+         turn, the tail tip, every swaying part, and anything a character lists in ud.motionProbes. For each: how far it
+         moves, and the RMS of its speed, acceleration and jerk (the third derivative: high jerk is what reads as
+         snapping, popping, robotic); "snaps" are frames whose jerk is far above that probe's own median. — */
+    'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
+      const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
+      if(!still && state!=='race') throw new Error('the race is not running; use still:true');
+      if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+      const o=r.obj, ud=o.userData, P=[]; const v=new T.Vector3();
+      const add=(name,obj,kind)=>{ if(obj) P.push({ name, obj, kind:kind||'pos', s:[] }); };
+      add('head', ud.head); add('neck', ud.neck, 'rot');
+      if(ud.tailMesh) P.push({ name:'tailTip', kind:'tip', s:[] });
+      (ud.sway||(ud.fluid&&ud.fluid.sway)||[]).slice(0,8).forEach((w,i)=>add('sway'+i, w.o));   // (a fluid racer's sways live in its spring layer)
+      for(const [n,obj,k] of (ud.motionProbes||[])) add(n,obj,k);
+      const dt=1/60, n=Math.round(seconds/dt), q=new T.Quaternion(), inv=new T.Matrix4();
+      for(let k=0;k<n;k++){
+        if(!still && state==='race'){ hold(autopilot?autoKeys(me(),k):[]); raceStep(dt); }
+        SIM.t+=dt; syncObjects(dt, SIM.t); o.updateMatrixWorld(true); inv.copy(o.matrixWorld).invert();
+        for(const p of P){
+          if(p.kind==='rot'){ q.identity(); for(let x=p.obj; x && x!==o; x=x.parent) q.premultiply(x.quaternion); p.s.push([q.x,q.y,q.z,q.w]); continue; }   // composed up to the body: exact under squash & stretch, where a scaled world matrix is no rotation
+          if(p.kind==='tip'){ const g=ud.tailMesh.geometry, a=g.attributes.position; v.fromBufferAttribute(a, a.count-1); ud.tailMesh.localToWorld(v); }
+          else p.obj.getWorldPosition(v);
+          v.applyMatrix4(inv); p.s.push([v.x,v.y,v.z]); }
+        if(k%240===239) await new Promise(res=>setTimeout(res,0));
+      }
+      hold([]);
+      const rms=a=>Math.sqrt(a.reduce((x,y)=>x+y*y,0)/Math.max(1,a.length)), med=a=>{ const b=a.slice().sort((x,y)=>x-y); return b[b.length>>1]||0; };
+      // derivatives are taken as VECTORS (a rotation's as axis × angle), so a part swinging back through zero is smooth
+      // motion, not a corner in its speed; the per-frame numbers are the vectors' lengths
+      const qa=new T.Quaternion(), qb=new T.Quaternion();
+      const dv=(a,b,kind)=>{ if(kind!=='rot') return [(a[0]-b[0])/dt,(a[1]-b[1])/dt,(a[2]-b[2])/dt];
+        qa.set(a[0],a[1],a[2],a[3]); qb.set(b[0],b[1],b[2],b[3]).invert(); qa.multiply(qb); if(qa.w<0){ qa.x=-qa.x; qa.y=-qa.y; qa.z=-qa.z; qa.w=-qa.w; }
+        const sn=Math.sqrt(qa.x*qa.x+qa.y*qa.y+qa.z*qa.z), ang=2*Math.atan2(sn,qa.w), f=sn>1e-9?ang/sn/dt:2/dt; return [qa.x*f,qa.y*f,qa.z*f]; };
+      const sub=(a,b)=>[(a[0]-b[0])/dt,(a[1]-b[1])/dt,(a[2]-b[2])/dt], len=a=>Math.hypot(a[0],a[1],a[2]);
+      const out=P.map(p=>{
+        const V=[], A=[], J=[]; for(let i=1;i<p.s.length;i++) V.push(dv(p.s[i],p.s[i-1],p.kind));
+        for(let i=1;i<V.length;i++) A.push(sub(V[i],V[i-1])); for(let i=1;i<A.length;i++) J.push(sub(A[i],A[i-1]));
+        const vel=V.map(len), acc=A.map(len), jerk=J.map(len);
+        const jm=med(jerk.map(Math.abs))||1e-9, snaps=jerk.filter(j=>Math.abs(j)>8*jm && Math.abs(j)>(p.kind==='rot'?400:2000)).length;
+        const res={ probe:p.name, unit:p.kind==='rot'?'rad':'u', travel:+vel.reduce((x,y)=>x+y*dt,0).toFixed(2), speed:+rms(vel).toFixed(2), accel:+rms(acc).toFixed(1), jerk:+rms(jerk).toFixed(0), snaps };
+        if(series){ res.speedSeries=vel.map(x=>+x.toFixed(3)); res.snapFrames=jerk.map((j,i)=>Math.abs(j)>8*jm && Math.abs(j)>(p.kind==='rot'?400:2000)?i+3:-1).filter(i=>i>=0); }   // per-frame speed, and the frames the snaps fell on
+        return res; });
+      return { racer:r.name, character:r.id, seconds:+(n*dt).toFixed(2), still, probes:out };
+    },
+
+    /* — DIFF: two images (base64 JPEG/PNG) compared in the page: the share of pixels that changed beyond a tolerance,
+         the mean change, and a heat map of where. For visual regression of a character against a golden sheet. — */
+    'race.diff': async ({a, b, tol=32}={})=>{
+      const load=src=>new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error('could not decode an image')); im.src=src; });
+      const [A,B]=await Promise.all([load('data:image/jpeg;base64,'+a), load('data:image/jpeg;base64,'+b)]);
+      const W=Math.min(A.width,B.width)>>1, H=Math.min(A.height,B.height)>>1, c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+      g.drawImage(A,0,0,W,H); const da=g.getImageData(0,0,W,H).data; g.drawImage(B,0,0,W,H); const db=g.getImageData(0,0,W,H).data;
+      const out=g.createImageData(W,H); let changed=0, sum=0;
+      for(let i=0;i<da.length;i+=4){ const d=Math.max(Math.abs(da[i]-db[i]),Math.abs(da[i+1]-db[i+1]),Math.abs(da[i+2]-db[i+2])); sum+=d; const hot=d>tol; if(hot) changed++;
+        const gr=(db[i]+db[i+1]+db[i+2])/3*0.35; out.data[i]=hot?255:gr; out.data[i+1]=hot?Math.max(0,200-d):gr; out.data[i+2]=hot?40:gr; out.data[i+3]=255; }
+      g.putImageData(out,0,0); const url=c.toDataURL('image/jpeg',0.8);
+      return { changed:+(changed/(W*H)).toFixed(4), meanDelta:+(sum/(W*H)/255).toFixed(4), heat:url.slice(url.indexOf(',')+1), width:W, height:H };
     },
 
     'race.select': async ({character}={})=>{
