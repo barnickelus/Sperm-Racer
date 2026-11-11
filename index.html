@@ -50117,7 +50117,8 @@ function ophTick(P, tsec){
       const u=Math.min(4, Math.max(0, ((me.lap|0)+pr)*4/laps));
       if(!(P.u>=0)) P.u=0;
       // (capped at ~3x racing pace, a lap in 44 s: a lap that jumps — reversing over the line — still glides)
-      if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-dt/0.9)), dt*0.08); }
+      if(SIM.warped) P.u=u;   // (race_warp jumped the race: the hour goes with it, no glide)
+      else if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-dt/0.9)), dt*0.08); }
     ophHour(P, P.u);
     if(TRACK_PULSE.motes && P.moteK!==1) TRACK_PULSE.motes.material.opacity*=P.moteK;   // (frame() sets it afresh every frame, just above)
     if(P.fly && P.hf>0) OPH_H.value=renderer.domElement.height||720; }
@@ -72589,7 +72590,7 @@ function collide(){
   for(const h of hazards){
     h.arm-=1/60;
     if(h.critter){   // crabs patrol laterally across the road, scuttling and snapping
-      const s=SAMP[h.ci], tN=performance.now()*0.001;
+      const s=SAMP[h.ci], tN=SIM.manual?SIM.t:performance.now()*0.001;   // (game time when driven from outside, so a film is the same every take)
       const off=Math.sin(tN*h.cspd+h.phase)*HW*0.8;
       h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
       h.mesh.position.set(h.x, s.p.y+1.6+Math.abs(Math.sin(tN*9))*0.4, h.z);   // scuttle-bob
@@ -72598,7 +72599,7 @@ function collide(){
       if(h.mesh.userData.claws) for(const c of h.mesh.userData.claws){
         c.userData.u.rotation.x=Math.PI/2-0.35-snap; c.userData.l.rotation.x=Math.PI/2+0.35+snap; }
     } else if(h.pill){   // Plan B pill: slower lateral drift + a hovering spin
-      const s=SAMP[h.ci], tN=performance.now()*0.001;
+      const s=SAMP[h.ci], tN=SIM.manual?SIM.t:performance.now()*0.001;
       const off=Math.sin(tN*h.cspd+h.phase)*HW*0.6;
       h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
       h.mesh.position.set(h.x, s.p.y+2.2+Math.sin(tN*2+h.phase)*0.3, h.z);
@@ -74228,12 +74229,14 @@ function hzDraw(){
    hook at the end of this file): a software-rendered page draws a few frames a second, and the
    race must not slow to a crawl — or turn on how fast the machine drew — just because it is being
    watched. frame() calls this exactly as it always ran inline. */
-const SIM={manual:false, cam:null, tick:null, t:0, busy:false};
+const SIM={manual:false, cam:null, tick:null, t:0, busy:false, warped:0};   // warped: frames left in which eased course state should snap (race_warp)
 const REC={on:false, pr:1, cam:null, k:0};   // race.recmode / race.rec: filming at a fixed frame rate   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
 /* A photographer's camera for the outside driver: orbit one racer at a fixed offset relative to
    its heading (azimuth 0 = in front, looking at its face; 180 = straight behind), after the chase
    camera has had its say. Only ever set from the MCP hook; null the rest of the time. */
 function simCamApply(){
+  if(SIM.cam && SIM.cam.free){ const c=SIM.cam; camera.position.set(c.from[0],c.from[1],c.from[2]); camera.lookAt(c.at[0],c.at[1],c.at[2]);
+    if(camera.fov!==c.fov){ camera.fov=c.fov; camera.updateProjectionMatrix(); } return; }   // (race_camera free: a fixed point in the world)
   const c=SIM.cam, r=racers.find(x=>c.who==null?x.you:x.name===c.who)||racers.find(x=>x.you); if(!r||!r.obj) return;
   const al=c.along||0, ox=r.obj.position.x+Math.sin(r.head)*al, oz=r.obj.position.z+Math.cos(r.head)*al;   // along: aim that far along the body (negative = toward the tail)
   const a=r.head+c.azimuth*Math.PI/180, e=c.elevation*Math.PI/180, d=c.distance, ty=r.obj.position.y+c.height;
@@ -74463,6 +74466,7 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
   perfMark('world');
+  if(SIM.warped) SIM.warped--;
   updateParticles(dt);
   perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
@@ -76511,6 +76515,25 @@ countdown = function(){
   if(netHoldStart(begin)) cd.textContent='…'; else begin();
 };
 
+/* Fold a group's still parts into one mesh per material: a model built from thirty little meshes is thirty draw calls
+   every frame, though only a few of its pieces ever move. Direct-child meshes not listed in `keep` (and not holding a
+   kept object) are merged, each baked with its own transform; the moving parts stay as they were. scene_profile found
+   the crabs at 35 draws apiece on every course that has them. */
+function mergeByMaterial(grp, keep){
+  keep=new Set(keep||[]); const buckets=new Map();
+  for(const m of [...grp.children]){
+    if(!m.isMesh || m.isInstancedMesh || keep.has(m) || m.children.length || Array.isArray(m.material)) continue;
+    m.updateMatrix(); const g=(m.geometry.index?m.geometry.toNonIndexed():m.geometry.clone()).applyMatrix4(m.matrix);
+    const b=buckets.get(m.material)||[]; b.push(g); buckets.set(m.material,b); grp.remove(m); m.geometry.dispose(); }
+  for(const [mat,gs] of buckets){
+    const out=new T.BufferGeometry(), uv=gs.every(g=>g.attributes.uv);
+    for(const name of ['position','normal'].concat(uv?['uv']:[])){
+      const n=gs[0].attributes[name].itemSize, arr=new Float32Array(gs.reduce((s,g)=>s+g.attributes[name].count*n,0)); let o=0;
+      for(const g of gs){ arr.set(g.attributes[name].array, o); o+=g.attributes[name].array.length; }
+      out.setAttribute(name, new T.BufferAttribute(arr, n)); }
+    for(const g of gs) g.dispose(); out.computeBoundingSphere(); grp.add(new T.Mesh(out, mat)); }
+  return grp;
+}
 // ---- track-hazard model builders (crab / Plan B pill / dental dam) ----
 // Enhanced crab: domed two-tone carapace, glossy back ridge + dark belly, segmented forward
 // pincer claws (animatable — see snap in the hazard loop), stalked eyes with pupils, antennae,
@@ -76551,7 +76574,7 @@ function makeCrab(){
     const foot=new T.Mesh(new T.ConeGeometry(0.12,0.7,4), shellDark); foot.position.set(sx*3.9,-1.5,zz); foot.rotation.z=sx*0.5; grp.add(foot);
   }
   grp.userData.claws=claws;
-  return grp;
+  return mergeByMaterial(grp);   // (the claw arms are groups, so they stay whole and keep snapping)
 }
 // Plan B pill: a classic two-tone capsule (white end + pink end, seam band at the middle),
 // laid horizontal. A hazard to AVOID — patrols laterally and spins out + shoves back any racer
@@ -76566,7 +76589,7 @@ function makePill(){
   const topCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,0,Math.PI/2), aMat); topCap.position.y=H/2; cap.add(topCap);
   const botCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,Math.PI/2,Math.PI/2), bMat); botCap.position.y=-H/2; cap.add(botCap);
   const band=new T.Mesh(new T.CylinderGeometry(R*1.03,R*1.03,0.2,16), new T.MeshPhongMaterial({color:0xcfcfd6,emissive:0x333338})); cap.add(band);
-  cap.rotation.z=Math.PI/2; grp.add(cap);   // lay the capsule along local X (two ends left/right)
+  mergeByMaterial(cap); cap.rotation.z=Math.PI/2; grp.add(cap);   // lay the capsule along local X (two ends left/right)
   grp.add(glowSprite(0xff9dbd,4.5));   // small halo — enough to catch the eye without washing out the two-tone
   return grp;
 }
@@ -78672,7 +78695,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
 
     /* — PROFILE: what each racer costs to draw (meshes ≈ draw calls, triangles, materials, textures), and on request the
          whole roster, every character built off-screen once and measured, build time included — */
-    'race.profile': async ({roster=false}={})=>{
+    'race.profile': async ({roster=false, top=12}={})=>{
       const cost=root=>{ let draws=0, tris=0; const mats=new Set(), tex=new Set();
         root.traverseVisible(o=>{ if(!(o.isMesh||o.isPoints||o.isLine||o.isSprite)) return; draws++;
           const g=o.geometry; if(g){ const n=g.index?g.index.count:(g.attributes.position?g.attributes.position.count:0);
@@ -78681,6 +78704,16 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         return { draws, triangles:Math.round(tris), materials:mats.size, textures:tex.size }; };
       const out={ racers:racers.map(r=>({ name:r.name, character:r.id, ...cost(r.obj) })).sort((a,b)=>b.draws-a.draws),
         track:trackGroup?cost(trackGroup):null, scene:cost(scene) };
+      // the course's heaviest pieces (the track's direct children, by draws then triangles), named as well as they can be
+      // identical pieces are rolled together (×count), each named by what is inside it: its first mesh's material, colour, geometry
+      const sig=o=>{ if(o.name) return o.name; let m=o.isMesh?o:null; if(!m) o.traverse(c=>{ if(!m && c.isMesh) m=c; });
+        if(!m) return o.type; const mt=Array.isArray(m.material)?m.material[0]:m.material;
+        return (o.isMesh?'':o.type+'›')+(m.isInstancedMesh?'Instanced·':'')+(mt?(mt.name||mt.type.replace('Material',''))+(mt.color?' #'+mt.color.getHexString():''):'')+' '+(m.geometry?m.geometry.type.replace('BufferGeometry','').replace('Geometry','')||'Buffer':''); };
+      const roll=(parent)=>{ const g=new Map(); for(const c of parent.children){ const k=cost(c); if(!k.draws) continue; const key=sig(c)+'|'+k.draws+'|'+k.triangles;
+          const e=g.get(key)||{ name:sig(c), count:0, draws:0, triangles:0, each:k.draws }; e.count++; e.draws+=k.draws; e.triangles+=k.triangles; g.set(key,e); }
+        return [...g.values()].sort((a,b)=>b.draws-a.draws||b.triangles-a.triangles).slice(0,top||12); };
+      if(trackGroup){ out.trackTop=roll(trackGroup); out.trackPieces=trackGroup.children.length; }
+      { const other=new T.Group(); other.children=scene.children.filter(c=>c!==trackGroup && !racers.some(r=>r.obj===c)); out.sceneOtherTop=roll(other); }   // outside the track and the racers: sky, particles, effects
       if(roster){ const list=[];
         for(const t of SPERM_TYPES){ const t0=performance.now(); let o=null, err=null;
           try{ o=makeCell(t.hue, t.id); }catch(e){ err=String(e.message||e); }
@@ -78819,6 +78852,83 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat() };
     },
 
+    /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
+         there: `to` is in laps on a lap course (2.5 = halfway round the third lap), a fraction on a point-to-point one.
+         You are put there and the field around you in race order (`spread` units apart), at speed, lap counts and
+         checkpoints set as if driven; eased course state (Ophelia's hour) snaps to it. — */
+    'race.warp': ({to=0, spread=14, you:at='back'}={})=>{
+      if(state!=='race') throw new Error('race_start first');
+      if(MAZE) throw new Error('the maze has no line to warp along');
+      let len=0; for(let i=1;i<STEPS;i++) len+=SAMP[i].p.distanceTo(SAMP[i-1].p); if(trackLoop) len+=SAMP[0].p.distanceTo(SAMP[STEPS-1].p);
+      const laps=lapsOf(), end=trackLoop?laps-0.03:0.96, t0=Math.max(0, Math.min(end, +to||0));
+      // where you sit in the field: at the back (the default: the chase camera sees the pack ahead, not a rival in its lens),
+      // at the front, or in the race's own order
+      const field=[...racers].filter(r=>!r.spectator && !r.remote).sort((a,b)=>a.place-b.place);
+      if(at!=='order'){ const m=field.findIndex(r=>r.you); if(m>=0){ const [y]=field.splice(m,1); if(at==='front') field.unshift(y); else field.push(y); } }
+      const mi=Math.max(0,field.findIndex(r=>r.you));
+      field.forEach((r,k)=>{
+        const t=Math.max(0, Math.min(end, t0+(mi-k)*spread/len));
+        const lap=trackLoop?Math.floor(t):0, u=trackLoop?t-lap:t, idx=trackLoop?Math.round(u*STEPS)%STEPS:Math.round(u*(STEPS-1)), sp=SAMP[idx];
+        const lane=((k%3)-1)*Math.min(6, HW*0.4);
+        r.x=sp.p.x+sp.n.x*lane; r.z=sp.p.z+sp.n.z*lane; r.y=sp.p.y+Math.sin(sp.bank||0)*lane+HOVER_H; r.surfY=r.y-HOVER_H;
+        r.head=Math.atan2(sp.t.x, sp.t.z); r.idx=idx; r.lap=lap; r.prog=u; r.total=lap+u; r._cp=trackLoop && u>0.4;
+        r.spd=Math.max(r.spd||0, MAXV*0.75); r.air=false; r.vy=0; r.hop=0; r.spinT=0; r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r.offT=0;
+        r.finished=false; r.draft=0; r.draftCharge=0; });
+      rank(); const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.px=null; SIM.warped=3;
+      syncObjects(0, SIM.manual?SIM.t:performance.now()/1000);
+      return { to:+t0.toFixed(3), laps:trackLoop?laps:null, loop:trackLoop, trackLength:Math.round(len), you:view(m) };
+    },
+
+    /* — FRAMING: is a racer well shot from where the camera is? Two flat passes from the same camera: the racer alone
+         (its whole silhouette: how much of the frame it fills, where, whether the frame edge cuts it) and the racer
+         against the scene's depth (what is actually seen). Their difference is how much is hidden behind something.
+         A verdict against simple bounds, so a shot can be checked without looking at it. — */
+    'race.framing': async ({racer, cam, minFill=0.02, maxFill=0.6, maxHidden=0.25}={})=>{
+      const r=racers.find(x=>racer?(x.name===racer||x.id===racer):x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
+      const held=SIM.cam; if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:r.name });
+      if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+      if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
+      const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1);
+      const rt=new T.WebGLRenderTarget(W,H), a=new Uint8Array(W*H*4), v=new Uint8Array(W*H*4);
+      const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
+      const white=new T.MeshBasicMaterial({ color:0xffffff, fog:false }), black=new T.MeshBasicMaterial({ color:0x000000, fog:false });
+      const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white; o.layers.enable(3); }
+      const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear;
+      try{
+        scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
+        camera.layers.set(3); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,a);   // alone
+        // everything else in black, for its depth: only solid things hide a racer (not glows, sprites, haze, water, its own outline)
+        const hid=[]; scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
+            (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
+        for(const o of hid) o.visible=false;
+        camera.layers.mask=L; scene.overrideMaterial=black; renderer.clear(); renderer.render(scene,camera);
+        for(const o of hid) o.visible=true;
+        scene.overrideMaterial=null; renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
+        renderer.readRenderTargetPixels(rt,0,0,W,H,v);
+      } finally {
+        renderer.autoClear=ac; scene.overrideMaterial=null; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
+        for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } white.dispose(); black.dispose(); rt.dispose(); SIM.cam=held; }
+      let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4; if(a[i]>127){ A++; cx+=x; cy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+        if(x===0||y===0||x===W-1||y===H-1) edge++; if(v[i]>127) V++; } }
+      const fill=A/(W*H), hidden=A?1-V/A:1, f=n=>+n.toFixed(3);
+      const out={ racer:r.name, fill:f(fill), hidden:f(hidden), visibleFill:f(V/(W*H)),
+        box:A?[f(x0/W),f(1-y1/H),f((x1+1)/W),f(1-y0/H)]:null, center:A?[f(cx/A/W),f(1-cy/A/H)]:null, cutByEdge:edge>0 };
+      const why=[]; if(!A) why.push('not in frame'); else { if(fill<minFill) why.push('too small ('+f(fill)+' of the frame)'); if(fill>maxFill) why.push('too big ('+f(fill)+' of the frame)');
+        if(hidden>maxHidden) why.push(Math.round(hidden*100)+'% hidden behind something'); if(edge>Math.sqrt(A)*0.5) why.push('cut by the frame edge'); }
+      out.ok=!why.length; if(why.length) out.why=why; return out;
+    },
+
+    /* — IMAGE FIT: scale an image (base64 JPEG/PNG) to at most maxWidth wide, as a JPEG. Every picture an agent is
+         shown costs it in proportion to its pixels: tools return pictures at a working size, files keep full size. — */
+    'img.fit': async ({data, maxWidth=800, quality=0.85}={})=>{
+      const im=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('could not decode an image')); i.src='data:image/jpeg;base64,'+data; });
+      if(im.width<=maxWidth) return { data, width:im.width, height:im.height, scaled:false };
+      const w=maxWidth, h=Math.round(im.height*maxWidth/im.width), c=document.createElement('canvas'); c.width=w; c.height=h;
+      const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(im,0,0,w,h); const url=c.toDataURL('image/jpeg',quality);
+      return { data:url.slice(url.indexOf(',')+1), width:w, height:h, scaled:true };
+    },
+
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
     'race.fx': ({slipstream}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
       return { slipstream:DRAFT_FX.force }; },
@@ -78886,7 +78996,15 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       return { screen:'select', character:{ id:t.id, name:t.name }, stage:{ visible:!!SEL3D.vis, live:!!SEL3D.live, mode:SEL3D.mode, ...SEL3D.stats } };   // (live:false = the stage judged this device too slow and fell back to 2D)
     },
 
-    'race.camera': ({mode='photo', racer, azimuth=30, elevation=12, distance=22, height=3.5, fov=35, along=0}={})=>{
+    'race.camera': ({mode='photo', racer, azimuth=30, elevation=12, distance=22, height=3.5, fov=35, along=0, from, at, hazard}={})=>{
+      if(mode==='free'){   // a camera anywhere: from a world point, looking at another (or at a hazard, from `distance` off its side)
+        if(hazard!=null){ const h=hazards[hazard|0]; if(!h) throw new Error('no hazard '+hazard+' ('+hazards.length+' on this course)');
+          const hp=h.mesh.position; at=[hp.x,hp.y+1,hp.z]; const a=azimuth*Math.PI/180, e=elevation*Math.PI/180;
+          from=[hp.x+Math.sin(a)*Math.cos(e)*distance, hp.y+1+Math.sin(e)*distance, hp.z+Math.cos(a)*Math.cos(e)*distance]; }
+        if(!from||!at) throw new Error('free needs from:[x,y,z] and at:[x,y,z], or a hazard index');
+        SIM.cam={ free:true, from, at, fov }; simCamApply();
+        return { mode:'free', from:from.map(v=>+(+v).toFixed(1)), at:at.map(v=>+(+v).toFixed(1)), fov, hazards:hazards.map((h,i)=>({ i, kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard') })) };
+      }
       if(mode==='chase'){ SIM.cam=null; if(racers.length) for(let i=0;i<120;i++) updateCamera(1/60); return { mode:'chase' }; }   // settled at once, not eased back from the photo position
       if(!racers.length) throw new Error('no racers on the course yet — race_start first');
       if(racer && !racers.some(r=>r.name===racer)) throw new Error('no racer "'+racer+'" (names: '+racers.map(r=>r.name).join(', ')+')');
