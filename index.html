@@ -79253,7 +79253,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          overlap another piece by a good share of the smaller one's volume. Each finding says where it is along the lap
          (in laps, for race_warp), how far off the centreline, and what it is. Ground, road, sky and water (anything
          bigger than `maxSize` across) are skipped. — */
-    'race.audit': ({maxSize=160, minSize=1.5, margin=1, overlap=0.3, top=40}={})=>{
+    'race.audit': ({maxSize=160, minSize=1.5, margin=1, overlap=0.3, top=40, sameKind=false}={})=>{
       if(!trackGroup || !SAMP.length) throw new Error('no course built');
       const G=new Map(), CELL=120, key=(x,z)=>Math.floor(x/CELL)+':'+Math.floor(z/CELL);
       for(let i=0;i<STEPS;i++){ const k=key(SAMP[i].p.x,SAMP[i].p.z); (G.get(k)||G.set(k,[]).get(k)).push(i); }
@@ -79289,17 +79289,21 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(worst){ const g=inCorridor(B); if(!g.n) worst=null; else { worst=g.at; worst.inside=g.deep; worst.verts=g.n; } }   // (its box reaches the road; does its shape?)
         if(worst) onRoad.push({ name:B.name, at:worst.at, lateral:+worst.lat.toFixed(1), intoRoad:+worst.inside.toFixed(1), vertices:worst.verts, x:Math.round((bx.min.x+bx.max.x)/2), z:Math.round((bx.min.z+bx.max.z)/2), size:+bx.getSize(new T.Vector3()).length().toFixed(1) }); }
       onRoad.sort((a,b)=>b.intoRoad-a.intoRoad);
+      // the course's own driving surfaces (a boost strip draped over a slope, a jump wedge) belong on the road: listed apart
+      const padNear=(x,z)=>[...boostPads,...jumpPads].some(P=>Math.hypot(P.x-x,P.z-z)<40);
+      const surfaces=onRoad.filter(o=>padNear(o.x,o.z)); for(const o of surfaces) onRoad.splice(onRoad.indexOf(o),1);
       // overlaps between separate pieces (a spatial hash on the boxes' centres keeps it near linear)
       const H=new Map(), C2=60; boxes.forEach((B,k)=>{ const c=B.box.getCenter(new T.Vector3()); const kk=Math.floor(c.x/C2)+':'+Math.floor(c.z/C2); (H.get(kk)||H.set(kk,[]).get(kk)).push(k); B.c=c; });
       const vol=bx=>{ const s=bx.getSize(new T.Vector3()); return Math.max(1e-3,s.x*s.y*s.z); }, I=new T.Box3(), seen=new Set(), overlaps=[];
       boxes.forEach((B,k)=>{ const cx=Math.floor(B.c.x/C2), cz=Math.floor(B.c.z/C2);
         for(let a=-1;a<=1;a++) for(let bb=-1;bb<=1;bb++){ const L=H.get((cx+a)+':'+(cz+bb)); if(!L) continue;
           for(const j of L){ if(j<=k) continue; const A=boxes[j]; if(A.src===B.src && !B.src.isInstancedMesh) continue;
+            if(!sameKind && A.name===B.name) continue;   // (a clump of the same thing, palms or foam, is composed that way: sameKind:true lists those too)
             if(!B.box.intersectsBox(A.box)) continue; I.copy(B.box).intersect(A.box); const r=vol(I)/Math.min(vol(B.box),vol(A.box));
             if(vol(I)/Math.max(vol(B.box),vol(A.box))>0.7) continue;   // (near-identical twins: an ink hull round its shape, a glow over its body — on purpose)
             if(r>=overlap){ const w=where(B.c.x,B.c.z); overlaps.push({ a:B.name, b:A.name, share:+r.toFixed(2), at:w?w.at:null, lateral:w?+w.lat.toFixed(1):null, x:Math.round(B.c.x), z:Math.round(B.c.z) }); } } } });
       overlaps.sort((a,b)=>b.share-a.share);
-      return { course:TRACKS[selTrack].name, loop:trackLoop, pieces:boxes.length, roadHalfWidth:HW, onRoad:onRoad.slice(0,top), onRoadCount:onRoad.length, overlaps:overlaps.slice(0,top), overlapCount:overlaps.length };
+      return { course:TRACKS[selTrack].name, loop:trackLoop, pieces:boxes.length, roadHalfWidth:HW, onRoad:onRoad.slice(0,top), onRoadCount:onRoad.length, surfaces:surfaces.map(o=>({ name:o.name, at:o.at })), overlaps:overlaps.slice(0,top), overlapCount:overlaps.length };
     },
 
     /* — FEATURES: where this course's moments are, along the lap (fractions; on a lap course, of a lap): jump ramps,
