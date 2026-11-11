@@ -78935,14 +78935,18 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         frameStep(t0, dt, SIM.t, t0, sim, i===steps-1); }
       SIM.tick=tick0;
       const url=renderer.domElement.toDataURL('image/jpeg', quality);
-      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state };
+      // what the filmed racer is doing this frame, so the exciting moments can be found in the footage afterwards
+      const r=subj||me(), ev=r?{ place:r.place, speed:Math.round(r.spd||0), boost:(r.boostT||0)>0, air:!!r.air, spin:(r.spinT||0)>0, slings:r.slingN||0,
+        draft:+(r.draft||0).toFixed(2), item:r.item||null, finished:!!r.finished, mega:(r.megaT||0)>0 }:null;
+      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state, ev };
     },
     /* — AUDIO: record what the speakers get (the produced songs play straight into the master bus) for `seconds` of real
          time, as webm/opus, with the engine's hum muted meanwhile (a frozen race fires no other effects). Starts the audio
          and the music if they are not running. — */
-    'race.audio': async ({seconds=30}={})=>{
+    'race.audio': async ({seconds=30, style, bar}={})=>{
       initAudio(); if(!actx) throw new Error('no audio context');
       if(actx.state!=='running') await actx.resume();
+      if(style){ if(!MUSIC_STYLES[style]) throw new Error('no music style "'+style+'"'); musicOn=true; switchSong(style, bar==null?null:bar); await new Promise(r=>setTimeout(r,1500)); }   // (a produced record picks up on its next bar)
       if(!musicTimer) startMusic();
       await waitFor(()=>!!musicGain, 5000, 'the music');
       const dest=actx.createMediaStreamDestination(), lim=actx.createDynamicsCompressor();
@@ -78951,10 +78955,12 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const rec=new MediaRecorder(dest.stream, { mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:192000 }), parts=[];
       rec.ondataavailable=e=>{ if(e.data.size) parts.push(e.data); };
       const done=new Promise(res=>{ rec.onstop=res; });
-      rec.start(1000); await new Promise(r=>setTimeout(r, seconds*1000)); rec.stop(); await done;
+      rec.start(1000); const mb0=musicBeat(), h0=Object.values(producedStations).find(h=>h.running);
+      const firstBar=mb0&&mb0.bpm ? +(((1-mb0.bar)%1)*240/mb0.bpm).toFixed(3) : null, atBar=h0&&h0.bar!=null ? h0.bar : null, section=h0&&h0.sectionId||null;
+      await new Promise(r=>setTimeout(r, seconds*1000)); rec.stop(); await done;
       try{ masterGain.disconnect(lim); }catch(_){} if(engineGain && eg!=null) engineGain.gain.value=eg;
       const buf=new Uint8Array(await new Blob(parts,{type:'audio/webm'}).arrayBuffer()); let bin=''; for(let i=0;i<buf.length;i+=0x8000) bin+=String.fromCharCode.apply(null, buf.subarray(i,i+0x8000));
-      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat() };
+      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat(), firstDownbeat:firstBar, startBar:atBar, section };
     },
 
     /* — AUDIT: what on this course is where it shouldn't be. Every piece of scenery (each instance of an instanced batch
@@ -79012,13 +79018,29 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       return { course:TRACKS[selTrack].name, loop:trackLoop, pieces:boxes.length, roadHalfWidth:HW, onRoad:onRoad.slice(0,top), onRoadCount:onRoad.length, overlaps:overlaps.slice(0,top), overlapCount:overlaps.length };
     },
 
+    /* — FEATURES: where this course's moments are, along the lap (fractions; on a lap course, of a lap): jump ramps,
+         boost strips, item boxes, smashable clusters, hazards — so a shot can be set up just before one (race_warp). — */
+    'race.features': ()=>{
+      const at=(x,z)=>{ const i=nearest(x,z); return +(trackLoop? i/STEPS : i/(STEPS-1)).toFixed(4); };
+      const spot=(x,z)=>{ const i=nearest(x,z), sp=SAMP[i], r1=v=>+v.toFixed(1), r3=v=>+v.toFixed(3);   // where, and which way the road runs there (for a free camera)
+        return { at:+(trackLoop? i/STEPS : i/(STEPS-1)).toFixed(4), x:r1(x), y:r1(sp.p.y), z:r1(z), t:[r3(sp.t.x),r3(sp.t.z)], n:[r3(sp.n.x),r3(sp.n.z)] }; };
+      return { course:TRACKS[selTrack].name, loop:trackLoop, laps:trackLoop?lapsOf():null,
+        jumps:jumpPads.map(p=>spot(p.x,p.z)), boostPads:boostPads.map(p=>at(p.x,p.z)).sort((a,b)=>a-b),
+        itemBoxes:items.filter(b=>b&&isFinite(b.x)).map(b=>at(b.x,b.z)).sort((a,b)=>a-b).slice(0,60),
+        breakables:breakables.map(b=>spot(b.x,b.z)).sort((a,b)=>a.at-b.at).slice(0,60),
+        hazards:hazards.map(h=>({ kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard'), at:at(h.mesh.position.x,h.mesh.position.z) })) };
+    },
+
     /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
          there: `to` is in laps on a lap course (2.5 = halfway round the third lap), a fraction on a point-to-point one.
          You are put there and the field around you in race order (`spread` units apart), at speed, lap counts and
          checkpoints set as if driven; eased course state (Ophelia's hour) snaps to it. — */
-    'race.warp': ({to=0, spread=26, you:at='back'}={})=>{
+    'race.warp': ({to=0, spread=26, you:at='back', jump, pad, lead=160}={})=>{
       if(state!=='race') throw new Error('race_start first');
       if(MAZE) throw new Error('the maze has no line to warp along');
+      if(jump!=null || pad!=null){ const L=jump!=null?jumpPads:boostPads, k=jump!=null?jump:pad, P=L[k|0]; if(!P) throw new Error('no '+(jump!=null?'jump':'boost pad')+' '+k+' ('+L.length+' on this course)');
+        let len0=0; for(let i=1;i<STEPS;i++) len0+=SAMP[i].p.distanceTo(SAMP[i-1].p);
+        const i=nearest(P.x,P.z), f=(trackLoop? i/STEPS : i/(STEPS-1))-lead/len0; to=Math.max(0, f<0&&trackLoop? f+1 : f); }   // (lead units short of it)
       let len=0; for(let i=1;i<STEPS;i++) len+=SAMP[i].p.distanceTo(SAMP[i-1].p); if(trackLoop) len+=SAMP[0].p.distanceTo(SAMP[STEPS-1].p);
       const laps=lapsOf(), end=trackLoop?laps-0.03:0.96, t0=Math.max(0, Math.min(end, +to||0));
       // where you sit in the field: at the back (the default: the chase camera sees the pack ahead, not a rival in its lens),
