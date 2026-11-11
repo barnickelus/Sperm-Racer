@@ -351,7 +351,7 @@ await check('race_features maps the set pieces; race_warp lands short of a jump;
   json(await call('race_warp', { jump: 0, you: 'front', lead: 120 }));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-mom-'));
   try {
-    const r = json(await call('race_record', { seconds: 3, fps: 10, dir, name: 'j' }));
+    const r = json(await call('race_record', { seconds: 3, fps: 12, dir, name: 'j' }));
     assert.ok(r.moments.some(m => m.what === 'airborne'), 'the take-off is a moment: ' + JSON.stringify(r.moments));
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'j.events.json'), 'utf8')).length, r.frames);
     const a = json(await call('race_audio', { seconds: 2, style: 'coronation', bar: 8, file: path.join(dir, 'k.webm') }));
