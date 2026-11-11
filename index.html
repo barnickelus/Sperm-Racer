@@ -37695,6 +37695,9 @@ const TRACKS=[
      point, snakes through two measured S-bends along the north beach, climbs the dunes to a
      crest jump past the sandcastle and rides a quicker S down the east beach to the line.
      raw: the ctrl list is the finished road.
+     Her four laps are a station's broadcast day: SIGN-ON in pastels, NOON at full strength,
+     the SUNSET she was drawn as, and CLOSEDOWN in neon under the stars and the moon (see THE
+     BROADCAST DAY in the kit); each lap opens on its hour at the run into the wave.
      Her song is surf rock: a twangy major-pentatonic line over I-IV-V-IV, a bass no
      other course uses. */
   {name:'Stacey', testcard:true, raw:true, sc:1.127, laps:4, key:4, tempo:172, sky:0x5c14d0, courseStyle:'courseStacey',
@@ -40949,6 +40952,73 @@ const TC_HOR=0xb4b0e2;                         // the haze the land fades toward
 const TC_SUN=new T.Vector3(-0.93,0.05,0.37).normalize();   // low in the south-west, over the sea from the straight
 const TC_SEA_Y=-10;                            // under the lowest banked edge of the deck (-7.3)
 const TC_T={value:0};
+/* THE BROADCAST DAY. Her four laps run a station's day: SIGN-ON, the card in pastels under a
+   morning sun just up off the sea, a ghost of the moon setting opposite; NOON, the bars at full
+   strength under a high sun, the sky a clean blue over thin bands at the horizon; the SUNSET she
+   was drawn as, the sun half down in the sea; and CLOSEDOWN, the sun gone, the bars turned neon,
+   the band edges and the drips lit like tubes, stars, the full moon high with its road on the sea.
+   The rule that keeps it one drawing: INK holds all day (palms, gulls, keylines, hatching, the
+   road), white goes moonlit only at night, and only the colour fields — the sky's bands, the sea's
+   reflections, the bars on the props — are re-keyed. Every key is a uniform (TC_DAYU, shared by
+   the sky, the sea, the sand, the deck, the wave and every prop's material) or a light's colour,
+   intensity or position: no light is added, hidden or shadowed, nothing recompiles mid-race. The
+   menu and the countdown are always SIGN-ON; the hour follows the player (tcTick, tcHour). */
+const TC_DAYU={
+  uSun:{value:TC_SUN.clone()},                                  // the sun the sky draws and the bands arch over
+  uB0:{value:new T.Color()}, uB1:{value:new T.Color()}, uB2:{value:new T.Color()},   // the sky's bands, horizon up (raw sRGB)
+  uB3:{value:new T.Color()}, uB4:{value:new T.Color()}, uB5:{value:new T.Color()}, uBW:{value:new T.Color()},
+  uBS:{value:1}, uEdge:{value:new T.Color()},                   // the bands' height; their brush lines (ink, or neon at night)
+  uRay:{value:1}, uRayT:{value:new T.Vector2(0.30,0.10)},   // the sunburst and its reach
+  uMoon:{value:new T.Vector4(0,0,1,1)}, uStar:{value:0},
+  uCloudW:{value:new T.Color()}, uCloudS:{value:new T.Color()},
+  uSea:{value:new T.Color()}, uSeaW:{value:new T.Color()},      // the ink sea and its foam
+  uRdDir:{value:new T.Vector3()}, uRdA:{value:1}, uRd0:{value:new T.Color()}, uRd1:{value:new T.Color()}, uRd2:{value:new T.Color()},   // the road of light on the sea
+  uDay:{value:new T.Vector4()}, uMoonW:{value:new T.Color(1,1,1)}   // props: x pastel, y full value; what the unsaturated is lit by (linear)
+};
+// what the props' colours do at each hour: the bars (saturated) go pastel or to full value; white, the
+// grey and the ink are multiplied by the moonlight (ink stays ink). Linear colour in, linear out.
+const TC_DAYF=`
+  uniform vec4 uDay; uniform vec3 uMoonW;
+  vec3 tcDay(vec3 c){ float mx=max(max(c.r,c.g),c.b), mn=min(min(c.r,c.g),c.b), bar=smoothstep(0.36,0.48,mx-mn);
+    vec3 b=mix(c, c/max(mx,1e-3), uDay.y); b=mix(b, vec3(1.0), uDay.x);
+    return mix(c*uMoonW, b, bar); }
+  vec3 tcDayG(vec3 c){ return sqrt(max(tcDay(c*c), vec3(0.0))); }`;   // (for the shaders that write sRGB)
+const _tcH=h=>new T.Color(h), _tcHL=h=>new T.Color(h).convertSRGBToLinear();
+const TC_HOURS=[
+  { // 0 · SIGN-ON: the card in pastels, a pale morning sun just up off the sea, the moon a ghost setting opposite
+    sunEl:0.17, moonEl:0.32, moonA:0.42, bs:1.25, ray:1, rayT:new T.Vector2(0.30,0.10),
+    b:[0xfff3c4,0xffcfb4,0xf9b9dc,0xd2bdf4,0xa9c3f4,0x86a6e8].map(_tcH), bw:_tcH(0xfffaf0), edge:_tcH(TC_INK),
+    cloudW:_tcH(0xfffaf4), cloudS:_tcH(0xf3c9df), sea:_tcH(0x161a2e), seaW:_tcH(TC_WHITE),
+    rd:[_tcH(0xfffaf0),_tcH(0xfff0a8),_tcH(0xffc0a8)], rdA:1, day:new T.Vector4(0.30,0,0,0), moonW:new T.Color(1,1,1),
+    fog:_tcHL(0xeee4f0), fogN:700, fogF:2600,
+    hemiC:_tcH(0xe8e2f6), hemiG:_tcH(0xf4eee2), hemiI:0.82, sunC:_tcH(0xfff4e4), sunI:0.85, sunP:new T.Vector3(-170,42,68),
+    rimC:_tcH(0xff9ad6), rimI:0.30, rimP:new T.Vector3(110,60,-70), fillC:_tcH(0x9ad6ff), fillI:0.20, fillP:new T.Vector3(60,30,120) },
+  { // 1 · NOON: the bars at 100%, the sun high (out of the top of the frame), a clean blue over thin bands at the horizon
+    sunEl:0.55, moonEl:-0.30, moonA:0, bs:0.70, ray:1, rayT:new T.Vector2(0.24,0.06),
+    b:[0xfbf7e4,0xf7e41c,0x1ec8e4,0x14a4dc,0x2e8ef2,0x2448e8].map(_tcH), bw:_tcH(0xffffff), edge:_tcH(TC_INK),
+    cloudW:_tcH(0xffffff), cloudS:_tcH(TC_LAV), sea:_tcH(0x0c1426), seaW:_tcH(TC_WHITE),
+    rd:[_tcH(0xffffff),_tcH(0xfff27a),_tcH(0x7fe8ff)], rdA:1, day:new T.Vector4(0,1,0,0), moonW:new T.Color(1,1,1),
+    fog:_tcHL(0xd6ecf6), fogN:760, fogF:2800,
+    hemiC:_tcH(0xdcecff), hemiG:_tcH(0xf2ecdc), hemiI:0.86, sunC:_tcH(0xffffff), sunI:1.05, sunP:new T.Vector3(-90,175,36),
+    rimC:_tcH(0x48c8ff), rimI:0.26, rimP:new T.Vector3(110,60,-70), fillC:_tcH(0xfff2b0), fillI:0.16, fillP:new T.Vector3(60,30,120) },
+  { // 2 · SUNSET, as she was drawn: the bars as the sunset, the sun exactly half down in the sea, the full moon rising opposite
+    sunEl:0.0, moonEl:0.29, moonA:1, bs:1.0, ray:1, rayT:new T.Vector2(0.30,0.10),
+    b:TC_SKY.map(_tcH), bw:_tcH(TC_WHITE), edge:_tcH(TC_INK),
+    cloudW:_tcH(TC_WHITE), cloudS:_tcH(TC_LAV), sea:_tcH(TC_SEA), seaW:_tcH(TC_WHITE),
+    rd:[_tcH(TC_WHITE),_tcH(TC_SKY[0]),_tcH(TC_SKY[1])], rdA:1, day:new T.Vector4(0,0,0,0), moonW:new T.Color(1,1,1),
+    fog:_tcHL(TC_HOR), fogN:700, fogF:2600,
+    hemiC:_tcH(0xd8d4f4), hemiG:_tcH(0xf0e8dc), hemiI:0.78, sunC:_tcH(0xfff0d0), sunI:0.95, sunP:new T.Vector3(-160,70,64),
+    rimC:_tcH(0xe040ff), rimI:0.42, rimP:new T.Vector3(110,60,-70), fillC:_tcH(0x40b0ff), fillI:0.22, fillP:new T.Vector3(60,30,120) },
+  { // 3 · CLOSEDOWN: the sun gone, neon bands low and a near-black sky, the edges and drips lit like tubes, stars,
+    // the moon high with its road on the sea; the bars at full strength against moonlit sand
+    sunEl:-0.42, moonEl:0.33, moonA:1, bs:0.80, ray:0, rayT:new T.Vector2(0.30,0.10),
+    b:[0xff3d9a,0xb52adf,0x5b23c4,0x2e2890,0x182064,0x0c1036].map(_tcH), bw:_tcH(0xffd0f0), edge:_tcH(0x79f2ff),
+    cloudW:_tcH(0x2b2a66), cloudS:_tcH(0x1a1944), sea:_tcH(0x050409), seaW:_tcH(0xb9b4e8),
+    rd:[_tcH(0xf4f2ff),_tcH(0xc8b8ff),_tcH(0x8e66ff)], rdA:1, day:new T.Vector4(0,1,0,0), moonW:new T.Color(0.34,0.34,0.58),
+    fog:_tcHL(0x2a2558), fogN:520, fogF:2100,
+    hemiC:_tcH(0x5a58a8), hemiG:_tcH(0x2e2c48), hemiI:0.60, sunC:_tcH(0xc0caff), sunI:0.55, sunP:new T.Vector3(180,105,-72),
+    rimC:_tcH(0xff40d0), rimI:0.60, rimP:new T.Vector3(110,60,-70), fillC:_tcH(0x40f0ff), fillI:0.36, fillP:new T.Vector3(60,30,120) }
+];
 /* THE PULSE: on every bar of her song the sun sends out a wave of light, and the card's colour
    fields light up in its path one segment at a time, each as a crisp step (0.12 s in the colour
    one step warmer, then two steps down through its own colour brightened, then gone: a test
@@ -41033,10 +41103,14 @@ const TC_QRND=harbRnd(0x51A7E3);
 function tcQuiet(fn){ const mr=Math.random; Math.random=TC_QRND; try{ return fn(); } finally{ Math.random=mr; } }
 // the sunset's bands by height, arched over the sun and melting at their edges: shared by the
 // sky and by the sea, which reflects them (raw sRGB, as the domes write)
+// (the colours, the bands' height and the moon are the hour's: TC_DAYU. Round the sun and the moon the
+// edges hold still, so neither disc, nor a ray's end, ever just touches a wandering edge.)
 const TC_BANDS=`
+  uniform vec3 uB0, uB1, uB2, uB3, uB4, uB5, uBW; uniform float uBS; uniform vec4 uMoon;
   float tcWob(float az, float t){ return 0.016*sin(az*4.0+t*0.035)+0.009*sin(az*9.0-t*0.05+1.3)+0.005*sin(az*19.0+t*0.08+0.4); }
-  vec3 tcBandC(float b){ return b<-0.5?${arcG3(TC_WHITE)}: b<0.5?${arcG3(TC_SKY[0])}: b<1.5?${arcG3(TC_SKY[1])}: b<2.5?${arcG3(TC_SKY[2])}: b<3.5?${arcG3(TC_SKY[3])}: b<4.5?${arcG3(TC_SKY[4])}: ${arcG3(TC_SKY[5])}; }
-  float tcBand(float el, float az, float th, float t){ float wob=tcWob(az,t), sc=0.40+0.46*exp(-th*th*1.15), e=el+wob*(4.0*el), v=e/sc;
+  float tcCalm(float th, float mth){ return smoothstep(0.25,0.55,th)*smoothstep(0.20,0.42,mth); }
+  vec3 tcBandC(float b){ return b<-0.5?uBW: b<0.5?uB0: b<1.5?uB1: b<2.5?uB2: b<3.5?uB3: b<4.5?uB4: uB5; }
+  float tcBand(float el, float az, float th, float t){ float wob=tcWob(az,t)*smoothstep(0.25,0.55,th), sc=(0.40+0.46*exp(-th*th*1.15))*uBS, e=el+wob*(4.0*el), v=e/sc;
     return e>0.95+wob*3.0?5.0: v<0.10?0.0: v<0.22?1.0: v<0.38?2.0: v<0.60?3.0: 4.0; }`;
 const TC_SWAY=`{ float sw=transformed.y*transformed.y; float ph=0.0;
     #ifdef USE_INSTANCING
@@ -41048,6 +41122,7 @@ function tcFlat(name, o){
   const mat=new T.MeshBasicMaterial(Object.assign({color:0xffffff}, o.mat||{}));
   mat.onBeforeCompile=sh=>{
     sh.uniforms.uT=TC_T; if(o.pulse){ sh.uniforms.uPW=TC_PW; sh.uniforms.uPA=TC_PA; }
+    sh.uniforms.uDay=TC_DAYU.uDay; sh.uniforms.uMoonW=TC_DAYU.uMoonW;   // (the hour: TC_DAYF)
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+(o.pulse?'\nattribute float aPA; varying float vPA;':''))
       .replace('#include <begin_vertex>','#include <begin_vertex>\n'+(o.pulse?'vPA=aPA;':''))
       .replace('#include <begin_vertex>','#include <begin_vertex>\n'+(o.sway?TC_SWAY:''))
@@ -41057,9 +41132,11 @@ function tcFlat(name, o){
             tn=mat3(instanceMatrix)*tn; tw=instanceMatrix*tw;
           #endif
           vTN=normalize(mat3(modelMatrix)*tn); vTW=(modelMatrix*tw).xyz; }`);
-    if(o.flat===false) return;
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+(o.hatch?TC_GLSL:'')+(o.pulse?TC_PULSE+'\nvarying float vPA;':''))
+    if(o.flat===false){ sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>'+TC_DAYF)
+      .replace('#include <color_fragment>','#include <color_fragment>\n diffuseColor.rgb=tcDay(diffuseColor.rgb);'); return; }
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vTN; varying vec3 vTW; uniform float uT;'+TC_DAYF+(o.hatch?TC_GLSL:'')+(o.pulse?TC_PULSE+'\nvarying float vPA;':''))
       .replace('#include <color_fragment>',`#include <color_fragment>
+        diffuseColor.rgb=tcDay(diffuseColor.rgb);
         ${o.pulse?`// the pulse lights the bars' colours only (ink and white hold)
         { vec3 dc=diffuseColor.rgb; float sat=max(max(dc.r,dc.g),dc.b)-min(min(dc.r,dc.g),dc.b);
           diffuseColor.rgb=tcLitL(dc, tcPulse(vPA)*smoothstep(0.26,0.32,sat)); }`:''}
@@ -41164,14 +41241,21 @@ function tcFlushStatic(){
    The sun a white disc in rings of ink and white, half down into the sea, its outer ring dashed
    and turning; the full moon rising opposite, white, its seas and shaded limb in Ben-Day dots.
    Pictogram clouds (white, ink outline weighted underneath, a grey-bar underside) drift a degree
-   a minute. Below the horizon, the sea at infinity. */
+   a minute. Below the horizon, the sea at infinity.
+   NO TANGENTS: round the sun and the moon the edges hold still (tcCalm), so a disc, a ray's end
+   or a cloud can be placed against them exactly — every climbing ray ends mid-band, the sun's
+   crown and the moon's foot and crown sit well inside bands (TC_HOURS), no drip hangs under the
+   moon, and each cloud rides an edge through its middle, never on its foot.
+   THE HOUR (TC_DAYU): the bands' colours and height, the sun's height and the moon's, the burst,
+   the edges (ink by day, lit like tubes at closedown), the clouds, the sea, and the stars. */
 function tcSky(){
-  const S=TC_SUN, G=arcG3;
+  const G=arcG3;
   const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, extensions:{derivatives:true},
-    uniforms:{ uT:TC_T, uSun:{value:S.clone()}, uPW:TC_PW, uPA:TC_PA },
+    uniforms:Object.assign({ uT:TC_T, uPW:TC_PW, uPA:TC_PA }, TC_DAYU),
     vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
       varying vec3 vP; uniform float uT; uniform vec3 uSun;
+      uniform vec3 uEdge, uCloudW, uCloudS, uSea; uniform float uRay, uStar; uniform vec2 uRayT;
       ${TC_GLSL}
       ${TC_BANDS}
       ${TC_PULSE}
@@ -41200,9 +41284,10 @@ function tcSky(){
       void main(){
         vec3 d=normalize(vP);
         float el=asin(clamp(d.y,-1.0,1.0)), az=atan(d.z,d.x);
-        if(el<0.0){ gl_FragColor=vec4(${G(TC_SEA)},1.0); return; }
-        float th=acos(clamp(dot(d,uSun),-1.0,1.0));
-        float wob=tcWob(az,uT), sc=0.40+0.46*exp(-th*th*1.15), e=el+wob*(4.0*el), v=e/sc, zen=0.95+wob*3.0;
+        if(el<0.0){ gl_FragColor=vec4(uSea,1.0); return; }
+        vec3 mD=uMoon.xyz;
+        float th=acos(clamp(dot(d,uSun),-1.0,1.0)), mth=acos(clamp(dot(d,mD),-1.0,1.0));
+        float wob=tcWob(az,uT)*tcCalm(th,mth), sc=(0.40+0.46*exp(-th*th*1.15))*uBS, e=el+wob*(4.0*el), v=e/sc, zen=0.95+wob*3.0;
         float aa=fwidth(el)*0.8+1e-5, ua=(az+3.14159265)/6.2831853, ce=cos(el);
         // the band, and how far this point is under the edge above it (yA) and over the edge below (yB)
         float b, yA, yB, tb;
@@ -41213,51 +41298,81 @@ function tcSky(){
         else if(v<0.60){ b=3.0; yA=(0.60-v)*sc; yB=(v-0.38)*sc; tb=0.22*sc; }
         else { b=4.0; yA=zen-e; yB=(v-0.60)*sc; tb=zen-0.60*sc; }
         // THE SUNBURST: round the sun every other ray carries the bands one step warmer (white
-        // where the yellow was), out to a ragged reach; the rays and their ends inked
+        // where the yellow was), out to a ragged reach (uRayT); the rays and their ends inked. A ray
+        // that climbs or falls ends in the middle of the band it reaches, a little ragged (the edges
+        // hold still round the sun, so this is exact): no cap lies along an edge, no tab pokes past one
         vec3 s1=normalize(cross(vec3(0.0,1.0,0.0),uSun)), s2=cross(uSun,s1);
         float ang=atan(dot(d,s2),dot(d,s1)), ra=(ang/6.2831853+0.5)*32.0, ri=floor(ra), fr=fract(ra);
-        float rayR=0.27+0.10*tcH(vec2(ri,3.3)), odd=step(0.5,mod(ri,2.0));
-        float inRay=odd*step(th,rayR)*step(0.13,th);
-        vec3 c=tcBandC(b-inRay); float bw=inRay>0.5 ? b-2.0 : max(b-1.0,0.0);   // (the yellow band holds its colour: white there would flash the horizon)
+        float odd=step(0.5,mod(ri,2.0)), nb=mod(fr<0.5?ri-1.0:ri+1.0,32.0), oi=odd>0.5?ri:nb;   // (oi: the coloured ray whose lines these are)
+        float thE=uRayT.x+uRayT.y*tcH(vec2(oi,3.3));
+        { float sA=sin(((oi+0.5)/32.0-0.5)*6.2831853);
+          float sEl=asin(clamp(uSun.y,-1.0,1.0)), elE=sEl+thE*sA;
+          if(abs(sA)>0.35 && elE>0.0){ float scE=(0.40+0.46*exp(-thE*thE*1.15))*uBS, lo=0.0, hi=0.10*scE;
+            if(elE>hi){ lo=hi; hi=0.22*scE; } if(elE>hi){ lo=hi; hi=0.38*scE; } if(elE>hi){ lo=hi; hi=0.60*scE; }
+            if(elE>hi){ lo=hi; hi=0.95; } if(elE>hi){ lo=hi; hi=1.57; }
+            elE=(lo+hi)*0.5+(tcH(vec2(oi,5.9))-0.5)*0.30*(hi-lo);
+            thE=(elE-sEl)/sA; } }
+        float reach=step(0.13,th)*step(th,thE)*step(0.001,uRay);
+        float inRay=odd*reach;
+        vec3 c=mix(tcBandC(b), tcBandC(b-1.0), inRay*uRay); float bw=inRay>0.5 ? b-2.0 : max(b-1.0,0.0);   // (the yellow band holds its colour: white there would flash the horizon)
         // (the pulse: the rays shoot out from the sun in three steps, then the bands light in turn)
         float arr=inRay>0.5 ? 0.03*floor((th-0.13)/0.08) : tcArrB(b,th);
-        // THE MELT: the band above runs down into this one in drips (none inside the burst)
-        float far=step(0.46,th);
+        // THE MELT: the band above runs down into this one in drips (none inside the burst, and none in the
+        // cells under the moon, where a drip would hang from its foot)
+        float mcell=floor((atan(mD.z,mD.x)+3.14159265)/6.2831853*64.0), cd64=abs(mod(floor(ua*64.0)-mcell+32.0,64.0)-32.0);
+        float far=step(0.46,th)*step(1.5,cd64);
         float dA=(b<4.5)?mix(1.0,drip(b,yA,tb,ua,ce),far):1.0;
         float dB=(b>0.5)?mix(1.0,drip(b-1.0,-yB,tb,ua,ce),far):1.0;
         // (a drip lights after its band, running down in three steps)
         if(dA<0.0){ c=tcBandC(b+1.0); bw=b; arr=tcArrB(b+1.0,th)+0.05+0.045*floor(clamp(yA/(0.92*tb),0.0,0.999)*3.0); }
         if(tcOn(0.0,0.96)) c=tcLitB(c, bw, tcPulse(arr));
         // the edges: brush lines, thick and thin along their length, broken where a drip runs out
+        // (in ink; at closedown they light like tubes, uEdge)
         float lwA=0.0012+0.0046*n1p(ua*20.0+b*5.3,20.0), lwB=0.0012+0.0046*n1p(ua*20.0+(b-1.0)*5.3,20.0);
         float ink=(1.0-smoothstep(lwA,lwA+aa,abs(yA)))*smoothstep(-aa,aa,dA);
         ink=max(ink,(1.0-smoothstep(lwB,lwB+aa,abs(yB)))*smoothstep(-aa,aa,dB));
         ink=max(ink,1.0-smoothstep(lwA*0.8,lwA*0.8+aa,abs(dA)));
-        float nb=mod(fr<0.5?ri-1.0:ri+1.0,32.0), shR=odd>0.5?rayR:0.27+0.10*tcH(vec2(nb,3.3));
-        float lwR=0.0011*(0.6+2.6*th);
-        ink=max(ink,(1.0-smoothstep(lwR,lwR+aa,min(fr,1.0-fr)*0.19635*sin(th)))*step(0.13,th)*step(th,shR));
-        ink=max(ink,odd*(1.0-smoothstep(lwR*1.4,lwR*1.4+aa,abs(th-rayR)))*step(0.13,th));
-        c=mix(c, ${G(TC_INK)}, ink);
-        if(el<0.30) for(int k=0;k<9;k++){
+        c=mix(c, uEdge, ink);
+        // the rays' lines out to their owner's reach, and its end caps (sideways, climbing, falling)
+        float lwR=0.0011*(0.6+2.6*th), lw2=lwR*1.4;
+        float rk=(1.0-smoothstep(lwR,lwR+aa,min(fr,1.0-fr)*0.19635*sin(th)))*reach;
+        rk=max(rk, odd*(1.0-smoothstep(lw2,lw2+aa,abs(th-thE)))*step(0.13,th)*step(0.001,uRay));
+        c=mix(c, ${G(TC_INK)}, rk*uRay);
+        // STARS at closedown, in the dark bands: four-point stars on a jittered grid, a few in neon
+        if(uStar>0.004 && b>2.5 && el>0.05){
+          float rs=0.046, row=floor(el/rs), cnt=max(6.0,floor(6.2831853*cos((row+0.5)*rs)/rs)), cx=ua*cnt, col=floor(cx);
+          vec2 cid=vec2(mod(col,cnt),row); float h1=tcH(cid+vec2(3.1,7.7)), h2=tcH(cid+vec2(11.3,1.9)), h3=tcH(cid+vec2(5.5,9.4));
+          if(h1<0.40){
+            vec2 q=vec2((fract(cx)-(0.22+0.56*h2))*6.2831853/cnt*ce, (el/rs-row-(0.22+0.56*h3))*rs);
+            float R=0.0026+0.0050*h1/0.40; vec2 aq=abs(q)/R; float s=sqrt(aq.x)+sqrt(aq.y), fs=fwidth(s)+1e-4;
+            float st=(1.0-smoothstep(1.0-fs,1.0+fs,s))*smoothstep(0.11,0.13,mth);
+            c=mix(c, h2>0.82 ? uEdge : ${G(TC_WHITE)}, st*uStar); } }
+        // CLOUDS ride the band edges: each hangs across the third or the fourth edge where it is, the
+        // edge through its middle, so its flat foot and its crown never sit on a line
+        if(el<0.75) for(int k=0;k<9;k++){
           float fk=float(k);
           float a0=fk*0.698+0.25*sin(fk*3.7)+uT*0.0005*(1.0+0.4*sin(fk*1.9));
-          float e0=0.085+0.11*fract(sin(fk*7.31)*143.7);
+          float dx=(mod(az-a0+3.14159265,6.2831853)-3.14159265)*cos(el); if(abs(dx)>0.13) continue;   // (only round its own azimuth)
           float r=0.026+0.018*fract(sin(fk*12.9)*437.5);
-          vec2 p=vec2((mod(az-a0+3.14159265,6.2831853)-3.14159265)*cos(el), el-e0);
+          vec3 cd=normalize(vec3(cos(a0), 0.18, sin(a0)));
+          float cth=acos(clamp(dot(cd,uSun),-1.0,1.0)), cmth=acos(clamp(dot(cd,mD),-1.0,1.0));
+          float csc=(0.40+0.46*exp(-cth*cth*1.15))*uBS, cwob=tcWob(a0,uT)*tcCalm(cth,cmth);
+          float e0=(mod(fk,2.0)<0.5 ? 0.38 : 0.60)*csc/(1.0+4.0*cwob)-0.40*r;
+          vec2 p=vec2(dx, el-e0);
           float dd=cloud(p, r);
           if(dd<0.02){
             // keylined heavier underneath, the way a brush weights a line toward the ground
             float lc=0.0026+0.0050*smoothstep(0.3*r,-0.5*r,p.y);
-            vec3 cc=p.y<-0.10*r ? ${G(TC_LAV)} : ${G(TC_WHITE)};
-            c=mix(c, ${G(TC_INK)}, 1.0-smoothstep(lc, lc+aa, dd));
+            vec3 cc=p.y<-0.10*r ? uCloudS : uCloudW;
+            c=mix(c, uEdge, 1.0-smoothstep(lc, lc+aa, dd));
             c=mix(c, cc, 1.0-smoothstep(0.0, aa, dd)); }
         }
-        // THE MOON, full, rising opposite the setting sun as a full moon does: a white disc in an
-        // ink ring weighted to its foot, its seas and its shaded limb laid in Ben-Day dots (when they
-        // close up under a few pixels they give way to the tone they print)
-        { vec3 mD=normalize(vec3(-uSun.x,0.0,-uSun.z))*0.9940+vec3(0.0,0.1098,0.0);
-          float mth=acos(clamp(dot(d,mD),-1.0,1.0));
-          if(mth<0.11){ vec3 m1=normalize(cross(vec3(0.0,1.0,0.0),mD)), m2=cross(mD,m1);
+        // THE MOON, full, opposite the sun: a white disc in an ink ring weighted to its foot, its seas and
+        // its shaded limb laid in Ben-Day dots (when they close up under a few pixels they give way to the
+        // tone they print). Placed for each hour so at most one edge crosses it, well off its foot and its
+        // crown (TC_HOURS); in the morning a day moon, its dots and ring printed in the sky's own pale
+        // colours instead of ink (uMoon.w)
+        if(mth<0.11){ vec3 m1=normalize(cross(vec3(0.0,1.0,0.0),mD)), m2=cross(mD,m1);
             vec2 mp=vec2(dot(d,m1),dot(d,m2)); float mr=0.086, ml=length(mp);
             vec2 sq=mp/mr, gq=mat2(0.7071,-0.7071,0.7071,0.7071)*mp/0.0092, gf=fract(gq)-0.5;
             float sea=smoothstep(0.32,0.14,length(sq-vec2(-0.28,0.22)))+smoothstep(0.24,0.10,length(sq-vec2(0.18,0.38)))
@@ -41265,19 +41380,19 @@ function tcSky(){
             float dr=clamp(0.42*sea+0.70*smoothstep(0.10,1.0,dot(sq,vec2(0.62,-0.78))),0.0,0.86);
             float fw=fwidth(gq.x), bd=(1.0-smoothstep(dr*0.5-fw*0.5,dr*0.5+fw*0.5,length(gf)))*step(0.02,dr);
             bd=mix(bd, dr*dr*3.14159*0.25, smoothstep(0.30,0.60,fw));
-            vec3 mc=mix(${G(TC_WHITE)}, ${G(TC_INK)}, bd);
+            vec3 mInk=mix(uB3, ${G(TC_INK)}, uMoon.w), mc=mix(${G(TC_WHITE)}, mInk, bd);
             float lm=0.0040+0.0070*smoothstep(0.2,-0.9,sq.y);
-            c=mix(c, ${G(TC_INK)}, 1.0-smoothstep(mr+lm, mr+lm+aa, ml));
-            c=mix(c, mc, 1.0-smoothstep(mr, mr+aa, ml)); } }
+            c=mix(c, mix(uB4, ${G(TC_INK)}, uMoon.w), 1.0-smoothstep(mr+lm, mr+lm+aa, ml));
+            c=mix(c, mc, 1.0-smoothstep(mr, mr+aa, ml)); }
         // THE SUN: a white disc in rings of ink and white, the outer ring broken into dashes that
         // turn once in four minutes
         // (as a wave leaves, its rings ring out in the bars: yellow, red, magenta from the middle)
         float sl=step(0.45,tcPulse(0.0));
         float dash=step(0.45,fract(ang/6.2831853*20.0+uT*0.004));
-        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[2])},sl), dash*(1.0-smoothstep(0.0042,0.0042+aa,abs(th-0.121))));
-        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[1])},sl), 1.0-smoothstep(0.106, 0.106+aa, th));
+        c=mix(c, mix(${G(TC_INK)},uB2,sl), dash*(1.0-smoothstep(0.0042,0.0042+aa,abs(th-0.121))));
+        c=mix(c, mix(${G(TC_INK)},uB1,sl), 1.0-smoothstep(0.106, 0.106+aa, th));
         c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.096, 0.096+aa, th));
-        c=mix(c, mix(${G(TC_INK)},${G(TC_SKY[0])},sl), 1.0-smoothstep(0.086, 0.086+aa, th));
+        c=mix(c, mix(${G(TC_INK)},uB0,sl), 1.0-smoothstep(0.086, 0.086+aa, th));
         c=mix(c, ${G(TC_WHITE)}, 1.0-smoothstep(0.072, 0.072+aa, th));
         gl_FragColor=vec4(c,1.0);
       }`});
@@ -41389,11 +41504,11 @@ function tcTerrain(F){
   const I=[]; for(let iz=0;iz<NZ-1;iz++) for(let ix=0;ix<NX-1;ix++){ const a=iz*NX+ix; I.push(a,a+NX,a+1, a+1,a+NX,a+NX+1); }
   g.setIndex(I); g.computeVertexNormals();
   const mat=new T.MeshBasicMaterial({color:0xffffff});
-  mat.onBeforeCompile=sh=>{
+  mat.onBeforeCompile=sh=>{ sh.uniforms.uMoonW=TC_DAYU.uMoonW;   // (white sand goes moonlit at closedown; the ink holds)
     // (MeshBasic is not sent cameraPosition, so the distance comes over from the vertex stage)
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec2 aRL; varying vec2 vRL; varying vec3 vSW; varying vec3 vSN; varying float vSD;')
       .replace('#include <project_vertex>','#include <project_vertex>\n vRL=aRL; vSW=(modelMatrix*vec4(transformed,1.0)).xyz; vSN=normalize(mat3(modelMatrix)*normal); vSD=-mvPosition.z;');
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec2 vRL; varying vec3 vSW; varying vec3 vSN; varying float vSD;'+TC_GLSL)
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec2 vRL; varying vec3 vSW; varying vec3 vSN; varying float vSD; uniform vec3 uMoonW;'+TC_GLSL)
       .replace('#include <color_fragment>',`#include <color_fragment>
         { vec3 n=normalize(vSN); float k=dot(n, normalize(vec3(-0.55,0.80,0.24)));
           vec3 c=${arcL3(TC_WHITE)};
@@ -41405,7 +41520,7 @@ function tcTerrain(F){
           float wy=fwidth(vSW.y)+0.02;
           c=mix(c, ${arcL3(TC_LAV)}, 1.0-smoothstep(${(SEA+1.3).toFixed(2)}-wy, ${(SEA+1.3).toFixed(2)}+wy, vSW.y));
           c=mix(c, ${arcL3(TC_WHITE)}, 1.0-smoothstep(${(SEA+0.45).toFixed(2)}-wy, ${(SEA+0.45).toFixed(2)}+wy, vSW.y));
-          diffuseColor.rgb=c; }`);
+          diffuseColor.rgb=c*uMoonW; }`);
   };
   mat.customProgramCacheKey=()=>'tc-sand';
   const TL=3;
@@ -41435,10 +41550,11 @@ function tcSea(F){
   for(let k=0;k<NX*NZ;k++){ const v=Math.min(255,Math.round(D[k])); data[k*4]=v; data[k*4+1]=v; data[k*4+2]=v; data[k*4+3]=255; }
   const tex=new T.DataTexture(data, NX, NZ, T.RGBAFormat); tex.magFilter=tex.minFilter=T.LinearFilter; tex.needsUpdate=true;
   const mat=new T.ShaderMaterial({ fog:false, extensions:{derivatives:true},
-    uniforms:{ uT:TC_T, uSD:{value:tex}, uBox:{value:new T.Vector4(x0-CS*0.5, z0-CS*0.5, NX*CS, NZ*CS)}, uSun:{value:TC_SUN.clone()}, uPW:TC_PW, uPA:TC_PA },
+    uniforms:Object.assign({ uT:TC_T, uSD:{value:tex}, uBox:{value:new T.Vector4(x0-CS*0.5, z0-CS*0.5, NX*CS, NZ*CS)}, uPW:TC_PW, uPA:TC_PA }, TC_DAYU),   // (the sun, the bands and the road of light are the hour's)
     vertexShader:`varying vec3 vW; void main(){ vW=(modelMatrix*vec4(position,1.0)).xyz; gl_Position=projectionMatrix*viewMatrix*vec4(vW,1.0); }`,
     fragmentShader:`
       varying vec3 vW; uniform float uT; uniform sampler2D uSD; uniform vec4 uBox; uniform vec3 uSun;
+      uniform vec3 uSea, uSeaW, uRdDir, uRd0, uRd1, uRd2; uniform float uRdA;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
       ${TC_GLSL}
       ${TC_BANDS}
@@ -41449,7 +41565,7 @@ function tcSea(F){
         float sd=255.0;
         if(uv.x>0.0&&uv.y>0.0&&uv.x<1.0&&uv.y<1.0) sd=texture2D(uSD,uv).r*255.0;
         vec2 dv=vW.xz-cameraPosition.xz; float D=length(dv);
-        vec3 c=${arcG3(TC_SEA)};
+        vec3 c=uSea;
         // the sunset in the water: what the sky would show in a mirror here (its height pressed
         // down, as a painter keys a reflection warmer than the sky above it)
         vec3 V=normalize(vW-cameraPosition), Rf=vec3(V.x,-V.y,V.z);
@@ -41476,13 +41592,13 @@ function tcSea(F){
         float rl=1.0-smoothstep(rw, rw+fwidth(q)*1.2, abs(fract(q)-0.5));
         float gap=step(0.22, fract((vW.x*0.7+vW.z*0.7)/90.0+h21(vec2(floor(q),2.0))));
         rl*=gap*(1.0-smoothstep(150.0,230.0,sd))*(1.0-smoothstep(0.18,0.40,fq))*step(3.5,sd)*(1.0-q3*lod);
-        c=mix(c, mix(${arcG3(TC_WHITE)}, tcLitB(rc, rb-1.0, Lw), smoothstep(22.0,52.0,sd)), rl);
+        c=mix(c, mix(uSeaW, tcLitB(rc, rb-1.0, Lw), smoothstep(22.0,52.0,sd)), rl);
         // the foam at the edge, scalloped
         float fe=sd-1.6*sin(vW.x*0.11+uT*0.6)-1.2*sin(vW.z*0.13-uT*0.45);
         float fw=fwidth(sd)+0.05;
-        c=mix(c, ${arcG3(TC_WHITE)}, 1.0-smoothstep(3.0, 3.0+fw*1.5, fe));
-        // the sun's road
-        vec2 vd=dv/max(D,1.0), sn=normalize(uSun.xz);
+        c=mix(c, uSeaW, 1.0-smoothstep(3.0, 3.0+fw*1.5, fe));
+        // the sun's road (the moon's at closedown: uRdDir)
+        vec2 vd=dv/max(D,1.0), sn=normalize(uRdDir.xz);
         float fac=dot(vd,sn);
         if(fac>0.0){
           float da=abs(vd.x*sn.y-vd.y*sn.x);
@@ -41493,8 +41609,8 @@ function tcSea(F){
           float on=(1.0-smoothstep(0.40, 0.40+fr2, fr))*smoothstep(0.0, fr2+0.02, fr)*(1.0-smoothstep(wd*0.92, wd, da));
           on*=smoothstep(70.0,150.0,D)*(1.0-smoothstep(0.35,0.7,fr2));
           float k=da/wd;
-          vec3 sc=k<0.38? ${arcG3(TC_WHITE)} : tcLift(k<0.70 ? ${arcG3(TC_SKY[0])} : ${arcG3(TC_SKY[1])}, Lr);
-          c=mix(c, sc, on*step(0.0,fac-0.2));
+          vec3 sc=k<0.38? uRd0 : tcLift(k<0.70 ? uRd1 : uRd2, Lr);
+          c=mix(c, sc, on*step(0.0,fac-0.2)*uRdA);
         }
         gl_FragColor=vec4(c,1.0);
       }`});
@@ -41555,14 +41671,14 @@ function tcDeck(inS, tunIdx){
   const dg=new T.BufferGeometry(); dg.setAttribute('position',new T.Float32BufferAttribute(D,3)); dg.setAttribute('color',new T.Float32BufferAttribute(DC,3));
   dg.setAttribute('aDL',new T.Float32BufferAttribute(DA,2)); dg.setIndex(DI);
   const dm=new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide});
-  dm.onBeforeCompile=sh=>{
+  dm.onBeforeCompile=sh=>{ sh.uniforms.uMoonW=TC_DAYU.uMoonW;
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec2 aDL; varying vec2 vDL;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\n vDL=aDL;');
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec2 vDL;'+TC_GLSL)
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec2 vDL; uniform vec3 uMoonW;'+TC_GLSL)
       .replace('#include <color_fragment>',`#include <color_fragment>
         { float x=vDL.x-${HW.toFixed(1)}, q=(x-2.6)/3.6;
           float w=mix(0.36, 0.13, smoothstep(0.0,30.0,x))*(0.70+0.60*tcN(vec2(vDL.y/64.0, floor(q)*2.3)));
-          diffuseColor.rgb=mix(diffuseColor.rgb, ${arcL3(TC_INK)}, tcLine(q,w)*step(0.0,q)); }`);
+          diffuseColor.rgb=mix(diffuseColor.rgb, ${arcL3(TC_INK)}, tcLine(q,w)*step(0.0,q))*uMoonW; }`);
   };
   dm.customProgramCacheKey=()=>'tc-deck';
   trackGroup.add(new T.Mesh(dg, dm));
@@ -41587,10 +41703,10 @@ function tcDeck(inS, tunIdx){
   pg.setAttribute('aPA',new T.Float32BufferAttribute(PA,1));
   // the pulse lights the bars' stripes as the front crosses them, stripe by stripe (the ink ones hold)
   const pm=new T.MeshBasicMaterial({vertexColors:true, side:T.DoubleSide});
-  pm.onBeforeCompile=sh=>{ sh.uniforms.uPW=TC_PW; sh.uniforms.uPA=TC_PA;
+  pm.onBeforeCompile=sh=>{ sh.uniforms.uPW=TC_PW; sh.uniforms.uPA=TC_PA; sh.uniforms.uDay=TC_DAYU.uDay; sh.uniforms.uMoonW=TC_DAYU.uMoonW;
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute float aPA; varying float vPA;').replace('#include <begin_vertex>','#include <begin_vertex>\n vPA=aPA;');
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vPA;'+TC_PULSE)
-      .replace('#include <color_fragment>','#include <color_fragment>\n { vec3 dc=diffuseColor.rgb; diffuseColor.rgb=tcLitL(dc, tcPulse(vPA)*step(0.3,max(max(dc.r,dc.g),dc.b)-min(min(dc.r,dc.g),dc.b))); }'); };
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vPA;'+TC_PULSE+TC_DAYF)
+      .replace('#include <color_fragment>','#include <color_fragment>\n { vec3 dc=tcDay(diffuseColor.rgb); diffuseColor.rgb=tcLitL(dc, tcPulse(vPA)*step(0.3,max(max(dc.r,dc.g),dc.b)-min(min(dc.r,dc.g),dc.b))); }'); };
   pm.customProgramCacheKey=()=>'tc-wind';
   trackGroup.add(new T.Mesh(pg, pm));
 }
@@ -41684,11 +41800,12 @@ function tcTunnel(tunIdx, inS){
     return [v[0]+(o[0]-v[0])*f, v[1]+(o[1]-v[1])*f, v[2]+(o[2]-v[2])*f, f, v[3]]; })),3,null);
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aW',new T.Float32BufferAttribute(A,3)); g.setIndex(I);
   const B=TC_BARS, G=arcG3;
-  const mat=new T.ShaderMaterial({ side:T.DoubleSide, fog:false, extensions:{derivatives:true}, uniforms:{ uT:TC_T, uPW:TC_PW, uPA:TC_PA },
+  const mat=new T.ShaderMaterial({ side:T.DoubleSide, fog:false, extensions:{derivatives:true}, uniforms:{ uT:TC_T, uPW:TC_PW, uPA:TC_PA, uDay:TC_DAYU.uDay, uMoonW:TC_DAYU.uMoonW },
     vertexShader:`attribute vec3 aW; varying vec3 vA; varying vec2 vX; void main(){ vA=aW; vX=(modelMatrix*vec4(position,1.0)).xz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`varying vec3 vA; varying vec2 vX; uniform float uT;
       ${TC_GLSL}
       ${TC_PULSE}
+      ${TC_DAYF}
       void main(){
         float a=vA.x, side=vA.y, s=vA.z; vec3 c;
         float fa=fwidth(a)+1e-4;
@@ -41724,7 +41841,7 @@ function tcTunnel(tunIdx, inS){
           c=mix(c, ${G(TC_INK)}, tcLine(q, wl));
           c=mix(c, ${G(TC_WHITE)}, smoothstep(0.93,0.95,a));
         }
-        gl_FragColor=vec4(c,1.0);
+        gl_FragColor=vec4(tcDayG(c),1.0);   // (the hour: its bars pastel or full, its white moonlit at closedown)
       }`});
   const m=new T.Mesh(g, mat); trackGroup.add(m);
   // whitewater at the entry, and the shoulder of the wave running on past the exit
@@ -41863,6 +41980,7 @@ function tcScenery(inS, tunIdx){
   const S=u=>SAMP[((Math.round(u*N)%N)+N)%N];
   const palms=[[],[],[]], bodies=[], roofs=[], doors=[], umbA=[], umbB=[], poles=[], towels=[], balls=[], boards=[], strg=[];
   const castS=[], castC=[], castI=[], flags=[];
+  let castBox=null, lightAt=null;   // (the castle's walls and the light's foot, for ROOM)
   // push a footprint outward along the sample's normal until it clears every leg of the deck;
   // give up at the water
   // the wave owns the beach round the barrel: nothing else stands within 85 of its road
@@ -41888,12 +42006,8 @@ function tcScenery(inS, tunIdx){
           const h=62+R()*70, ry=Math.atan2(-P.s.n.z*side, P.s.n.x*side)+(R()-0.5)*1.6;   // the bend leans away from the road
           palms[(k+j)%3].push({x, y:F.footAt(x,z,3)-1.5, z, s:h, ry, rz:(R()-0.5)*0.12}); } }
       u+=0.010+R()*0.022; k++; } }
-  // one batch per family, unchunked: on a phone a draw call costs more than the few thousand
-  // triangles that culling the far side of the island would save
+  // (batched further down, once the other families have stood, so a palm can give way to them: see ROOM)
   const palmMat=tcFlat('palm',{sway:true, flat:false, mat:{color:tcLin(TC_INK), side:T.DoubleSide}});
-  tcBatch(tcPalmGeo(0.16,8,11), palms[0], palmMat, 0);
-  tcBatch(tcPalmGeo(0.26,7,23), palms[1], palmMat, 0);
-  tcBatch(tcPalmGeo(0.08,9,37), palms[2], palmMat, 0);
   // HUTS: a row of seven in the bars' order, gables to the road
   const hutRow=(u,side,out)=>{
     const s0=S(u), W=17, HH=19, DD=15, span=7*W+6*3;
@@ -41948,6 +42062,13 @@ function tcScenery(inS, tunIdx){
       const x=F.x0+(k%F.NX)*F.CS, z=F.z0+Math.floor(k/F.NX)*F.CS; if(Math.hypot(x-SAMP[0].p.x,z-SAMP[0].p.z)>1500) continue;
       if(bob.some(b=>Math.hypot(b.x-x,b.z-z)<220)) continue;
       bob.push({x, y:F.SEA+2, z, s:9+R()*8, ry:R()*6.28, ph:R()*6.28}); } }
+  // (none rides into the pier: its line is traced here as THE PIER traces it below)
+  { const s0=S(0.012), sl=Math.hypot(TC_SUN.x,TC_SUN.z), dx=TC_SUN.x/sl, dz=TC_SUN.z/sl;
+    let px=s0.p.x-s0.n.x*inS*40, pz=s0.p.z-s0.n.z*inS*40, k=0;
+    while(k<200 && F.groundAt(px,pz)>F.SEA+0.6){ px+=dx*4; pz+=dz*4; k++; }
+    const ax=px-dx*36, az=pz-dz*36;
+    for(let i=bob.length-1;i>=0;i--){ const b=bob[i], t=Math.max(0,Math.min(470,(b.x-ax)*dx+(b.z-az)*dz));
+      if(Math.hypot(ax+dx*t-b.x, az+dz*t-b.z)<b.s+16) bob.splice(i,1); } }
   const bobMesh=tcBatch(ballGeo, bob, ballMat, 0, tcHull('ball'))[0]||null;
   // BOARDS: fins in the sand
   const BS=[[0.82,-1,60,4],[0.895,1,80,6],[0.935,-1,62,3],[0.61,-1,64,4],[0.205,-1,52,5],[0.735,1,82,4],[0.44,1,76,4]];
@@ -41963,7 +42084,7 @@ function tcScenery(inS, tunIdx){
   { let best=null;
     for(let x=-860;x<=-520;x+=20) for(let z=860;z<=1060;z+=20){ if(tcClear(x,z,tunIdx)<30) continue; const g=F.footAt(x,z,16);
       if(g<F.SEA+1.5) continue; const sc=-Math.abs(x+700)*0.2-Math.abs(z-960)*0.2; if(!best||sc>best.sc) best={x,z,g,sc}; }
-    if(best){ const h=170; tcStatic(tcLightGeo(), [{x:best.x, y:best.g-2, z:best.z, s:h}]); } }
+    if(best){ const h=170; tcStatic(tcLightGeo(), [{x:best.x, y:best.g-2, z:best.z, s:h}]); lightAt={x:best.x, z:best.z, y0:best.g-2, y1:best.g+h}; } }
   // THE CASTLE on the lagoon shore: keep, four bucket towers, curtain walls, a gate
   { let best=null;
     const K=1.6;
@@ -41971,6 +42092,7 @@ function tcScenery(inS, tunIdx){
     if(best){ const cx=best.x, cz=best.z, ry=Math.atan2(best.s.p.x-cx,best.s.p.z-cz), ca=Math.cos(ry), sa=Math.sin(ry);
       const L=(lx,lz)=>[cx+(lx*ca+lz*sa)*K, cz+(-lx*sa+lz*ca)*K];
       const g0=best.y-3;
+      { const [mx,mz]=L(0,-5); castBox={x:mx, z:mz, ry, w:(112+28)*K, d:(70+28)*K, y0:g0, y1:g0+(62+30)*K}; }
       const tower=(lx,lz,r,h)=>{ const [x,z]=L(lx,lz); r*=K; h*=K; castC.push({x,y:g0,z,s:r,sy:h,sz:r,ry});
         for(let k=0;k<6;k++){ const a=k/6*Math.PI*2; castS.push({x:x+Math.cos(a)*r*0.80,y:g0+h+r*0.16,z:z+Math.sin(a)*r*0.80,s:r*0.36,sy:r*0.32,sz:r*0.36,ry:a}); }
         const [wx,wz]=L(lx,lz+r*0.97/K); castI.push({x:wx,y:g0+h*0.62,z:wz,s:r*0.22,sy:r*0.55,sz:0.6,ry,c:TC_INK});
@@ -42043,6 +42165,76 @@ function tcScenery(inS, tunIdx){
   if(pierSeg.length){ const [ax,az,bx,bz]=pierSeg, ex=bx-ax, ez=bz-az, l2=ex*ex+ez*ez;
     const near=r=>{ const t=Math.max(0,Math.min(1,((r.x-ax)*ex+(r.z-az)*ez)/l2)); return Math.hypot(ax+ex*t-r.x, az+ez*t-r.z)<16; };
     for(const L of [umbA,umbB,poles,towels]) for(let i=L.length-1;i>=0;i--) if(near(L[i])) L.splice(i,1); }
+  // ROOM: each family above was placed clear of the deck but blind to the others, so a trunk could
+  // stand through a hut's roof or a giant ball, a canopy through a palm or through the next canopy,
+  // two trunks rise from one root, or two edges just kiss. Settled here, after placement (every random
+  // number already drawn, so nothing else on the island moves): the authored and the big stay where they
+  // are (castle, light, stair, pier, gate, huts, boards, balls); an umbrella, then a palm, is walked clear
+  // of what it stood in, and dropped only where there is no clear sand near (4 palms of 77, 4 umbrellas
+  // of 31, as built); a towel lies clear of anything big.
+  { const solid=[];   // circles {x,z,r,y0,y1} covering everything that stays
+    const disc=(x,z,r,y0,y1)=>solid.push({x,z,r,y0,y1});
+    const boxS=(x,z,w,d,ry,y0,y1)=>{ const ca=Math.cos(ry||0), sa=Math.sin(ry||0), r=Math.min(w,d)/2, l=Math.max(w,d)-2*r, n=Math.max(1,Math.ceil(l/(2*r))+1);
+      for(let i=0;i<n;i++){ const t=n>1?i/(n-1)-0.5:0, lx=w>=d?t*l:0, lz=w>=d?0:t*l; disc(x+lx*ca+lz*sa, z-lx*sa+lz*ca, r*1.42, y0, y1); } };
+    for(const b of bodies) boxS(b.x, b.z, b.s, b.sz, b.ry, b.y, b.y+b.sy+b.s*0.55);
+    for(const b of balls) disc(b.x, b.z, b.s, b.y-b.s, b.y+b.s);
+    for(const b of boards) disc(b.x, b.z, b.s*0.17, b.y, b.y+b.sy);
+    for(const c of castC) disc(c.x, c.z, c.s, c.y, c.y+c.sy);
+    if(castBox) boxS(castBox.x, castBox.z, castBox.w, castBox.d, castBox.ry, castBox.y0, castBox.y1);
+    if(lightAt) disc(lightAt.x, lightAt.z, 18, lightAt.y0, lightAt.y1);
+    if(stairC.length){ const p=stairC[0], m=stairC[1]; disc(p.x, p.z, p.s+2, p.y-6, p.y+6); disc(m.x, m.z, 88, p.y+30, m.y+m.sy); }
+    { const s0=SAMP[0]; for(const lat of [-inS*40, inS*60]) disc(s0.p.x+s0.n.x*lat, s0.p.z+s0.n.z*lat, 4, -1e3, 1e3); }   // (the gate's posts)
+    if(pierSeg.length){ const [ax,az,bx,bz]=pierSeg, n=Math.ceil(Math.hypot(bx-ax,bz-az)/8); for(let i=0;i<=n;i++) disc(ax+(bx-ax)*i/n, az+(bz-az)*i/n, 9, -1e3, 1e3); }
+    // (a hit: the footprints come within `gap` of each other where their heights overlap)
+    const hits=(x,z,r,y0,y1,gap)=>solid.some(s=>s.y1>y0 && s.y0<y1 && Math.hypot(s.x-x,s.z-z)<s.r+r+gap);
+    // umbrellas: against everything that stays, then against the canopies already kept; one that would
+    // stand in something is walked clear of it (as a palm is, below), and only dropped if it cannot be
+    const keep=[];
+    const umbAt=(x,z,u,y)=>{ const r=0.62*u.s, y0=y+u.sy*0.80, y1=y+u.sy*1.15;
+      if(tcClear(x,z,tunIdx)<16 || !F.dry(x,z,6) || nearWave(x,z,16)) return false;
+      if(hits(x,z,1.2,y,y1,3) || hits(x,z,r,y0,y1,2)) return false;
+      for(const j of keep){ const v=umbA[j], rv=0.62*v.s, d=Math.hypot(x-v.x,z-v.z);
+        // (two canopies may overlap only if one stands clearly over the other; never edge to edge)
+        if(Math.abs(d-(r+rv))<3 || (d<r+rv && Math.abs(u.sy-v.sy)<5) || d<Math.max(r,rv)*0.75) return false; }
+      return true; };
+    for(let i=0;i<umbA.length;i++){ const u=umbA[i]; let ok=umbAt(u.x,u.z,u,u.y);
+      if(!ok){ let bx=u.x+1, bz=u.z, bd=1e9;
+        for(const s of solid){ const d=Math.hypot(s.x-u.x,s.z-u.z)-s.r; if(d<bd && s.y1>u.y && s.y0<u.y+u.sy*1.15){ bd=d; bx=s.x; bz=s.z; } }
+        for(const j of keep){ const v=umbA[j], d=Math.hypot(v.x-u.x,v.z-u.z)-0.62*v.s; if(d<bd){ bd=d; bx=v.x; bz=v.z; } }
+        let dx=u.x-bx, dz=u.z-bz; const l=Math.hypot(dx,dz)||1; dx/=l; dz/=l;
+        for(let d=4; d<=40 && !ok; d+=4){ const x=u.x+dx*d, z=u.z+dz*d, y=F.footAt(x,z,2)-1.5;
+          if(umbAt(x,z,u,y)){ ok=true; for(const L of [umbA,umbB,poles]){ L[i].x=x; L[i].z=z; L[i].y=y; } } } }
+      if(ok) keep.push(i); }
+    const kept=new Set(keep);
+    for(const L of [umbA,umbB,poles]) for(let i=L.length-1;i>=0;i--) if(!kept.has(i)) L.splice(i,1);
+    const nS=solid.length;
+    for(const u of umbA) disc(u.x, u.z, 1.2, u.y, u.y+u.sy*1.15), disc(u.x, u.z, 0.62*u.s, u.y+u.sy*0.80, u.y+u.sy*1.15);
+    // (a towel lies clear of everything big, and may lie beside a pole, its own or another's, but not on one)
+    for(let i=towels.length-1;i>=0;i--){ const t=towels[i];
+      if(solid.some((s,k)=>s.y1>t.y-2 && s.y0<t.y+2 && Math.hypot(s.x-t.x,s.z-t.z)<s.r+(k<nS?9:2.5))) towels.splice(i,1); }
+    for(const t of towels) disc(t.x, t.z, 8, t.y-2, t.y+3);
+    // palms: the trunk's foot and its middle clear of everything, and of each other's (a clump may fork
+    // from close roots, but two trunks never merge into one); the crown clear of whatever stands as tall
+    // as it. One that would stand in something is walked away from it until it stands clear (on dry sand,
+    // clear of the deck and the wave, as it was placed), and only dropped if there is no such spot.
+    const roots=[];
+    const palmAt=(x,z,p,bend)=>{ const h=p.s, rb=0.04*h+1, ca=Math.cos(p.ry), sa=Math.sin(p.ry);
+      if(tcClear(x,z,tunIdx)<6 || !F.dry(x,z,4) || nearWave(x,z,70)) return null;
+      const y=F.footAt(x,z,3)-1.5, mx=x+0.31*bend*h*ca, mz=z-0.31*bend*h*sa, cx=x+bend*h*ca, cz=z-bend*h*sa;
+      if(hits(x,z,rb,y,y+0.3*h,4) || hits(mx,mz,rb*0.7,y+0.3*h,y+0.7*h,2) || hits(cx,cz,0.30*h,y+0.7*h,y+1.05*h,0)) return null;
+      if(roots.some(q=>Math.hypot(q.x-x,q.z-z)<q.r+0.04*h+1.5)) return null;
+      return y; };
+    [0.16,0.26,0.08].forEach((bend,f)=>{ const A=palms[f];
+      for(let i=0;i<A.length;i++){ const p=A[i]; let y=palmAt(p.x,p.z,p,bend);
+        if(y==null){ // away from the nearest thing it stands in (or the nearest root), along the ground
+          let bx=p.x+Math.cos(p.ry), bz=p.z-Math.sin(p.ry), bd=1e9;
+          for(const s of solid){ const d=Math.hypot(s.x-p.x,s.z-p.z)-s.r; if(d<bd && s.y1>p.y && s.y0<p.y+p.s*1.05){ bd=d; bx=s.x; bz=s.z; } }
+          for(const q of roots){ const d=Math.hypot(q.x-p.x,q.z-p.z)-q.r; if(d<bd){ bd=d; bx=q.x; bz=q.z; } }
+          let dx=p.x-bx, dz=p.z-bz; const l=Math.hypot(dx,dz)||1; dx/=l; dz/=l;
+          for(let d=4; d<=48 && y==null; d+=4){ const x=p.x+dx*d, z=p.z+dz*d; y=palmAt(x,z,p,bend); if(y!=null){ p.x=x; p.z=z; } } }
+        if(y==null){ A.splice(i,1); i--; continue; }
+        p.y=y; roots.push({x:p.x, z:p.z, r:0.04*p.s}); } });
+  }
   // SHADOWS: whatever stands on the sand throws a hard ink shadow across it, away from the light
   // the hatching is drawn by — the drawing's solid blacks, long as a dream's. Draped on the ground
   // a quarter unit up, and each one stops short of the deck and of the water.
@@ -42094,6 +42286,11 @@ function tcScenery(inS, tunIdx){
       const sm=new T.MeshBasicMaterial({color:tcLin(TC_INK), side:T.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2});
       sm.customProgramCacheKey=()=>'tc-shadow'; trackGroup.add(new T.Mesh(g, sm)); } }
   });
+  // the palms, once ROOM has settled them: one batch per family, unchunked (on a phone a draw call
+  // costs more than the few thousand triangles that culling the far side of the island would save)
+  tcBatch(tcPalmGeo(0.16,8,11), palms[0], palmMat, 0);
+  tcBatch(tcPalmGeo(0.26,7,23), palms[1], palmMat, 0);
+  tcBatch(tcPalmGeo(0.08,9,37), palms[2], palmMat, 0);
   tcFlushStatic();
   // GULLS: three loose flocks wheeling over the beaches
   // (one batch for all three flocks; tcTick moves them round their centres)
@@ -42142,9 +42339,59 @@ function tcBarAmp(n, song){   // 1 on the phrase, 0.6 between
   const L=song&&song.bars, F=(song&&song.loopFrom)||0;
   if(L && n>=L && L>F) n=F+(n-F)%(L-F);
   return ((n%4)+4)%4===0 ? 1.0 : 0.6; }
+// THE HOUR at u, the player's progress scaled to four laps (0 at the line, 4 at the flag). Each change
+// runs over the back of a lap (the east beach, the dunes and the crest, ~40% of it) and is done at the
+// line, so every lap opens on its own hour where the course was composed to be seen: the run from the
+// line into the wave, toward the sun — the morning sun, the noon sun high over the barrel, the sunset
+// half down in its eye, and at closedown the dark west under the stars. The stars come out with the dusk.
+function tcHourOf(u){ return arcSS(0.58,1.0,u)+arcSS(1.58,2.0,u)+arcSS(2.58,3.0,u); }
+const _tcMix=(a,b,t)=>a+(b-a)*t, _tcSX=TC_SUN.x/Math.hypot(TC_SUN.x,TC_SUN.z), _tcSZ=TC_SUN.z/Math.hypot(TC_SUN.x,TC_SUN.z);
+const _tcBU=['uB0','uB1','uB2','uB3','uB4','uB5'];
+function tcHour(P, u){
+  const h=tcHourOf(u), star=arcSS(2.72,3.05,u);
+  if(h===P.hk && star===P.hs) return;     // (all of lap one, and the whole menu: nothing to do)
+  P.hk=h; P.hs=star;
+  const a=Math.min(2, Math.floor(h)), t=h-a, A=TC_HOURS[a], B=TC_HOURS[a+1], U=TC_DAYU, L=_tcMix;
+  // the sun climbs and sinks on its own azimuth, the moon opposite it
+  const se=L(A.sunEl,B.sunEl,t), me=L(A.moonEl,B.moonEl,t);
+  U.uSun.value.set(Math.cos(se)*_tcSX, Math.sin(se), Math.cos(se)*_tcSZ);
+  U.uMoon.value.set(-Math.cos(me)*_tcSX, Math.sin(me), -Math.cos(me)*_tcSZ, L(A.moonA,B.moonA,t));
+  for(let i=0;i<6;i++) U[_tcBU[i]].value.copy(A.b[i]).lerp(B.b[i],t);
+  U.uBW.value.copy(A.bw).lerp(B.bw,t); U.uEdge.value.copy(A.edge).lerp(B.edge,t);
+  U.uCloudW.value.copy(A.cloudW).lerp(B.cloudW,t); U.uCloudS.value.copy(A.cloudS).lerp(B.cloudS,t);
+  U.uSea.value.copy(A.sea).lerp(B.sea,t); U.uSeaW.value.copy(A.seaW).lerp(B.seaW,t);
+  U.uBS.value=L(A.bs,B.bs,t); U.uRay.value=L(A.ray,B.ray,t)*arcSS(-0.13,0.0,se); U.uStar.value=star;   // (the burst goes down with the disc)
+  U.uRayT.value.copy(A.rayT).lerp(B.rayT,t);
+  U.uRd0.value.copy(A.rd[0]).lerp(B.rd[0],t); U.uRd1.value.copy(A.rd[1]).lerp(B.rd[1],t); U.uRd2.value.copy(A.rd[2]).lerp(B.rd[2],t);
+  // the road of light on the sea is the sun's until it sets, then the moon's: it goes out at the turn
+  // and comes back on the other side, rather than swinging across the water
+  if(a===2){ U.uRdA.value=Math.abs(1-2*t)*L(A.rdA,B.rdA,t);
+    if(t<0.5) U.uRdDir.value.copy(U.uSun.value); else U.uRdDir.value.set(U.uMoon.value.x, U.uMoon.value.y, U.uMoon.value.z); }
+  else { U.uRdA.value=L(A.rdA,B.rdA,t); U.uRdDir.value.copy(U.uSun.value); }
+  U.uDay.value.copy(A.day).lerp(B.day,t); U.uMoonW.value.copy(A.moonW).lerp(B.moonW,t);
+  // the karts' light: colours, intensities and directions only (no light comes or goes)
+  hemi.color.copy(A.hemiC).lerp(B.hemiC,t); hemi.groundColor.copy(A.hemiG).lerp(B.hemiG,t); hemi.intensity=L(A.hemiI,B.hemiI,t);
+  sun.color.copy(A.sunC).lerp(B.sunC,t); sun.intensity=L(A.sunI,B.sunI,t); sun.position.copy(A.sunP).lerp(B.sunP,t);
+  rim.color.copy(A.rimC).lerp(B.rimC,t); rim.intensity=L(A.rimI,B.rimI,t); rim.position.copy(A.rimP).lerp(B.rimP,t);
+  fill.color.copy(A.fillC).lerp(B.fillC,t); fill.intensity=L(A.fillI,B.fillI,t); fill.position.copy(A.fillP).lerp(B.fillP,t);
+  if(scene.fog){   // (the MCP studio backdrop takes the fog away for a while)
+    scene.fog.color.copy(A.fog).lerp(B.fog,t); scene.fog.near=L(A.fogN,B.fogN,t); scene.fog.far=L(A.fogF,B.fogF,t); }
+}
 function tcTick(P, t){
   TC_T.value=t;
   tcPulseTick(t);
+  // THE HOUR (as ophTick keeps Ophelia's): on the menu and the grid it is SIGN-ON at once; in the race it
+  // eases after the player and never goes back; race_warp's jump snaps it (SIM.warped)
+  { let me=null; if(state==='race'||state==='done') for(let k=0;k<racers.length;k++) if(racers[k].you){ me=racers[k]; break; }
+    const dt=Math.max(0, t-(P.hT==null?t:P.hT)); P.hT=t;
+    if(!me) P.u=0;
+    else { const laps=lapsOf()||4, pr=(!me._cp && (me.prog||0)>0.6) ? 0 : (me.prog||0);   // (behind the line, no lap begun: still the start)
+      const u=Math.min(4, Math.max(0, ((me.lap|0)+pr)*4/laps));
+      if(!(P.u>=0)) P.u=0;
+      // (capped at ~3x racing pace, a lap in 44 s: a lap that jumps — reversing over the line — still glides)
+      if(SIM.warped) P.u=u;
+      else if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-dt/0.9)), dt*0.08); }
+    tcHour(P, P.u); }
   if(P.gulls){ const {m,L}=P.gulls;
     L.forEach((g,i)=>{ const a=g.a-g.ph+t*g.w; _tcP.set(g.cx+Math.cos(a)*g.r, g.y, g.cz+Math.sin(a)*g.r);
       _tcQ.setFromEuler(_tcE.set(0,-a,g.rz)); _tcS.setScalar(g.s); m.setMatrixAt(i,_tcM.compose(_tcP,_tcQ,_tcS)); });
@@ -42155,14 +42402,48 @@ function tcTick(P, t){
       m.setMatrixAt(i,_tcM.compose(_tcP,_tcQ,_tcS)); });
     m.instanceMatrix.needsUpdate=true; }
 }
-// The sunset's light on the karts: a warm key low from the south-west, where the sun sits; a
-// lavender sky and a white-sand bounce; a magenta rim off the sky's bands and a cool fill.
-function applyTcLighting(){
-  hemi.color.setHex(0xd8d4f4); hemi.groundColor.setHex(0xf0e8dc); hemi.intensity=0.78;
-  sun.color.setHex(0xfff0d0);  sun.intensity=0.95; sun.position.set(-160,70,64);
-  rim.color.setHex(0xe040ff);  rim.intensity=0.42; rim.position.set(110,60,-70);
-  fill.color.setHex(0x40b0ff); fill.intensity=0.22; fill.position.set(60,30,120);
+// The light on the karts, from the first hour (SIGN-ON: a pale key low from the south-west, a lilac
+// sky over a white-sand bounce, a pink rim and a cool fill); tcHour moves every one of these through
+// the day — the sunset's warm key and magenta rim, the moonlight and neon rims of closedown (TC_HOURS).
+// Every light re-set, so nothing strands on the next course.
+function applyTcLighting(){ const A=TC_HOURS[0];
+  hemi.color.copy(A.hemiC); hemi.groundColor.copy(A.hemiG); hemi.intensity=A.hemiI;
+  sun.color.copy(A.sunC);   sun.intensity=A.sunI;  sun.position.copy(A.sunP);
+  rim.color.copy(A.rimC);   rim.intensity=A.rimI;  rim.position.copy(A.rimP);
+  fill.color.copy(A.fillC); fill.intensity=A.fillI; fill.position.copy(A.fillP);
   flesh.color.setHex(0xffffff);flesh.intensity=0.0; flesh.position.set(0,0,0);
+}
+/* THE SMASHABLES: the shared trackside clusters, drawn on the card as a child's stack of three
+   building blocks in the bars — two on the deck and one across them, keylined and hatched like
+   every other prop and lit by the pulse — standing on the shoulder's grey between the road's
+   edge (22) and the windbreak (29.3), clear of both, so they read as something to plough
+   through and never as part of the road. The shared loop has already drawn its random numbers
+   and made its three blobs; they are swapped here for one fill and one keyline (two draws a
+   stack instead of three), made inside tcQuiet so the page's own stream is not spent. */
+let TC_BRK=null;
+function tcBrkStack(grp, k, s){
+  for(const b of [...grp.children]){ grp.remove(b); b.geometry.dispose(); }
+  tcQuiet(()=>{
+    if(!TC_BRK) TC_BRK={ fill:tcFlat('static',{hatch:true, pulse:true, mat:{vertexColors:true, side:T.DoubleSide}}), hull:tcHull('static') };
+    const R=harbRnd(0xB10C+k*977), a=3.8, sink=0.3+Math.abs(Math.sin(s.bank||0))*a*0.5;
+    // standing plumb (a stack of blocks does), across the road and along it; a proper rotation, so the keyline stays outside
+    const U=new T.Vector3(0,1,0), X=new T.Vector3(s.n.x,0,s.n.z).normalize(), F=new T.Vector3().crossVectors(X,U).normalize();
+    const B=new T.Matrix4().makeBasis(X,U,F), M=new T.Matrix4(), Q=new T.Quaternion(), P=new T.Vector3(), S1=new T.Vector3(a,a,a), up=U;
+    const base=new T.BoxGeometry(1,1,1).toNonIndexed(), pos=[], nor=[], col=[], pa=[], c=new T.Color(), v=new T.Vector3(), NM=new T.Matrix3();
+    // two blocks on the deck along the road, a hair apart, and one laid across the pair, turned a little more
+    [[0,-(a/2+0.22),0.5*a-sink,0.12],[0,(a/2+0.22),0.5*a-sink,0.12],[0,(R()-0.5)*0.6,1.5*a-sink,0.30]].forEach(([lx,lz,ly,tw],j)=>{
+      Q.setFromAxisAngle(up,(R()-0.5)*2*tw); P.set(lx,ly,lz); M.compose(P,Q,S1).premultiply(B); NM.getNormalMatrix(M);
+      c.copy(tcLin(TC_BARS[1+((k*3+j*2)%6)]));
+      const p=base.attributes.position, n=base.attributes.normal;
+      for(let i=0;i<p.count;i++){ v.fromBufferAttribute(p,i).applyMatrix4(M); pos.push(v.x,v.y,v.z);
+        v.fromBufferAttribute(n,i).applyMatrix3(NM).normalize(); nor.push(v.x,v.y,v.z); col.push(c.r,c.g,c.b); } });
+    const wx=grp.position.x, wz=grp.position.z, arr=tcArrJ(wx,wz);
+    for(let i=0;i<pos.length/3;i++) pa.push(arr+(i>=72?0.06:0.0));   // (the top block lights a step after the pair)
+    const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new T.Float32BufferAttribute(nor,3));
+    g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setAttribute('aPA',new T.Float32BufferAttribute(pa,1)); g.computeBoundingSphere();
+    grp.add(new T.Mesh(g, TC_BRK.fill));
+    const hg=hanaHullGeo(g); hg.deleteAttribute('aPA'); hg.computeBoundingSphere(); grp.add(new T.Mesh(hg, TC_BRK.hull));
+    base.dispose(); });
 }
 // the jump ramp's marking, road-sign style: two black chevrons on the white wedge
 function tcJumpCanvas(){ return tcCanvas('jump',64,64,(g)=>{
@@ -55708,11 +55989,12 @@ function buildTrack(idx){
   } else if(tc){
     // Stacey: the sunset sky, the sand atoll in its ink sea, and the road's deck laid on the
     // sand (wet-sand shoulders, ink lip, windbreaks; see DREAM BEACH KIT)
-    TC_TEXB={};
+    TC_TEXB={}; TC_BRK=null;
     skyDome=tcSky(); trackGroup.add(skyDome);
     tcGround(innerSign, tcTun);
     tcDeck(innerSign, tcTun);
-    TRACK_PULSE.tc={};
+    // every race starts at SIGN-ON: the hour's shared uniforms, the rig and the fog back to key 0 (tcTick holds it there until the off)
+    TRACK_PULSE.tc={}; tcHour(TRACK_PULSE.tc, 0);
   } else if(sho){
     // Rosalie: the printed sky, the shore's ground grid, the sea, the deck and its piles (LINOCUT KIT)
     skyDome=shSky(); trackGroup.add(skyDome);
@@ -57536,7 +57818,7 @@ function buildTrack(idx){
     // Victoria: printed in the set's own ink (yellow in the mine, where the lamp makes the floor violet)
     if(vic){ pad.material.blending=T.NormalBlending; pad.material.color.copy(vicLin(vicInk(i)[0])); }
     trackGroup.add(pad);
-    const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana && !sho && !vic) trackGroup.add(halo);
+    const halo=glowSprite(0xffb44a,16); halo.position.copy(s.p).add(new T.Vector3(0,3,0)); if(!hana && !sho && !vic && !tc) trackGroup.add(halo);   // (Stacey: a soft glow hanging at kart height has no place on a hard-edged card)
     boostPads.push({x:s.p.x,z:s.p.z,r:13});
   }
   geo.setDrawRange(0,Infinity);   // (the whole road draws again)
@@ -57604,7 +57886,7 @@ function buildTrack(idx){
       // Stacey: added light vanishes on a white wedge — print black chevrons instead
       if(tc||vic){ mk.map=tcTex(tcJumpCanvas(),{clamp:true}); mk.blending=T.NormalBlending; }
       trackGroup.add(grp);
-      const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana && !sho && !vic) trackGroup.add(halo);
+      const halo=glowSprite(0x7dffaa,22); halo.position.copy(sp.p).add(new T.Vector3(0,5,3)); if(!hana && !sho && !vic && !tc) trackGroup.add(halo);
       jumpPads.push({x:sp.p.x+sp.t.x*3, z:sp.p.z+sp.t.z*3, r:12});
     }
   }
@@ -58591,9 +58873,10 @@ function buildTrack(idx){
     const VCM = vic ? new T.MeshBasicMaterial({vertexColors:true}) : null;
     for(let k=0;k<NB;k++){
       const i=((Math.random()*STEPS|0)+5)%STEPS, s=SAMP[i];
-      const side=(Math.random()<0.5?-1:1), out=HW*(0.96+Math.random()*0.28);
+      const side=(Math.random()<0.5?-1:1), out0=HW*(0.96+Math.random()*0.28);
+      const out=tc ? HW+3.95+(out0/HW-0.96)*0.5 : out0;   // Stacey: a stack on the shoulder's grey, clear of the road's edge and the windbreak (tcBrkStack)
       const bx=s.p.x+s.n.x*side*out, bz=s.p.z+s.n.z*side*out;
-      const by=s.p.y+Math.sin(s.bank||0)*side*out+(oph?0.5:2.2);   // ride the banked road edge (posies float ON the water)
+      const by=s.p.y+Math.sin(s.bank||0)*side*out+(oph?0.5:tc?0:2.2);   // ride the banked road edge (posies float ON the water; Stacey's blocks stand on the deck)
       const hue=20+Math.random()*40;
       const grp=new T.Group(); grp.position.set(bx,by,bz);
       const m = loom
@@ -58646,8 +58929,9 @@ function buildTrack(idx){
         for(const b of [...grp.children]){ grp.remove(b); b.geometry.dispose(); }
         grp.add(new T.Mesh(mg, SHBM)); }
       if(vic) vicCrates(grp, i, VCM);
+      if(tc) tcBrkStack(grp, k, s);
       trackGroup.add(grp);
-      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:tc?[226,58,193,118,285,0,245][(k*3)%7]:sho?8:300+hue});
+      breakables.push({x:bx,z:bz,y:by,r:5.2,mesh:grp,alive:true,hue:oph?[6,48,272,46][k%4]:arc?42:eden?[168,72,24,276][k%4]:tc?[226,58,193,118,285,0,245][1+(k*3)%6]:sho?8:300+hue});
     }
   }
 
