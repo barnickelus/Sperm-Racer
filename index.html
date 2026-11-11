@@ -78957,6 +78957,61 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat() };
     },
 
+    /* — AUDIT: what on this course is where it shouldn't be. Every piece of scenery (each instance of an instanced batch
+         counts on its own) is boxed in world space and checked two ways: does it push into the racing corridor (its
+         footprint within the road's half-width of the centreline, at road height: not a gantry overhead), and does it
+         overlap another piece by a good share of the smaller one's volume. Each finding says where it is along the lap
+         (in laps, for race_warp), how far off the centreline, and what it is. Ground, road, sky and water (anything
+         bigger than `maxSize` across) are skipped. — */
+    'race.audit': ({maxSize=160, minSize=1.5, margin=1, overlap=0.3, top=40}={})=>{
+      if(!trackGroup || !SAMP.length) throw new Error('no course built');
+      const G=new Map(), CELL=120, key=(x,z)=>Math.floor(x/CELL)+':'+Math.floor(z/CELL);
+      for(let i=0;i<STEPS;i++){ const k=key(SAMP[i].p.x,SAMP[i].p.z); (G.get(k)||G.set(k,[]).get(k)).push(i); }
+      const near=(x,z)=>{ let bi=-1, bd=1e18; const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
+        for(let a=-1;a<=1;a++) for(let b=-1;b<=1;b++){ const L=G.get((cx+a)+':'+(cz+b)); if(!L) continue;
+          for(const i of L){ const dx=SAMP[i].p.x-x, dz=SAMP[i].p.z-z, d=dx*dx+dz*dz; if(d<bd){ bd=d; bi=i; } } }
+        return bi; };
+      const sig=o=>{ let m=o.isMesh?o:null; if(!m) o.traverse(c=>{ if(!m && c.isMesh) m=c; }); if(o.name) return o.name; if(!m) return o.type;
+        const mt=Array.isArray(m.material)?m.material[0]:m.material; return (m.isInstancedMesh?'Instanced·':'')+(mt?(mt.name||mt.type.replace('Material',''))+(mt.color?' #'+mt.color.getHexString():''):'')+' '+(m.geometry?m.geometry.type.replace('BufferGeometry','').replace('Geometry',''):''); };
+      trackGroup.updateMatrixWorld(true);
+      const boxes=[], b=new T.Box3(), gb=new T.Box3(), mtx=new T.Matrix4();
+      const add=(box,name,src,inst)=>{ const sz=box.getSize(new T.Vector3()), d=Math.max(sz.x,sz.y,sz.z); if(d>maxSize || d<minSize || !isFinite(d)) return; boxes.push({ box:box.clone(), name, src, inst }); };
+      // the geometry itself, not its box: how many of a piece's vertices sit inside the corridor at kart height, and how deep
+      const _v=new T.Vector3(), _m=new T.Matrix4();
+      const inCorridor=(B)=>{ let n=0, deep=0, at=null; const visit=(mesh, inst)=>{ const pos=mesh.geometry&&mesh.geometry.attributes.position; if(!pos) return;
+          _m.copy(mesh.matrixWorld); if(inst!=null){ mesh.getMatrixAt(inst, mtx); _m.multiply(mtx); }
+          const step=Math.max(1, Math.floor(pos.count/1500));
+          for(let i=0;i<pos.count;i+=step){ _v.fromBufferAttribute(pos,i).applyMatrix4(_m); const w=where(_v.x,_v.z); if(!w) continue;
+            const inside=HW+margin-Math.abs(w.lat); if(inside>0 && _v.y>w.y-0.5 && _v.y<w.y+7){ n++; if(inside>deep){ deep=inside; at=w; } } } };
+        if(B.inst!=null) visit(B.src, B.inst); else B.src.traverseVisible(o=>{ if(o.isMesh && !o.isInstancedMesh) visit(o, null); });
+        return { n, deep, at }; };
+      for(const c of trackGroup.children){ if(!c.visible) continue;
+        if(c.isInstancedMesh){ if(!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+          for(let i=0;i<c.count;i++){ c.getMatrixAt(i,mtx); gb.copy(c.geometry.boundingBox).applyMatrix4(mtx).applyMatrix4(c.matrixWorld); add(gb, sig(c)+' #'+i, c, i); } }
+        else if(c.isMesh || c.isGroup || c.type==='Object3D'){ b.setFromObject(c); if(!b.isEmpty()) add(b, sig(c), c); } }
+      const where=(x,z)=>{ const i=near(x,z); if(i<0) return null; const sp=SAMP[i], lat=(x-sp.p.x)*sp.n.x+(z-sp.p.z)*sp.n.z;
+        return { i, lat, y:sp.p.y+Math.sin(sp.bank||0)*lat, at:+(trackLoop? i/STEPS : i/(STEPS-1)).toFixed(4) }; };
+      const onRoad=[];
+      for(const B of boxes){ const bx=B.box, pts=[[(bx.min.x+bx.max.x)/2,(bx.min.z+bx.max.z)/2],[bx.min.x,bx.min.z],[bx.max.x,bx.min.z],[bx.min.x,bx.max.z],[bx.max.x,bx.max.z]];
+        let worst=null; for(const [x,z] of pts){ const w=where(x,z); if(!w) continue; const inside=HW+margin-Math.abs(w.lat);
+          if(inside>0 && bx.min.y<w.y+7 && bx.max.y>w.y-1 && (!worst || inside>worst.inside)) worst={ ...w, inside }; }
+        if(worst && bx.max.y-bx.min.y<0.8) worst=null;   // (a flat decal lying on the road: markings belong there)
+        if(worst){ const g=inCorridor(B); if(!g.n) worst=null; else { worst=g.at; worst.inside=g.deep; worst.verts=g.n; } }   // (its box reaches the road; does its shape?)
+        if(worst) onRoad.push({ name:B.name, at:worst.at, lateral:+worst.lat.toFixed(1), intoRoad:+worst.inside.toFixed(1), vertices:worst.verts, x:Math.round((bx.min.x+bx.max.x)/2), z:Math.round((bx.min.z+bx.max.z)/2), size:+bx.getSize(new T.Vector3()).length().toFixed(1) }); }
+      onRoad.sort((a,b)=>b.intoRoad-a.intoRoad);
+      // overlaps between separate pieces (a spatial hash on the boxes' centres keeps it near linear)
+      const H=new Map(), C2=60; boxes.forEach((B,k)=>{ const c=B.box.getCenter(new T.Vector3()); const kk=Math.floor(c.x/C2)+':'+Math.floor(c.z/C2); (H.get(kk)||H.set(kk,[]).get(kk)).push(k); B.c=c; });
+      const vol=bx=>{ const s=bx.getSize(new T.Vector3()); return Math.max(1e-3,s.x*s.y*s.z); }, I=new T.Box3(), seen=new Set(), overlaps=[];
+      boxes.forEach((B,k)=>{ const cx=Math.floor(B.c.x/C2), cz=Math.floor(B.c.z/C2);
+        for(let a=-1;a<=1;a++) for(let bb=-1;bb<=1;bb++){ const L=H.get((cx+a)+':'+(cz+bb)); if(!L) continue;
+          for(const j of L){ if(j<=k) continue; const A=boxes[j]; if(A.src===B.src && !B.src.isInstancedMesh) continue;
+            if(!B.box.intersectsBox(A.box)) continue; I.copy(B.box).intersect(A.box); const r=vol(I)/Math.min(vol(B.box),vol(A.box));
+            if(vol(I)/Math.max(vol(B.box),vol(A.box))>0.7) continue;   // (near-identical twins: an ink hull round its shape, a glow over its body — on purpose)
+            if(r>=overlap){ const w=where(B.c.x,B.c.z); overlaps.push({ a:B.name, b:A.name, share:+r.toFixed(2), at:w?w.at:null, lateral:w?+w.lat.toFixed(1):null, x:Math.round(B.c.x), z:Math.round(B.c.z) }); } } } });
+      overlaps.sort((a,b)=>b.share-a.share);
+      return { course:TRACKS[selTrack].name, loop:trackLoop, pieces:boxes.length, roadHalfWidth:HW, onRoad:onRoad.slice(0,top), onRoadCount:onRoad.length, overlaps:overlaps.slice(0,top), overlapCount:overlaps.length };
+    },
+
     /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
          there: `to` is in laps on a lap course (2.5 = halfway round the third lap), a fraction on a point-to-point one.
          You are put there and the field around you in race order (`spread` units apart), at speed, lap counts and

@@ -469,6 +469,13 @@ tool('race_perf', {
   } finally { await cdp.detach().catch(() => {}); }
 });
 
+tool('race_audit', {
+  title: 'Find scenery in the wrong place',
+  description: 'Audit the built course: every piece of scenery (each instance of an instanced batch on its own) is boxed in world space and checked for pushing into the racing corridor (its footprint inside the road\'s half-width of the centreline, at road height, so overhead gantries don\'t count) and for overlapping another piece by at least `overlap` of the smaller one\'s volume. Each finding gives where it is along the lap (`at`, in laps, for race_warp), its offset from the centreline, how far into the road it reaches, its world x/z and what it is. Ground, road, sky and water (bigger than `maxSize`) are skipped. Overlaps can be intended (a cluster); use the list to look, not as a verdict.',
+  inputSchema: { page: pageArg, maxSize: z.number().positive().default(160), minSize: z.number().min(0).default(1.5), margin: z.number().default(1), overlap: z.number().min(0.01).max(1).default(0.3), top: z.number().int().min(1).max(200).default(40) },
+  annotations: { readOnlyHint: true },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.audit'), 'race.audit', a, 120000))));
+
 tool('race_warp', {
   title: 'Jump the race to a point',
   description: 'Jump the running race to any point, so a late part of a course, or a late hour of its light, can be looked at without driving there. `to` is in laps on a lap course (2.5 = halfway round the third lap) and a fraction of the way to the egg on a point-to-point course. You are placed there with the field `spread` units apart (you at the back by default, so the chase camera sees the pack ahead), at speed, with lap counts and checkpoints set as if driven. Eased course state, such as Ophelia\'s hour, snaps to the new point.',
