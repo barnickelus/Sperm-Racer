@@ -371,6 +371,14 @@ tool('scene_profile', {
   annotations: { readOnlyHint: true },
 }, async ({ page, roster }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster }, 180000))));
 
+tool('race_palette', {
+  title: 'Analyse a racer\'s colours',
+  description: 'Which of a racer\'s parts blend into each other on screen. Renders the frame and an ID pass from the same camera, then reports each part\'s share of the racer\'s pixels and mean on-screen colour, and the closest-coloured pairs by CIE ΔE (under ~10 reads as the same colour at racing distance). cam: photo-camera params, or omit for the current view.',
+  inputSchema: { page: pageArg, racer: z.string().optional(), minShare: z.number().min(0).max(0.5).default(0.02),
+    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional() },
+  annotations: { readOnlyHint: true },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.palette'), 'race.palette', a))));
+
 tool('race_select', {
   title: 'Show the character-select stage',
   description: 'Leave any race for the character-select screen with this character on its 3D stage (the game\'s own studio lighting and idle animation), and screenshot it. Good for judging a character the way players first see it.',

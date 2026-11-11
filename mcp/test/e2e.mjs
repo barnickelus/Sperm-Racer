@@ -45,7 +45,7 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_options', 'race_pose', 'race_realtime', 'race_select',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_options', 'race_palette', 'race_pose', 'race_realtime', 'race_select',
     'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats']);
 });
 
@@ -223,6 +223,29 @@ await check('scene_profile breaks the cost down per racer and over the whole ros
   assert.deepEqual(p.roster.filter(r => r.error), [], 'none failed to build');
   const rusty = p.roster.find(r => r.id === 'outlaw');
   assert.ok(rusty.draws <= 64, `Rusty within his budget: ${rusty.draws} draws`);
+});
+
+await check('race_palette measures how far apart a racer\'s parts are on screen (Rusty: hat and hair)', async () => {
+  const p = json(await call('race_palette', { cam: { azimuth: 180, elevation: 20, distance: 26, height: 3.5 } }));
+  assert.equal(p.racer, 'Rusty Malone');
+  const parts = Object.fromEntries(p.parts.map(x => [x.part, x]));
+  assert.ok(parts.hat && parts.hair, 'hat and hair both on screen: ' + p.parts.map(x => x.part).join(', '));
+  const pair = p.closestPairs.find(x => new Set([x.a, x.b]).has('hat') && new Set([x.a, x.b]).has('hair'));
+  assert.ok(!pair || pair.dE > 20, `hat and hair read apart (ΔE ${pair && pair.dE})`);
+});
+
+await check('Kasi: built, acting, and within the roster budget', async () => {
+  json(await call('race_setup', { course: 'Ophelia', character: 'kasi', difficulty: 'medium' }));
+  const g = json(await call('race_start'));
+  assert.equal(g.grid.find(x => x.you).expression, 'chill');
+  assert.deepEqual(json(await call('race_pose')).expressions, ['chill', 'hype', 'focused', 'shook', 'side-eye', 'annoyed', 'wink', 'tired', 'vibing', 'champion']);
+  const d = json(await call('race_drive', { seconds: 20 }));
+  assert.ok(Object.keys(d.you.expressions || {}).length >= 2, JSON.stringify(d.you.expressions));
+  const prof = json(await call('scene_profile'));
+  const k = prof.racers.find(r => r.character === 'kasi');
+  assert.ok(k.draws <= 48, `Kasi within budget: ${k.draws} draws`);
+  const tw = json(await call('scene_graph', { root: 'twists', depth: 0 }));
+  assert.ok(tw.root.instances >= 150, 'the twists are one instanced draw (r128 reports InstancedMesh as type Mesh, with an instance count)');
 });
 
 await check('no page errors through all of it', async () => {
