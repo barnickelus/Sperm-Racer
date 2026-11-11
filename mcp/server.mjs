@@ -487,7 +487,7 @@ tool('race_warp', {
   title: 'Jump the race to a point',
   description: 'Jump the running race to any point, so a late part of a course, or a late hour of its light, can be looked at without driving there. `to` is in laps on a lap course (2.5 = halfway round the third lap) and a fraction of the way to the egg on a point-to-point course. You are placed there with the field `spread` units apart (you at the back by default, so the chase camera sees the pack ahead), at speed, with lap counts and checkpoints set as if driven. Eased course state, such as Ophelia\'s hour, snaps to the new point.',
   inputSchema: { page: pageArg, to: z.number().min(0).default(0), jump: z.number().int().min(0).optional().describe('instead of `to`: put you `lead` units short of this jump ramp (race_features lists them)'),
-    pad: z.number().int().min(0).optional().describe('instead of `to`: `lead` units short of this boost pad'), lead: z.number().min(0).default(160), spread: z.number().min(0).max(80).default(26), you: z.enum(['back', 'front', 'order']).default('back').describe('where you sit in the field: at the back (the chase camera sees the pack ahead), the front, or in race order') },
+    pad: z.number().int().min(0).optional().describe('instead of `to`: `lead` units short of this boost pad'), lead: z.number().min(0).default(160), spread: z.number().min(0).max(80).default(26), you: z.union([z.enum(['back', 'front', 'order']), z.number().int().min(1)]).default('back').describe('where you sit in the field: at the back (the chase camera sees the pack ahead), the front, in race order, or a place (2 = right behind the leader, to stage a pass)') },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.warp'), 'race.warp', a))));
 
 tool('race_framing', {
