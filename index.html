@@ -74852,6 +74852,17 @@ function simCamApply(){
   camera.lookAt(ox, ty, oz);
   if(camera.fov!==c.fov){ camera.fov=c.fov; camera.updateProjectionMatrix(); }
 }
+/* Every solid thing drawn in flat black, for its depth (race_framing, race_palette). Not scene.overrideMaterial: r128 reuses one
+   override program across instanced meshes with and without instanceColor, and the one without has no buffer for it (a null
+   attribute, mid-render). So each mesh gets a black that matches its own instancing and skinning, and gets its material back. */
+function renderSolidBlack(skip){
+  const mats=new Map(), swapped=[];
+  const black=o=>{ const k=(o.isInstancedMesh&&o.instanceColor?1:0)+(o.isSkinnedMesh?2:0);
+    if(!mats.has(k)) mats.set(k, new T.MeshBasicMaterial({ color:0x000000, fog:false, skinning:!!(k&2) })); return mats.get(k); };
+  scene.traverseVisible(o=>{ if(!o.isMesh || (skip && skip(o))) return; swapped.push([o,o.material]); o.material=black(o); });
+  try{ renderer.render(scene,camera); }
+  finally{ for(const [o,m] of swapped) o.material=m; for(const m of mats.values()) m.dispose(); }
+}
 function raceStep(dt){
   raceTime+=dt;   // accumulate the capped dt: a backgrounded tab / stalled frame must not inflate the clock
   for(const r of racers)updateRacer(r,dt);
@@ -79360,17 +79371,29 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.userData.isOutline && !(o.material&&o.material.isShaderMaterial)) meshes.push(o); });
       const parts=[...new Set(meshes.map(key))], idCol=k=>[(k*67+40)%256,(k*151+90)%256,(k*29+170)%256];
       const lookup=new Map(parts.map((p,k)=>[idCol(k).join(','),k]));
+      // what lies over a racer without being it (wind lines, glows, sparks, haze, sprites) would tint its parts: those sit out
+      const mine=new Set(); r.obj.traverse(o=>mine.add(o));
+      const over=[]; scene.traverseVisible(o=>{ if(mine.has(o)) return; const m=o.material; if(o.isSprite || o.isPoints || o.isLine ||
+          (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) over.push(o); });
+      for(const o of over) o.visible=false;
       // the frame as drawn (into a target, so both passes see the same pixels)
       renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,px);
       // the ID pass: this racer only, flat colours, depth-tested against itself
       const saved=[], hulls=[], L=camera.layers.mask;
       for(const o of meshes){ const c=idCol(parts.indexOf(key(o))); saved.push([o,o.material]); o.material=new T.MeshBasicMaterial({ color:new T.Color(c[0]/255,c[1]/255,c[2]/255), fog:false, side:o.material.side }); o.layers.enable(3); }
       r.obj.traverse(o=>{ if(o.userData.isOutline && o.visible){ hulls.push(o); o.visible=false; } });
-      const bg=scene.background; scene.background=null; camera.layers.set(3);
-      renderer.setClearColor(0x000000,0); renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,id);
-      camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
-      for(const [o,m] of saved){ o.material.dispose(); o.material=m; o.layers.disable(3); } for(const h of hulls) h.visible=true;
-      rt.dispose(); SIM.cam=held;
+      const bg=scene.background; scene.background=null;
+      // ...depth-tested against the solid scene, so a rival in front of a part is not counted as that part
+      const ac=renderer.autoClear;
+      try{
+        renderer.setClearColor(0x000000,0); renderer.setRenderTarget(rt); renderer.clear();
+        r.obj.visible=false; renderSolidBlack(); r.obj.visible=true;
+        renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,id);
+      } finally {
+        r.obj.visible=true; renderer.autoClear=ac; for(const o of over) o.visible=true;
+        camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
+        for(const [o,m] of saved){ o.material.dispose(); o.material=m; o.layers.disable(3); } for(const h of hulls) h.visible=true;
+        rt.dispose(); SIM.cam=held; }
       // accumulate (render targets hold linear colour: to sRGB for a colour you would see)
       const s2=v=>{ v/=255; return v<=0.0031308?v*12.92:1.055*Math.pow(v,1/2.4)-0.055; };
       const acc=parts.map(()=>[0,0,0,0]); let total=0;
@@ -79596,8 +79619,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1);
       const rt=new T.WebGLRenderTarget(W,H), a=new Uint8Array(W*H*4), v=new Uint8Array(W*H*4);
       const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
-      const white=new T.MeshBasicMaterial({ color:0xffffff, fog:false }), black=new T.MeshBasicMaterial({ color:0x000000, fog:false });
-      const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white; o.layers.enable(3); }
+      const whites=new Map(), white=o=>{ const k=(o.isInstancedMesh&&o.instanceColor?1:0)+(o.isSkinnedMesh?2:0);   // (one per instancing: see renderSolidBlack)
+        if(!whites.has(k)) whites.set(k, new T.MeshBasicMaterial({ color:0xffffff, fog:false, skinning:!!(k&2) })); return whites.get(k); };
+      const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white(o); o.layers.enable(3); }
       const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear, hid=[];
       try{
         scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
@@ -79606,9 +79630,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
             (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
         for(const o of hid) o.visible=false;
-        camera.layers.mask=L; scene.overrideMaterial=black; renderer.clear(); renderer.render(scene,camera);
+        camera.layers.mask=L; renderer.clear(); renderSolidBlack();
         for(const o of hid) o.visible=true;
-        scene.overrideMaterial=null; renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
+        renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
         renderer.readRenderTargetPixels(rt,0,0,W,H,v);
       } catch(e){   // name whatever geometry broke the pass, so the fault can be found
         const bad=[]; scene.traverse(o=>{ const g=o.geometry; if(!g) return; const at=g.attributes||{};
@@ -79616,8 +79640,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         throw new Error(e.message+(bad.length?' — geometry with a missing attribute: '+bad.slice(0,8).join(', '):''));
       } finally {
         for(const o of hid) o.visible=true;
-        renderer.autoClear=ac; scene.overrideMaterial=null; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
-        for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } white.dispose(); black.dispose(); rt.dispose(); SIM.cam=held; }
+        renderer.autoClear=ac; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
+        for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } for(const m of whites.values()) m.dispose(); rt.dispose(); SIM.cam=held; }
       let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
       for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4; if(a[i]>127){ A++; cx+=x; cy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
         if(x===0||y===0||x===W-1||y===H-1) edge++; if(v[i]>127) V++; } }
