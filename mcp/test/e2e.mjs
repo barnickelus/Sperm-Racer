@@ -45,8 +45,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_options', 'race_pose', 'race_realtime', 'race_select',
-    'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_screenshot', 'scene_stats']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_options', 'race_pose', 'race_realtime', 'race_select',
+    'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats']);
 });
 
 await check('nothing connected: tools say how to connect; a foreign origin is refused', async () => {
@@ -202,6 +202,27 @@ await check('race_studio isolates the racer; race_sheet draws turnaround and exp
   save(image(e), 'rusty-expressions.jpg');
   assert.match(e.content.find(c => c.type === 'text').text, /^10 cells/);
   assert.equal(json(await call('race_studio', { on: false })).studio, false);
+});
+
+await check('race_film films motion; Rusty\'s smoke is puffs, not a tube', async () => {
+  json(await call('race_pose', { expression: 'smirk', hold: 60 }));
+  const f = await call('race_film', { frames: 6, seconds: 1.5, still: true, cam: { azimuth: -45, distance: 14, height: 5, along: 2.5 }, cell: 200 });
+  save(image(f), 'rusty-film.jpg');
+  assert.match(f.content.find(c => c.type === 'text').text, /^6 frames/);
+  const puffs = json(await call('scene_graph', { root: 'puffs', depth: 0 }));
+  assert.equal(puffs.root.name, 'puffs');
+  assert.equal(puffs.root.geometry, 'InstancedBufferGeometry');
+});
+
+await check('scene_profile breaks the cost down per racer and over the whole roster', async () => {
+  const p = json(await call('scene_profile', { roster: true }));
+  assert.equal(p.racers.length, 6);
+  assert.ok(p.scene.draws > p.track.draws);
+  const opts = json(await call('race_options'));
+  assert.equal(p.roster.length, opts.characters.length, 'every character built');
+  assert.deepEqual(p.roster.filter(r => r.error), [], 'none failed to build');
+  const rusty = p.roster.find(r => r.id === 'outlaw');
+  assert.ok(rusty.draws <= 64, `Rusty within his budget: ${rusty.draws} draws`);
 });
 
 await check('no page errors through all of it', async () => {

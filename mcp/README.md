@@ -57,6 +57,8 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_studio` | One racer alone on a plain backdrop, lit by the course's lights or a studio rig. It uses render layers, so nothing else in the scene can leak into frame |
 | `race_pose` | List a character's expressions, or force one (held for N seconds) |
 | `race_sheet` | **The engine draws a character reference sheet** and returns it as one image: an 8-view turnaround, every expression, or your own cells. Use it to compare a model against concept art |
+| `race_film` | **A filmstrip:** N frames over game time in one image, so motion can be judged. `still:true` keeps the race frozen while the racers' own animation (smoke, cloth, faces) runs |
+| `scene_profile` | **Render cost per racer** (draw calls, triangles, materials, textures), the track and the scene. `roster:true` builds every character off-screen and returns the whole table, build times included |
 | `scene_screenshot` / `scene_stats` / `scene_graph` / `page_logs` | Look, measure (draw calls and triangles per frame), inspect the object tree, read the console |
 
 Try asking Claude: *"Race Tex Calloway on Ophelia at hard difficulty on
@@ -92,7 +94,7 @@ tools then drive your tab instead of a headless one.
 npm test          # SHOTS=some/dir npm test  keeps the screenshots
 ```
 
-The test covers 17 checks over stdio, including the real-time loop still
+The test covers 19 checks over stdio, including the real-time loop still
 running the race, a page without `?mcp` staying inert, and Rusty Malone's
 expression rig, studio and sheets.
 

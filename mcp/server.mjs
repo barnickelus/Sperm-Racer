@@ -349,6 +349,28 @@ tool('race_sheet', {
   return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${s.cells} cells · ${s.width}×${s.height}`));
 });
 
+tool('race_film', {
+  title: 'Film a filmstrip',
+  description: 'Render `frames` frames spread over `seconds` of GAME time into one image, so motion can be judged: smoke, cloth, hair, a face changing. still:true keeps the race frozen and lets the racers\' own animation run (idle motion); otherwise the race is driven between frames (autopilot or held keys). cam: photo-camera params {azimuth, elevation, distance, height, along, fov} to follow one racer, or omit for the game\'s chase camera.',
+  inputSchema: {
+    page: pageArg, racer: z.string().optional(), frames: z.number().int().min(2).max(16).default(8), seconds: z.number().positive().max(60).default(2),
+    still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]),
+    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional(),
+    cell: z.number().int().min(120).max(600).default(320), columns: z.number().int().min(1).max(8).optional(), title: z.string().optional(),
+  },
+}, async ({ page, ...a }) => {
+  const p = pick(page, 'race.film');
+  const s = await call(p, 'race.film', a, 300000);
+  return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${s.frames} frames · ${s.width}×${s.height}`));
+});
+
+tool('scene_profile', {
+  title: 'Profile render cost',
+  description: 'What each racer on the grid costs to draw (visible meshes ≈ draw calls, triangles, materials, textures), the track, and the whole scene. roster:true also builds EVERY character off-screen once and measures it, build time included: the table to keep new characters within budget.',
+  inputSchema: { page: pageArg, roster: z.boolean().default(false) },
+  annotations: { readOnlyHint: true },
+}, async ({ page, roster }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster }, 180000))));
+
 tool('race_select', {
   title: 'Show the character-select stage',
   description: 'Leave any race for the character-select screen with this character on its 3D stage (the game\'s own studio lighting and idle animation), and screenshot it. Good for judging a character the way players first see it.',
