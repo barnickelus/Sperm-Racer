@@ -289,7 +289,7 @@ tool('race_start', {
   title: 'Start a race',
   description: 'Start a solo race with the current setup. Waits through the 3-second countdown. With manual:true (default) the race then stays frozen on the grid until race_drive steps it; manual:false lets it run in real time (slow motion on a software GPU).',
   inputSchema: { page: pageArg, manual: z.boolean().default(true) },
-}, async ({ page, manual }) => ok(text(await call(pick(page, 'race.start'), 'race.start', { manual }, 120000))));
+}, async ({ page, manual }) => ok(text(await call(pick(page, 'race.start'), 'race.start', { manual }, 200000))));
 
 tool('race_drive', {
   title: 'Drive the race forward',
@@ -398,6 +398,72 @@ tool('race_motion', {
   description: 'Step the page at 1/60 s (racing on autopilot, or still) and track probes in the racer\'s own space: head, neck turn, tail tip, swaying parts, and any ud.motionProbes. Per probe: travel, RMS speed, acceleration and jerk, and "snaps" (frames of jerk far above the probe\'s median). Low jerk with few snaps reads as fluid; high jerk reads as popping or robotic. Compare a character before and after an animation change. `series:true` adds each probe\'s per-frame speed and the frames its snaps fell on, to find what causes them.',
   inputSchema: { page: pageArg, racer: z.string().optional(), seconds: z.number().positive().max(30).default(3), still: z.boolean().default(false), autopilot: z.boolean().default(true), series: z.boolean().default(false) },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.motion'), 'race.motion', a, 120000))));
+
+tool('race_perf', {
+  title: 'Where the frame time goes',
+  description: 'Run the game for `seconds` and measure it three ways at once. mode "steps" (default) runs whole frames at a fixed 1/60 s step as fast as the machine allows (draw:false leaves the picture out, to see the JavaScript alone); "realtime" lets the page\'s own clock run it. The three measures: the game\'s frame split into segments (setup, sim, racers, camera, minimap, world animation, particles, render) in ms per frame, with the worst frame, draw calls and triangles; Chrome\'s sampling CPU profiler (top functions by self time, labelled game / three.js / native, and the game functions with the most time including what they call); and its sampling heap profiler (who allocates the most: garbage the collector must clear, which shows up as hitches). Headless pages only. A software GPU makes render and fps slow; the JavaScript costs are real. Restores manual stepping afterwards if the race was manual.',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(60).default(6), mode: z.enum(['steps', 'realtime']).default('steps'), draw: z.boolean().default(true),
+    top: z.number().int().min(5).max(60).default(18), cpu: z.boolean().default(true), alloc: z.boolean().default(true),
+    shaderChecks: z.boolean().default(false).describe('keep three\'s shader-error checks on while measuring (MCP pages have them on; players don\'t)') },
+}, async ({ page, seconds, mode, draw, top, cpu, alloc, shaderChecks }) => {
+  const p = pick(page, 'race.perf'); if (!p.headless || !p.headless.tab) throw new Error(`${p.id} is a live tab: race_perf profiles headless pages (open DevTools on a live tab instead)`);
+  const st = await call(p, 'race.state'); const wasManual = !!st.manual;
+  const cdp = await p.headless.context.newCDPSession(p.headless.tab);
+  try {
+    if (cpu) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 250 }); }
+    if (alloc) { await cdp.send('HeapProfiler.enable'); }
+    await cdp.send('Performance.enable');
+    const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]));
+    const m0 = await metrics();
+    const steps = mode === 'steps';
+    if (!steps && st.state === 'race' && wasManual) await call(p, 'race.manual', { manual: false });
+    await call(p, 'race.perf', { on: true, autopilot: !steps, shaderChecks });
+    if (cpu) await cdp.send('Profiler.start');
+    if (alloc) await cdp.send('HeapProfiler.startSampling', { samplingInterval: 16384, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+    if (steps) await call(p, 'race.frames', { frames: Math.round(seconds * 60), draw }, 600000);
+    else await new Promise(r => setTimeout(r, seconds * 1000));
+    const prof = cpu ? (await cdp.send('Profiler.stop')).profile : null;
+    const heap = alloc ? (await cdp.send('HeapProfiler.stopSampling')).profile : null;
+    const m1 = await metrics();
+    const frame = await call(p, 'race.perf', { on: false });
+    { const n = Math.max(1, frame.frames), d = k => (m1[k] || 0) - (m0[k] || 0);   // the browser's own counters: layout and style work the page caused
+      frame.browser = { layoutsPerFrame: +(d('LayoutCount') / n).toFixed(2), layoutMsPerFrame: +(d('LayoutDuration') * 1000 / n).toFixed(3),
+        styleRecalcsPerFrame: +(d('RecalcStyleCount') / n).toFixed(2), styleMsPerFrame: +(d('RecalcStyleDuration') * 1000 / n).toFixed(3),
+        scriptMsPerFrame: +(d('ScriptDuration') * 1000 / n).toFixed(3), heapMB: +((m1.JSHeapUsedSize || 0) / 1048576).toFixed(1) }; }
+    if (!steps && st.state === 'race' && wasManual) await call(p, 'race.manual', { manual: true });
+    const where = (cf) => { const u = cf.url || ''; const file = u ? u.split('/').pop().split('?')[0] : ''; const kind = /three/.test(file) ? 'three' : /index\.html/.test(file) ? 'game' : file ? file : 'native';
+      return { key: `${cf.functionName || '(anonymous)'} ${file}:${cf.lineNumber + 1}`, name: cf.functionName || '(anonymous)', at: file ? `${file}:${cf.lineNumber + 1}` : '', kind }; };
+    const out = { seconds, mode, draw, frame };
+    if (prof) {
+      const byId = new Map(prof.nodes.map(n => [n.id, n])), parent = new Map();
+      for (const n of prof.nodes) for (const c of n.children || []) parent.set(c, n.id);
+      const self = new Map(), incl = new Map(), kinds = {}; let total = 0;
+      for (let i = 0; i < prof.samples.length; i++) {
+        const dt = (prof.timeDeltas[i] || 0) / 1000; total += dt; const n = byId.get(prof.samples[i]); const w = where(n.callFrame);
+        const s0 = self.get(w.key) || { ...w, ms: 0 }; s0.ms += dt; self.set(w.key, s0); kinds[w.kind] = (kinds[w.kind] || 0) + dt;
+        const seen = new Set(); for (let id = n.id; id != null; id = parent.get(id)) { const x = where(byId.get(id).callFrame); if (x.kind !== 'game' || seen.has(x.key)) continue; seen.add(x.key);
+          const t0 = incl.get(x.key) || { ...x, ms: 0 }; t0.ms += dt; incl.set(x.key, t0); } }
+      const fmt = (a) => a.sort((x, y) => y.ms - x.ms).slice(0, top).map(x => ({ fn: x.name, at: x.at, kind: x.kind, ms: +x.ms.toFixed(1), share: +(x.ms / total).toFixed(3) }));
+      out.cpu = { sampledMs: +total.toFixed(0), byKind: Object.fromEntries(Object.entries(kinds).map(([k, v]) => [k, +(v / total).toFixed(3)]).sort((a, b) => b[1] - a[1])),
+        selfTop: fmt([...self.values()].filter(x => !/^\((idle|program)\)$/.test(x.name))), gameInclusive: fmt([...incl.values()]) };
+    }
+    if (heap) {
+      const agg = new Map(); let bytes = 0;
+      const walk = (n) => { const w = where(n.callFrame); if (n.selfSize) { const a = agg.get(w.key) || { ...w, b: 0 }; a.b += n.selfSize; agg.set(w.key, a); bytes += n.selfSize; } for (const c of n.children || []) walk(c); };
+      walk(heap.head);
+      const fr = Math.max(1, frame.frames);
+      out.alloc = { sampledMB: +(bytes / 1048576).toFixed(1), perFrameKB: +(bytes / fr / 1024).toFixed(1),
+        top: [...agg.values()].sort((a, b) => b.b - a.b).slice(0, top).map(a => ({ fn: a.name, at: a.at, kind: a.kind, kb: Math.round(a.b / 1024), kbPerFrame: +(a.b / fr / 1024).toFixed(2) })) };
+    }
+    return ok(text(out));
+  } finally { await cdp.detach().catch(() => {}); }
+});
+
+tool('race_fx', {
+  title: 'Hold an effect up',
+  description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
+  inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional() },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));
 
 tool('race_regress', {
   title: 'Visual regression of a character',

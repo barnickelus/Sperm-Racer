@@ -1149,12 +1149,13 @@
      dead space under the modes. While the Horizon home is up, the page wears the cabinet's colour so nothing can show through; and
      in the Home Screen app (no browser bars, so the large viewport IS the screen) the home is sized to the full screen height. */
   /* (the racer select and the lobby wear the cabinet too under Horizon, so they get the same backing) */
-  html:has(body.hz :is(#start,#select,#mp):not(.hidden)),body.hz:has(:is(#start,#select,#mp):not(.hidden)){background:#0E0806;}
+  /* (on classes, not :has() on <html>/<body>: with :has() there, every HUD write in a race restyled the whole page — 3 ms a frame. screenClasses() keeps them) */
+  html.hz-scr-menu,body.hz.scr-menu{background:#0E0806;}
   /* #fx sits above the screens (z-index 2), so the in-race edge vignette (an inset shadow ~230px deep at .85) was darkening the
      home itself: measured, the bottom row's text fell from 230 to 95 brightness, the top bar's to ~168 — the dim, hard-to-read
      settings and the "dead" dark band at the bottom. The cabinet has its own scanlines and glow; the vignette waits for the race.
      (The same reason body.sel-up turns it down on the racer select.) */
-  body.hz:has(#start:not(.hidden)) #vignette{opacity:0;}
+  body.hz.scr-start #vignette{opacity:0;}
   @media (display-mode:standalone){ @supports (height:100lvh){ body.hz #start{bottom:auto;height:100lvh;} } }
   @media (prefers-reduced-motion:reduce){ #start.firstrun #hzdeck #startbtn::before,#start.firstrun #hzdeck #startbtn .go-main::after{animation:none;} }
 
@@ -1446,7 +1447,7 @@
      (RACE on the right, as on the home). All under body.hz: Classic keeps its look, and .hzf-* are display:none there. No backdrop
      blur; the race behind shows through dimmed, under the cabinet's scanlines. */
   #finish .hzf-sky,#finish .hzf-lb,#finish .hzf-rb{display:none;}
-  body.hz:has(#finish:not(.hidden)) #vignette{opacity:0;}
+  body.hz.scr-finish #vignette{opacity:0;}
   body.hz #finish{--ht:clamp(34px,min(11vw,6.4vh),64px);--race:clamp(24px,4vh,34px);--px:clamp(14px,4.6vw,40px);--py:clamp(10px,1.8vh,22px);
     --hzf-in:36px;--hz-rp:8px;--hzf-rh:34px;--fw:680px;counter-reset:hzf;
     display:grid;grid-template-columns:minmax(0,1fr) minmax(0,var(--fw)) minmax(0,1fr);
@@ -2672,6 +2673,22 @@
 </div>
 
 <script src="three.min.js"></script>
+<script>
+/* The screen classes the stylesheet keys on (scr-menu, scr-start, scr-finish on <body>; hz-scr-menu on <html>), kept by
+   one observer that only fires when a screen is shown or hidden or the home style changes. They stand in for :has()
+   rules on <html> and <body>, which made Chrome restyle the whole document on every HUD write (race_perf: style
+   recalc 3.08 ms a frame, 0.14 without). */
+(function screenClasses(){
+  const B=document.body, H=document.documentElement, up=id=>{ const e=document.getElementById(id); return !!e && !e.classList.contains('hidden'); };
+  const sync=()=>{ const menu=up('start')||up('select')||up('mp');
+    B.classList.toggle('scr-menu', menu); B.classList.toggle('scr-start', up('start')); B.classList.toggle('scr-finish', up('finish'));
+    H.classList.toggle('hz-scr-menu', menu && B.classList.contains('hz')); };
+  const mo=new MutationObserver(sync);
+  for(const id of ['start','select','mp','finish']){ const e=document.getElementById(id); if(e) mo.observe(e, { attributes:true, attributeFilter:['class'] }); }
+  mo.observe(B, { attributes:true, attributeFilter:['class'] });
+  sync();
+})();
+</script>
 <script>
 (()=>{
 "use strict";
@@ -37201,6 +37218,10 @@ const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
 /* ============== SCENE ============== */
 const app=$('app');
 const renderer=new T.WebGLRenderer({antialias:true});
+// three checks every shader it compiles by asking the GPU for the log at once — a stall each time a new effect first
+// shows in a race (race_perf: getShaderInfoLog/getProgramInfoLog ~1.2 s across a race on a software GPU). Players don't
+// read shader logs; the MCP and ?debug pages keep the check, so a broken shader still fails the tests.
+renderer.debug.checkShaderErrors=/[?&](mcp|debug)\b/.test(location.search);
 renderer.setClearColor(0x1c1218);
 renderer.outputEncoding=T.sRGBEncoding;            // richer, less muddy color
 const RES=isTouch?0.88:0.95;                       // sharper for iPad + modern displays
@@ -37222,7 +37243,7 @@ const rim = new T.DirectionalLight(0x6df2d0,0.55); rim.position.set(-60,80,-80);
 const fill = new T.PointLight(0xffe0b0,0.30,400); fill.position.set(20,60,-120); scene.add(fill);
 const flesh = new T.PointLight(0xff6f8a,0.35,500); flesh.position.set(-30,-10,40); scene.add(flesh); // fleshy underglow
 
-let _vw=0,_vh=0;
+let _vw=0,_vh=0,_vsPoll=0;
 // single source of truth for the current visible size. visualViewport reflects the ACTUAL
 // visible window on iPad — including Stage Manager / Split View window resizes and the
 // dynamic-toolbar shrink — which documentElement.clientWidth/Height can report stale during
@@ -58583,6 +58604,10 @@ function wiggleTail(g, phase, amp, lift, st){
   // first the spine (sway, lift and the lash's pull and heading per ring), then the rings around it
   const SX=d.sx||(d.sx=new Float32Array(rings+1)), SY=d.sy||(d.sy=new Float32Array(rings+1)), SZ=d.sz||(d.sz=new Float32Array(rings+1)), SA=d.sa||(d.sa=new Float32Array(rings+1));
   for(let i=0;i<=rings;i++){ tailOffset(i*0.5*LK, i/rings, phase, amp, st); SX[i]=_tox; SY[i]=_toy; SZ[i]=_wlz; SA[i]=_wla; }
+  // normals are written with the positions: each vertex's normal IS its direction out from the spine (cb·ca, s, cb·sa),
+  // exact for a tube and seamless round the join — three's computeVertexNormals pass, every racer every frame, is gone
+  let nrm=geo.attributes.normal; if(!nrm || nrm.array.length!==pos.length){ nrm=new T.BufferAttribute(new Float32Array(pos.length),3); geo.setAttribute('normal',nrm); }
+  const N=nrm.array, CB=d.cbT||(d.cbT=Float32Array.from({length:sides+1},(_,j)=>Math.cos(j/sides*Math.PI*2))), SB=d.sbT||(d.sbT=Float32Array.from({length:sides+1},(_,j)=>Math.sin(j/sides*Math.PI*2)));
   let p=0;
   for(let i=0;i<=rings;i++){
     const t=i/rings;
@@ -58593,15 +58618,15 @@ function wiggleTail(g, phase, amp, lift, st){
     // thickness through the S instead of shearing thin. At rest the bend is 0 and the rings face straight back as ever.
     const a0=i>0?i-1:0, a1=i<rings?i+1:rings, yaw=_WL.on ? SA[i] : -Math.atan((SX[a1]-SX[a0])/(ringZ[a1]-ringZ[a0]));
     const ca=Math.cos(yaw), sa=Math.sin(yaw);
+    const yy=y+lift*t*t+sy+oy;
     for(let j=0;j<=sides;j++){
-      const ang=j/sides*Math.PI*2, cb=Math.cos(ang), c=cb*ca, s=Math.sin(ang), cs=cb*sa;
-      pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
-      pos[p]=y+lift*t*t+sy+oy+s*r;  outlinePos[p]=y+lift*t*t+sy+oy+s*ro;  p++;
-      pos[p]=cz+cs*r;     outlinePos[p]=cz+cs*ro;      p++;
+      const cb=CB[j], c=cb*ca, s=SB[j], cs=cb*sa;
+      N[p]=c; pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
+      N[p]=s; pos[p]=yy+s*r;  outlinePos[p]=yy+s*ro;  p++;
+      N[p]=cs; pos[p]=cz+cs*r;     outlinePos[p]=cz+cs*ro;      p++;
     }
   }
-  geo.attributes.position.needsUpdate=true;
-  geo.computeVertexNormals();
+  geo.attributes.position.needsUpdate=true; nrm.needsUpdate=true;
   if(outlineGeo){ outlineGeo.attributes.position.needsUpdate=true; }
 }
 function celShade(g){
@@ -69070,12 +69095,13 @@ function cbWiggle(g, ct, phase, amp, lift){
     else { const ds=S[i]-S[i-1], dx=x-sx[i-1], dy=y-sy[i-1]; pz-=Math.sqrt(Math.max(ds*ds-dx*dx-dy*dy, ds*ds*0.06)); }
     sx[i]=x; sy[i]=y; sz[i]=pz+dz;
   }
+  const CS=ct.cs||(ct.cs=Float32Array.from({length:NS+1},(_,j)=>Math.cos(j/NS*6.2832))), SN=ct.sn||(ct.sn=Float32Array.from({length:NS+1},(_,j)=>Math.sin(j/NS*6.2832)));   // (once, not two trig calls per vertex per frame)
   for(let i=0,p=0;i<=NR;i++){
     const i0=i>0?i-1:0, i1=i<NR?i+1:NR;
     _cbT.set(sx[i1]-sx[i0], sy[i1]-sy[i0], sz[i1]-sz[i0]).normalize();
     _cbSd.crossVectors(_cbY,_cbT).normalize(); _cbUp.crossVectors(_cbT,_cbSd);
     const r=R[i], cx=sx[i], cy=HEAD_CY+sy[i], cz=sz[i];
-    for(let j=0;j<=NS;j++,p+=3){ const an=j/NS*6.2832, c=Math.cos(an), sn=Math.sin(an);
+    for(let j=0;j<=NS;j++,p+=3){ const c=CS[j], sn=SN[j];
       const nx=_cbSd.x*c+_cbUp.x*sn, ny=_cbSd.y*c+_cbUp.y*sn, nz=_cbSd.z*c+_cbUp.z*sn;
       pos[p]=cx+nx*r; pos[p+1]=cy+ny*r; pos[p+2]=cz+nz*r; nor[p]=nx; nor[p+1]=ny; nor[p+2]=nz; }
   }
@@ -71490,6 +71516,44 @@ function useItem(r){
 /* ============== SIM ============== */
 function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
 
+/* ============== SLIPSTREAM ============== *
+ * Tuck in behind a rival — inside a narrow lane along ITS heading, 6 to 40 units back, both of you quick — and the air
+ * goes still: a little more top speed while you sit there (up to +6%), and a charge that builds. Held about a second and a
+ * half it fires a SLINGSHOT (a short boost) to pull out and pass. Everyone drafts, the AI included (it charges a little
+ * slower), so it is a way past a rival and a reason to break someone's tow. Your own tow shows as wind lines streaming past
+ * your kart, brighter the deeper you sit in it (DRAFT_FX). */
+const DRAFT={ RANGE:40, NEAR:6, LANE:5.5, MINSPD:70, CHARGE:1.4, SLING:0.7, GAIN:0.06, AI:0.65 };
+function draftOf(r){
+  if(MAZE || r.air || Math.abs(r.spd)<DRAFT.MINSPD) return 0;
+  let best=0;
+  for(const o of racers){ if(o===r || o.finished || o.spectator || o.air || Math.abs(o.spd)<DRAFT.MINSPD*0.8) continue;
+    const dx=o.x-r.x, dz=o.z-r.z, fx=Math.sin(o.head), fz=Math.cos(o.head), along=dx*fx+dz*fz;
+    if(along<DRAFT.NEAR || along>DRAFT.RANGE) continue;
+    const lat=Math.abs(dx*fz-dz*fx); if(lat>DRAFT.LANE || Math.abs((o.y||0)-(r.y||0))>6) continue;
+    const q=(1-lat/DRAFT.LANE)*(along<16?1:1-(along-16)/(DRAFT.RANGE-16)); if(q>best) best=q; }
+  return best;
+}
+const DRAFT_FX={ mesh:null, mat:null, N:36, seeds:null, t:0, o:0, d:null, force:null };   // force: an outside driver holds the lines up (race_fx)
+function draftFxEnsure(){ const F=DRAFT_FX; if(F.mesh){ if(F.mesh.parent!==scene) scene.add(F.mesh); return F; }
+  F.mat=new T.MeshBasicMaterial({ color:0xd8fff4, transparent:true, opacity:0, blending:T.AdditiveBlending, depthWrite:false, fog:false });
+  F.mesh=new T.InstancedMesh(new T.BoxGeometry(0.17,0.17,1), F.mat, F.N); F.mesh.frustumCulled=false; F.mesh.visible=false; F.mesh.name='slipstream';
+  F.seeds=Array.from({length:F.N},(_,i)=>({ a:i/F.N*6.2832+Math.random()*0.3, r:2.9+Math.random()*2.4, z0:Math.random()*26, v:0.75+Math.random()*0.5, len:3+Math.random()*4.5 }));
+  F.d=new T.Object3D(); scene.add(F.mesh); return F; }
+function draftFxTick(dt){
+  const me=racers.find(r=>r.you), F=DRAFT_FX;
+  const want=F.force!=null ? F.force : (me && state==='race' && !me.finished && !me.spectator && camMode!=='fp') ? Math.min(1,(me.draft||0)*1.7) : 0;
+  F.o+=(want-F.o)*Math.min(1,6*dt);
+  if(!F.mesh){ if(F.o<0.01) return; draftFxEnsure(); }
+  if(F.mesh.parent!==scene) scene.add(F.mesh);
+  F.mesh.visible=F.o>0.01 && !!me; if(!F.mesh.visible) return;
+  F.mesh.position.set(me.x, me.y, me.z); F.mesh.rotation.set(0, me.head, 0);   // (heading only: the lines are the air, not the kart)
+  F.mat.opacity=0.9*F.o; F.t+=dt;
+  const sp=Math.max(60,Math.abs(me.spd)), D=F.d;
+  for(let i=0;i<F.N;i++){ const q=F.seeds[i], z=9-((F.t*sp*0.55*q.v+q.z0)%26);
+    D.position.set(Math.cos(q.a)*q.r, 3.2+Math.sin(q.a)*q.r*0.7, z); D.scale.set(1,1,q.len*(0.5+0.5*F.o)); D.updateMatrix(); F.mesh.setMatrixAt(i, D.matrix); }
+  F.mesh.instanceMatrix.needsUpdate=true;
+}
+
 function updateRacer(r,dt){
   if(r.spectator){ specTick(r); return; }   // the spectator's hidden kart rides the one it watches (see SPEC); nothing below applies
   // A remote human's kart is authored on their machine; here it is pure playback.
@@ -71633,6 +71697,12 @@ function updateRacer(r,dt){
     if(thr>0.05) target *= (0.5 + 0.5*Math.min(1,thr));
   }
 
+  // slipstream (see SLIPSTREAM): sitting in a rival's tow lifts the top speed and charges a slingshot
+  { const q=onRoad?draftOf(r):0; r.draft=(r.draft||0)+(q-(r.draft||0))*Math.min(1,5*dt);
+    if(q>0.12){ r.draftCharge=(r.draftCharge||0)+dt*(0.5+0.5*q)*(r.you?1:DRAFT.AI); target*=1+DRAFT.GAIN*r.draft;
+      if(r.draftCharge>=DRAFT.CHARGE){ r.draftCharge=0; r.boostT=Math.max(r.boostT,DRAFT.SLING); r.slingN=(r.slingN||0)+1;
+        if(r.you){ SFX.boost(); kickShake(0.22); showToast('Slingshot!','t-green'); } } }
+    else r.draftCharge=Math.max(0,(r.draftCharge||0)-dt*0.9); }
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
   if(r.boostT>0) target=BOOSTV;
@@ -73391,6 +73461,14 @@ function flashFx(amt,color){
 const _camPush=new T.Vector3(), _camPushed=new T.Vector3(), _camLook=new T.Vector3(),
       _cpP=new T.Vector3(), _cpD=new T.Vector3();
 let _camRoll=0, _camPushOn=false;
+/* CAMERA WORK for the chase view, on top of where it already sits (all of it eased, none of it large):
+   · a drift swings the lens out round the kart, so the slide's angle shows instead of being hidden behind it;
+   · it leans into a turn from the actual yaw rate (a few degrees), as the first-person lens already did;
+   · the lens widens as speed builds (58 at a crawl to 64 flat out; a boost still kicks it to 74);
+   · a landing dips it on a spring, so a jump has a bottom;
+   · shake is a smooth tremor (summed sines at random phases), not a fresh random offset every frame. */
+const CAMFX={ t:0, swing:0, roll:0, rate:0, prevHead:null, land:0, landV:0, wasAir:false, ph:[Math.random()*9,Math.random()*9,Math.random()*9] };
+function camTremor(axis){ const t=CAMFX.t, p=CAMFX.ph[axis]; return (Math.sin(t*41+p)*0.55+Math.sin(t*67.3+p*1.7)*0.3+Math.sin(t*23.1+p*2.3)*0.15); }
 /* VIEW OPTION: 'chase' (the original), 'close' (the same chase, pulled in so the racer fills more
    of a small phone screen) or 'fp' (first person, from the racer's own eyes — pairs with tilt
    steering). Remembered between visits; a first-time narrow portrait screen starts on 'close'. */
@@ -73652,23 +73730,35 @@ function updateCameraCore(dt){
   const hold=camHold(me);   // up and back while the start pack / a finishing rival is on top of the chase spot
   // close: 17 back, 8 up and a 54 lens (chase is 30 / 13 / 64), so the racer stands about twice as tall in frame; any nearer and
   // the tail tip would be at the glass
+  // the camera work (CAMFX): the drift swing turns `back` round the kart; the landing dip and the lean come after the aim
+  CAMFX.t+=dt;
+  { let dh=CAMFX.prevHead==null?0:me.head-CAMFX.prevHead; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; CAMFX.prevHead=me.head;
+    const rate=dt>0?ldClamp(dh/dt,-3,3):0; CAMFX.rate+=(rate-CAMFX.rate)*Math.min(1,5*dt);
+    const swingT=state==='race' && !me.finished ? ldClamp(-(me.slip||0)*0.75, -0.42, 0.42) : 0;
+    CAMFX.swing+=(swingT-CAMFX.swing)*Math.min(1,3.2*dt);
+    if(me.air) CAMFX.wasAir=true; else if(CAMFX.wasAir){ CAMFX.wasAir=false; CAMFX.landV-=Math.min(14, 5+Math.abs(me.vy||0)*0.08); }
+    CAMFX.landV=(CAMFX.landV-CAMFX.land*90*dt)*Math.exp(-9*dt); CAMFX.land+=CAMFX.landV*dt; }
   const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?6.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold,0));
+  if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
   if(me._camSnap){ camera.position.copy(want); me._camSnap=false; }
   else camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
-    camera.position.x += (Math.random()*2-1)*camShake;
-    camera.position.y += (Math.random()*2-1)*camShake;
-    camera.position.z += (Math.random()*2-1)*camShake;
+    camera.position.x += camTremor(0)*camShake*1.25;
+    camera.position.y += camTremor(1)*camShake*1.25;
+    camera.position.z += camTremor(2)*camShake*1.25;
     camShake=Math.max(0,camShake-dt*5);
   }
   const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(close?12:18)).add(new T.Vector3(0,close?0.6:4,0));
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
+  else { const rollT=state==='race' && !me.finished ? ldClamp(-CAMFX.rate*0.035, -0.055, 0.055) : 0;   // lean into the turn
+    CAMFX.roll+=(rollT-CAMFX.roll)*Math.min(1,4*dt); if(Math.abs(CAMFX.roll)>1e-4) camera.rotateZ(_camRoll=CAMFX.roll); }
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
-  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54)) : (tube?70:(boost?74:64));   // finish punch > tube squeeze > boost (close: a longer lens)
+  const spN=ldClamp(Math.abs(me.spd||0)/142, 0, 1), spW=state==='race'?(1-spN)*(1-spN):0;   // a crawl narrows the lens a little; flat out is the old 64
+  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW)) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
@@ -73689,15 +73779,21 @@ function drawMap(){
   const ox=pad+(W-pad*2-(b.maxx-b.minx)*sc)/2, oz=pad+(W-pad*2-(b.maxz-b.minz)*sc)/2;
   const X=x=>ox+(x-b.minx)*sc, Z=z=>oz+(z-b.minz)*sc;
   mx.clearRect(0,0,W,W);
-  const mapEnd=trackLoop?STEPS:STEPS-1;
-  const path=()=>{ mx.beginPath();
-    for(let i=0;i<=mapEnd;i+=3){const s=SAMP[Math.min(i,STEPS-1)]; const p=[X(s.p.x),Z(s.p.z)]; i?mx.lineTo(p[0],p[1]):mx.moveTo(p[0],p[1]);} };
-  mx.lineJoin='round';
-  mx.lineWidth=8; mx.strokeStyle='rgba(109,242,208,0.10)'; path(); mx.stroke();   // glow
-  mx.lineWidth=3.5; mx.strokeStyle='rgba(109,242,208,0.55)'; path(); mx.stroke(); // core
-  // start/finish tick
-  const s0=SAMP[0]; mx.fillStyle='#eafff8';
-  mx.fillRect(X(s0.p.x)-2,Z(s0.p.z)-2,4,4);
+  // the course itself (glow, core, start tick) is drawn once per layout into its own canvas and copied in each frame:
+  // stroking hundreds of points twice with round joins, sixty times a second, was the minimap's whole cost
+  const mc=drawMap.cache||(drawMap.cache={ cv:document.createElement('canvas'), b:null, samp:null, loop:null });
+  if(mc.b!==b || mc.samp!==SAMP || mc.loop!==trackLoop || mc.cv.width!==mapCv.width || mc.cv.height!==mapCv.height){
+    mc.b=b; mc.samp=SAMP; mc.loop=trackLoop; mc.cv.width=mapCv.width; mc.cv.height=mapCv.height;
+    const c=mc.cv.getContext('2d'); c.setTransform(mx.getTransform()); c.clearRect(0,0,W,W);
+    const mapEnd=trackLoop?STEPS:STEPS-1;
+    const path=()=>{ c.beginPath();
+      for(let i=0;i<=mapEnd;i+=3){ const s=SAMP[Math.min(i,STEPS-1)], px=X(s.p.x), pz=Z(s.p.z); i?c.lineTo(px,pz):c.moveTo(px,pz); } };
+    c.lineJoin='round';
+    c.lineWidth=8; c.strokeStyle='rgba(109,242,208,0.10)'; path(); c.stroke();   // glow
+    c.lineWidth=3.5; c.strokeStyle='rgba(109,242,208,0.55)'; path(); c.stroke(); // core
+    const s0=SAMP[0]; c.fillStyle='#eafff8'; c.fillRect(X(s0.p.x)-2,Z(s0.p.z)-2,4,4);   // start/finish tick
+  }
+  mx.save(); mx.setTransform(1,0,0,1,0,0); mx.drawImage(mc.cv,0,0); mx.restore();
   for(const r of racers){
     if(r.you){ mx.shadowColor='#fff'; mx.shadowBlur=8; mx.beginPath();
       mx.arc(X(r.x),Z(r.z),4.5,0,7); mx.fillStyle='#fff'; mx.fill(); mx.shadowBlur=0; }
@@ -73784,30 +73880,32 @@ function syncLeader(){
     `<span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}`+
     `${r.remote&&r.human?'<span class="lhum">●</span>':''}</div>`).join('');
 }
+function hudText(id, v){ const el=$(id), t=String(v); if(el.textContent!==t) el.textContent=t; }
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
   // always visible (was appear/disappear with range — players couldn't tell the move existed
   // until it flashed up); .ready lights it up orange only when actually usable. On keyboard
   // and mouse it's the lower-right indicator showing its key, and still clickable.
-  $('whipbtn').style.display = !me.finished ? 'inline-flex' : 'none';
+  { const d=!me.finished ? 'inline-flex' : 'none', b=$('whipbtn'); if(b.style.display!==d) b.style.display=d; }
   $('whipbtn').classList.toggle('ready', whipReady);
   // seek knobs only enabled for characters that actually have more than one station —
   // the screen itself (station/clock/speed) always shows regardless
   { const hasAlts=!!(chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length) || !!courseStyleId();   // a course record makes two stations
-    $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
+    if($('radioPrev').disabled!==!hasAlts) $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
+  // (each written only when it changes: a write is a restyle and a relayout, sixty times a second)
   if(trackLoop){
-    $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(lapsOf(),me.lap+1); $('lapsuf').textContent='/'+lapsOf();
+    hudText('laplbl','Lap'); hudText('lapn',Math.min(lapsOf(),me.lap+1)); hudText('lapsuf','/'+lapsOf());
   } else {
-    $('laplbl').textContent='To Egg'; $('lapn').textContent=Math.round(me.prog*100)+'%'; $('lapsuf').textContent='';
+    hudText('laplbl','To Egg'); hudText('lapn',Math.round(me.prog*100)+'%'); hudText('lapsuf','');
   }
-  $('posn').textContent=ord(me.place);
-  $('radioClock').textContent=fmt(raceTime);
+  hudText('posn',ord(me.place));
+  hudText('radioClock',fmt(raceTime));
   const sp=Math.abs(me.spd);
   // sp is an in-game unit speed (max ~MAXV=142, ~BOOSTV=211 boosted) with no real-world
   // meaning — 0.7 scales that range to a believable arcade top speed (~99mph cruising,
   // ~148mph boosted) instead of showing the raw sim units.
-  $('radioSpeed').textContent=Math.round(sp*0.7);
+  hudText('radioSpeed',Math.round(sp*0.7));
   $('radioPanel').classList.toggle('boosting', me.boostT>0);
   const dial=dialOf(chosenType&&chosenType.id);
   // written when the station or the screen changes, and looked at again every 30 frames (on a
@@ -73884,6 +73982,9 @@ const PREVIEW_DELAY=350;
 // frame stats (More: "Frame stats"): a readout for a device that feels slow: fps, the loop's own ms per frame, the canvas's
 // pixel size, the last course build, the state and home style. Off by default (sr_diag).
 const DIAG={on:false, el:null, n:0, ms:0, t0:0, build:0, built:''};
+/* PERF: where a frame's time goes, segment by segment (race_perf turns it on). Off, each mark is one boolean test. */
+const PERF={on:false, n:0, t:0, seg:{}, calls:0, tris:0, geos:0, texs:0, worst:0, f0:0, drive:null};
+function perfMark(k){ if(!PERF.on) return; const t=performance.now(); PERF.seg[k]=(PERF.seg[k]||0)+t-PERF.t; PERF.t=t; }
 function diagTick(now, ms){
   if(!DIAG.on||!DIAG.el) return; DIAG.n++; DIAG.ms+=ms; if(now-DIAG.t0<500) return;
   const c=renderer.domElement, fps=DIAG.n*1000/(now-DIAG.t0);
@@ -73927,7 +74028,7 @@ function hzDraw(){
    hook at the end of this file): a software-rendered page draws a few frames a second, and the
    race must not slow to a crawl — or turn on how fast the machine drew — just because it is being
    watched. frame() calls this exactly as it always ran inline. */
-const SIM={manual:false, cam:null, tick:null, t:0};   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
+const SIM={manual:false, cam:null, tick:null, t:0, busy:false};   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
 /* A photographer's camera for the outside driver: orbit one racer at a fixed offset relative to
    its heading (azimuth 0 = in front, looking at its face; 180 = straight behind), after the chase
    camera has had its say. Only ever set from the MCP hook; null the rest of the time. */
@@ -73981,16 +74082,28 @@ function frame(now){
     renderer.render(scene,camera); requestAnimationFrame(frame); return;
   }
   const tsec=SIM.manual?SIM.t:now/1000;   // (manual: the clock race_drive advances — game time, not wall time)
-  { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
-  if(HZV.cover && state==='menu'){ diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the Horizon lobby covers the screen: nothing behind it is seen, so nothing is drawn
+  if(SIM.busy){ requestAnimationFrame(frame); return; }   // (race.frames is stepping the game itself: stand aside)
+  frameStep(now, dt, tsec, _f0, state==='race' && !cupPause && !SIM.manual, true);
+  requestAnimationFrame(frame);
+}
+/* One frame of the game: the race stepped (when `sim`), the racers, the camera, the world's animation, the particles,
+   and the picture drawn (when `draw`). frame() runs it on the display's clock; the MCP hook runs it on a fixed one
+   (race.frames), so a frame can be profiled, or recorded for film at an exact game time, at any speed the machine has. */
+function frameStep(now, dt, tsec, _f0, sim, draw){
+  if(PERF.on){ PERF.n++; PERF.t=PERF.f0=_f0; }
+  if(!(++_vsPoll%15)){ const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed (resize events do the rest; every 15th frame is enough to catch a missed one)
+  if(HZV.cover && state==='menu'){ diagTick(now, performance.now()-_f0); return; }   // the Horizon lobby covers the screen: nothing behind it is seen, so nothing is drawn
   // the Horizon home: the course is drawn into its window only (its rectangle re-read on any layout change, and now and then anyway)
   const hzWin=HZV.shown && state==='menu' && !!HZV.measure;
   if(hzWin && (HZV.dirty || ++HZV.tick>=90)){ HZV.tick=0; HZV.measure(); }
   menuRes(state==='menu'?(hzWin?2:1):0);
   if(!hzWin && camera.aspect!==_vw/_vh){ camera.aspect=_vw/_vh; camera.updateProjectionMatrix(); }
-  if(state==='race' && !cupPause && !SIM.manual) raceStep(dt);   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
+  perfMark('setup');
+  if(PERF.on && PERF.drive && sim) try{ PERF.drive(PERF.n); }catch(e){ PERF.drive=null; console.error(e); }   // (race_perf drives your kart, so the camera travels the course)
+  if(sim) raceStep(dt);   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
+  perfMark('sim');
   if(state==='count') countdownGlance(dt, now);
-  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); }   // no minimap in the maze unless the radar toggle is on
+  if(racers.length){ syncObjects(dt,tsec); draftFxTick(dt); perfMark('racers'); updateCamera(dt); if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); perfMark('camera'); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); perfMark('minimap'); }   // no minimap in the maze unless the radar toggle is on
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
@@ -74148,12 +74261,16 @@ function frame(now){
     } else { const s=1+Math.sin(tsec*2.2)*0.06;
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
+  perfMark('world');
   updateParticles(dt);
+  perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
   const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
-  if(!held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  if(draw && !held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  if(PERF.on){ perfMark('render'); const ri=renderer.info; if(draw){ PERF.calls+=ri.render.calls; PERF.tris+=ri.render.triangles; } PERF.geos=ri.memory.geometries; PERF.texs=ri.memory.textures;
+    const np=renderer.info.programs?renderer.info.programs.length:0; if(PERF.progN!=null && np!==PERF.progN && PERF.compiles.length<40) PERF.compiles.push({ frame:PERF.n, programs:np-PERF.progN, ms:+(performance.now()-PERF.f0).toFixed(1), what:renderer.info.programs.slice(Math.max(0,PERF.progN)).map(p=>p.name+(PERF.keyOf?PERF.keyOf(p):'')) }); PERF.progN=np;   // a frame that compiled shaders
+    const ft=performance.now()-PERF.f0; if(PERF.ft.length<20000) PERF.ft.push(ft); if(ft>PERF.worst){ PERF.worst=ft; PERF.worstAt={ frame:PERF.n, seg:Object.assign({}, PERF.seg), prev:PERF.prevSeg }; } PERF.prevSeg=Object.assign({}, PERF.seg); }
   diagTick(now, performance.now()-_f0);
-  requestAnimationFrame(frame);
 }
 
 /* ============== GHOSTS ==================================================================
@@ -75717,6 +75834,15 @@ function countdownGlance(dt, now){
 }
 
 /* ============== FLOW ============== */
+/* Compile every shader the course and the racers will need while the lights count down, not when a part of the course
+   first swings into view at speed. three compiles a program the first time an object is DRAWN, so a race used to stop
+   dead each time something new came on screen (race_perf: six compiles in ten seconds of Victoria, 0.5-4 s each on a
+   software GPU — tens to hundreds of ms on a real one). renderer.compile walks the whole scene, seen or not. */
+function warmShaders(){
+  setTimeout(()=>{ if(state!=='count' && state!=='race') return; const t0=performance.now();
+    try{ draftFxEnsure(); renderer.compile(scene, camera); }catch(e){ console.error(e); }   // (the slipstream's lines are made now, so their shader is in the warm-up)
+    DIAG.warm=performance.now()-t0; }, 60);   // (after the "3" has been drawn)
+}
 function countdown(){
   buildRacers();
   document.body.classList.remove('final-lap');   // clear any pulse left over from a previous race
@@ -75724,7 +75850,7 @@ function countdown(){
   $('cd').classList.remove('hidden'); $('count').textContent='3';
   // A flat three seconds: 3 / 2 / 1 / GO at 750ms each. It used to run 2.85s on an
   // uneven 750/750/600 split, which is not what a lights-out sequence should feel like.
-  state='count'; cdT0=performance.now(); let n=3;
+  state='count'; cdT0=performance.now(); let n=3; warmShaders();
   const tick=()=>{ n--;
     if(n>0){$('count').textContent=n;setTimeout(tick,750);}
     else if(n===0){$('count').textContent='GO!';setTimeout(tick,750);}
@@ -76161,7 +76287,7 @@ countdown = function(){
   const cd=$('count'); cd.textContent='3';
   const pulse=()=>{ cd.style.animation='none'; void cd.offsetWidth; cd.style.animation=''; };
   pulse();
-  state='count'; let n=3;
+  state='count'; let n=3; warmShaders();
   const tick=()=>{ n--;
     if(n>0){cd.textContent=n;pulse();SFX.count(false);setTimeout(tick,750);}
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
@@ -78140,7 +78266,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
   const offOf=r=>{ if(MAZE) return 0; const s=SAMP[nearest(r.x,r.z,r.air?null:r.y)]; return s?Math.hypot(r.x-s.p.x, r.z-s.p.z):0; };   // (r.idx is stale until a kart first moves)
   const view=r=>({ name:r.name, character:r.id, you:!!r.you, place:r.place, lap:r.lap, total:r3(r.total||0),
     speed:r1(r.spd||0), x:r1(r.x), z:r1(r.z), item:r.item||null, offRoad:!r.air && offOf(r)>HW,
-    spinning:(r.spinT||0)>0, boosting:(r.boostT||0)>0, finished:!!r.finished, time:r.finished?r1(r.finishT):null,
+    spinning:(r.spinT||0)>0, boosting:(r.boostT||0)>0, finished:!!r.finished, time:r.finished?r1(r.finishT):null, draft:r3(r.draft||0), slingshots:r.slingN||0,
     ...(r.obj&&r.obj.userData.expr?{ expression:r.obj.userData.expr.cur }:{}) });
   const course=()=>({ index:selTrack, name:TRACKS[selTrack].name, laps:lapsOf(), loop:trackLoop, maze:!!MAZE });
   const waitFor=(fn,ms,what)=>new Promise((res,rej)=>{ const t0=performance.now();
@@ -78180,9 +78306,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       SIM.manual=!!manual; SIM.cam=null; SIM.t=performance.now()/1000; hold([]);
       if(NET.on) netLeave(); chalSoloEnd(); cupStop();
       $('start').classList.add('hidden');
-      countdown();
-      await waitFor(()=>state==='race', 20000, 'the countdown');
-      return { state, manual:SIM.manual, course:course(), grid:racers.map(view) };
+      DIAG.warm=null; countdown();
+      await waitFor(()=>state==='race', 180000, 'the countdown');   // (long: on a software GPU the shader warm-up in the countdown takes a while)
+      return { state, manual:SIM.manual, course:course(), shaderWarmupMs:DIAG.warm==null?null:Math.round(DIAG.warm), programs:renderer.info.programs?renderer.info.programs.length:0, grid:racers.map(view) };
     },
 
     'race.manual': ({manual})=>{ if(manual && !SIM.manual) SIM.t=performance.now()/1000; SIM.manual=!!manual; if(!manual) last=performance.now(); hold([]); return { manual:SIM.manual, state }; },
@@ -78411,6 +78537,40 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          turn, the tail tip, every swaying part, and anything a character lists in ud.motionProbes. For each: how far it
          moves, and the RMS of its speed, acceleration and jerk (the third derivative: high jerk is what reads as
          snapping, popping, robotic); "snaps" are frames whose jerk is far above that probe's own median. — */
+    /* — PERF: the page's own frame, segment by segment (setup, sim, racers, camera, minimap, world, particles, render):
+         on:true starts counting, on:false returns ms per frame for each, the worst frame, draw calls and triangles. — */
+    'race.perf': ({on=true, autopilot=true, shaderChecks}={})=>{
+      if(on){ PERF.checks0=renderer.debug.checkShaderErrors; if(shaderChecks!=null) renderer.debug.checkShaderErrors=!!shaderChecks;   // (shaderChecks:false measures the game as players get it)
+        Object.assign(PERF, { on:true, drive:autopilot?(k=>hold(autoKeys(me(),k))):null, n:0, seg:{}, calls:0, tris:0, worst:0, worstAt:null, prevSeg:null, ft:[], compiles:[], progN:renderer.info.programs?renderer.info.programs.length:0 }); return { on:true }; }
+      PERF.on=false; if(PERF.drive){ PERF.drive=null; hold([]); } if(PERF.checks0!=null){ renderer.debug.checkShaderErrors=PERF.checks0; PERF.checks0=null; } const n=Math.max(1,PERF.n), seg={}; let tot=0;
+      for(const k in PERF.seg){ seg[k]=+(PERF.seg[k]/n).toFixed(3); tot+=PERF.seg[k]/n; }
+      let worstSeg=null; if(PERF.worstAt){ const a=PERF.worstAt.seg, b=PERF.worstAt.prev||{}; worstSeg={ frame:PERF.worstAt.frame };   // the worst frame, segment by segment (its own cost: this frame's running totals minus the last frame's)
+        for(const k in a){ const d=a[k]-(b[k]||0); if(d>0.5) worstSeg[k]=+d.toFixed(1); } }
+      const ft=PERF.ft.slice().sort((a,b)=>a-b), q=f=>+(ft[Math.min(ft.length-1, Math.floor(f*ft.length))]||0).toFixed(2);
+      return { frames:PERF.n, msPerFrame:+tot.toFixed(3), p50:q(0.5), p95:q(0.95), p99:q(0.99), segments:seg, worstFrameMs:+PERF.worst.toFixed(2), worstFrame:worstSeg,
+        shaderCompiles:PERF.compiles, programs:renderer.info.programs?renderer.info.programs.length:0, draws:Math.round(PERF.calls/n), triangles:Math.round(PERF.tris/n),
+        geometries:PERF.geos, textures:PERF.texs, state, course:TRACKS[selTrack]&&TRACKS[selTrack].name, racers:racers.length };
+    },
+
+    /* — FRAMES: whole game frames (race, racers, camera, world, particles, and the picture when draw) at a fixed step,
+         as fast as the machine allows; the display loop stands aside meanwhile. For profiling (race_perf) and for film. — */
+    'race.frames': async ({frames=60, dt=1/60, draw=true, autopilot=true, keys:extra=[]}={})=>{
+      if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+      SIM.busy=true;
+      try{ for(let k=0;k<frames;k++){
+        const sim=state==='race' && !cupPause;
+        if(sim) hold(autopilot?[...autoKeys(me(),k),...extra]:extra);
+        SIM.t+=dt; const t0=performance.now();
+        frameStep(t0, dt, SIM.t, t0, sim, draw);
+        if(k%30===29) await new Promise(res=>setTimeout(res,0));
+      } } finally { SIM.busy=false; hold([]); }
+      return { frames, raceTime:r1(raceTime), state };
+    },
+
+    /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
+    'race.fx': ({slipstream}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
+      return { slipstream:DRAFT_FX.force }; },
+
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
       if(!still && state!=='race') throw new Error('the race is not running; use still:true');

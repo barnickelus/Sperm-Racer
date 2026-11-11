@@ -48,7 +48,7 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_options', 'race_palette', 'race_pose', 'race_realtime',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose', 'race_realtime',
     'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
     'scene_profile', 'scene_screenshot', 'scene_stats']);
 });
@@ -285,6 +285,21 @@ await check('race_regress: a rest-pose sheet is the same pixels every time; the 
   const other = await call('race_regress');
   save(image(other), 'regress-heat.jpg');
   assert.equal(json(other).pass, false, 'Sid Spitfire is not Guido');
+});
+
+await check('race_perf: the frame split into segments, the browser\'s style work, CPU and allocation profiles; shaders compiled in the countdown', async () => {
+  json(await call('race_setup', { course: 'Victoria', character: 'guido', difficulty: 'medium' }));
+  const st = json(await call('race_start'));
+  assert.ok(st.programs > 20, `the countdown compiled the course's shaders (${st.programs} programs, ${st.shaderWarmupMs} ms)`);
+  const js = json(await call('race_perf', { seconds: 3, draw: false }));
+  assert.ok(js.frame.frames >= 170, `${js.frame.frames} frames`);
+  for (const k of ['sim', 'racers', 'camera', 'minimap', 'world', 'particles']) assert.ok(k in js.frame.segments, k);
+  assert.ok(js.frame.browser.styleMsPerFrame < 0.5, `style recalc ${js.frame.browser.styleMsPerFrame} ms a frame (a :has() on <html>/<body> made it 3 ms)`);
+  assert.ok(js.cpu.selfTop.length > 0 && js.cpu.gameInclusive.some(f => f.fn === 'frameStep'), 'the CPU profile sees the frame');
+  assert.ok(js.alloc.top.length > 0);
+  const drawn = json(await call('race_perf', { seconds: 1, cpu: false, alloc: false }));
+  assert.ok(drawn.frame.draws > 20, `${drawn.frame.draws} draw calls`);
+  assert.ok(drawn.frame.shaderCompiles.length <= 1, 'no shader compiles mid-race: ' + JSON.stringify(drawn.frame.shaderCompiles));
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
