@@ -32,6 +32,9 @@ machine. So `race_start` leaves the race **frozen on the grid**, and
 `race_drive` advances it in **fixed 1/60 s steps** through `raceStep()`, the
 same function the game's own loop calls. Every result is measured in game
 seconds. A full four-lap race takes about 30 seconds of wall time.
+While manual, the page also runs on a game-time clock (`SIM.t`), so timed
+animation such as an expression held for 2 seconds lasts 2 game seconds, not
+2 wall seconds.
 
 Your kart is driven through the game's own `keys` set, exactly as a keyboard
 drives it. It runs either on **autopilot** (steers for the same look-ahead
@@ -46,11 +49,14 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_options` | Every course, character and difficulty |
 | `race_setup` | Course (index or name), character id, difficulty for the next race |
 | `race_start` | Start a solo race and wait out the countdown. `manual:true` (default) freezes it for `race_drive` |
-| `race_drive` | Drive N game seconds on autopilot or held keys. Returns distance, speeds, off-road and airborne time, laps and splits, spins, boosts, place changes, items, and the standings. `untilFinish:true` drives to the line |
+| `race_drive` | Drive N game seconds on autopilot or held keys. Returns distance, speeds, off-road and airborne time, laps and splits, spins, boosts, place changes, items, **seconds spent in each expression** (for characters with a face rig), and the standings. `untilFinish:true` drives to the line |
 | `race_state` | State, clock, and every racer's place, lap, speed, position, item, off-road and spin status |
 | `race_realtime` | Hand the race back to the page's own clock, or freeze it again |
 | `race_camera` | `photo`: orbit one racer (azimuth relative to its heading, elevation, distance, `along` its body). `chase`: the game's camera, settled at once |
 | `race_select` | The character-select screen with a given racer on its 3D stage, plus the stage's build timings |
+| `race_studio` | One racer alone on a plain backdrop, lit by the course's lights or a studio rig. It uses render layers, so nothing else in the scene can leak into frame |
+| `race_pose` | List a character's expressions, or force one (held for N seconds) |
+| `race_sheet` | **The engine draws a character reference sheet** and returns it as one image: an 8-view turnaround, every expression, or your own cells. Use it to compare a model against concept art |
 | `scene_screenshot` / `scene_stats` / `scene_graph` / `page_logs` | Look, measure (draw calls and triangles per frame), inspect the object tree, read the console |
 
 Try asking Claude: *"Race Tex Calloway on Ophelia at hard difficulty on
@@ -86,8 +92,9 @@ tools then drive your tab instead of a headless one.
 npm test          # SHOTS=some/dir npm test  keeps the screenshots
 ```
 
-The test covers 14 checks over stdio, including the real-time loop still
-running the race and a page without `?mcp` staying inert.
+The test covers 17 checks over stdio, including the real-time loop still
+running the race, a page without `?mcp` staying inert, and Rusty Malone's
+expression rig, studio and sheets.
 
 The page-side bridge, `bridge.js`, is the same file as Tesserae-Engine's
 `examples/lib/mcp-bridge.js`. Keep the two in step.

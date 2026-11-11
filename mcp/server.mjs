@@ -320,6 +320,35 @@ tool('race_realtime', {
   inputSchema: { page: pageArg, manual: z.boolean() },
 }, async ({ page, manual }) => ok(text(await call(pick(page, 'race.manual'), 'race.manual', { manual }))));
 
+tool('race_studio', {
+  title: 'Studio backdrop',
+  description: 'Show one racer alone on a plain backdrop (the course, the other racers, particles all out of frame), lit by the course\'s own lights or a neutral three-point studio rig. For judging a character model. on:false restores the game.',
+  inputSchema: { page: pageArg, on: z.boolean().default(true), racer: z.string().optional(), background: z.string().default('#efe3c8'),
+    lighting: z.enum(['course', 'studio']).default('course') },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.studio'), 'race.studio', a))));
+
+tool('race_pose', {
+  title: 'Set a racer\'s expression',
+  description: 'For a character with an expression rig: list its expressions, or force one (held for `hold` seconds, after which its own reactions take over again). Omit expression to just list them.',
+  inputSchema: { page: pageArg, racer: z.string().optional(), expression: z.string().optional(), hold: z.number().min(0).max(600).default(8) },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.pose'), 'race.pose', a))));
+
+tool('race_sheet', {
+  title: 'Render a reference sheet',
+  description: 'The engine draws a character reference sheet of one racer and returns it as ONE image: kind "turnaround" (8 views round the racer: front, 3/4, side, rear...) or "expressions" (every expression its rig has, close on the face), or your own `cells` [{label, azimuth, elevation, distance, height, along, expression}]. Best inside race_studio. Compare it against concept art to check a model.',
+  inputSchema: {
+    page: pageArg, racer: z.string().optional(), kind: z.enum(['turnaround', 'expressions']).default('turnaround'),
+    cells: z.array(z.object({ label: z.string().optional(), azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(),
+      height: z.number().optional(), along: z.number().optional(), fov: z.number().optional(), expression: z.string().optional() })).optional(),
+    cell: z.number().int().min(120).max(600).default(300), columns: z.number().int().min(1).max(10).optional(), title: z.string().optional(),
+    photo: z.object({ elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), fov: z.number().optional(), along: z.number().optional() }).optional(),
+  },
+}, async ({ page, ...a }) => {
+  const p = pick(page, 'race.sheet');
+  const s = await call(p, 'race.sheet', a, 240000);
+  return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${s.cells} cells · ${s.width}×${s.height}`));
+});
+
 tool('race_select', {
   title: 'Show the character-select stage',
   description: 'Leave any race for the character-select screen with this character on its 3D stage (the game\'s own studio lighting and idle animation), and screenshot it. Good for judging a character the way players first see it.',

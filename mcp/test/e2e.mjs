@@ -45,8 +45,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_options', 'race_realtime', 'race_select',
-    'race_setup', 'race_start', 'race_state', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_screenshot', 'scene_stats']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_options', 'race_pose', 'race_realtime', 'race_select',
+    'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_pages', 'scene_screenshot', 'scene_stats']);
 });
 
 await check('nothing connected: tools say how to connect; a foreign origin is refused', async () => {
@@ -164,6 +164,44 @@ await check('race_select shows Tex on the select stage', async () => {
   const s = json(r);
   assert.equal(s.screen, 'select'); assert.equal(s.character.id, 'cowboy'); assert.equal(s.stage.visible, true);
   // (on a software GPU the stage judges the device too slow and falls back to 2D — for every racer — so no image check)
+});
+
+await check('Rusty Malone races, and his face is driven by the race (and reported)', async () => {
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' }));
+  const g = json(await call('race_start'));
+  assert.equal(g.grid.find(x => x.you).character, 'outlaw');
+  assert.equal(g.grid.find(x => x.you).expression, 'smirk', 'resting face on the grid');
+  const d = json(await call('race_drive', { seconds: 25 }));
+  const faces = d.you.expressions;
+  assert.ok(faces && Object.keys(faces).length >= 2, 'more than one face over 25 s of racing: ' + JSON.stringify(faces));
+  const total = Object.values(faces).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(total - 25) < 0.5, `face time adds up to the drive (${total})`);
+  assert.ok((faces.smirk || 0) + (faces.determined || 0) > total * 0.4, 'mostly at rest or boosting, not twitching: ' + JSON.stringify(faces));
+});
+
+await check('race_pose lists and forces expressions; a character without a rig says so', async () => {
+  const p = json(await call('race_pose'));
+  assert.deepEqual(p.expressions, ['smirk', 'laugh', 'angry', 'surprised', 'suspicious', 'determined', 'tired', 'wink', 'injured', 'victorious']);
+  json(await call('race_pose', { expression: 'wink', hold: 30 }));
+  await call('race_drive', { seconds: 0.2 });
+  assert.equal(json(await call('race_state')).standings.find(s => s.you).expression, 'wink');
+  const bad = await callRaw('race_pose', { expression: 'yodel' });
+  assert.equal(bad.isError, true); assert.match(bad.content[0].text, /no expression "yodel"/);
+  const other = json(await call('race_state')).standings.find(s => !s.you && s.character !== 'outlaw');
+  assert.match(json(await call('race_pose', { racer: other.name })).note || '', /no expression rig/);
+});
+
+await check('race_studio isolates the racer; race_sheet draws turnaround and expression sheets', async () => {
+  const st = json(await call('race_studio', { lighting: 'studio' }));
+  assert.equal(st.studio, true); assert.equal(st.racer, 'Rusty Malone');
+  const t = await call('race_sheet', { kind: 'turnaround', cell: 160, title: 'TEST' });
+  const ti = image(t); save(ti, 'rusty-turnaround.jpg');
+  assert.match(t.content.find(c => c.type === 'text').text, /^8 cells · 640×\d+/);
+  assert.ok(Buffer.from(ti.data, 'base64').length > 20000, 'a real sheet');
+  const e = await call('race_sheet', { kind: 'expressions', cell: 140 });
+  save(image(e), 'rusty-expressions.jpg');
+  assert.match(e.content.find(c => c.type === 'text').text, /^10 cells/);
+  assert.equal(json(await call('race_studio', { on: false })).studio, false);
 });
 
 await check('no page errors through all of it', async () => {
