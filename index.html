@@ -49077,8 +49077,29 @@ function ophMat(){ return ophLand(new T.MeshLambertMaterial({color:0xffffff})); 
    it is the slow breathing of a summer afternoon; at racing speed it is big shapes of light and
    shade sliding past in the corner of the eye, which is what makes the meadows read as open land
    under a sky rather than a lawn under a lamp. */
+// (uOphCS, the shade's depth, is 0.55 all afternoon and thins out as the sun goes down: see THE HOUR)
+const OPH_CS={value:0.55};
+/* RIM LIGHT, for the low sun (THE HOUR). Looking INTO the light, the facets a willow crown, a
+   strand or a reed blade turns edge-on to you catch it — the glowing edge every golden-hour
+   painting puts round its trees. Per vertex, like the rest of Lambert: the light comes in
+   coloured by the leaf it passes through (it is added to the direct term, which the albedo
+   multiplies). uOphRim is black all afternoon, so until then it adds nothing. */
+const OPH_RIM={value:new T.Color(0,0,0)}, OPH_SUNW={value:OPH.sun.clone()};
+const OPH_RIM_GLSL=`
+uniform vec3 uOphRim; uniform vec3 uOphSunW;
+`;
+const OPH_RIM_V=`
+      if(uOphRim.r+uOphRim.g+uOphRim.b>0.0){      // (a uniform branch: all afternoon it costs nothing)
+        vec3 sv=normalize((viewMatrix*vec4(uOphSunW,0.0)).xyz);
+        float bk=max(dot(-geometry.viewDir,sv),0.0), ed=1.0-abs(dot(geometry.normal,geometry.viewDir));
+        vec3 rl=uOphRim*(bk*bk*ed*ed);
+        vLightFront+=rl;
+        #ifdef DOUBLE_SIDED
+          vLightBack+=rl;
+        #endif
+      }`;
 const OPH_CLOUD_GLSL=`
-uniform float uOphT;
+uniform float uOphT; uniform float uOphCS;
 float ophCH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float ophCN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(ophCH(i),ophCH(i+vec2(1.0,0.0)),f.x), mix(ophCH(i+vec2(0.0,1.0)),ophCH(i+vec2(1.0,1.0)),f.x), f.y); }
@@ -49086,22 +49107,23 @@ float ophCloud(vec2 w){ vec2 p=w/270.0+vec2(uOphT*0.0195, uOphT*0.008);
   float n=ophCN(p)*0.64+ophCN(p*2.37+vec2(5.2,1.3))*0.36;      // (mean 0.49, sd 0.15: ~45% under cloud)
   return smoothstep(0.47,0.60,n); }
 `;
-function ophLand(m, key){
-  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey;
+// o.cloud:false leaves the cloud shade off (the reeds), o.rim:false the rim light (the land itself)
+function ophLand(m, key, o){
+  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey, cloud=!(o&&o.cloud===false), rimOn=!(o&&o.rim===false);
   m.onBeforeCompile=(sh,r)=>{ if(prev && prev!==T.Material.prototype.onBeforeCompile) prev(sh,r);
-    sh.uniforms.uOphT=OPH_T;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL)
-      .replace('#include <lights_lambert_vertex>',`#include <lights_lambert_vertex>
+    sh.uniforms.uOphT=OPH_T; sh.uniforms.uOphCS=OPH_CS; sh.uniforms.uOphRim=OPH_RIM; sh.uniforms.uOphSunW=OPH_SUNW;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL+OPH_RIM_GLSL)
+      .replace('#include <lights_lambert_vertex>','#include <lights_lambert_vertex>'+(cloud?`
       { vec4 cw=vec4(position,1.0);
         #ifdef USE_INSTANCING
           cw=instanceMatrix*cw;
         #endif
-        cw=modelMatrix*cw; float cs=1.0-0.55*ophCloud(cw.xz);
+        cw=modelMatrix*cw; float cs=1.0-uOphCS*ophCloud(cw.xz);
         vLightFront*=cs;
         #ifdef DOUBLE_SIDED
           vLightBack*=cs;
         #endif
-      }`); };
+      }`:'')+(rimOn?OPH_RIM_V:'')); };
   const base=(pk && pk!==T.Material.prototype.customProgramCacheKey) ? pk.call(m) : '';
   m.customProgramCacheKey=()=>'ophLand'+(key||'')+base;
   return m;
@@ -49125,7 +49147,8 @@ function ophSwayMat(amp, noCloud){
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`); };
   m.customProgramCacheKey=()=>'ophSway'+amp;
-  return noCloud ? m : ophLand(m);       // the cloud shade, chained after the sway (not on the reeds: see ophFlush)
+  // the cloud shade, chained after the sway (not on the reeds: see ophFlush); the rim light on both
+  return noCloud ? ophLand(m, 'r', {cloud:false}) : ophLand(m);
 }
 /* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
    (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
@@ -49252,7 +49275,7 @@ function ophGroundMat(side){
     OPH_GRASS=ophCanvasTex(c); OPH_GRASS.encoding=T.sRGBEncoding; }
   const m=new T.MeshLambertMaterial({map:OPH_GRASS, vertexColors:true, side:side||T.FrontSide});
   m.color.setRGB(1.36,1.36,1.36);                 // cancels the sheet's mean (~0.73 linear)
-  return ophLand(m, 'g');                         // the cloud shadows cross the meadow (see ophLand)
+  return ophLand(m, 'g', {rim:false});            // the cloud shadows cross the meadow (see ophLand); no rim on the land
 }
 function ophTerrain(F, ccx, ccz){
   const N=144, W=2900, V=(N+1)*(N+1), P=new Float32Array(V*3), Cc=new Float32Array(V*3), UV=new Float32Array(V*2), c=new T.Color();
@@ -49389,18 +49412,19 @@ function ophWaterMat(lap){
       uDeep:{value:null}, uShal:{value:null}, uRip:{value:null}, uT:{value:0},
       uSky:{value:new T.Color(0xb4c8c4).convertSRGBToLinear()},
       uBank:{value:new T.Color(0x1a2c16).convertSRGBToLinear()},
+      uBed:{value:new T.Color(1,1,1)},     // the light on the bed: white all afternoon, then THE HOUR dims and warms/cools it
       uPd:{value:Pd}, uPs:{value:Ps}, uFlow:{value:OPH.flow} }]),
     vertexShader:`
       attribute vec3 aS; varying vec3 vS; varying vec3 vW; varying float vCl;
       ${OPH_CLOUD_GLSL}
       #include <fog_pars_vertex>
-      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz);
+      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz)*(uOphCS/0.55);
         vec4 mvPosition=viewMatrix*w; gl_Position=projectionMatrix*mvPosition;
         #include <fog_vertex>
       }`,
     fragmentShader:`
       uniform sampler2D uDeep, uShal, uRip; uniform float uT, uPd, uPs, uFlow;
-      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW; varying float vCl;
+      uniform vec3 uSky, uBank, uBed; varying vec3 vS; varying vec3 vW; varying float vCl;
       #include <fog_pars_fragment>
       void main(){
         float ak=abs(vS.x), fv=uT*uFlow;
@@ -49408,7 +49432,7 @@ function ophWaterMat(lap){
         vec3 dC=texture2D(uDeep, vec2(vS.x/46.0+0.5, (vS.y-fv)/uPd)).rgb;
         vec3 sC=texture2D(uShal, vec2(vS.x/uPs, vS.y/uPs)).rgb;
         // the bed through the water is sunlit: a passing cloud shadow takes it down a step
-        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl);
+        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl)*uBed;
         vec3 V=normalize(cameraPosition-vW);
         float rp=texture2D(uRip, vec2(vS.x/37.0, (vS.y-fv*1.15)/61.0)).r;
         float rq=texture2D(uRip, vec2(vS.x/23.0+0.37, (vS.y-fv*0.8)/97.0+0.5)).r;
@@ -49426,45 +49450,160 @@ function ophWaterMat(lap){
     fog:true, side:T.DoubleSide });
   m.uniforms.uDeep.value=ophDeepTex(); m.uniforms.uShal.value=ophShalTex(); m.uniforms.uRip.value=ophRipTex();
   m.uniforms.uOphT=OPH_T;                // the shared clock, by reference (merge() above would have cloned it)
+  m.uniforms.uOphCS=OPH_CS;              // and the cloud shade's depth, likewise
   return m;
 }
 /* THE SKY. High summer afternoon: pale warm haze at the horizon (the lightest value in the
    whole picture, so every tree is found against it), cerulean overhead, fair-weather
    cumulus drifting, and a far line of woodland one value step off the haze. */
 function ophSky(){
-  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uT:{value:0}, uSun:{value:OPH.sun.clone()} },
+  // every colour the dome paints is a uniform, starting at the afternoon (OPH_HOURS[0]); THE HOUR moves them
+  const H0=OPH_HOURS[0], U={ uT:{value:0}, uSun:{value:OPH.sun.clone()}, uVenus:{value:OPH_VENUS.clone()}, uStar:{value:0} };
+  for(const [u,k] of OPH_SKYU) U[u]={value:(typeof H0[k]==='number') ? H0[k] : H0[k].clone()};
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, uniforms:U,
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP; uniform float uT; uniform vec3 uSun;
+      varying vec3 vP; uniform float uT; uniform vec3 uSun, uVenus;
+      uniform vec3 uHor, uMid, uZen, uGlowC, uDiscC, uCloudL, uCloudS, uWood, uBand, uBand2;
+      uniform float uGlowK, uGlowP, uCov, uCloudA, uCloudG, uBandK, uStar;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
       float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*vn(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return v; }
       void main(){
         vec3 d=normalize(vP-cameraPosition); float el=d.y, az=atan(d.z,d.x);
-        vec3 c=mix(vec3(0.875,0.902,0.839), vec3(0.690,0.800,0.870), smoothstep(0.0,0.30,el));
-        c=mix(c, vec3(0.400,0.580,0.780), smoothstep(0.22,0.95,el));
+        vec3 c=mix(uHor, uMid, smoothstep(0.0,0.30,el));
+        c=mix(c, uZen, smoothstep(0.22,0.95,el));
         float sd=max(dot(d,uSun),0.0);
-        c+=vec3(1.0,0.94,0.80)*pow(sd,10.0)*0.16;
-        c=mix(c, vec3(1.0,0.99,0.95), smoothstep(0.9975,0.9990,sd));
+        // THE AFTERGLOW (the late laps): a warm band hugging the horizon, tallest and hottest under
+        // the sun and thinning to a dusky rose round the rest of the sky
+        if(uBandK>0.0){ float ta=dot(normalize(d.xz+vec2(1e-5)), normalize(uSun.xz+vec2(1e-5)))*0.5+0.5; ta*=ta;
+          c=mix(c, mix(uBand2,uBand,ta), uBandK*(0.45+0.55*ta)*(1.0-smoothstep(0.0,0.05+0.17*ta,el))); }
+        c+=uGlowC*pow(sd,uGlowP)*uGlowK;
+        // FIRST STARS (the last lap): a sparse field, the high sky first, and the evening star over the glow
+        if(uStar>0.0 && el>0.03){ vec3 sp=d*60.0, ci=floor(sp), f=fract(sp)-0.5;
+          float h=fract(sin(dot(ci,vec3(127.1,311.7,74.7)))*43758.5453);
+          if(h>0.9972){ vec3 o=vec3(fract(h*37.0),fract(h*71.0),fract(h*113.0))-0.5;
+            c+=vec3(0.92,0.94,1.0)*(1.0-smoothstep(0.08,0.26,length(f-o*0.5)))*(0.45+0.55*fract(h*997.0))
+              *smoothstep(0.3,1.0,uStar)*smoothstep(0.05,0.22,el); }
+          c+=vec3(1.0,0.96,0.86)*smoothstep(0.999965,0.99999,dot(d,uVenus))*smoothstep(0.0,0.35,uStar); }
+        c=mix(c, uDiscC, smoothstep(0.9975,0.9990,sd));
         if(el>0.0){
           vec2 cu=d.xz/(el+0.07)*0.9+vec2(uT*0.0035, uT*0.0012);
           float n=fbm(cu), n2=fbm(cu+vec2(0.09,0.05)*1.0);
-          float cov=smoothstep(0.55,0.70,n)*smoothstep(0.02,0.16,el);
-          vec3 cw=vec3(0.985,0.980,0.955), cs=vec3(0.735,0.765,0.830);
-          vec3 cc=mix(cw, cs, clamp((n2-0.58)*3.2,0.0,1.0)*0.85);
-          c=mix(c, cc, cov*0.95);
+          float cov=smoothstep(uCov,uCov+0.15,n)*smoothstep(0.02,0.16,el);
+          vec3 cc=mix(uCloudL, uCloudS, clamp((n2-0.58)*3.2,0.0,1.0)*0.85);
+          c=mix(c, cc, cov*uCloudA);
+          c+=uGlowC*pow(sd,uGlowP)*uCloudG*cov;          // low sun: the clouds round it catch its light
         }
         float tb=0.011+0.009*vn(vec2(az*7.0,1.0))+0.007*pow(abs(sin(az*53.0+vn(vec2(az*29.0,3.0))*4.0)),0.7);
         // (edges kept in ascending order: reversed smoothstep edges are undefined in GLSL)
-        c=mix(c, vec3(0.640,0.715,0.670), (1.0-smoothstep(tb-0.0015,tb+0.0015,el))*0.85);
-        c=mix(c, vec3(0.875,0.902,0.839), 1.0-smoothstep(-0.05,-0.005,el));
+        c=mix(c, uWood, (1.0-smoothstep(tb-0.0015,tb+0.0015,el))*0.85);
+        c=mix(c, uHor, 1.0-smoothstep(-0.05,-0.005,el));
         gl_FragColor=vec4(c,1.0);
       }`});
   const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat); m.frustumCulled=false; return m;
 }
+/* ---- THE HOUR. The race runs from afternoon into dusk, the way Victoria's runs through her sets:
+   lap one is the painting as Millais left it; lap two the same meadow an hour or two later, the
+   light a little lower and warmer; lap three golden hour — a low amber sun, a peach haze, the
+   willows and reeds lit round their edges when you look into it; lap four dusk, the hour Millais
+   painted himself in AUTUMN LEAVES and THE VALE OF REST: the land gone dark and cool under a
+   blue-violet sky with a last warm band along the horizon, the stream holding the sky's light
+   (the value plan turns over: the water is no longer the darkest shape, the land is), the
+   first stars, and glow-worms and fireflies along the reed beds.
+   Four keys, blended on the player's progress (eased, and only ever forward: the sun does not
+   rise again). Everything animated is a colour, an intensity, a direction or a uniform — no
+   light is added, removed, hidden or shadowed, so nothing recompiles mid-race. The menu and
+   the countdown are always key 0, which is exactly the course as built. ---- */
+const _ophHex=h=>new T.Color(h), _ophRGB=(r,g,b)=>new T.Color(r,g,b);
+const OPH_AZ0=Math.atan2(OPH.sun.z, OPH.sun.x), OPH_EL0=Math.asin(OPH.sun.y);
+const OPH_HOURS=[
+  { // 0 · AFTERNOON: the values applyOpheliaLighting, ophSky and ophWaterMat were built with
+    el:OPH_EL0, lel:OPH_EL0, az:0,
+    hemiC:_ophHex(0xc4dcec), hemiG:_ophHex(0x42562a), hemiI:0.70, sunC:_ophHex(0xfff0d4), sunI:0.96, rimC:_ophHex(0xd4e4ff), rimI:0.22,
+    fog:_ophHex(OPH.haze), fogN:260, fogF:1250,
+    hor:_ophRGB(0.875,0.902,0.839), mid:_ophRGB(0.690,0.800,0.870), zen:_ophRGB(0.400,0.580,0.780),
+    glowC:_ophRGB(1.0,0.94,0.80), glowK:0.16, glowP:10, discC:_ophRGB(1.0,0.99,0.95),
+    cloudL:_ophRGB(0.985,0.980,0.955), cloudS:_ophRGB(0.735,0.765,0.830), cov:0.55, cloudA:0.95, cloudG:0,
+    wood:_ophRGB(0.640,0.715,0.670), band:_ophRGB(1.0,0.86,0.66), band2:_ophRGB(0.92,0.88,0.80), bandK:0,
+    wSky:_ophHex(0xb4c8c4), wBank:_ophHex(0x1a2c16), wBed:_ophRGB(1,1,1),
+    cs:0.55, rim:_ophRGB(0,0,0), moteC:_ophHex(0xfff4d8), mote:1, fleckC:_ophHex(0xfff0c0), fleck:1 },
+  { // 1 · LATE AFTERNOON: the sun down to ~28°, a little warmer; the haze takes a breath of cream
+    el:0.49, lel:0.49, az:-0.08,
+    hemiC:_ophHex(0xcad8e0), hemiG:_ophHex(0x4a5826), hemiI:0.68, sunC:_ophHex(0xffe0b4), sunI:1.06, rimC:_ophHex(0xd4e0f8), rimI:0.22,
+    fogN:260, fogF:1250,
+    hor:_ophRGB(0.900,0.882,0.785), mid:_ophRGB(0.712,0.790,0.840), zen:_ophRGB(0.395,0.565,0.768),
+    glowC:_ophRGB(1.0,0.90,0.72), glowK:0.22, glowP:8, discC:_ophRGB(1.0,0.97,0.88),
+    cloudL:_ophRGB(0.992,0.962,0.905), cloudS:_ophRGB(0.722,0.738,0.805), cov:0.57, cloudA:0.93, cloudG:0.12,
+    wood:_ophRGB(0.612,0.668,0.602), band:_ophRGB(1.0,0.84,0.62), band2:_ophRGB(0.92,0.86,0.78), bandK:0.10,
+    wSky:_ophHex(0xbec8b4), wBank:_ophHex(0x1e2c16), wBed:_ophRGB(1.0,0.97,0.90),
+    cs:0.50, rim:_ophRGB(0.12,0.08,0.035), moteC:_ophHex(0xfff0cc), mote:1.05, fleckC:_ophHex(0xffe8b4), fleck:1 },
+  { // 2 · GOLDEN HOUR: a low amber sun (~9°), peach-amber haze, the clouds breaking up and gilded;
+    // warm light, cool shade (the hemisphere stays sky-blue: the shadow side is lit by the sky)
+    el:0.155, lel:0.16, az:-0.18,
+    hemiC:_ophHex(0xb8c2d6), hemiG:_ophHex(0x4e5024), hemiI:0.60, sunC:_ophHex(0xffb46a), sunI:1.38, rimC:_ophHex(0xaab8e0), rimI:0.20,
+    fogN:250, fogF:1200,
+    hor:_ophRGB(0.955,0.815,0.640), mid:_ophRGB(0.835,0.800,0.735), zen:_ophRGB(0.425,0.555,0.740),
+    glowC:_ophRGB(1.0,0.72,0.40), glowK:0.48, glowP:5, discC:_ophRGB(1.0,0.93,0.72),
+    cloudL:_ophRGB(1.0,0.84,0.64), cloudS:_ophRGB(0.680,0.615,0.665), cov:0.61, cloudA:0.90, cloudG:0.45,
+    wood:_ophRGB(0.580,0.530,0.455), band:_ophRGB(1.0,0.74,0.46), band2:_ophRGB(0.93,0.78,0.66), bandK:0.32,
+    wSky:_ophHex(0xd8b486), wBank:_ophHex(0x262410), wBed:_ophRGB(0.74,0.64,0.50),
+    cs:0.20, rim:_ophRGB(1.3,0.80,0.36), moteC:_ophHex(0xffd088), mote:1.15, fleckC:_ophHex(0xffc878), fleck:0.9 },
+  { // 3 · DUSK, the blue hour: the sun gone (~-5°), its afterglow the only warm light left
+    el:-0.088, lel:0.085, az:-0.28,
+    hemiC:_ophHex(0x6672b8), hemiG:_ophHex(0x121814), hemiI:0.36, sunC:_ophHex(0xff8c64), sunI:0.16, rimC:_ophHex(0x8494d4), rimI:0.16,
+    fogN:130, fogF:1000,
+    hor:_ophRGB(0.490,0.458,0.565), mid:_ophRGB(0.330,0.345,0.560), zen:_ophRGB(0.110,0.140,0.305),
+    glowC:_ophRGB(1.0,0.56,0.32), glowK:0.34, glowP:7, discC:_ophRGB(1.0,0.86,0.62),
+    cloudL:_ophRGB(0.930,0.640,0.580), cloudS:_ophRGB(0.340,0.330,0.460), cov:0.66, cloudA:0.85, cloudG:0.55,
+    wood:_ophRGB(0.255,0.248,0.330), band:_ophRGB(0.985,0.630,0.390), band2:_ophRGB(0.620,0.505,0.615), bandK:0.85,
+    wSky:_ophHex(0x8c86b0), wBank:_ophHex(0x0e1218), wBed:_ophRGB(0.30,0.32,0.42),
+    cs:0.0, rim:_ophRGB(0.30,0.16,0.10), moteC:_ophHex(0xffd088), mote:0, fleckC:_ophHex(0xffc878), fleck:0 }
+];
+OPH_HOURS.forEach(k=>{ if(!k.fog) k.fog=k.hor; });     // (the land fades into the sky's own horizon)
+// the dome's uniforms and the key each one follows
+const OPH_SKYU=[['uHor','hor'],['uMid','mid'],['uZen','zen'],['uGlowC','glowC'],['uGlowK','glowK'],['uGlowP','glowP'],['uDiscC','discC'],
+  ['uCloudL','cloudL'],['uCloudS','cloudS'],['uCov','cov'],['uCloudA','cloudA'],['uCloudG','cloudG'],['uWood','wood'],['uBand','band'],['uBand2','band2'],['uBandK','bandK']];
+// the evening star: low over the glow, a little south of where the sun went down
+const OPH_VENUS=(()=>{ const a=OPH_AZ0+OPH_HOURS[3].az+0.42, e=0.16; return new T.Vector3(Math.cos(e)*Math.cos(a), Math.sin(e), Math.cos(e)*Math.sin(a)); })();
+const OPH_H={value:720};                 // drawing-buffer height, for the fireflies' point size
+// The hour at u, the player's progress scaled to four laps (0 at the line, 4 at the flag). Each
+// change takes the back half of one lap and the front of the next, so every lap has a look of its
+// own and the line is crossed mid-change: lap 2 is late afternoon by its middle, lap 3 golden by
+// its middle, and the sun touches the woods as the last lap begins.
+function ophHourOf(u){ return ophSS(0.85,1.45,u)+ophSS(1.75,2.35,u)+ophSS(2.70,3.30,u); }
+function ophHour(P, u){
+  const h=ophHourOf(u), fly=ophSS(2.95,3.45,u), star=ophSS(3.15,3.85,u);
+  if(h===P.hk && fly===P.hf && star===P.hs) return;     // (all lap one, and the whole menu: nothing to do)
+  P.hk=h; P.hf=fly; P.hs=star;
+  const a=Math.min(2, Math.floor(h)), t=h-a, A=OPH_HOURS[a], B=OPH_HOURS[a+1], L=ophMix;
+  hemi.color.copy(A.hemiC).lerp(B.hemiC,t); hemi.groundColor.copy(A.hemiG).lerp(B.hemiG,t); hemi.intensity=L(A.hemiI,B.hemiI,t);
+  sun.color.copy(A.sunC).lerp(B.sunC,t); sun.intensity=L(A.sunI,B.sunI,t);
+  rim.color.copy(A.rimC).lerp(B.rimC,t); rim.intensity=L(A.rimI,B.rimI,t);
+  const az=OPH_AZ0+L(A.az,B.az,t), el=L(A.el,B.el,t), le=L(A.lel,B.lel,t);
+  if(h===0){ sun.position.copy(OPH.sun).multiplyScalar(200); OPH_SUNW.value.copy(OPH.sun); }
+  else { OPH_SUNW.value.set(Math.cos(le)*Math.cos(az), Math.sin(le), Math.cos(le)*Math.sin(az)); sun.position.copy(OPH_SUNW.value).multiplyScalar(200); }
+  if(scene.fog){   // (the MCP studio backdrop takes the fog away for a while)
+    scene.fog.color.copy(A.fog).lerp(B.fog,t); if(scene.background && scene.background.isColor) scene.background.copy(scene.fog.color);
+    scene.fog.near=L(A.fogN,B.fogN,t); scene.fog.far=L(A.fogF,B.fogF,t); }
+  if(P.sky){ const U=P.sky.uniforms;
+    for(let i=0;i<OPH_SKYU.length;i++){ const u=OPH_SKYU[i][0], k=OPH_SKYU[i][1];
+      if(typeof A[k]==='number') U[u].value=L(A[k],B[k],t); else U[u].value.copy(A[k]).lerp(B[k],t); }
+    if(h===0) U.uSun.value.copy(OPH.sun); else U.uSun.value.set(Math.cos(el)*Math.cos(az), Math.sin(el), Math.cos(el)*Math.sin(az));
+    U.uStar.value=star; }
+  if(P.water){ const U=P.water.uniforms;
+    U.uSky.value.copy(A.wSky).lerp(B.wSky,t).convertSRGBToLinear(); U.uBank.value.copy(A.wBank).lerp(B.wBank,t).convertSRGBToLinear();
+    U.uBed.value.copy(A.wBed).lerp(B.wBed,t); }
+  OPH_CS.value=L(A.cs,B.cs,t); OPH_RIM.value.copy(A.rim).lerp(B.rim,t);
+  // pollen in the sun and sun through the leaves both go out as the sun reaches the woods, well before the
+  // sky is dark: additive specks over a darkening sky read as dirt on the lens (see the motes in buildTrack)
+  P.moteK=L(A.mote,B.mote,t)*(1-ophSS(2.0,2.4,h)); if(TRACK_PULSE.motes) TRACK_PULSE.motes.material.color.copy(A.moteC).lerp(B.moteC,t);
+  P.fleckK=L(A.fleck,B.fleck,t)*(1-ophSS(2.05,2.5,h)); if(P.fleck) P.fleck.mat.color.copy(A.fleckC).lerp(B.fleckC,t);
+  if(P.fly) P.fly.U.uAmp.value=fly;
+}
+function ophMix(a,b,t){ return a+(b-a)*t; }
 // Every light re-set, so nothing strands on the next course (called after the shared rig).
 // Summer sun high and warm; a sky-blue hemisphere over a green bounce, so shadowed leaves
 // stay GREEN instead of going grey; a faint cool rim for the silhouettes against the haze.
@@ -49905,16 +50044,69 @@ function ophSwifts(R){
   m.frustumCulled=false;
   return {mesh:m, list, d:new T.Object3D()};
 }
+/* DUSK'S OWN LIFE (THE HOUR, the last lap): fireflies over the reed beds and the shallows at the
+   bank, and glow-worms in the bank grass — the summer-night lights of an English stream. Placed
+   where the verge is reed and loosestrife (ophVerge's own zoning), in loose drifts on an irregular
+   cadence; every one seated on the water or the bank under it. A firefly drifts a few units and
+   its glow swells and fades over a second or two, then rests; a glow-worm sits still and breathes.
+   Built with the course and drawn from the first frame (so the countdown compiles it), at zero
+   amplitude — which also puts every point off-screen — until the hour brings them up. */
+function ophFireflies(F, innerSign){
+  const R=harbRnd(0xF1F1E5), P=[], A=[];
+  for(const sd of [1,-1]){ const inner=sd*innerSign>0;
+    let i=(R()*5)|0;
+    while(i<STEPS){ const s=SAMP[i], toe=inner?F.toe[i]:OPH.toeOut;
+      const zv=ophNoise(i*0.017+(sd>0?0:40), sd>0?1.5:7.5), rich=zv<0.46;
+      if(R()<(rich?0.95:0.5)){ const n=3+((R()*(rich?7:3))|0), j0=(R()-0.5)*8;
+        for(let k=0;k<n;k++){ const worm=R()<0.3, t=worm ? 3+R()*12 : -2+R()*15, L=toe+t, j=j0+(R()-0.5)*12;
+          const x=s.p.x+s.n.x*sd*L+s.t.x*j, z=s.p.z+s.n.z*sd*L+s.t.z*j, q=F.near(x,z);
+          const y=(q.t<0.6 ? F.surf(q) : F.H(x,z,q)) + (worm ? 0.5+R()*0.6 : 1.8+R()*6.5);
+          P.push(x,y,z); A.push(worm ? 1.3+R()*0.6 : 2.0+R()*1.4, R()*60, worm?1:0); } }
+      i += R()<0.25 ? 9+((R()*14)|0) : 3+((R()*5)|0);
+    } }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aF',new T.Float32BufferAttribute(A,3));
+  const U={uT:OPH_T, uH:OPH_H, uMap:{value:TEX_GLOW}, uAmp:{value:0}};
+  const m=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false, uniforms:U,
+    vertexShader:`attribute vec3 aF; uniform float uT, uH, uAmp; varying float vA, vW;
+      void main(){ vW=aF.z; vA=0.0;
+        if(uAmp<0.002){ gl_Position=vec4(2.0,2.0,2.0,1.0); gl_PointSize=1.0; return; }
+        float ph=aF.y; vec3 p=position;
+        p+=(1.0-vW)*vec3(sin(uT*0.23+ph)*2.6, sin(uT*0.41+ph*1.3)*0.9, cos(uT*0.19+ph*0.7)*2.6);
+        vec4 mv=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv;
+        float dz=-mv.z;
+        gl_PointSize=min(aF.x*projectionMatrix[1][1]*uH*0.5/max(dz,1.0), 40.0);
+        float fl=smoothstep(-0.15,0.9,sin(uT*(0.5+fract(ph*0.37)*0.4)+ph));
+        vA=uAmp*(1.0-smoothstep(200.0,480.0,dz))*smoothstep(5.0,16.0,dz)*mix(0.15+0.85*fl, 0.72+0.28*sin(uT*0.21+ph), vW); }`,
+    fragmentShader:`uniform sampler2D uMap; varying float vA, vW;
+      void main(){ float a=texture2D(uMap, gl_PointCoord).a*vA; if(a<0.004) discard;
+        gl_FragColor=vec4(mix(vec3(0.95,0.96,0.55), vec3(0.66,0.96,0.58), vW), a); }`});
+  const pts=new T.Points(g, m); pts.frustumCulled=false; pts.renderOrder=3;
+  return {pts, U};
+}
 const _ophV=new T.Vector3();
 function ophTick(P, tsec){
   OPH_T.value=tsec;
+  // THE HOUR: the player's lap and fraction of a lap, scaled to four laps. On the menu and the grid
+  // it is the afternoon at once; in the race it eases after the player and never goes back.
+  { let me=null; if(state==='race'||state==='done') for(let k=0;k<racers.length;k++) if(racers[k].you){ me=racers[k]; break; }
+    const dt=Math.max(0, tsec-(P.hT==null?tsec:P.hT)); P.hT=tsec;
+    if(!me) P.u=0;
+    else { const laps=lapsOf()||4, pr=(!me._cp && (me.prog||0)>0.6) ? 0 : (me.prog||0);   // (behind the line, no lap begun: still the start)
+      const u=Math.min(4, Math.max(0, ((me.lap|0)+pr)*4/laps));
+      if(!(P.u>=0)) P.u=0;
+      // (capped at ~3x racing pace, a lap in 44 s: a lap that jumps — reversing over the line — still glides)
+      if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-dt/0.9)), dt*0.08); }
+    ophHour(P, P.u);
+    if(TRACK_PULSE.motes && P.moteK!==1) TRACK_PULSE.motes.material.opacity*=P.moteK;   // (frame() sets it afresh every frame, just above)
+    if(P.fly && P.hf>0) OPH_H.value=renderer.domElement.height||720; }
   if(P.cull) for(const m of P.cull){ const bs=m.geometry.boundingSphere;
     m.visible = camera.position.distanceTo(bs.center) - bs.radius < m.userData.ophNear; }
   if(P.water) P.water.uniforms.uT.value=tsec;
   if(P.sky) P.sky.uniforms.uT.value=tsec;
   if(P.float) ophDrift(P.float, tsec);
   if(P.fleck){ const k=Math.sin(tsec*0.37)*0.6+Math.sin(tsec*0.91+1.3)*0.4;
-    P.fleck.mat.opacity=0.24*(1+k*0.22);
+    P.fleck.mat.opacity=0.24*(1+k*0.22)*(P.fleckK!=null?P.fleckK:1);     // (sun through leaves: gone with the sun)
     P.fleck.m.position.set(Math.sin(tsec*0.23)*0.9, 0, Math.cos(tsec*0.19)*0.9); }
   if(P.swifts){ const G=P.swifts, d=G.d;
     for(let k=0;k<G.list.length;k++){ const v=G.list[k], a=v.ph+tsec*v.w;
@@ -55389,7 +55581,9 @@ function buildTrack(idx){
     trackGroup.add(ophTerrain(OK.F, ccx, ccz));
     trackGroup.add(ophBanks(OK.F, innerSign));
     OK.geo=ophStreamGeo(OK.F, innerSign);
-    TRACK_PULSE.oph={sky:skyDome.material};
+    // every race starts in the afternoon: the hour's shared uniforms back to key 0 (ophTick holds it there until the off)
+    OPH_CS.value=OPH_HOURS[0].cs; OPH_RIM.value.setRGB(0,0,0); OPH_SUNW.value.copy(OPH.sun);
+    TRACK_PULSE.oph={sky:skyDome.material, u:0};
   } else if(hana){
     // Hana: the printed sky, the island's ground grid, the sea (see WOODBLOCK KIT)
     skyDome=hanaSky(); trackGroup.add(skyDome);
@@ -57309,6 +57503,7 @@ function buildTrack(idx){
     const fl=ophFloaters(innerSign, OK.geo.userData.lap, OK.F.toe);
     trackGroup.add(fl.pet); trackGroup.add(fl.eye); TRACK_PULSE.oph.float=fl;
     const sw=ophSwifts(harbRnd(0x5A1F7)); trackGroup.add(sw.mesh); TRACK_PULSE.oph.swifts=sw;
+    const ff=ophFireflies(OK.F, innerSign); trackGroup.add(ff.pts); TRACK_PULSE.oph.fly=ff;   // (dark until dusk: see THE HOUR)
   } else if(paint){
     /* THE FLEET. What was here before was 170 free-floating sails placed at
        sp.p.y + h*0.72 with a half-height of h*0.62 — so every one of them hung between 8
