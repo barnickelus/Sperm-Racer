@@ -50522,6 +50522,129 @@ const EDEN_LIVE_VTX=`
     #endif
     float gd; vLive=edenLive(eo, wk, gd); vGold=gd; SWELL }`;
 function edenLiveUniforms(sh){ for(const k in EDEN_LIVE) sh.uniforms[k]=EDEN_LIVE[k]; }
+/* THE HAND OF THE GARDEN: SURFACE. The reference was glossy clay, and every surface here was one
+   smooth Phong of one colour under one even sheen — which, in the bottom third of the chase frame
+   (the verge, the road, the near props), read as plastic. Clay left out in a garden is not new
+   clay: it is moss, soil, bark, fibrous stems, pitted stone, caps with their fibrils. So each
+   family gets the surface its material actually has, as DETAIL laid over the colour it already had:
+   · one 256² tileable RGBA noise, built once — r grain (~0.6 u), g clumps (~2.5 u), b fibre (streaks
+     long in v), a sparse specks — read in world space (triplanar on props, flat on the ground and
+     the road), so the grain is the same size on a pebble and on a boulder;
+   · MIPMAPPED, so with distance and at grazing angles it averages to its own mean, and every use is
+     centred on that mean: the far garden keeps exactly the value and sheen it had, nothing shimmers
+     at speed, and past a couple of hundred units the lookups are skipped altogether;
+   · value stays in the bottom two steps — the detail darkens and lifts the colour a surface already
+     has (multiplied, mean-preserving) and breaks the sheen into polished and dull patches, rather
+     than adding light; only the luminous things (moss, caps, cups, pods, the ground's moss) have
+     their glow gathered into fibres and spore heads, so light still lives in small things;
+   · on the road, a shallow bump from the wear's clumps, so the moon's long highlight breaks up;
+   · each instance a little lighter or darker and a whisper warmer or cooler, keyed to where it
+     stands, so a batch of one prop stops looking cloned. */
+let _edenDetail=null, EDEN_SPK=0.05, EDEN_GRIT=0.01;   // the specks channel's mean, and its cores' (the road's grit), which their uses are centred on
+const EDEN_DET={value:null};
+function edenDetailTex(){
+  if(_edenDetail) return _edenDetail;
+  const S=256, R=harbRnd(0xDE7A11), out=new Uint8Array(S*S*4);
+  const lat=(px,py)=>{ const L=new Float32Array(px*py); for(let i=0;i<L.length;i++) L[i]=R(); return {L,px,py}; };
+  const vn=(Q,u,v)=>{ const x=u*Q.px, y=v*Q.py, i=Math.floor(x), j=Math.floor(y); let fx=x-i, fy=y-j;
+    fx=fx*fx*(3-2*fx); fy=fy*fy*(3-2*fy);
+    const L=Q.L, i0=i%Q.px, i1=(i+1)%Q.px, j0=j%Q.py, j1=(j+1)%Q.py;
+    const a=L[j0*Q.px+i0], b=L[j0*Q.px+i1], c=L[j1*Q.px+i0], d=L[j1*Q.px+i1], t=a+(b-a)*fx;
+    return t+(c+(d-c)*fx-t)*fy; };
+  // a channel of periodic value noise, normalised to mean 0.5 and a fixed spread
+  const chan=oct=>{ const Q=oct.map(([px,py,w])=>[lat(px,py),w]), A=new Float32Array(S*S);
+    for(let y=0;y<S;y++) for(let x=0;x<S;x++){ let s=0; for(const [q,w] of Q) s+=vn(q,x/S,y/S)*w; A[y*S+x]=s; }
+    let m=0; for(let i=0;i<A.length;i++) m+=A[i]; m/=A.length;
+    let sd=0; for(let i=0;i<A.length;i++) sd+=(A[i]-m)*(A[i]-m); sd=Math.sqrt(sd/A.length)||1;
+    for(let i=0;i<A.length;i++) A[i]=Math.max(0,Math.min(1,0.5+(A[i]-m)/sd*0.17));
+    return A; };
+  const gr=chan([[16,16,0.5],[32,32,0.3],[64,64,0.2]]);       // grain
+  const cl=chan([[4,4,0.6],[8,8,0.3],[16,16,0.1]]);           // clumps
+  const fb=chan([[48,3,0.6],[96,6,0.4]]);                     // fibre: long in v
+  const sp=new Float32Array(S*S);                             // specks: soft dots, wrapped
+  for(let k=0;k<320;k++){ const cx=R()*S, cy=R()*S, r=1.3+R()*2.8, a=0.45+R()*0.55, e=Math.ceil(r+1);
+    for(let dy=-e;dy<=e;dy++) for(let dx=-e;dx<=e;dx++){ const px=Math.floor(cx)+dx, py=Math.floor(cy)+dy;
+      const d=Math.hypot(px+0.5-cx, py+0.5-cy), v=a*edenSm((r-d)/1.2); if(v<=0) continue;
+      const i=((py%S+S)%S)*S+((px%S+S)%S); sp[i]=Math.max(sp[i],v); } }
+  let sm=0, gm=0; for(let i=0;i<sp.length;i++){ sm+=sp[i]; gm+=Math.max(sp[i]-0.5,0)*2; } EDEN_SPK=sm/sp.length; EDEN_GRIT=gm/sp.length;
+  for(let i=0;i<S*S;i++){ out[i*4]=gr[i]*255; out[i*4+1]=cl[i]*255; out[i*4+2]=fb[i]*255; out[i*4+3]=sp[i]*255; }
+  const t=new T.DataTexture(out,S,S,T.RGBAFormat);
+  t.wrapS=t.wrapT=T.RepeatWrapping; t.magFilter=T.LinearFilter; t.minFilter=T.LinearMipmapLinearFilter;
+  // isotropic trilinear, on purpose: the detail SHOULD blur away at a grazing distance (down the road,
+  // across the verge), which is the fade it is meant to have, and it is cheaper on a phone
+  t.generateMipmaps=true; t.needsUpdate=true;
+  return _edenDetail=t;
+}
+/* Fragment helpers: a read at an explicit level of detail, a triplanar read (weights from the world
+   normal), and a bump from a height's screen derivatives (three's perturbNormalArb, under its own
+   name: bumpMap is never defined here). THE LEVEL OF DETAIL ON THE PROPS IS WORKED OUT PER VERTEX
+   (edenLodVtx), not left to the hardware: a world-space read on a form this low in polygons gets its
+   derivatives from each flat triangle, so the hardware's mip level steps from one ring of facets to the
+   next. Distance, the pixel's footprint and the SMOOTH normal against the view give a level that runs
+   continuously across the facets, for a few instructions a vertex instead of per pixel. (Without
+   texture LOD in a WebGL1 fragment shader it falls back to the hardware's choice.) */
+let _edenLodOK=null;
+const edenLodOK=()=>_edenLodOK!=null?_edenLodOK:(_edenLodOK=!!(renderer.capabilities.isWebGL2||renderer.extensions.has('EXT_shader_texture_lod')));
+const edenGrainF=()=>`
+uniform sampler2D uEdD;
+${edenLodOK()?'#define ED_TEX(uv,l) texture2DLodEXT(uEdD,uv,l)':'#define ED_TEX(uv,l) texture2D(uEdD,uv)'}
+vec4 edTri(vec3 p, vec3 n, float l){ vec3 w=n*n; w*=w; w/=(w.x+w.y+w.z+1e-5);
+  return ED_TEX(p.zy,l)*w.x+ED_TEX(p.xz,l)*w.y+ED_TEX(p.xy,l)*w.z; }
+vec3 edBump(vec3 sp, vec3 n, float h, float fd){
+  vec3 sx=dFdx(sp), sy=dFdy(sp); vec2 dh=vec2(dFdx(h),dFdy(h));
+  vec3 r1=cross(sy,n), r2=cross(n,sx); float det=dot(sx,r1)*fd;
+  return normalize(abs(det)*n-sign(det)*(dh.x*r1+dh.y*r2)); }`;
+// the vertex half: tpu is the texels per world unit of the read; the footprint is a pixel's width in
+// world units at this vertex, widened as the surface turns away from the eye
+const edenLodVtx=tpu=>`{ vec3 edE=cameraPosition-vEdW; float edDd=length(edE);
+    float edSl=1.0/max(abs(dot(normalize(vEdN),edE/max(edDd,1e-3))),0.2);
+    vEdLod=log2(max(edDd*2.0/(projectionMatrix[1][1]*uEdH)*edSl*(${tpu}),1.0)); }`;
+/* The families. Each reads one sample D (r grain, g clumps, b fibre, a specks; g,m,f,s are those
+   centred on their means) and sets: A albedo multiplier, edS specular strength, edSh shininess
+   multiplier, edG glow multiplier, edV velvet (a cool fringe of fibres catching the sky at
+   grazing angles: the soft-edge cue that plastic does not have).
+   Every term is scaled by edK, the near-field weight, and centred, so at edK→0 nothing changes.
+   NO BUMP on the props: a derivative bump builds its gradient in each triangle's own plane, and on
+   forms this low in polygons (a moss cushion is 8x5) that plane is well off the smooth normal, so
+   it would step at the edges; the relief is carried by the value and the broken sheen instead.
+   map: 'tri' world triplanar | 'rad' radial from the local pole (caps: fibrils from the centre) |
+   'leaf' the blade's own plane, veins slanting out from the midrib | 'top' from above only (the moss:
+   a cushion is nearly all top, so one read does the work of three). vary: per-instance value spread. */
+const EDEN_GRAIN={
+  // pitted stone: clumped grain, dark pits; polished on the bulges, dull and broad in the hollows
+  rock:{map:'tri', vary:0.16, b:`A=1.0+edK*(1.1*m+0.7*g-2.2*s);
+    edS=max(0.0,1.0+edK*(1.6*m+0.5*g-1.8*s)); edSh=1.0-edK*0.5*smoothstep(0.0,0.25,-m);`},
+  // moss: tufts and the dark between them, no gloss to speak of, its light in the tufts and spore heads
+  moss:{map:'top', vary:0.18, b:`A=1.0+edK*(1.6*g+1.0*m);
+    edS=max(0.0,1.0+edK*(2.0*g-0.5)); edG=max(0.0,1.0+edK*(2.0*g+1.0*m+2.6*s)); edV=edK*0.30;`},
+  // caps: radial fibrils from the centre, darker scales, a satin sheen that runs along the fibrils
+  cap:{map:'rad', vary:0.14, b:`A=1.0+edK*(0.85*f+0.40*m-1.2*s);
+    edS=max(0.0,1.0+edK*(1.4*f-0.15)); edSh=1.0-edK*0.35; edG=max(0.0,1.0+edK*(0.85*f+0.45*m+1.4*s)); edV=edK*0.20;`},
+  // stems and stalks: streaky fibre up the length
+  stem:{map:'tri', vary:0.12, b:`A=1.0+edK*(1.0*f+0.35*m);
+    edS=max(0.0,1.0+edK*(1.6*f)); edG=1.0+edK*0.6*f;`},
+  // bark: the canvas furrows carry the direction; this adds fibre, knots of clump and pits
+  bark:{map:'tri', vary:0.14, b:`A=1.0+edK*(0.75*f+0.75*m-1.6*s);
+    edS=max(0.0,1.0+edK*(1.4*m+0.8*f));`},
+  // the hollow log: worn wood, no streak (its axis runs along the road, which no world axis follows)
+  wood:{map:'tri', vary:0.0, b:`A=1.0+edK*(0.7*g+0.8*m-1.4*s);
+    edS=max(0.0,1.0+edK*(1.3*m+0.5*g));`},
+  // crowns and bushes: clumps of leaf, glints on their tops, dark in the hollows between
+  lobe:{map:'tri', vary:0.16, b:`A=1.0+edK*(1.3*m+0.7*g);
+    edS=max(0.0,1.0+edK*(2.0*m+1.0*g)); edG=1.0+edK*0.9*m;`},
+  // leaf blades: veins slanting out from the midrib, a waxy sheen broken along them
+  leaf:{map:'leaf', vary:0.14, b:`A=1.0+edK*(1.0*f+0.3*m);
+    edS=max(0.0,1.0+edK*(1.5*f));`},
+  // fiddleheads: the fine scales a young frond is furred with
+  curl:{map:'tri', vary:0.12, b:`A=1.0+edK*(0.9*g+0.4*m);
+    edS=max(0.0,1.0+edK*(1.8*g)); edV=edK*0.25;`},
+  // flower cups: veins running up the petals, the light along them
+  cup:{map:'tri', vary:0.12, b:`A=1.0+edK*(0.8*f+0.3*m);
+    edS=max(0.0,1.0+edK*(1.4*f)); edG=max(0.0,1.0+edK*(0.9*f+0.35*m)); edV=edK*0.18;`},
+  // ringed pods: a fine skin over the rings, pitted, the gloss broken
+  pod:{map:'tri', vary:0.10, b:`A=1.0+edK*(0.55*g+0.45*m-1.2*s);
+    edS=max(0.0,1.0+edK*(1.4*g-1.4*s)); edG=max(0.0,1.0+edK*(0.5*g+0.35*m));`},
+};
 function edenMat(o){
   o=o||{};
   const m=new T.MeshPhongMaterial({color:0xffffff, shininess:o.shin!=null?o.shin:38,
@@ -50530,9 +50653,24 @@ function edenMat(o){
   if(o.map){ m.map=o.map; m.emissiveMap=o.map; m.emissive=new T.Color(o.emi!=null?o.emi:0.6,o.emi!=null?o.emi:0.6,o.emi!=null?o.emi:0.6); }
   const U={uGlow:{value:o.glow||0}};
   m.userData.edenU=U;
+  // the surface (see THE HAND OF THE GARDEN: SURFACE): o.grain names the family
+  const GK=o.grain&&EDEN_GRAIN[o.grain], gn=GK?(o.near||50):0, gf=GK?(o.far||200):0;
+  if(GK){ EDEN_DET.value=edenDetailTex(); m.extensions={derivatives:true, shaderTextureLOD:true}; }
+  const f1=v=>v.toFixed(4), gL=GK&&(GK.map==='rad'||GK.map==='leaf');   // gL: the form's own local frame is read
+  const gSample=!GK?'':GK.map==='rad'
+    // fibrils from the pole of the unit local form: u round it (3 whole tiles, so the seam closes), v out along the radius
+    ? 'ED_TEX(vec2(atan(vEdL.z,vEdL.x)*0.4774648, length(vEdL.xz)*0.9), vEdLod)'
+    : GK.map==='leaf'
+    // the blade's plane in world units: lines of constant u slant from the midrib toward the tip
+    ? 'ED_TEX(vec2(vEdL.z-1.3*abs(vEdL.x), abs(vEdL.x)*1.4)*0.045, vEdLod)'
+    : GK.map==='top'
+    ? 'ED_TEX(vEdW.xz*0.1, vEdLod)'
+    : 'edTri(vEdW*0.1, normalize(vEdN), vEdLod)';
+  // texels per world unit of each read (a 256 tile at 0.1 a unit; the leaf's slant ~0.086; the caps' ~0.9 per unit of local radius)
+  const gTpu=!GK?'':GK.map==='rad'?'230.0/edSc':GK.map==='leaf'?'22.0':'25.6';
   m.onBeforeCompile=sh=>{
-    sh.uniforms.uT=EDEN_T; sh.uniforms.uGlow=U.uGlow;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;'+(o.live?EDEN_LIVE_GLSL:''));
+    sh.uniforms.uT=EDEN_T; sh.uniforms.uGlow=U.uGlow; if(GK){ sh.uniforms.uEdD=EDEN_DET; sh.uniforms.uEdH=EDEN_H; }
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;'+(o.live?EDEN_LIVE_GLSL:'')+(GK?'\nuniform float uEdH; varying vec3 vEdW; varying vec3 vEdN; varying float vEdLod;'+(gL?' varying vec3 vEdL;':''):''));
     if(o.live){ edenLiveUniforms(sh); sh.vertexShader=sh.vertexShader.replace('#include <project_vertex>', EDEN_LIVE_VTX.replace('SWELL','')+'\n#include <project_vertex>'); }
     if(o.sway) sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
       { float ph=0.0;
@@ -50541,14 +50679,52 @@ function edenMat(o){
         #endif
         float hh=max(0.0,transformed.y), a=${o.sway.toFixed(4)}*hh*hh;
         transformed.x+=a*sin(uT*0.83+ph); transformed.z+=a*0.7*sin(uT*0.61+ph*1.7+1.3); }`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;'+(o.live?'\nvarying float vLive; varying float vGold;':''))
+    if(GK) sh.vertexShader=sh.vertexShader
+      // each instance a little lighter or darker, a whisper warmer or cooler, keyed to where it stands
+      .replace('#include <color_vertex>',`#include <color_vertex>
+      #if defined(USE_INSTANCING) && defined(USE_INSTANCING_COLOR)
+      { vec3 h=fract(instanceMatrix[3].xyz*vec3(0.1031,0.1030,0.0973)); h+=dot(h,h.yzx+33.33); h=fract((h.xxy+h.yzz)*h.zyx);
+        vColor.rgb*=(1.0+${f1(GK.vary*2.0)}*(h.x-0.5))*(1.0+0.08*(h-0.5)); }
+      #endif`)
+      // where the surface is, before any sway (so the grain rides the form), and which way it faces
+      .replace('#include <worldpos_vertex>',`{ vec4 ew=vec4(position,1.0);
+        #ifdef USE_INSTANCING
+          ew=instanceMatrix*ew;
+        #endif
+        vEdW=(modelMatrix*ew).xyz; vEdN=(vec4(transformedNormal,0.0)*viewMatrix).xyz;
+        ${GK.map==='rad'?'vEdL=position;':GK.map==='leaf'?`vEdL=position;
+        #ifdef USE_INSTANCING
+          vEdL*=vec3(length(instanceMatrix[0].xyz),length(instanceMatrix[1].xyz),length(instanceMatrix[2].xyz));
+        #endif`:''}
+        float edSc=1.0;
+        #ifdef USE_INSTANCING
+          edSc=max(length(instanceMatrix[0].xyz),1e-3);
+        #endif
+        ${edenLodVtx(gTpu)}
+      }
+      #include <worldpos_vertex>`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;'+(o.live?'\nvarying float vLive; varying float vGold;':'')
+        +(GK?'\nvarying vec3 vEdW; varying vec3 vEdN; varying float vEdLod;'+(gL?' varying vec3 vEdL;':'')+edenGrainF():''))
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
+      ${GK?'totalEmissiveRadiance*=edG;':''}
       #if defined(USE_COLOR)
-        totalEmissiveRadiance+=vColor.rgb*uGlow;
+        totalEmissiveRadiance+=vColor.rgb*uGlow${GK?'*edG':''};
       #endif
       ${o.live?'totalEmissiveRadiance=totalEmissiveRadiance*(1.0+vLive*0.8)+vec3(1.0,0.78,0.42)*vGold*(uGlow+0.15)*1.3;':''}`);
+    if(GK) sh.fragmentShader=sh.fragmentShader
+      .replace('#include <color_fragment>',`#include <color_fragment>
+      float edK=0.0, edS=1.0, edSh=1.0, edG=1.0, edV=0.0;
+      { edK=1.0-smoothstep(${gn.toFixed(1)},${gf.toFixed(1)},distance(vEdW,cameraPosition));
+        if(edK>0.002){ vec4 D=${gSample};
+          float g=D.r-0.5, m=D.g-0.5, f=D.b-0.5, s=D.a-${f1(EDEN_SPK)}, A=1.0;
+          ${GK.b}
+          diffuseColor.rgb*=max(A,0.2); } }`)
+      .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\nspecularStrength*=edS;')
+      .replace('#include <lights_phong_fragment>','#include <lights_phong_fragment>\nmaterial.specularShininess*=edSh;')
+      .replace('#include <lights_fragment_end>',`#include <lights_fragment_end>
+      if(edV>0.0) reflectedLight.directDiffuse+=diffuseColor.rgb*vec3(0.30,0.38,0.62)*edV*pow(1.0-abs(dot(normal,normalize(vViewPosition))),4.0);`);
   };
-  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0)+(o.live?'-live':'');
+  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0)+(o.live?'-live':'')+(GK?'-g'+o.grain+'-'+gn+'-'+gf:'');
   return m;
 }
 // pure light: fruit, rims, gills, beads. Unlit, fogged, coloured per instance.
@@ -50885,13 +51061,37 @@ function edenTerrain(F, pools){
      land brightening a little ahead and settling behind, as if the garden were drawing you in.
      Per vertex on the 26-unit grid, on the shared clock; nothing else is touched. */
   const hx=F.shrine?F.shrine.x:0, hz=F.shrine?F.shrine.z:0;
-  mat.onBeforeCompile=sh=>{ sh.uniforms.uT=EDEN_T;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 aGlow; varying vec3 vGlow; uniform float uT;')
+  /* THE GROUND'S SURFACE (see THE HAND OF THE GARDEN). Two reads of the detail noise, flat in
+     world xz: one at a 10-unit tile (crumbs, tufts, specks of litter) and one turned and slower (a
+     47-unit tile: patches of moss and bare loam), both centred so the far land keeps its colour.
+     The loam goes darker and lighter within its own two steps, a little mossier where the patches
+     rise and a little warmer where they sink; the litter is a few cool pale specks, never a light;
+     and the luminous moss's glow gathers in its fibres and spore heads instead of lying smooth.
+     Lambert is lit per vertex, so there is no bump here: the relief is in the value.
+     (The distance is the view-space position's length: three r128 uploads cameraPosition only to
+     Phong, Standard, Toon and shader materials, so in a Lambert shader it reads as the origin.) */
+  EDEN_DET.value=edenDetailTex();
+  mat.onBeforeCompile=sh=>{ sh.uniforms.uT=EDEN_T; sh.uniforms.uEdD=EDEN_DET;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute vec3 aGlow; varying vec3 vGlow; varying vec3 vEdW; varying vec3 vEdV; uniform float uT;')
       .replace('#include <begin_vertex>',`#include <begin_vertex>
         { float dr=length(position.xz-vec2(${hx.toFixed(1)},${hz.toFixed(1)}));
-          vGlow=aGlow*(0.84+0.36*(0.5+0.5*sin(dr*0.0105+uT*0.52))); }`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow;')
-      .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vGlow;');
+          vGlow=aGlow*(0.84+0.36*(0.5+0.5*sin(dr*0.0105+uT*0.52)));
+          vEdW=(modelMatrix*vec4(position,1.0)).xyz; vEdV=(modelViewMatrix*vec4(position,1.0)).xyz; }`);
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vGlow; varying vec3 vEdW; varying vec3 vEdV; uniform sampler2D uEdD;')
+      .replace('#include <color_fragment>',`#include <color_fragment>
+        float edG=1.0;
+        { float k=1.0-smoothstep(60.0,240.0,length(vEdV));
+          if(k>0.002){ vec2 p=vEdW.xz;
+            // the fine read wanders with the slow one, and the tuft scale is the slow read's own grain
+            // (a 47-unit repeat, turned): the 10-unit tile's clumps lined up in rows down the verge
+            vec4 b=texture2D(uEdD,mat2(0.8,-0.6,0.6,0.8)*p*0.0213+0.37), a=texture2D(uEdD,p*0.1+(b.g-0.5)*vec2(0.9,-0.7));
+            float g=a.r-0.5, m=a.g-0.5, s=a.a-${EDEN_SPK.toFixed(4)}, P=b.g-0.5, Q=b.r-0.5;
+            // (the loam is so near black that a gentle multiplier is invisible: this one runs ~x0.3..x1.9)
+            diffuseColor.rgb*=max(0.15, 1.0+k*(0.9*m+1.8*P+1.0*g+1.5*Q));
+            diffuseColor.rgb*=1.0+k*P*vec3(-0.40,0.30,0.06);
+            diffuseColor.rgb+=k*max(s,0.0)*vec3(0.020,0.024,0.036);
+            edG=max(0.0, 1.0+k*(2.2*g+1.3*Q+0.6*m+2.6*s)); } }`)
+      .replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance+=vGlow*edG;');
   };
   mat.customProgramCacheKey=()=>'eden-ground';
   const c=new T.Color(), g=new T.Color();
@@ -51360,9 +51560,9 @@ function edenLog(F, i0, i1, R){
   const mk=(P,I,col,mat)=>{ const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(P,3));
     if(col) g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(I); g.computeVertexNormals(); g.computeBoundingSphere();
     const m=new T.Mesh(g,mat); trackGroup.add(m); return m; };
-  const om=edenMat({shin:20, spec:0x241a30, side:T.DoubleSide}); om.color.copy(bark);
+  const om=edenMat({shin:20, spec:0x241a30, side:T.DoubleSide, grain:'wood'}); om.color.copy(bark);
   mk(posO, idxO, null, om);
-  mk(posI, idxI, colI, edenMat({vc:true, glow:0.85, shin:30, spec:0x30304a, side:T.DoubleSide}));
+  mk(posI, idxI, colI, edenMat({vc:true, glow:0.85, shin:30, spec:0x30304a, side:T.DoubleSide, grain:'wood'}));
   /* SHELF FUNGUS. Half-discs bracketed off the inner wall, in clusters of two or three, teal
      and cyan mostly with lime and the odd orange. Low on the walls they stand off the bore
      (37+ out) by at most 5, so they never reach 32; higher up they are above road+24. */
@@ -51419,19 +51619,21 @@ function edenMossGeo(){
 function edenFlush(F){
   const G=F.G, mats={};
   EDEN_CHUNKS=[];
-  const bark=mats.bark=edenMat({shin:10, spec:0x221c34, glow:0.05, tex:edenBarkTex()});
-  const lobe=mats.lobe=edenMat({shin:16, spec:0x22484c, glow:0.10});
+  // (grain: the surface each family has — see THE HAND OF THE GARDEN: SURFACE. The sheens are a
+  // step lower and broader than the clay's were; the grain breaks what is left of them up close)
+  const bark=mats.bark=edenMat({shin:10, spec:0x221c34, glow:0.05, tex:edenBarkTex(), grain:'bark'});
+  const lobe=mats.lobe=edenMat({shin:16, spec:0x22484c, glow:0.10, grain:'lobe'});
   const fruit=mats.fruit=edenGlowMat();
-  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42, live:true});
-  const stem=mats.stem=edenMat({shin:30, spec:0x3a3a5a, glow:0.10});
+  const cap=mats.cap=edenMat({shin:56, spec:0x5a7898, glow:0.42, live:true, grain:'cap'});
+  const stem=mats.stem=edenMat({shin:30, spec:0x3a3a5a, glow:0.10, grain:'stem'});
   const glowM=mats.glow=edenGlowMat({side:T.DoubleSide});
-  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a, live:true});
-  const leaf=mats.leaf=edenMat({shin:40, spec:0x2a5a4a, glow:0.10, side:T.DoubleSide});
-  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide, live:true});
-  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50, live:true});
-  const rock=mats.rock=edenMat({shin:70, spec:0x4a4a7a, glow:0.0});
-  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34, live:true});
-  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20, live:true});
+  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:36, spec:0x3a6a5a, live:true, grain:'curl'});
+  const leaf=mats.leaf=edenMat({shin:34, spec:0x2a5a4a, glow:0.10, side:T.DoubleSide, grain:'leaf'});
+  const cup=mats.cup=edenMat({shin:44, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide, live:true, grain:'cup'});
+  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:50, spec:0x5a6a50, live:true, grain:'pod'});
+  const rock=mats.rock=edenMat({shin:46, spec:0x40406c, glow:0.0, grain:'rock'});
+  const moss=mats.moss=edenMat({shin:20, spec:0x142c2e, glow:0.34, live:true, grain:'moss'});
+  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20, live:true, grain:'stem'});
   edenBatch(new T.CylinderGeometry(0.78,1,1,9,1), bark, G.trunk);
   edenBatch(new T.SphereGeometry(1,10,7), lobe, G.lobe);
   edenBatch(new T.SphereGeometry(1,10,8), fruit, G.fruit);
@@ -51455,7 +51657,7 @@ function edenFlush(F){
   edenBatch(edenRootArcGeo(0.058,0x2007), bark, G.arch.filter(a=>!a.wide));
   edenBatch(new T.TorusGeometry(1,0.075,7,30,Math.PI+0.8), bark, G.arch.filter(a=>a.wide));
   edenBatch(edenRootArcGeo(0.032,0x77A1), bark, G.archT);
-  edenBatch(new T.CircleGeometry(1,12), mats.cap, G.pad);
+  edenBatch(new T.CircleGeometry(1,12).rotateX(-Math.PI/2), mats.cap, G.pad);
   edenBatch(new T.CylinderGeometry(1,1,0.9,14,1,false,0,Math.PI), cap, G.shelf);
   trackGroup.add(edenPoints(G.halo, 0));
   return mats;
@@ -51499,6 +51701,37 @@ function edenRoadTex(){
   const t1=new T.CanvasTexture(a), t2=new T.CanvasTexture(b);
   for(const t of [t1,t2]){ t.encoding=T.sRGBEncoding; t.wrapS=t.wrapT=T.RepeatWrapping; t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy()); }
   return {map:t1, emi:t2};
+}
+/* The path's surface (see THE HAND OF THE GARDEN): glossy clay that catches the moon, as it was,
+   but worn — fine aggregate in it (grain and a few pale grit specks), soft wear mottling at two
+   scales, and the moon's sheen polished on the worn patches and dull on the rough ones, so the long
+   highlight down the road is a surface and not a sheet of vinyl. A shallow bump from the wear's
+   clumps only (the grain is too fine for a derivative bump: it glitters in blocks at this grazing
+   angle). The markings are the emissive sheet and are not touched: the corridor reads as it did. */
+function edenRoadMat(map, emi){
+  const m=new T.MeshPhongMaterial({map, emissiveMap:emi, emissive:0xffffff, color:0xffffff,
+    shininess:40, specular:edenLin(0x3c4a7a), side:T.DoubleSide});
+  EDEN_DET.value=edenDetailTex(); m.extensions={derivatives:true, shaderTextureLOD:true};
+  m.onBeforeCompile=sh=>{ sh.uniforms.uEdD=EDEN_DET;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vEdW;')
+      .replace('#include <worldpos_vertex>','vEdW=(modelMatrix*vec4(position,1.0)).xyz;\n#include <worldpos_vertex>');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying vec3 vEdW;'+edenGrainF())
+      .replace('#include <color_fragment>',`#include <color_fragment>
+        float edS=1.0, edH=0.0;
+        { float k=1.0-smoothstep(50.0,280.0,distance(vEdW,cameraPosition));
+          if(k>0.002){ vec2 p=vEdW.xz;
+            vec4 a=texture2D(uEdD,p*0.125), b=texture2D(uEdD,mat2(0.8,-0.6,0.6,0.8)*p*0.021+0.61);
+            // grit: only the cores of the brighter specks, so it is sparse, small and uneven, not a terrazzo of dots
+            float g=a.r-0.5, m=a.g-0.5, P=b.g-0.5, Q=b.r-0.5, s=max(a.a-0.5,0.0)*2.0-${EDEN_GRIT.toFixed(4)};
+            diffuseColor.rgb*=max(0.3, 1.0+k*(0.40*g+0.55*m+1.10*P+0.50*Q));
+            diffuseColor.rgb+=k*max(s,0.0)*vec3(0.014,0.014,0.022);
+            edS=max(0.0, 1.0+k*(1.1*P+0.7*m+0.3*g-0.45*s));
+            edH=k*m*0.05; } }`)
+      .replace('#include <specularmap_fragment>','#include <specularmap_fragment>\nspecularStrength*=edS;')
+      .replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nnormal=edBump(-vViewPosition, normal, edH, faceDirection);');
+  };
+  m.customProgramCacheKey=()=>'eden-road';
+  return m;
 }
 // the kerb: a low glowing cord just outside each edge (0.85 proud — a road marking with
 // thickness, not a wall), and a dark skirt sealing the deck to the bench below it
@@ -51648,7 +51881,8 @@ function edenPondDress(F){
     const np=5+((R()*9)|0);
     for(let j=0;j<np;j++){ const a=R()*6.28, e=Math.sqrt(R())*0.75, u=Math.cos(a)*W.rx*e, v=Math.sin(a)*W.rz*e, r=2.2+R()*3.4;
       const x=W.x+u*W.ca-v*W.sa, z=W.z+u*W.sa+v*W.ca;
-      G.pad.push({x,y:W.wl+0.15,z,s:r,sy:r,sz:r,rx:-Math.PI/2,rz:R()*6.28,c:[0x1a8a6a,0x2ad8b4,0x6ac040][(R()*3)|0],k:0});
+      // (the disc is laid flat in its geometry, so its spin is a yaw: the caps' radial fibrils read it as a pad's veins)
+      G.pad.push({x,y:W.wl+0.15,z,s:r,sy:r,sz:r,ry:R()*6.28,c:[0x1a8a6a,0x2ad8b4,0x6ac040][(R()*3)|0],k:0});
       if(R()<0.3){ const cc=[EDEN.violet,0xf0a0c8,EDEN.orange][(R()*3)|0];
         G.cup.push({x,y:W.wl+0.3,z,s:1.4,sy:1.0,sz:1.4,ry:R()*6.28,c:cc,k:0}); G.halo.push({x,y:W.wl+1.5,z,s:9,c:cc,k:0.5}); } } }
   if(!I.length) return;
@@ -56879,9 +57113,8 @@ function buildTrack(idx){
     : sho
     ? new T.MeshBasicMaterial({map:rt, color:0xffffff, side:T.DoubleSide})
     : eden
-    // glossy clay that catches the moon, with its markings in a separate light sheet
-    ? new T.MeshPhongMaterial({map:rt, emissiveMap:edenEmi, emissive:0xffffff, color:0xffffff,
-        shininess:46, specular:edenLin(0x3c4a7a), side:T.DoubleSide})
+    // glossy clay that catches the moon, worn and gritted (edenRoadMat), with its markings in a separate light sheet
+    ? edenRoadMat(rt, edenEmi)
     : macro
     // wet is a hard WHITE specular (the natatorium lesson); slight violet emissive keeps
     // the water from going black where the key misses it
