@@ -23,6 +23,7 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -464,6 +465,42 @@ tool('race_fx', {
   description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
   inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional() },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));
+
+const frameZ = z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() });
+tool('race_record', {
+  title: 'Film a shot',
+  description: 'Film a shot at an exact frame rate, however slow the machine: the game is stepped 1/fps of GAME time per frame (racing on autopilot, held keys, or still: frozen race, live animation), the camera placed for each frame (the chase cam, or a photo camera eased from one framing to another over the shot: azimuth relative to the racer\'s heading, elevation, distance, height, along its body, fov), and every frame written to disk as a JPEG. encode:true also makes an MP4 with ffmpeg. Returns the folder, the files, the race clock at both ends, and the shot\'s middle frame to look at. The display loop stands aside while it films, and the canvas renders at pixel ratio 1 (its size is the window\'s: open the scene at 1280x720 for 720p).',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(60), fps: z.number().int().min(12).max(60).default(30), cam: z.object({ mode: z.enum(['chase', 'photo']).default('chase'), who: z.string().optional().describe('racer name or character id (default: you)'), ease: z.enum(['inout', 'linear', 'in', 'out']).default('inout'), from: frameZ.optional(), to: frameZ.optional() }).optional(),
+    still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]), quality: z.number().min(0.5).max(1).default(0.9),
+    dir: z.string().optional().describe('folder for the frames (default mcp/recordings)'), name: z.string().default('shot'), encode: z.boolean().default(false) },
+}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, dir, name, encode }) => {
+  const p = pick(page, 'race.rec');
+  const out = path.resolve(dir || path.join(here, 'recordings')); fs.mkdirSync(out, { recursive: true });
+  const n = Math.max(1, Math.round(seconds * fps)), files = []; let first = null, last = null, mid = null;
+  await call(p, 'race.recmode', { on: true });
+  try {
+    for (let k = 0; k < n; k++) {
+      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality }, 120000);
+      const file = path.join(out, `${name}_${String(k).padStart(4, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64')); files.push(file);
+      if (k === 0) first = f.raceTime; last = f.raceTime; if (k === (n >> 1)) mid = f.data;
+    }
+  } finally { await call(p, 'race.recmode', { on: false }).catch(() => {}); }
+  let mp4 = null;
+  if (encode) { mp4 = path.join(out, `${name}.mp4`);
+    await new Promise((res, rej) => { const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', path.join(out, `${name}_%04d.jpg`), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', mp4], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = ''; ff.stderr.on('data', d => { err += d; }); ff.on('error', rej); ff.on('close', c => c === 0 ? res() : rej(new Error('ffmpeg: ' + err.slice(-400)))); }); }
+  return ok({ type: 'image', data: mid, mimeType: 'image/jpeg' }, text({ frames: n, fps, dir: out, first: files[0], last: files[files.length - 1], mp4, raceTime: [first, last] }));
+});
+
+tool('race_audio', {
+  title: 'Record the music',
+  description: 'Record the game\'s music (the master bus, with the engine hum muted) for `seconds` of real time and save it as a .webm (opus) file. Starts the audio and the current race\'s music if they are not playing. For a soundtrack under recorded footage.',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(180).default(30), file: z.string() },
+}, async ({ page, seconds, file }) => {
+  const a = await call(pick(page, 'race.audio'), 'race.audio', { seconds }, (seconds + 30) * 1000);
+  const f = path.resolve(file); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(a.data, 'base64'));
+  return ok(text({ file: f, bytes: fs.statSync(f).size, seconds, style: a.style, beat: a.beat }));
+});
 
 tool('race_regress', {
   title: 'Visual regression of a character',

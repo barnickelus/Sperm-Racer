@@ -63,6 +63,10 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_motion` | **How fluidly a racer moves.** It steps the race at 1/60 s and tracks the head, the neck's turn, the tail tip and every swaying part in the racer's own space. Per probe it reports RMS speed, acceleration and jerk, and *snaps*: frames whose jerk is far above that probe's median. Low jerk with few snaps reads as fluid; high jerk reads as popping. `series:true` adds the per-frame speed and the frames each snap fell on |
 | `race_regress` | **Visual regression.** It draws a rest-pose turnaround (or the expressions) in studio light and compares it with that character's golden sheet: the share of pixels changed, a heat map of where, and pass/fail. The first run, or `update:true`, saves the golden |
 | `scene_page` | The whole page as a player sees it (HUD, menus, overlays), not only the canvas. Headless pages only |
+| `race_perf` | **Where the frame time goes.** It runs whole frames at a fixed step (or on the page's own clock) and reports: the frame by segment (sim, racers, camera, minimap, world, particles, render) with p50/p95/p99 and the worst frame; the browser's layout and style work; Chrome's CPU profile (top functions, and game functions with their callees); its allocation profile; and every shader compiled mid-race, with the frame it hit. `draw:false` measures the JavaScript alone |
+| `race_record` | **Film a shot at an exact frame rate**, however slow the machine. The game is stepped 1/fps of game time per frame, the camera is placed for each frame (the chase cam, or a photo camera eased from one framing to another), and each frame is saved as a JPEG. `encode:true` adds an MP4 |
+| `race_audio` | Record the game's music for N seconds as a .webm, with the engine hum muted, for a soundtrack |
+| `race_fx` | Hold a racing effect up on your kart for a look or a film (the slipstream's wind lines) |
 | `scene_screenshot` / `scene_stats` / `scene_graph` / `page_logs` | Look, measure (draw calls and triangles per frame), inspect the object tree, read the console |
 
 Try asking Claude: *"Race Tex Calloway on Ophelia at hard difficulty on
@@ -126,7 +130,7 @@ tools then drive your tab instead of a headless one.
 npm test          # SHOTS=some/dir npm test  keeps the screenshots
 ```
 
-The test covers 24 checks over stdio. Among them: the real-time loop still
+The test covers 26 checks over stdio. Among them: the real-time loop still
 running the race, a page without `?mcp` staying inert, Rusty Malone's
 expression rig, studio and sheets, Guido's Fluid copy measuring smoother
 than Guido, and a rest-pose sheet coming out pixel-identical between runs.

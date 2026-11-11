@@ -48,8 +48,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose', 'race_realtime',
-    'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_audio', 'race_fx', 'race_options', 'race_palette', 'race_perf', 'race_pose', 'race_realtime',
+    'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
     'scene_profile', 'scene_screenshot', 'scene_stats']);
 });
 
@@ -300,6 +300,23 @@ await check('race_perf: the frame split into segments, the browser\'s style work
   const drawn = json(await call('race_perf', { seconds: 1, cpu: false, alloc: false }));
   assert.ok(drawn.frame.draws > 20, `${drawn.frame.draws} draw calls`);
   assert.ok(drawn.frame.shaderCompiles.length <= 1, 'no shader compiles mid-race: ' + JSON.stringify(drawn.frame.shaderCompiles));
+});
+
+await check('race_record films at an exact frame rate; race_audio records the music; slipstream is reported', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-rec-'));
+  try {
+    const r = json(await call('race_record', { seconds: 0.5, fps: 12, dir, name: 'shot', cam: { mode: 'photo', from: { azimuth: 30, distance: 20 }, to: { azimuth: 60, distance: 16 } } }));
+    assert.equal(r.frames, 6); assert.equal(fs.readdirSync(dir).filter(f => f.endsWith('.jpg')).length, 6);
+    assert.ok(r.raceTime[1] > r.raceTime[0], 'game time moved on between frames');
+    const a = json(await call('race_audio', { seconds: 2, file: path.join(dir, 'm.webm') }));
+    assert.ok(a.bytes > 4000, `${a.bytes} bytes of music`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const st = json(await call('race_state'));
+  assert.ok(st.standings.every(s => typeof s.draft === 'number' && typeof s.slingshots === 'number'));
+  assert.equal(json(await call('race_fx', { slipstream: 1 })).slipstream, 1);
+  const sg = json(await call('scene_graph', { root: 'slipstream', depth: 0 }));
+  assert.ok(sg.root.instances >= 20, 'the wind lines are one instanced draw');
+  json(await call('race_fx', { slipstream: null }));
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {

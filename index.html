@@ -74028,7 +74028,8 @@ function hzDraw(){
    hook at the end of this file): a software-rendered page draws a few frames a second, and the
    race must not slow to a crawl — or turn on how fast the machine drew — just because it is being
    watched. frame() calls this exactly as it always ran inline. */
-const SIM={manual:false, cam:null, tick:null, t:0, busy:false};   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
+const SIM={manual:false, cam:null, tick:null, t:0, busy:false};
+const REC={on:false, pr:1, cam:null, k:0};   // race.recmode / race.rec: filming at a fixed frame rate   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
 /* A photographer's camera for the outside driver: orbit one racer at a fixed offset relative to
    its heading (azimuth 0 = in front, looking at its face; 180 = straight behind), after the chase
    camera has had its say. Only ever set from the MCP hook; null the rest of the time. */
@@ -78565,6 +78566,52 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(k%30===29) await new Promise(res=>setTimeout(res,0));
       } } finally { SIM.busy=false; hold([]); }
       return { frames, raceTime:r1(raceTime), state };
+    },
+
+    /* — RECORD: film at an exact frame rate whatever the machine's speed. recmode on: the display loop stands aside (only
+         race.rec draws), the canvas renders at pixel ratio 1, the race is stepped by hand. Each race.rec advances the game
+         1/fps (in 1/60 s steps), places the camera (the chase cam, or a photo camera eased between two framings over the shot),
+         draws once and returns the frame as a JPEG. — */
+    'race.recmode': ({on=true, pixelRatio=1}={})=>{
+      if(on){ if(!REC.on){ REC.pr=renderer.getPixelRatio(); REC.cam=SIM.cam; } REC.on=true; SIM.busy=true; if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+        renderer.setPixelRatio(pixelRatio); resize(); }
+      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
+      const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
+    },
+    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9}={})=>{
+      if(!REC.on) throw new Error('race.recmode first');
+      if(cam){ if(cam.mode==='chase') SIM.cam=null;
+        else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
+          const L=key=>{ const a=A[key], b=B[key]; return a==null?(b==null?undefined:b):b==null?a:a+(b-a)*e; };
+          const who=cam.who?racers.find(r=>r.name===cam.who||r.id===cam.who):null;
+          SIM.cam={ who:who?who.name:null, azimuth:L('azimuth')??0, elevation:L('elevation')??10, distance:L('distance')??24, height:L('height')??3.5, fov:L('fov')??40, along:L('along')??0 }; } }
+      const steps=Math.max(1,Math.round(60/fps)), dt=1/60;
+      for(let i=0;i<steps;i++){
+        const sim=!still && state==='race' && !cupPause;
+        if(sim) hold(autopilot?[...autoKeys(me(),REC.k++),...extra]:extra);
+        SIM.t+=dt; const t0=performance.now();
+        frameStep(t0, dt, SIM.t, t0, sim, i===steps-1); }
+      const url=renderer.domElement.toDataURL('image/jpeg', quality);
+      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state };
+    },
+    /* — AUDIO: record what the speakers get (the produced songs play straight into the master bus) for `seconds` of real
+         time, as webm/opus, with the engine's hum muted meanwhile (a frozen race fires no other effects). Starts the audio
+         and the music if they are not running. — */
+    'race.audio': async ({seconds=30}={})=>{
+      initAudio(); if(!actx) throw new Error('no audio context');
+      if(actx.state!=='running') await actx.resume();
+      if(!musicTimer) startMusic();
+      await waitFor(()=>!!musicGain, 5000, 'the music');
+      const dest=actx.createMediaStreamDestination(), lim=actx.createDynamicsCompressor();
+      lim.threshold.value=-10; lim.ratio.value=8; masterGain.connect(lim); lim.connect(dest);
+      const eg=engineGain?engineGain.gain.value:null; if(engineGain) engineGain.gain.value=0;
+      const rec=new MediaRecorder(dest.stream, { mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:192000 }), parts=[];
+      rec.ondataavailable=e=>{ if(e.data.size) parts.push(e.data); };
+      const done=new Promise(res=>{ rec.onstop=res; });
+      rec.start(1000); await new Promise(r=>setTimeout(r, seconds*1000)); rec.stop(); await done;
+      try{ masterGain.disconnect(lim); }catch(_){} if(engineGain && eg!=null) engineGain.gain.value=eg;
+      const buf=new Uint8Array(await new Blob(parts,{type:'audio/webm'}).arrayBuffer()); let bin=''; for(let i=0;i<buf.length;i+=0x8000) bin+=String.fromCharCode.apply(null, buf.subarray(i,i+0x8000));
+      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat() };
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
