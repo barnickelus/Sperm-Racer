@@ -79598,19 +79598,24 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
       const white=new T.MeshBasicMaterial({ color:0xffffff, fog:false }), black=new T.MeshBasicMaterial({ color:0x000000, fog:false });
       const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white; o.layers.enable(3); }
-      const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear;
+      const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear, hid=[];
       try{
         scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
         camera.layers.set(3); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,a);   // alone
         // everything else in black, for its depth: only solid things hide a racer (not glows, sprites, haze, water, its own outline)
-        const hid=[]; scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
+        scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
             (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
         for(const o of hid) o.visible=false;
         camera.layers.mask=L; scene.overrideMaterial=black; renderer.clear(); renderer.render(scene,camera);
         for(const o of hid) o.visible=true;
         scene.overrideMaterial=null; renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
         renderer.readRenderTargetPixels(rt,0,0,W,H,v);
+      } catch(e){   // name whatever geometry broke the pass, so the fault can be found
+        const bad=[]; scene.traverse(o=>{ const g=o.geometry; if(!g) return; const at=g.attributes||{};
+          for(const k in at) if(!at[k]) bad.push((o.name||o.type)+'.'+k); if(g.index===undefined) bad.push((o.name||o.type)+'.index'); });
+        throw new Error(e.message+(bad.length?' — geometry with a missing attribute: '+bad.slice(0,8).join(', '):''));
       } finally {
+        for(const o of hid) o.visible=true;
         renderer.autoClear=ac; scene.overrideMaterial=null; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
         for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } white.dispose(); black.dispose(); rt.dispose(); SIM.cam=held; }
       let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
