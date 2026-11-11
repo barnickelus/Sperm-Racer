@@ -23,6 +23,7 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -201,7 +202,13 @@ function pageSummary(p) {
   return { page: p.id, name: p.hello.name, url: p.hello.url, mode: p.headless ? 'headless (launched by this server)' : 'live tab',
            gpu: p.hello.gpu, softwareRendering: !!p.hello.software };
 }
-async function shot(p, { maxWidth = 1000, format = 'jpeg' } = {}) {
+// Pictures cost the agent that looks at them in proportion to their pixels: tools return them at a working width
+// (SPERM_RACER_MCP_IMAGE_MAX, 800 by default; 0 = full size). Files written to disk keep full size.
+const IMG_MAX = process.env.SPERM_RACER_MCP_IMAGE_MAX != null ? +process.env.SPERM_RACER_MCP_IMAGE_MAX : 800;
+async function fit(p, data, maxWidth) { const w = maxWidth ?? IMG_MAX; if (!w) return data;
+  try { return (await call(p, 'img.fit', { data, maxWidth: w })).data; } catch { return data; } }
+const maxWidthArg = z.number().int().min(0).max(4096).optional().describe(`width of the returned picture (default ${IMG_MAX}; 0 = full size). Smaller costs less to look at`);
+async function shot(p, { maxWidth = IMG_MAX || 1600, format = 'jpeg' } = {}) {
   const s = await call(p, 'scene.screenshot', { maxWidth, format });
   return [{ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${p.id} · ${s.width}×${s.height}${p.hello.software ? ' · software GL' : ''}`)];
 }
@@ -238,7 +245,7 @@ tool('scene_close', {
 tool('scene_screenshot', {
   title: 'Screenshot the game',
   description: 'What the 3D canvas shows right now (HUD and menus are HTML and are not included).',
-  inputSchema: { page: pageArg, maxWidth: z.number().int().min(64).max(2048).default(1000), format: z.enum(['jpeg', 'png']).default('jpeg') },
+  inputSchema: { page: pageArg, maxWidth: z.number().int().min(64).max(2048).default(IMG_MAX || 1600), format: z.enum(['jpeg', 'png']).default('jpeg') },
   annotations: { readOnlyHint: true },
 }, async ({ page, maxWidth, format }) => ok(...await shot(pick(page, 'scene.screenshot'), { maxWidth, format })));
 
@@ -289,7 +296,7 @@ tool('race_start', {
   title: 'Start a race',
   description: 'Start a solo race with the current setup. Waits through the 3-second countdown. With manual:true (default) the race then stays frozen on the grid until race_drive steps it; manual:false lets it run in real time (slow motion on a software GPU).',
   inputSchema: { page: pageArg, manual: z.boolean().default(true) },
-}, async ({ page, manual }) => ok(text(await call(pick(page, 'race.start'), 'race.start', { manual }, 120000))));
+}, async ({ page, manual }) => ok(text(await call(pick(page, 'race.start'), 'race.start', { manual }, 200000))));
 
 tool('race_drive', {
   title: 'Drive the race forward',
@@ -345,11 +352,12 @@ tool('race_sheet', {
     cell: z.number().int().min(120).max(600).default(300), columns: z.number().int().min(1).max(10).optional(), title: z.string().optional(),
     photo: z.object({ elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), fov: z.number().optional(), along: z.number().optional() }).optional(),
     rest: z.boolean().default(false).describe('draw a fresh build of the character in its rest pose at a fixed heading, not the live racer: the same pixels every time'),
+    maxWidth: maxWidthArg,
   },
-}, async ({ page, ...a }) => {
+}, async ({ page, maxWidth, ...a }) => {
   const p = pick(page, 'race.sheet');
   const s = await call(p, 'race.sheet', a, 240000);
-  return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${s.cells} cells · ${s.width}×${s.height}`));
+  return ok({ type: 'image', data: await fit(p, s.data, maxWidth), mimeType: 'image/jpeg' }, text(`${s.cells} cells · drawn ${s.width}×${s.height}`));
 });
 
 tool('race_film', {
@@ -360,19 +368,21 @@ tool('race_film', {
     still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]),
     cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional(),
     cell: z.number().int().min(120).max(600).default(320), columns: z.number().int().min(1).max(8).optional(), title: z.string().optional(),
+    maxWidth: maxWidthArg,
   },
-}, async ({ page, ...a }) => {
+}, async ({ page, maxWidth, ...a }) => {
   const p = pick(page, 'race.film');
   const s = await call(p, 'race.film', a, 300000);
-  return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text(`${s.frames} frames · ${s.width}×${s.height}`));
+  return ok({ type: 'image', data: await fit(p, s.data, maxWidth), mimeType: 'image/jpeg' }, text(`${s.frames} frames · drawn ${s.width}×${s.height}`));
 });
 
 tool('scene_profile', {
   title: 'Profile render cost',
-  description: 'What each racer on the grid costs to draw (visible meshes ≈ draw calls, triangles, materials, textures), the track, and the whole scene. roster:true also builds EVERY character off-screen once and measures it, build time included: the table to keep new characters within budget.',
-  inputSchema: { page: pageArg, roster: z.boolean().default(false) },
+  description: 'What each racer on the grid costs to draw (visible meshes ≈ draw calls, triangles, materials, textures), the track, and the whole scene. trackTop lists the course\'s heaviest pieces. roster:true also builds EVERY character off-screen once and measures it, build time included: the table to keep new characters within budget.',
+  inputSchema: { page: pageArg, roster: z.boolean().default(false), top: z.number().int().min(1).max(60).default(12).describe('how many of the course\'s heaviest pieces to list (trackTop)'),
+    inView: z.boolean().default(false).describe('also count only what the camera draws right now (frustum-tested), by the piece it belongs to') },
   annotations: { readOnlyHint: true },
-}, async ({ page, roster }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster }, 180000))));
+}, async ({ page, roster, top, inView }) => ok(text(await call(pick(page, 'race.profile'), 'race.profile', { roster, top, inView }, 180000))));
 
 tool('race_palette', {
   title: 'Analyse a racer\'s colours',
@@ -390,7 +400,7 @@ tool('scene_page', {
 }, async ({ page, fullPage }) => {
   const p = pick(page); if (!p.headless || !p.headless.tab) throw new Error(`${p.id} is a live tab: use scene_screenshot (the canvas) instead`);
   const buf = await p.headless.tab.screenshot({ type: 'jpeg', quality: 82, fullPage });
-  return ok({ type: 'image', data: buf.toString('base64'), mimeType: 'image/jpeg' }, text(`${p.id} · whole page`));
+  return ok({ type: 'image', data: await fit(p, buf.toString('base64')), mimeType: 'image/jpeg' }, text(`${p.id} · whole page`));
 });
 
 tool('race_motion', {
@@ -398,6 +408,123 @@ tool('race_motion', {
   description: 'Step the page at 1/60 s (racing on autopilot, or still) and track probes in the racer\'s own space: head, neck turn, tail tip, swaying parts, and any ud.motionProbes. Per probe: travel, RMS speed, acceleration and jerk, and "snaps" (frames of jerk far above the probe\'s median). Low jerk with few snaps reads as fluid; high jerk reads as popping or robotic. Compare a character before and after an animation change. `series:true` adds each probe\'s per-frame speed and the frames its snaps fell on, to find what causes them.',
   inputSchema: { page: pageArg, racer: z.string().optional(), seconds: z.number().positive().max(30).default(3), still: z.boolean().default(false), autopilot: z.boolean().default(true), series: z.boolean().default(false) },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.motion'), 'race.motion', a, 120000))));
+
+tool('race_perf', {
+  title: 'Where the frame time goes',
+  description: 'Run the game for `seconds` and measure it three ways at once. mode "steps" (default) runs whole frames at a fixed 1/60 s step as fast as the machine allows (draw:false leaves the picture out, to see the JavaScript alone); "realtime" lets the page\'s own clock run it. The three measures: the game\'s frame split into segments (setup, sim, racers, camera, minimap, world animation, particles, render) in ms per frame, with the worst frame, draw calls and triangles; Chrome\'s sampling CPU profiler (top functions by self time, labelled game / three.js / native, and the game functions with the most time including what they call); and its sampling heap profiler (who allocates the most: garbage the collector must clear, which shows up as hitches). Headless pages only. A software GPU makes render and fps slow; the JavaScript costs are real. Restores manual stepping afterwards if the race was manual.',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(60).default(6), mode: z.enum(['steps', 'realtime']).default('steps'), draw: z.boolean().default(true),
+    top: z.number().int().min(5).max(60).default(18), cpu: z.boolean().default(true), alloc: z.boolean().default(true),
+    shaderChecks: z.boolean().default(false).describe('keep three\'s shader-error checks on while measuring (MCP pages have them on; players don\'t)') },
+}, async ({ page, seconds, mode, draw, top, cpu, alloc, shaderChecks }) => {
+  const p = pick(page, 'race.perf'); if (!p.headless || !p.headless.tab) throw new Error(`${p.id} is a live tab: race_perf profiles headless pages (open DevTools on a live tab instead)`);
+  const st = await call(p, 'race.state'); const wasManual = !!st.manual;
+  const cdp = await p.headless.context.newCDPSession(p.headless.tab);
+  try {
+    if (cpu) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 250 }); }
+    if (alloc) { await cdp.send('HeapProfiler.enable'); }
+    await cdp.send('Performance.enable');
+    const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]));
+    const m0 = await metrics();
+    const steps = mode === 'steps';
+    if (!steps && st.state === 'race' && wasManual) await call(p, 'race.manual', { manual: false });
+    await call(p, 'race.perf', { on: true, autopilot: !steps, shaderChecks });
+    if (cpu) await cdp.send('Profiler.start');
+    if (alloc) await cdp.send('HeapProfiler.startSampling', { samplingInterval: 16384, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+    if (steps) await call(p, 'race.frames', { frames: Math.round(seconds * 60), draw }, 600000);
+    else await new Promise(r => setTimeout(r, seconds * 1000));
+    const prof = cpu ? (await cdp.send('Profiler.stop')).profile : null;
+    const heap = alloc ? (await cdp.send('HeapProfiler.stopSampling')).profile : null;
+    const m1 = await metrics();
+    const frame = await call(p, 'race.perf', { on: false });
+    { const n = Math.max(1, frame.frames), d = k => (m1[k] || 0) - (m0[k] || 0);   // the browser's own counters: layout and style work the page caused
+      frame.browser = { layoutsPerFrame: +(d('LayoutCount') / n).toFixed(2), layoutMsPerFrame: +(d('LayoutDuration') * 1000 / n).toFixed(3),
+        styleRecalcsPerFrame: +(d('RecalcStyleCount') / n).toFixed(2), styleMsPerFrame: +(d('RecalcStyleDuration') * 1000 / n).toFixed(3),
+        scriptMsPerFrame: +(d('ScriptDuration') * 1000 / n).toFixed(3), heapMB: +((m1.JSHeapUsedSize || 0) / 1048576).toFixed(1) }; }
+    if (!steps && st.state === 'race' && wasManual) await call(p, 'race.manual', { manual: true });
+    const where = (cf) => { const u = cf.url || ''; const file = u ? u.split('/').pop().split('?')[0] : ''; const kind = /three/.test(file) ? 'three' : /index\.html/.test(file) ? 'game' : file ? file : 'native';
+      return { key: `${cf.functionName || '(anonymous)'} ${file}:${cf.lineNumber + 1}`, name: cf.functionName || '(anonymous)', at: file ? `${file}:${cf.lineNumber + 1}` : '', kind }; };
+    const out = { seconds, mode, draw, frame };
+    if (prof) {
+      const byId = new Map(prof.nodes.map(n => [n.id, n])), parent = new Map();
+      for (const n of prof.nodes) for (const c of n.children || []) parent.set(c, n.id);
+      const self = new Map(), incl = new Map(), kinds = {}; let total = 0;
+      for (let i = 0; i < prof.samples.length; i++) {
+        const dt = (prof.timeDeltas[i] || 0) / 1000; total += dt; const n = byId.get(prof.samples[i]); const w = where(n.callFrame);
+        const s0 = self.get(w.key) || { ...w, ms: 0 }; s0.ms += dt; self.set(w.key, s0); kinds[w.kind] = (kinds[w.kind] || 0) + dt;
+        const seen = new Set(); for (let id = n.id; id != null; id = parent.get(id)) { const x = where(byId.get(id).callFrame); if (x.kind !== 'game' || seen.has(x.key)) continue; seen.add(x.key);
+          const t0 = incl.get(x.key) || { ...x, ms: 0 }; t0.ms += dt; incl.set(x.key, t0); } }
+      const fmt = (a) => a.sort((x, y) => y.ms - x.ms).slice(0, top).map(x => ({ fn: x.name, at: x.at, kind: x.kind, ms: +x.ms.toFixed(1), share: +(x.ms / total).toFixed(3) }));
+      out.cpu = { sampledMs: +total.toFixed(0), byKind: Object.fromEntries(Object.entries(kinds).map(([k, v]) => [k, +(v / total).toFixed(3)]).sort((a, b) => b[1] - a[1])),
+        selfTop: fmt([...self.values()].filter(x => !/^\((idle|program)\)$/.test(x.name))), gameInclusive: fmt([...incl.values()]) };
+    }
+    if (heap) {
+      const agg = new Map(); let bytes = 0;
+      const walk = (n) => { const w = where(n.callFrame); if (n.selfSize) { const a = agg.get(w.key) || { ...w, b: 0 }; a.b += n.selfSize; agg.set(w.key, a); bytes += n.selfSize; } for (const c of n.children || []) walk(c); };
+      walk(heap.head);
+      const fr = Math.max(1, frame.frames);
+      out.alloc = { sampledMB: +(bytes / 1048576).toFixed(1), perFrameKB: +(bytes / fr / 1024).toFixed(1),
+        top: [...agg.values()].sort((a, b) => b.b - a.b).slice(0, top).map(a => ({ fn: a.name, at: a.at, kind: a.kind, kb: Math.round(a.b / 1024), kbPerFrame: +(a.b / fr / 1024).toFixed(2) })) };
+    }
+    return ok(text(out));
+  } finally { await cdp.detach().catch(() => {}); }
+});
+
+tool('race_warp', {
+  title: 'Jump the race to a point',
+  description: 'Jump the running race to any point, so a late part of a course, or a late hour of its light, can be looked at without driving there. `to` is in laps on a lap course (2.5 = halfway round the third lap) and a fraction of the way to the egg on a point-to-point course. You are placed there with the field `spread` units apart (you at the back by default, so the chase camera sees the pack ahead), at speed, with lap counts and checkpoints set as if driven. Eased course state, such as Ophelia\'s hour, snaps to the new point.',
+  inputSchema: { page: pageArg, to: z.number().min(0), spread: z.number().min(0).max(80).default(26), you: z.enum(['back', 'front', 'order']).default('back').describe('where you sit in the field: at the back (the chase camera sees the pack ahead), the front, or in race order') },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.warp'), 'race.warp', a))));
+
+tool('race_framing', {
+  title: 'Is the racer well shot?',
+  description: 'Check a shot without looking at it. From the current camera, or a photo camera given as `cam`, it renders two flat passes: the racer alone (its whole silhouette) and the racer against the scene\'s depth (what is actually seen). It reports how much of the frame the racer fills, how much of it is hidden behind solid scenery or rivals (glows, sprites, haze and water don\'t count), its box and centre in the frame (0..1, from the bottom left), whether the frame edge cuts it, and ok/why against minFill, maxFill and maxHidden.',
+  inputSchema: { page: pageArg, racer: z.string().optional(), cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional(),
+    minFill: z.number().min(0).max(1).default(0.02), maxFill: z.number().min(0).max(1).default(0.6), maxHidden: z.number().min(0).max(1).default(0.25) },
+  annotations: { readOnlyHint: true },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.framing'), 'race.framing', a))));
+
+tool('race_fx', {
+  title: 'Hold an effect up',
+  description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
+  inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional(), edenLive: z.boolean().optional().describe('Eve: the garden\'s living light (the racers\' wake and the egg\'s call) on or off, for an A/B look') },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));
+
+const frameZ = z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() });
+tool('race_record', {
+  title: 'Film a shot',
+  description: 'Film a shot at an exact frame rate, however slow the machine: the game is stepped 1/fps of GAME time per frame (racing on autopilot, held keys, or still: frozen race, live animation), the camera placed for each frame (the chase cam, or a photo camera eased from one framing to another over the shot: azimuth relative to the racer\'s heading, elevation, distance, height, along its body, fov), and every frame written to disk as a JPEG. encode:true also makes an MP4 with ffmpeg. Returns the folder, the files, the race clock at both ends, and the shot\'s middle frame to look at. The display loop stands aside while it films, and the canvas renders at pixel ratio 1 (its size is the window\'s: open the scene at 1280x720 for 720p).',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(60), fps: z.number().int().min(12).max(60).default(30), cam: z.object({ mode: z.enum(['chase', 'photo']).default('chase'), who: z.string().optional().describe('racer name or character id (default: you)'), ease: z.enum(['inout', 'linear', 'in', 'out']).default('inout'), from: frameZ.optional(), to: frameZ.optional() }).optional(),
+    still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]), quality: z.number().min(0.5).max(1).default(0.9),
+    straight: z.boolean().default(false).describe('the filmed racer looks straight ahead (no glancing at rivals): for portraits'),
+    dir: z.string().optional().describe('folder for the frames (default mcp/recordings)'), name: z.string().default('shot'), encode: z.boolean().default(false) },
+}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, straight, dir, name, encode }) => {
+  const p = pick(page, 'race.rec');
+  const out = path.resolve(dir || path.join(here, 'recordings')); fs.mkdirSync(out, { recursive: true });
+  const n = Math.max(1, Math.round(seconds * fps)), files = []; let first = null, last = null, mid = null;
+  await call(p, 'race.recmode', { on: true });
+  try {
+    for (let k = 0; k < n; k++) {
+      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality, straight }, 120000);
+      const file = path.join(out, `${name}_${String(k).padStart(4, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64')); files.push(file);
+      if (k === 0) first = f.raceTime; last = f.raceTime; if (k === (n >> 1)) mid = f.data;
+    }
+  } finally { await call(p, 'race.recmode', { on: false }).catch(() => {}); }
+  let mp4 = null;
+  if (encode) { mp4 = path.join(out, `${name}.mp4`);
+    await new Promise((res, rej) => { const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', path.join(out, `${name}_%04d.jpg`), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', mp4], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = ''; ff.stderr.on('data', d => { err += d; }); ff.on('error', rej); ff.on('close', c => c === 0 ? res() : rej(new Error('ffmpeg: ' + err.slice(-400)))); }); }
+  return ok({ type: 'image', data: await fit(p, mid), mimeType: 'image/jpeg' }, text({ frames: n, fps, dir: out, first: files[0], last: files[files.length - 1], mp4, raceTime: [first, last] }));
+});
+
+tool('race_audio', {
+  title: 'Record the music',
+  description: 'Record the game\'s music (the master bus, with the engine hum muted) for `seconds` of real time and save it as a .webm (opus) file. Starts the audio and the current race\'s music if they are not playing. For a soundtrack under recorded footage.',
+  inputSchema: { page: pageArg, seconds: z.number().positive().max(180).default(30), file: z.string() },
+}, async ({ page, seconds, file }) => {
+  const a = await call(pick(page, 'race.audio'), 'race.audio', { seconds }, (seconds + 30) * 1000);
+  const f = path.resolve(file); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(a.data, 'base64'));
+  return ok(text({ file: f, bytes: fs.statSync(f).size, seconds, style: a.style, beat: a.beat }));
+});
 
 tool('race_regress', {
   title: 'Visual regression of a character',
@@ -416,7 +543,7 @@ tool('race_regress', {
   const dir = BASELINES, file = path.join(dir, `${id}-${kind}.jpg`);
   fs.mkdirSync(dir, { recursive: true });
   if (update || !fs.existsSync(file)) { fs.writeFileSync(file, Buffer.from(s.data, 'base64'));
-    return ok({ type: 'image', data: s.data, mimeType: s.mimeType }, text({ saved: path.relative(ROOT, file), note: update ? 'golden updated' : 'no golden yet: this render is now the golden' })); }
+    return ok({ type: 'image', data: await fit(p, s.data), mimeType: 'image/jpeg' }, text({ saved: path.relative(ROOT, file), note: update ? 'golden updated' : 'no golden yet: this render is now the golden' })); }
   const d = await call(p, 'race.diff', { a: fs.readFileSync(file).toString('base64'), b: s.data });
   const pass = d.changed <= threshold;
   return ok({ type: 'image', data: d.heat, mimeType: 'image/jpeg' }, text({ character: id, kind, golden: path.relative(ROOT, file), changed: d.changed, meanDelta: d.meanDelta, threshold, pass }));
@@ -435,10 +562,12 @@ tool('race_select', {
 
 tool('race_camera', {
   title: 'Point the camera',
-  description: 'mode "chase" is the game\'s own camera. mode "photo" orbits one racer relative to its heading — azimuth 0 = in front looking at its face, 90 = its left side, 180 = behind — at elevation degrees and distance units (a racer\'s head is ~7 units long), aimed `height` above its origin. Use photo to inspect a character model; then scene_screenshot.',
+  description: 'mode "free" puts the camera at a world point `from`, looking at `at` (or round a hazard by index). mode "chase" is the game\'s own camera. mode "photo" orbits one racer relative to its heading — azimuth 0 = in front looking at its face, 90 = its left side, 180 = behind — at elevation degrees and distance units (a racer\'s head is ~7 units long), aimed `height` above its origin. Use photo to inspect a character model; then scene_screenshot.',
   inputSchema: {
     page: pageArg,
-    mode: z.enum(['chase', 'photo']).default('photo'),
+    mode: z.enum(['chase', 'photo', 'free']).default('photo'),
+    from: z.array(z.number()).length(3).optional().describe('free: the camera\'s world position'), at: z.array(z.number()).length(3).optional().describe('free: the world point it looks at'),
+    hazard: z.number().int().min(0).optional().describe('free: frame this hazard (crab, pill...) by index, from azimuth/elevation/distance around it'),
     racer: z.string().optional().describe('Racer name (from race_state); default your kart'),
     azimuth: z.number().default(30), elevation: z.number().min(-80).max(85).default(12),
     distance: z.number().positive().default(22), height: z.number().default(3.5), fov: z.number().min(10).max(100).default(35),

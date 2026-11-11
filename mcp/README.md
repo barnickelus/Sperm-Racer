@@ -36,6 +36,10 @@ While manual, the page also runs on a game-time clock (`SIM.t`), so timed
 animation such as an expression held for 2 seconds lasts 2 game seconds, not
 2 wall seconds.
 
+Each step is a whole game frame without the drawing: the race, the racers, the
+camera and the course's own world (Victoria's posters tearing, Eve's garden
+answering the pack), so a drive leaves a course exactly as playing it would.
+
 Your kart is driven through the game's own `keys` set, exactly as a keyboard
 drives it. It runs either on **autopilot** (steers for the same look-ahead
 point the AI uses, drifts the bends, fires items) or with **held keys**.
@@ -52,17 +56,23 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_drive` | Drive N game seconds on autopilot or held keys. Returns distance, speeds, off-road and airborne time, laps and splits, spins, boosts, place changes, items, **seconds spent in each expression** (for characters with a face rig), and the standings. `untilFinish:true` drives to the line |
 | `race_state` | State, clock, and every racer's place, lap, speed, position, item, off-road and spin status. `music` is the race song's beat clock (bpm, phase in the beat and the bar) when a produced song is playing |
 | `race_realtime` | Hand the race back to the page's own clock, or freeze it again |
-| `race_camera` | `photo`: orbit one racer (azimuth relative to its heading, elevation, distance, `along` its body). `chase`: the game's camera, settled at once |
+| `race_camera` | `photo`: orbit one racer (azimuth relative to its heading, elevation, distance, `along` its body). `chase`: the game's camera, settled at once. `free`: from any world point to another, or framing a hazard by index |
+| `race_warp` | **Jump the race to any point**: laps on a lap course, a fraction of the way to the egg on a point-to-point one. You go at the back of the field, so the chase camera sees the pack, with laps and checkpoints set as if driven. Eased course state, such as Ophelia's hour, snaps to it. Check a late part of a course without driving there |
+| `race_framing` | **Is the racer well shot?** Without returning a picture, it reports how much of the frame the racer fills, how much is hidden behind solid scenery or rivals, its box and centre, whether the edge cuts it, and ok/why. It works from two flat passes, the racer alone and the racer against the scene's depth |
 | `race_select` | The character-select screen with a given racer on its 3D stage, plus the stage's build timings |
 | `race_studio` | One racer alone on a plain backdrop, lit by the course's lights or a studio rig. It uses render layers, so nothing else in the scene can leak into frame |
 | `race_pose` | List a character's expressions, or force one (held for N seconds) |
 | `race_sheet` | **The engine draws a character reference sheet** and returns it as one image: an 8-view turnaround, every expression, or your own cells. Use it to compare a model against concept art. `rest:true` draws a fresh build in its rest pose at a fixed heading instead of the live racer, so the same character gives the same pixels every time |
 | `race_film` | **A filmstrip:** N frames over game time in one image, so motion can be judged. `still:true` keeps the race frozen while the racers' own animation (smoke, cloth, faces) runs |
-| `scene_profile` | **Render cost per racer** (draw calls, triangles, materials, textures), the track and the scene. `roster:true` builds every character off-screen and returns the whole table, build times included |
+| `scene_profile` | **Render cost per racer** (draw calls, triangles, materials, textures), the track and the scene. `trackTop` names the course's heaviest pieces and rolls identical ones together. `inView:true` counts only what the camera draws right now, by the piece it belongs to. `roster:true` builds every character off-screen and returns the whole table, build times included |
 | `race_palette` | **Which parts of a racer blend together on screen.** It renders the frame and an ID pass from the same camera, then reports each part's share of the pixels, its real on-screen colour, and the closest pairs by CIE ΔE. Under about 10 reads as the same colour at racing distance |
 | `race_motion` | **How fluidly a racer moves.** It steps the race at 1/60 s and tracks the head, the neck's turn, the tail tip and every swaying part in the racer's own space. Per probe it reports RMS speed, acceleration and jerk, and *snaps*: frames whose jerk is far above that probe's median. Low jerk with few snaps reads as fluid; high jerk reads as popping. `series:true` adds the per-frame speed and the frames each snap fell on |
 | `race_regress` | **Visual regression.** It draws a rest-pose turnaround (or the expressions) in studio light and compares it with that character's golden sheet: the share of pixels changed, a heat map of where, and pass/fail. The first run, or `update:true`, saves the golden |
 | `scene_page` | The whole page as a player sees it (HUD, menus, overlays), not only the canvas. Headless pages only |
+| `race_perf` | **Where the frame time goes.** It runs whole frames at a fixed step (or on the page's own clock) and reports: the frame by segment (sim, racers, camera, minimap, world, particles, render) with p50/p95/p99 and the worst frame; the browser's layout and style work; Chrome's CPU profile (top functions, and game functions with their callees); its allocation profile; and every shader compiled mid-race, with the frame it hit. `draw:false` measures the JavaScript alone |
+| `race_record` | **Film a shot at an exact frame rate**, however slow the machine. The game is stepped 1/fps of game time per frame, the camera is placed for each frame (the chase cam, or a photo camera eased from one framing to another), and each frame is saved as a JPEG. `encode:true` adds an MP4 |
+| `race_audio` | Record the game's music for N seconds as a .webm, with the engine hum muted, for a soundtrack |
+| `race_fx` | Hold a racing effect up on your kart for a look or a film (the slipstream's wind lines), or switch Eve's living light off and on for an A/B look |
 | `scene_screenshot` / `scene_stats` / `scene_graph` / `page_logs` | Look, measure (draw calls and triangles per frame), inspect the object tree, read the console |
 
 Try asking Claude: *"Race Tex Calloway on Ophelia at hard difficulty on
@@ -118,6 +128,7 @@ tools then drive your tab instead of a headless one.
 | `SPERM_RACER_MCP_PORT` | `7458` | HTTP and WebSocket port. If it's busy, the next 9 ports are tried. `0` picks any free port. Tesserae-Engine's server uses 7457, so both can run at once |
 | `SPERM_RACER_MCP_ORIGINS` | none | Extra page origins allowed on the bridge |
 | `CHROMIUM_PATH` | auto | Browser for `scene_open`. Otherwise Playwright's own browser, then your installed Chrome |
+| `SPERM_RACER_MCP_IMAGE_MAX` | `800` | Width of the pictures tools return (0 = full size). Pictures cost the agent that looks at them in proportion to their pixels, so tools return a working size; files on disk keep full size. Most image tools also take `maxWidth` |
 | `SPERM_RACER_MCP_BASELINES` | `mcp/baselines` | Where `race_regress` keeps golden sheets. They are per machine (a GPU and a software renderer draw differently), so the folder is git-ignored |
 
 ## Test
@@ -126,7 +137,7 @@ tools then drive your tab instead of a headless one.
 npm test          # SHOTS=some/dir npm test  keeps the screenshots
 ```
 
-The test covers 24 checks over stdio. Among them: the real-time loop still
+The test covers 27 checks over stdio. Among them: the real-time loop still
 running the race, a page without `?mcp` staying inert, Rusty Malone's
 expression rig, studio and sheets, Guido's Fluid copy measuring smoother
 than Guido, and a rest-pose sheet coming out pixel-identical between runs.

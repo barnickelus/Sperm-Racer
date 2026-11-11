@@ -1149,12 +1149,13 @@
      dead space under the modes. While the Horizon home is up, the page wears the cabinet's colour so nothing can show through; and
      in the Home Screen app (no browser bars, so the large viewport IS the screen) the home is sized to the full screen height. */
   /* (the racer select and the lobby wear the cabinet too under Horizon, so they get the same backing) */
-  html:has(body.hz :is(#start,#select,#mp):not(.hidden)),body.hz:has(:is(#start,#select,#mp):not(.hidden)){background:#0E0806;}
+  /* (on classes, not :has() on <html>/<body>: with :has() there, every HUD write in a race restyled the whole page — 3 ms a frame. screenClasses() keeps them) */
+  html.hz-scr-menu,body.hz.scr-menu{background:#0E0806;}
   /* #fx sits above the screens (z-index 2), so the in-race edge vignette (an inset shadow ~230px deep at .85) was darkening the
      home itself: measured, the bottom row's text fell from 230 to 95 brightness, the top bar's to ~168 — the dim, hard-to-read
      settings and the "dead" dark band at the bottom. The cabinet has its own scanlines and glow; the vignette waits for the race.
      (The same reason body.sel-up turns it down on the racer select.) */
-  body.hz:has(#start:not(.hidden)) #vignette{opacity:0;}
+  body.hz.scr-start #vignette{opacity:0;}
   @media (display-mode:standalone){ @supports (height:100lvh){ body.hz #start{bottom:auto;height:100lvh;} } }
   @media (prefers-reduced-motion:reduce){ #start.firstrun #hzdeck #startbtn::before,#start.firstrun #hzdeck #startbtn .go-main::after{animation:none;} }
 
@@ -1446,7 +1447,7 @@
      (RACE on the right, as on the home). All under body.hz: Classic keeps its look, and .hzf-* are display:none there. No backdrop
      blur; the race behind shows through dimmed, under the cabinet's scanlines. */
   #finish .hzf-sky,#finish .hzf-lb,#finish .hzf-rb{display:none;}
-  body.hz:has(#finish:not(.hidden)) #vignette{opacity:0;}
+  body.hz.scr-finish #vignette{opacity:0;}
   body.hz #finish{--ht:clamp(34px,min(11vw,6.4vh),64px);--race:clamp(24px,4vh,34px);--px:clamp(14px,4.6vw,40px);--py:clamp(10px,1.8vh,22px);
     --hzf-in:36px;--hz-rp:8px;--hzf-rh:34px;--fw:680px;counter-reset:hzf;
     display:grid;grid-template-columns:minmax(0,1fr) minmax(0,var(--fw)) minmax(0,1fr);
@@ -2672,6 +2673,22 @@
 </div>
 
 <script src="three.min.js"></script>
+<script>
+/* The screen classes the stylesheet keys on (scr-menu, scr-start, scr-finish on <body>; hz-scr-menu on <html>), kept by
+   one observer that only fires when a screen is shown or hidden or the home style changes. They stand in for :has()
+   rules on <html> and <body>, which made Chrome restyle the whole document on every HUD write (race_perf: style
+   recalc 3.08 ms a frame, 0.14 without). */
+(function screenClasses(){
+  const B=document.body, H=document.documentElement, up=id=>{ const e=document.getElementById(id); return !!e && !e.classList.contains('hidden'); };
+  const sync=()=>{ const menu=up('start')||up('select')||up('mp');
+    B.classList.toggle('scr-menu', menu); B.classList.toggle('scr-start', up('start')); B.classList.toggle('scr-finish', up('finish'));
+    H.classList.toggle('hz-scr-menu', menu && B.classList.contains('hz')); };
+  const mo=new MutationObserver(sync);
+  for(const id of ['start','select','mp','finish']){ const e=document.getElementById(id); if(e) mo.observe(e, { attributes:true, attributeFilter:['class'] }); }
+  mo.observe(B, { attributes:true, attributeFilter:['class'] });
+  sync();
+})();
+</script>
 <script>
 (()=>{
 "use strict";
@@ -37201,6 +37218,10 @@ const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
 /* ============== SCENE ============== */
 const app=$('app');
 const renderer=new T.WebGLRenderer({antialias:true});
+// three checks every shader it compiles by asking the GPU for the log at once — a stall each time a new effect first
+// shows in a race (race_perf: getShaderInfoLog/getProgramInfoLog ~1.2 s across a race on a software GPU). Players don't
+// read shader logs; the MCP and ?debug pages keep the check, so a broken shader still fails the tests.
+renderer.debug.checkShaderErrors=/[?&](mcp|debug)\b/.test(location.search);
 renderer.setClearColor(0x1c1218);
 renderer.outputEncoding=T.sRGBEncoding;            // richer, less muddy color
 const RES=isTouch?0.88:0.95;                       // sharper for iPad + modern displays
@@ -37222,7 +37243,7 @@ const rim = new T.DirectionalLight(0x6df2d0,0.55); rim.position.set(-60,80,-80);
 const fill = new T.PointLight(0xffe0b0,0.30,400); fill.position.set(20,60,-120); scene.add(fill);
 const flesh = new T.PointLight(0xff6f8a,0.35,500); flesh.position.set(-30,-10,40); scene.add(flesh); // fleshy underglow
 
-let _vw=0,_vh=0;
+let _vw=0,_vh=0,_vsPoll=0;
 // single source of truth for the current visible size. visualViewport reflects the ACTUAL
 // visible window on iPad — including Stage Manager / Split View window resizes and the
 // dynamic-toolbar shrink — which documentElement.clientWidth/Height can report stale during
@@ -37295,37 +37316,57 @@ function glowSprite(hex,scale){
   const s=new T.Sprite(m); s.scale.setScalar(scale||10); return s;
 }
 
-/* pooled particle system */
+/* pooled particle system — ONE draw call. Every spark, puff and confetti flake used to be a sprite of its own (a draw
+   call each: a boost or a finish put a hundred more in the frame, race_perf/scene_profile inView). They are additive,
+   so their order never mattered: now they are instances of one camera-facing quad, position / size / colour / fade
+   per instance, rewritten each frame for the live ones only. Same texture, same blending, same fog. */
 const PMAX=260;
-const pPool=[], pLive=[];
-(function initParticles(){
-  for(let i=0;i<PMAX;i++){
-    const mat=new T.SpriteMaterial({map:TEX_SPARK,transparent:true,blending:T.AdditiveBlending,depthWrite:false});
-    const sp=new T.Sprite(mat); sp.visible=false; scene.add(sp);
-    pPool.push({sp,age:0,life:1,vx:0,vy:0,vz:0,s0:1,s1:0,grav:0});
-  }
+const pPool=[], pLive=[], _pc=new T.Color();
+const PARTS=(function initParticles(){
+  const q=new T.PlaneGeometry(1,1), geo=new T.InstancedBufferGeometry();
+  geo.index=q.index; geo.setAttribute('position', q.attributes.position); geo.setAttribute('uv', q.attributes.uv);
+  const A=(n)=>{ const a=new T.InstancedBufferAttribute(new Float32Array(PMAX*n), n); a.setUsage(T.DynamicDrawUsage); return a; };
+  const iPos=A(3), iSc=A(1), iCol=A(4); geo.setAttribute('iPos',iPos); geo.setAttribute('iSc',iSc); geo.setAttribute('iCol',iCol); geo.instanceCount=0;
+  const mat=new T.ShaderMaterial({ uniforms:T.UniformsUtils.merge([T.UniformsLib.fog, { map:{ value:null } }]),
+    vertexShader:`attribute vec3 iPos; attribute float iSc; attribute vec4 iCol; varying vec2 vUv; varying vec4 vCol;
+      #include <fog_pars_vertex>
+      void main(){ vUv=uv; vCol=iCol; vec4 mvPosition=modelViewMatrix*vec4(iPos,1.0); mvPosition.xy+=position.xy*iSc;
+        gl_Position=projectionMatrix*mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader:`uniform sampler2D map; varying vec2 vUv; varying vec4 vCol;
+      #include <common>
+      #include <fog_pars_fragment>
+      void main(){ vec4 t=texture2D(map,vUv); gl_FragColor=vec4(vCol.rgb*t.rgb, t.a*vCol.a);
+        #include <encodings_fragment>
+        #include <fog_fragment>
+      }`,
+    transparent:true, blending:T.AdditiveBlending, depthWrite:false, fog:true });
+  mat.uniforms.map.value=TEX_SPARK;
+  const mesh=new T.Mesh(geo, mat); mesh.frustumCulled=false; mesh.name='particles'; scene.add(mesh);
+  for(let i=0;i<PMAX;i++) pPool.push({ x:0,y:0,z:0, r:1,g:1,b:1, age:0,life:1,vx:0,vy:0,vz:0,s0:1,s1:0,grav:0,op0:1 });
+  return { mesh, geo, iPos, iSc, iCol };
 })();
 function emit(x,y,z,opt){
   const p=pPool.pop(); if(!p)return;
-  p.sp.visible=true; p.sp.position.set(x,y,z);
-  p.sp.material.color.set(opt.color||0xffffff);
+  p.x=x; p.y=y; p.z=z; _pc.set(opt.color||0xffffff); p.r=_pc.r; p.g=_pc.g; p.b=_pc.b;
   p.age=0; p.life=opt.life||0.5;
   p.vx=opt.vx||0; p.vy=opt.vy||0; p.vz=opt.vz||0;
   p.s0=opt.s0||4; p.s1=(opt.s1!=null)?opt.s1:0; p.grav=opt.grav||0;
-  p.sp.scale.setScalar(p.s0);
-  p.sp.material.opacity=opt.op!=null?opt.op:1;
-  p.op0=p.sp.material.opacity;
+  p.op0=opt.op!=null?opt.op:1;
   pLive.push(p);
 }
 function updateParticles(dt){
+  const P=PARTS, pos=P.iPos.array, sc=P.iSc.array, col=P.iCol.array; let n=0;
   for(let i=pLive.length-1;i>=0;i--){
     const p=pLive[i]; p.age+=dt; const t=p.age/p.life;
-    if(t>=1){ p.sp.visible=false; pLive.splice(i,1); pPool.push(p); continue; }
-    p.vy-=p.grav*dt;
-    p.sp.position.x+=p.vx*dt; p.sp.position.y+=p.vy*dt; p.sp.position.z+=p.vz*dt;
-    const sc=p.s0+(p.s1-p.s0)*t; p.sp.scale.setScalar(sc);
-    p.sp.material.opacity=p.op0*(1-t);
+    if(t>=1){ pLive.splice(i,1); pPool.push(p); continue; }
+    p.vy-=p.grav*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt;
+    pos[n*3]=p.x; pos[n*3+1]=p.y; pos[n*3+2]=p.z; sc[n]=p.s0+(p.s1-p.s0)*t;
+    col[n*4]=p.r; col[n*4+1]=p.g; col[n*4+2]=p.b; col[n*4+3]=p.op0*(1-t); n++;
   }
+  P.geo.instanceCount=n; P.mesh.visible=n>0;
+  if(n){ P.iPos.needsUpdate=true; P.iSc.needsUpdate=true; P.iCol.needsUpdate=true; }
 }
 function burst(x,y,z,color,n,spread,life,size){
   for(let k=0;k<n;k++){
@@ -49077,8 +49118,29 @@ function ophMat(){ return ophLand(new T.MeshLambertMaterial({color:0xffffff})); 
    it is the slow breathing of a summer afternoon; at racing speed it is big shapes of light and
    shade sliding past in the corner of the eye, which is what makes the meadows read as open land
    under a sky rather than a lawn under a lamp. */
+// (uOphCS, the shade's depth, is 0.55 all afternoon and thins out as the sun goes down: see THE HOUR)
+const OPH_CS={value:0.55};
+/* RIM LIGHT, for the low sun (THE HOUR). Looking INTO the light, the facets a willow crown, a
+   strand or a reed blade turns edge-on to you catch it — the glowing edge every golden-hour
+   painting puts round its trees. Per vertex, like the rest of Lambert: the light comes in
+   coloured by the leaf it passes through (it is added to the direct term, which the albedo
+   multiplies). uOphRim is black all afternoon, so until then it adds nothing. */
+const OPH_RIM={value:new T.Color(0,0,0)}, OPH_SUNW={value:OPH.sun.clone()};
+const OPH_RIM_GLSL=`
+uniform vec3 uOphRim; uniform vec3 uOphSunW;
+`;
+const OPH_RIM_V=`
+      if(uOphRim.r+uOphRim.g+uOphRim.b>0.0){      // (a uniform branch: all afternoon it costs nothing)
+        vec3 sv=normalize((viewMatrix*vec4(uOphSunW,0.0)).xyz);
+        float bk=max(dot(-geometry.viewDir,sv),0.0), ed=1.0-abs(dot(geometry.normal,geometry.viewDir));
+        vec3 rl=uOphRim*(bk*bk*ed*ed);
+        vLightFront+=rl;
+        #ifdef DOUBLE_SIDED
+          vLightBack+=rl;
+        #endif
+      }`;
 const OPH_CLOUD_GLSL=`
-uniform float uOphT;
+uniform float uOphT; uniform float uOphCS;
 float ophCH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float ophCN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(ophCH(i),ophCH(i+vec2(1.0,0.0)),f.x), mix(ophCH(i+vec2(0.0,1.0)),ophCH(i+vec2(1.0,1.0)),f.x), f.y); }
@@ -49086,22 +49148,23 @@ float ophCloud(vec2 w){ vec2 p=w/270.0+vec2(uOphT*0.0195, uOphT*0.008);
   float n=ophCN(p)*0.64+ophCN(p*2.37+vec2(5.2,1.3))*0.36;      // (mean 0.49, sd 0.15: ~45% under cloud)
   return smoothstep(0.47,0.60,n); }
 `;
-function ophLand(m, key){
-  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey;
+// o.cloud:false leaves the cloud shade off (the reeds), o.rim:false the rim light (the land itself)
+function ophLand(m, key, o){
+  const prev=m.onBeforeCompile, pk=m.customProgramCacheKey, cloud=!(o&&o.cloud===false), rimOn=!(o&&o.rim===false);
   m.onBeforeCompile=(sh,r)=>{ if(prev && prev!==T.Material.prototype.onBeforeCompile) prev(sh,r);
-    sh.uniforms.uOphT=OPH_T;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL)
-      .replace('#include <lights_lambert_vertex>',`#include <lights_lambert_vertex>
+    sh.uniforms.uOphT=OPH_T; sh.uniforms.uOphCS=OPH_CS; sh.uniforms.uOphRim=OPH_RIM; sh.uniforms.uOphSunW=OPH_SUNW;
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+OPH_CLOUD_GLSL+OPH_RIM_GLSL)
+      .replace('#include <lights_lambert_vertex>','#include <lights_lambert_vertex>'+(cloud?`
       { vec4 cw=vec4(position,1.0);
         #ifdef USE_INSTANCING
           cw=instanceMatrix*cw;
         #endif
-        cw=modelMatrix*cw; float cs=1.0-0.55*ophCloud(cw.xz);
+        cw=modelMatrix*cw; float cs=1.0-uOphCS*ophCloud(cw.xz);
         vLightFront*=cs;
         #ifdef DOUBLE_SIDED
           vLightBack*=cs;
         #endif
-      }`); };
+      }`:'')+(rimOn?OPH_RIM_V:'')); };
   const base=(pk && pk!==T.Material.prototype.customProgramCacheKey) ? pk.call(m) : '';
   m.customProgramCacheKey=()=>'ophLand'+(key||'')+base;
   return m;
@@ -49125,7 +49188,8 @@ function ophSwayMat(amp, noCloud){
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;`); };
   m.customProgramCacheKey=()=>'ophSway'+amp;
-  return noCloud ? m : ophLand(m);       // the cloud shade, chained after the sway (not on the reeds: see ophFlush)
+  // the cloud shade, chained after the sway (not on the reeds: see ophFlush); the rim light on both
+  return noCloud ? ophLand(m, 'r', {cloud:false}) : ophLand(m);
 }
 /* Batched, but CULLABLE. One lap-spanning InstancedMesh has to be drawn whole every frame
    (r128 culls an InstancedMesh by its geometry's bounds, not its instances'). So each batch
@@ -49252,7 +49316,7 @@ function ophGroundMat(side){
     OPH_GRASS=ophCanvasTex(c); OPH_GRASS.encoding=T.sRGBEncoding; }
   const m=new T.MeshLambertMaterial({map:OPH_GRASS, vertexColors:true, side:side||T.FrontSide});
   m.color.setRGB(1.36,1.36,1.36);                 // cancels the sheet's mean (~0.73 linear)
-  return ophLand(m, 'g');                         // the cloud shadows cross the meadow (see ophLand)
+  return ophLand(m, 'g', {rim:false});            // the cloud shadows cross the meadow (see ophLand); no rim on the land
 }
 function ophTerrain(F, ccx, ccz){
   const N=144, W=2900, V=(N+1)*(N+1), P=new Float32Array(V*3), Cc=new Float32Array(V*3), UV=new Float32Array(V*2), c=new T.Color();
@@ -49389,18 +49453,19 @@ function ophWaterMat(lap){
       uDeep:{value:null}, uShal:{value:null}, uRip:{value:null}, uT:{value:0},
       uSky:{value:new T.Color(0xb4c8c4).convertSRGBToLinear()},
       uBank:{value:new T.Color(0x1a2c16).convertSRGBToLinear()},
+      uBed:{value:new T.Color(1,1,1)},     // the light on the bed: white all afternoon, then THE HOUR dims and warms/cools it
       uPd:{value:Pd}, uPs:{value:Ps}, uFlow:{value:OPH.flow} }]),
     vertexShader:`
       attribute vec3 aS; varying vec3 vS; varying vec3 vW; varying float vCl;
       ${OPH_CLOUD_GLSL}
       #include <fog_pars_vertex>
-      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz);
+      void main(){ vS=aS; vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vCl=ophCloud(w.xz)*(uOphCS/0.55);
         vec4 mvPosition=viewMatrix*w; gl_Position=projectionMatrix*mvPosition;
         #include <fog_vertex>
       }`,
     fragmentShader:`
       uniform sampler2D uDeep, uShal, uRip; uniform float uT, uPd, uPs, uFlow;
-      uniform vec3 uSky, uBank; varying vec3 vS; varying vec3 vW; varying float vCl;
+      uniform vec3 uSky, uBank, uBed; varying vec3 vS; varying vec3 vW; varying float vCl;
       #include <fog_pars_fragment>
       void main(){
         float ak=abs(vS.x), fv=uT*uFlow;
@@ -49408,7 +49473,7 @@ function ophWaterMat(lap){
         vec3 dC=texture2D(uDeep, vec2(vS.x/46.0+0.5, (vS.y-fv)/uPd)).rgb;
         vec3 sC=texture2D(uShal, vec2(vS.x/uPs, vS.y/uPs)).rgb;
         // the bed through the water is sunlit: a passing cloud shadow takes it down a step
-        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl);
+        vec3 base=pow(mix(sC,dC,deep), vec3(2.2))*(1.0-0.34*vCl)*uBed;
         vec3 V=normalize(cameraPosition-vW);
         float rp=texture2D(uRip, vec2(vS.x/37.0, (vS.y-fv*1.15)/61.0)).r;
         float rq=texture2D(uRip, vec2(vS.x/23.0+0.37, (vS.y-fv*0.8)/97.0+0.5)).r;
@@ -49426,45 +49491,160 @@ function ophWaterMat(lap){
     fog:true, side:T.DoubleSide });
   m.uniforms.uDeep.value=ophDeepTex(); m.uniforms.uShal.value=ophShalTex(); m.uniforms.uRip.value=ophRipTex();
   m.uniforms.uOphT=OPH_T;                // the shared clock, by reference (merge() above would have cloned it)
+  m.uniforms.uOphCS=OPH_CS;              // and the cloud shade's depth, likewise
   return m;
 }
 /* THE SKY. High summer afternoon: pale warm haze at the horizon (the lightest value in the
    whole picture, so every tree is found against it), cerulean overhead, fair-weather
    cumulus drifting, and a far line of woodland one value step off the haze. */
 function ophSky(){
-  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false,
-    uniforms:{ uT:{value:0}, uSun:{value:OPH.sun.clone()} },
+  // every colour the dome paints is a uniform, starting at the afternoon (OPH_HOURS[0]); THE HOUR moves them
+  const H0=OPH_HOURS[0], U={ uT:{value:0}, uSun:{value:OPH.sun.clone()}, uVenus:{value:OPH_VENUS.clone()}, uStar:{value:0} };
+  for(const [u,k] of OPH_SKYU) U[u]={value:(typeof H0[k]==='number') ? H0[k] : H0[k].clone()};
+  const mat=new T.ShaderMaterial({ side:T.BackSide, depthWrite:false, fog:false, uniforms:U,
     vertexShader:`varying vec3 vP; void main(){ vP=(modelMatrix*vec4(position,1.0)).xyz;
       gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader:`
-      varying vec3 vP; uniform float uT; uniform vec3 uSun;
+      varying vec3 vP; uniform float uT; uniform vec3 uSun, uVenus;
+      uniform vec3 uHor, uMid, uZen, uGlowC, uDiscC, uCloudL, uCloudS, uWood, uBand, uBand2;
+      uniform float uGlowK, uGlowP, uCov, uCloudA, uCloudG, uBandK, uStar;
       float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }
       float fbm(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*vn(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return v; }
       void main(){
         vec3 d=normalize(vP-cameraPosition); float el=d.y, az=atan(d.z,d.x);
-        vec3 c=mix(vec3(0.875,0.902,0.839), vec3(0.690,0.800,0.870), smoothstep(0.0,0.30,el));
-        c=mix(c, vec3(0.400,0.580,0.780), smoothstep(0.22,0.95,el));
+        vec3 c=mix(uHor, uMid, smoothstep(0.0,0.30,el));
+        c=mix(c, uZen, smoothstep(0.22,0.95,el));
         float sd=max(dot(d,uSun),0.0);
-        c+=vec3(1.0,0.94,0.80)*pow(sd,10.0)*0.16;
-        c=mix(c, vec3(1.0,0.99,0.95), smoothstep(0.9975,0.9990,sd));
+        // THE AFTERGLOW (the late laps): a warm band hugging the horizon, tallest and hottest under
+        // the sun and thinning to a dusky rose round the rest of the sky
+        if(uBandK>0.0){ float ta=dot(normalize(d.xz+vec2(1e-5)), normalize(uSun.xz+vec2(1e-5)))*0.5+0.5; ta*=ta;
+          c=mix(c, mix(uBand2,uBand,ta), uBandK*(0.45+0.55*ta)*(1.0-smoothstep(0.0,0.05+0.17*ta,el))); }
+        c+=uGlowC*pow(sd,uGlowP)*uGlowK;
+        // FIRST STARS (the last lap): a sparse field, the high sky first, and the evening star over the glow
+        if(uStar>0.0 && el>0.03){ vec3 sp=d*60.0, ci=floor(sp), f=fract(sp)-0.5;
+          float h=fract(sin(dot(ci,vec3(127.1,311.7,74.7)))*43758.5453);
+          if(h>0.9972){ vec3 o=vec3(fract(h*37.0),fract(h*71.0),fract(h*113.0))-0.5;
+            c+=vec3(0.92,0.94,1.0)*(1.0-smoothstep(0.08,0.26,length(f-o*0.5)))*(0.45+0.55*fract(h*997.0))
+              *smoothstep(0.3,1.0,uStar)*smoothstep(0.05,0.22,el); }
+          c+=vec3(1.0,0.96,0.86)*smoothstep(0.999965,0.99999,dot(d,uVenus))*smoothstep(0.0,0.35,uStar); }
+        c=mix(c, uDiscC, smoothstep(0.9975,0.9990,sd));
         if(el>0.0){
           vec2 cu=d.xz/(el+0.07)*0.9+vec2(uT*0.0035, uT*0.0012);
           float n=fbm(cu), n2=fbm(cu+vec2(0.09,0.05)*1.0);
-          float cov=smoothstep(0.55,0.70,n)*smoothstep(0.02,0.16,el);
-          vec3 cw=vec3(0.985,0.980,0.955), cs=vec3(0.735,0.765,0.830);
-          vec3 cc=mix(cw, cs, clamp((n2-0.58)*3.2,0.0,1.0)*0.85);
-          c=mix(c, cc, cov*0.95);
+          float cov=smoothstep(uCov,uCov+0.15,n)*smoothstep(0.02,0.16,el);
+          vec3 cc=mix(uCloudL, uCloudS, clamp((n2-0.58)*3.2,0.0,1.0)*0.85);
+          c=mix(c, cc, cov*uCloudA);
+          c+=uGlowC*pow(sd,uGlowP)*uCloudG*cov;          // low sun: the clouds round it catch its light
         }
         float tb=0.011+0.009*vn(vec2(az*7.0,1.0))+0.007*pow(abs(sin(az*53.0+vn(vec2(az*29.0,3.0))*4.0)),0.7);
         // (edges kept in ascending order: reversed smoothstep edges are undefined in GLSL)
-        c=mix(c, vec3(0.640,0.715,0.670), (1.0-smoothstep(tb-0.0015,tb+0.0015,el))*0.85);
-        c=mix(c, vec3(0.875,0.902,0.839), 1.0-smoothstep(-0.05,-0.005,el));
+        c=mix(c, uWood, (1.0-smoothstep(tb-0.0015,tb+0.0015,el))*0.85);
+        c=mix(c, uHor, 1.0-smoothstep(-0.05,-0.005,el));
         gl_FragColor=vec4(c,1.0);
       }`});
   const m=new T.Mesh(new T.SphereGeometry(1150,48,28), mat); m.frustumCulled=false; return m;
 }
+/* ---- THE HOUR. The race runs from afternoon into dusk, the way Victoria's runs through her sets:
+   lap one is the painting as Millais left it; lap two the same meadow an hour or two later, the
+   light a little lower and warmer; lap three golden hour — a low amber sun, a peach haze, the
+   willows and reeds lit round their edges when you look into it; lap four dusk, the hour Millais
+   painted himself in AUTUMN LEAVES and THE VALE OF REST: the land gone dark and cool under a
+   blue-violet sky with a last warm band along the horizon, the stream holding the sky's light
+   (the value plan turns over: the water is no longer the darkest shape, the land is), the
+   first stars, and glow-worms and fireflies along the reed beds.
+   Four keys, blended on the player's progress (eased, and only ever forward: the sun does not
+   rise again). Everything animated is a colour, an intensity, a direction or a uniform — no
+   light is added, removed, hidden or shadowed, so nothing recompiles mid-race. The menu and
+   the countdown are always key 0, which is exactly the course as built. ---- */
+const _ophHex=h=>new T.Color(h), _ophRGB=(r,g,b)=>new T.Color(r,g,b);
+const OPH_AZ0=Math.atan2(OPH.sun.z, OPH.sun.x), OPH_EL0=Math.asin(OPH.sun.y);
+const OPH_HOURS=[
+  { // 0 · AFTERNOON: the values applyOpheliaLighting, ophSky and ophWaterMat were built with
+    el:OPH_EL0, lel:OPH_EL0, az:0,
+    hemiC:_ophHex(0xc4dcec), hemiG:_ophHex(0x42562a), hemiI:0.70, sunC:_ophHex(0xfff0d4), sunI:0.96, rimC:_ophHex(0xd4e4ff), rimI:0.22,
+    fog:_ophHex(OPH.haze), fogN:260, fogF:1250,
+    hor:_ophRGB(0.875,0.902,0.839), mid:_ophRGB(0.690,0.800,0.870), zen:_ophRGB(0.400,0.580,0.780),
+    glowC:_ophRGB(1.0,0.94,0.80), glowK:0.16, glowP:10, discC:_ophRGB(1.0,0.99,0.95),
+    cloudL:_ophRGB(0.985,0.980,0.955), cloudS:_ophRGB(0.735,0.765,0.830), cov:0.55, cloudA:0.95, cloudG:0,
+    wood:_ophRGB(0.640,0.715,0.670), band:_ophRGB(1.0,0.86,0.66), band2:_ophRGB(0.92,0.88,0.80), bandK:0,
+    wSky:_ophHex(0xb4c8c4), wBank:_ophHex(0x1a2c16), wBed:_ophRGB(1,1,1),
+    cs:0.55, rim:_ophRGB(0,0,0), moteC:_ophHex(0xfff4d8), mote:1, fleckC:_ophHex(0xfff0c0), fleck:1 },
+  { // 1 · LATE AFTERNOON: the sun down to ~28°, a little warmer; the haze takes a breath of cream
+    el:0.49, lel:0.49, az:-0.08,
+    hemiC:_ophHex(0xcad8e0), hemiG:_ophHex(0x4a5826), hemiI:0.68, sunC:_ophHex(0xffe0b4), sunI:1.06, rimC:_ophHex(0xd4e0f8), rimI:0.22,
+    fogN:260, fogF:1250,
+    hor:_ophRGB(0.900,0.882,0.785), mid:_ophRGB(0.712,0.790,0.840), zen:_ophRGB(0.395,0.565,0.768),
+    glowC:_ophRGB(1.0,0.90,0.72), glowK:0.22, glowP:8, discC:_ophRGB(1.0,0.97,0.88),
+    cloudL:_ophRGB(0.992,0.962,0.905), cloudS:_ophRGB(0.722,0.738,0.805), cov:0.57, cloudA:0.93, cloudG:0.12,
+    wood:_ophRGB(0.612,0.668,0.602), band:_ophRGB(1.0,0.84,0.62), band2:_ophRGB(0.92,0.86,0.78), bandK:0.10,
+    wSky:_ophHex(0xbec8b4), wBank:_ophHex(0x1e2c16), wBed:_ophRGB(1.0,0.97,0.90),
+    cs:0.50, rim:_ophRGB(0.12,0.08,0.035), moteC:_ophHex(0xfff0cc), mote:1.05, fleckC:_ophHex(0xffe8b4), fleck:1 },
+  { // 2 · GOLDEN HOUR: a low amber sun (~9°), peach-amber haze, the clouds breaking up and gilded;
+    // warm light, cool shade (the hemisphere stays sky-blue: the shadow side is lit by the sky)
+    el:0.155, lel:0.16, az:-0.18,
+    hemiC:_ophHex(0xb8c2d6), hemiG:_ophHex(0x4e5024), hemiI:0.60, sunC:_ophHex(0xffb46a), sunI:1.38, rimC:_ophHex(0xaab8e0), rimI:0.20,
+    fogN:250, fogF:1200,
+    hor:_ophRGB(0.955,0.815,0.640), mid:_ophRGB(0.835,0.800,0.735), zen:_ophRGB(0.425,0.555,0.740),
+    glowC:_ophRGB(1.0,0.72,0.40), glowK:0.48, glowP:5, discC:_ophRGB(1.0,0.93,0.72),
+    cloudL:_ophRGB(1.0,0.84,0.64), cloudS:_ophRGB(0.680,0.615,0.665), cov:0.61, cloudA:0.90, cloudG:0.45,
+    wood:_ophRGB(0.580,0.530,0.455), band:_ophRGB(1.0,0.74,0.46), band2:_ophRGB(0.93,0.78,0.66), bandK:0.32,
+    wSky:_ophHex(0xd8b486), wBank:_ophHex(0x262410), wBed:_ophRGB(0.74,0.64,0.50),
+    cs:0.20, rim:_ophRGB(1.3,0.80,0.36), moteC:_ophHex(0xffd088), mote:1.15, fleckC:_ophHex(0xffc878), fleck:0.9 },
+  { // 3 · DUSK, the blue hour: the sun gone (~-5°), its afterglow the only warm light left
+    el:-0.088, lel:0.085, az:-0.28,
+    hemiC:_ophHex(0x6672b8), hemiG:_ophHex(0x121814), hemiI:0.36, sunC:_ophHex(0xff8c64), sunI:0.16, rimC:_ophHex(0x8494d4), rimI:0.16,
+    fogN:130, fogF:1000,
+    hor:_ophRGB(0.490,0.458,0.565), mid:_ophRGB(0.330,0.345,0.560), zen:_ophRGB(0.110,0.140,0.305),
+    glowC:_ophRGB(1.0,0.56,0.32), glowK:0.34, glowP:7, discC:_ophRGB(1.0,0.86,0.62),
+    cloudL:_ophRGB(0.930,0.640,0.580), cloudS:_ophRGB(0.340,0.330,0.460), cov:0.66, cloudA:0.85, cloudG:0.55,
+    wood:_ophRGB(0.255,0.248,0.330), band:_ophRGB(0.985,0.630,0.390), band2:_ophRGB(0.620,0.505,0.615), bandK:0.85,
+    wSky:_ophHex(0x8c86b0), wBank:_ophHex(0x0e1218), wBed:_ophRGB(0.30,0.32,0.42),
+    cs:0.0, rim:_ophRGB(0.30,0.16,0.10), moteC:_ophHex(0xffd088), mote:0, fleckC:_ophHex(0xffc878), fleck:0 }
+];
+OPH_HOURS.forEach(k=>{ if(!k.fog) k.fog=k.hor; });     // (the land fades into the sky's own horizon)
+// the dome's uniforms and the key each one follows
+const OPH_SKYU=[['uHor','hor'],['uMid','mid'],['uZen','zen'],['uGlowC','glowC'],['uGlowK','glowK'],['uGlowP','glowP'],['uDiscC','discC'],
+  ['uCloudL','cloudL'],['uCloudS','cloudS'],['uCov','cov'],['uCloudA','cloudA'],['uCloudG','cloudG'],['uWood','wood'],['uBand','band'],['uBand2','band2'],['uBandK','bandK']];
+// the evening star: low over the glow, a little south of where the sun went down
+const OPH_VENUS=(()=>{ const a=OPH_AZ0+OPH_HOURS[3].az+0.42, e=0.16; return new T.Vector3(Math.cos(e)*Math.cos(a), Math.sin(e), Math.cos(e)*Math.sin(a)); })();
+const OPH_H={value:720};                 // drawing-buffer height, for the fireflies' point size
+// The hour at u, the player's progress scaled to four laps (0 at the line, 4 at the flag). Each
+// change takes the back half of one lap and the front of the next, so every lap has a look of its
+// own and the line is crossed mid-change: lap 2 is late afternoon by its middle, lap 3 golden by
+// its middle, and the sun touches the woods as the last lap begins.
+function ophHourOf(u){ return ophSS(0.85,1.45,u)+ophSS(1.75,2.35,u)+ophSS(2.70,3.30,u); }
+function ophHour(P, u){
+  const h=ophHourOf(u), fly=ophSS(2.95,3.45,u), star=ophSS(3.15,3.85,u);
+  if(h===P.hk && fly===P.hf && star===P.hs) return;     // (all lap one, and the whole menu: nothing to do)
+  P.hk=h; P.hf=fly; P.hs=star;
+  const a=Math.min(2, Math.floor(h)), t=h-a, A=OPH_HOURS[a], B=OPH_HOURS[a+1], L=ophMix;
+  hemi.color.copy(A.hemiC).lerp(B.hemiC,t); hemi.groundColor.copy(A.hemiG).lerp(B.hemiG,t); hemi.intensity=L(A.hemiI,B.hemiI,t);
+  sun.color.copy(A.sunC).lerp(B.sunC,t); sun.intensity=L(A.sunI,B.sunI,t);
+  rim.color.copy(A.rimC).lerp(B.rimC,t); rim.intensity=L(A.rimI,B.rimI,t);
+  const az=OPH_AZ0+L(A.az,B.az,t), el=L(A.el,B.el,t), le=L(A.lel,B.lel,t);
+  if(h===0){ sun.position.copy(OPH.sun).multiplyScalar(200); OPH_SUNW.value.copy(OPH.sun); }
+  else { OPH_SUNW.value.set(Math.cos(le)*Math.cos(az), Math.sin(le), Math.cos(le)*Math.sin(az)); sun.position.copy(OPH_SUNW.value).multiplyScalar(200); }
+  if(scene.fog){   // (the MCP studio backdrop takes the fog away for a while)
+    scene.fog.color.copy(A.fog).lerp(B.fog,t); if(scene.background && scene.background.isColor) scene.background.copy(scene.fog.color);
+    scene.fog.near=L(A.fogN,B.fogN,t); scene.fog.far=L(A.fogF,B.fogF,t); }
+  if(P.sky){ const U=P.sky.uniforms;
+    for(let i=0;i<OPH_SKYU.length;i++){ const u=OPH_SKYU[i][0], k=OPH_SKYU[i][1];
+      if(typeof A[k]==='number') U[u].value=L(A[k],B[k],t); else U[u].value.copy(A[k]).lerp(B[k],t); }
+    if(h===0) U.uSun.value.copy(OPH.sun); else U.uSun.value.set(Math.cos(el)*Math.cos(az), Math.sin(el), Math.cos(el)*Math.sin(az));
+    U.uStar.value=star; }
+  if(P.water){ const U=P.water.uniforms;
+    U.uSky.value.copy(A.wSky).lerp(B.wSky,t).convertSRGBToLinear(); U.uBank.value.copy(A.wBank).lerp(B.wBank,t).convertSRGBToLinear();
+    U.uBed.value.copy(A.wBed).lerp(B.wBed,t); }
+  OPH_CS.value=L(A.cs,B.cs,t); OPH_RIM.value.copy(A.rim).lerp(B.rim,t);
+  // pollen in the sun and sun through the leaves both go out as the sun reaches the woods, well before the
+  // sky is dark: additive specks over a darkening sky read as dirt on the lens (see the motes in buildTrack)
+  P.moteK=L(A.mote,B.mote,t)*(1-ophSS(2.0,2.4,h)); if(TRACK_PULSE.motes) TRACK_PULSE.motes.material.color.copy(A.moteC).lerp(B.moteC,t);
+  P.fleckK=L(A.fleck,B.fleck,t)*(1-ophSS(2.05,2.5,h)); if(P.fleck) P.fleck.mat.color.copy(A.fleckC).lerp(B.fleckC,t);
+  if(P.fly) P.fly.U.uAmp.value=fly;
+}
+function ophMix(a,b,t){ return a+(b-a)*t; }
 // Every light re-set, so nothing strands on the next course (called after the shared rig).
 // Summer sun high and warm; a sky-blue hemisphere over a green bounce, so shadowed leaves
 // stay GREEN instead of going grey; a faint cool rim for the silhouettes against the haze.
@@ -49905,16 +50085,70 @@ function ophSwifts(R){
   m.frustumCulled=false;
   return {mesh:m, list, d:new T.Object3D()};
 }
+/* DUSK'S OWN LIFE (THE HOUR, the last lap): fireflies over the reed beds and the shallows at the
+   bank, and glow-worms in the bank grass — the summer-night lights of an English stream. Placed
+   where the verge is reed and loosestrife (ophVerge's own zoning), in loose drifts on an irregular
+   cadence; every one seated on the water or the bank under it. A firefly drifts a few units and
+   its glow swells and fades over a second or two, then rests; a glow-worm sits still and breathes.
+   Built with the course and drawn from the first frame (so the countdown compiles it), at zero
+   amplitude — which also puts every point off-screen — until the hour brings them up. */
+function ophFireflies(F, innerSign){
+  const R=harbRnd(0xF1F1E5), P=[], A=[];
+  for(const sd of [1,-1]){ const inner=sd*innerSign>0;
+    let i=(R()*5)|0;
+    while(i<STEPS){ const s=SAMP[i], toe=inner?F.toe[i]:OPH.toeOut;
+      const zv=ophNoise(i*0.017+(sd>0?0:40), sd>0?1.5:7.5), rich=zv<0.46;
+      if(R()<(rich?0.95:0.5)){ const n=3+((R()*(rich?7:3))|0), j0=(R()-0.5)*8;
+        for(let k=0;k<n;k++){ const worm=R()<0.3, t=worm ? 3+R()*12 : -2+R()*15, L=toe+t, j=j0+(R()-0.5)*12;
+          const x=s.p.x+s.n.x*sd*L+s.t.x*j, z=s.p.z+s.n.z*sd*L+s.t.z*j, q=F.near(x,z);
+          const y=(q.t<0.6 ? F.surf(q) : F.H(x,z,q)) + (worm ? 0.5+R()*0.6 : 1.8+R()*6.5);
+          P.push(x,y,z); A.push(worm ? 1.3+R()*0.6 : 2.0+R()*1.4, R()*60, worm?1:0); } }
+      i += R()<0.25 ? 9+((R()*14)|0) : 3+((R()*5)|0);
+    } }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(P,3)); g.setAttribute('aF',new T.Float32BufferAttribute(A,3));
+  const U={uT:OPH_T, uH:OPH_H, uMap:{value:TEX_GLOW}, uAmp:{value:0}};
+  const m=new T.ShaderMaterial({ transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false, uniforms:U,
+    vertexShader:`attribute vec3 aF; uniform float uT, uH, uAmp; varying float vA, vW;
+      void main(){ vW=aF.z; vA=0.0;
+        if(uAmp<0.002){ gl_Position=vec4(2.0,2.0,2.0,1.0); gl_PointSize=1.0; return; }
+        float ph=aF.y; vec3 p=position;
+        p+=(1.0-vW)*vec3(sin(uT*0.23+ph)*2.6, sin(uT*0.41+ph*1.3)*0.9, cos(uT*0.19+ph*0.7)*2.6);
+        vec4 mv=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv;
+        float dz=-mv.z;
+        gl_PointSize=min(aF.x*projectionMatrix[1][1]*uH*0.5/max(dz,1.0), 40.0);
+        float fl=smoothstep(-0.15,0.9,sin(uT*(0.5+fract(ph*0.37)*0.4)+ph));
+        vA=uAmp*(1.0-smoothstep(200.0,480.0,dz))*smoothstep(5.0,16.0,dz)*mix(0.15+0.85*fl, 0.72+0.28*sin(uT*0.21+ph), vW); }`,
+    fragmentShader:`uniform sampler2D uMap; varying float vA, vW;
+      void main(){ float a=texture2D(uMap, gl_PointCoord).a*vA; if(a<0.004) discard;
+        gl_FragColor=vec4(mix(vec3(0.95,0.96,0.55), vec3(0.66,0.96,0.58), vW), a); }`});
+  const pts=new T.Points(g, m); pts.frustumCulled=false; pts.renderOrder=3;
+  return {pts, U};
+}
 const _ophV=new T.Vector3();
 function ophTick(P, tsec){
   OPH_T.value=tsec;
+  // THE HOUR: the player's lap and fraction of a lap, scaled to four laps. On the menu and the grid
+  // it is the afternoon at once; in the race it eases after the player and never goes back.
+  { let me=null; if(state==='race'||state==='done') for(let k=0;k<racers.length;k++) if(racers[k].you){ me=racers[k]; break; }
+    const dt=Math.max(0, tsec-(P.hT==null?tsec:P.hT)); P.hT=tsec;
+    if(!me) P.u=0;
+    else { const laps=lapsOf()||4, pr=(!me._cp && (me.prog||0)>0.6) ? 0 : (me.prog||0);   // (behind the line, no lap begun: still the start)
+      const u=Math.min(4, Math.max(0, ((me.lap|0)+pr)*4/laps));
+      if(!(P.u>=0)) P.u=0;
+      // (capped at ~3x racing pace, a lap in 44 s: a lap that jumps — reversing over the line — still glides)
+      if(SIM.warped) P.u=u;   // (race_warp jumped the race: the hour goes with it, no glide)
+      else if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-dt/0.9)), dt*0.08); }
+    ophHour(P, P.u);
+    if(TRACK_PULSE.motes && P.moteK!==1) TRACK_PULSE.motes.material.opacity*=P.moteK;   // (frame() sets it afresh every frame, just above)
+    if(P.fly && P.hf>0) OPH_H.value=renderer.domElement.height||720; }
   if(P.cull) for(const m of P.cull){ const bs=m.geometry.boundingSphere;
     m.visible = camera.position.distanceTo(bs.center) - bs.radius < m.userData.ophNear; }
   if(P.water) P.water.uniforms.uT.value=tsec;
   if(P.sky) P.sky.uniforms.uT.value=tsec;
   if(P.float) ophDrift(P.float, tsec);
   if(P.fleck){ const k=Math.sin(tsec*0.37)*0.6+Math.sin(tsec*0.91+1.3)*0.4;
-    P.fleck.mat.opacity=0.24*(1+k*0.22);
+    P.fleck.mat.opacity=0.24*(1+k*0.22)*(P.fleckK!=null?P.fleckK:1);     // (sun through leaves: gone with the sun)
     P.fleck.m.position.set(Math.sin(tsec*0.23)*0.9, 0, Math.cos(tsec*0.19)*0.9); }
   if(P.swifts){ const G=P.swifts, d=G.d;
     for(let k=0;k<G.list.length;k++){ const v=G.list[k], a=v.ph+tsec*v.w;
@@ -49971,6 +50205,42 @@ const edenSm=t=>{ t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); };
    two slow incommensurate sines keyed to where it stands, height-squared so the base never
    moves; vc — geometry vertex colours (the fern's red streak); map — a texture that is also
    its own emissive map (the ringed pods). */
+/* THE GARDEN ANSWERS — light that lives. Two things move through every small light in the garden (fruit, beads, cap
+   rims, gills, and the glowing caps, cups, moss, pods and curls), and both are computed per light ON THE GPU from a
+   handful of shared uniforms, so they cost no draw calls and almost no CPU:
+   · THE WAKE. Each racer leaves its last six positions (every 0.18 s) in uWake; a light near any of them flares and
+     swells, and lets go as the point ages. The pack lights its own way, and the leaders leave a lit path through the
+     dark for the ones behind. A light outside the pack's sphere (uPack) skips the sum.
+   · THE EGG'S CALL. A sperm finds the egg by following its chemical call; here the call is light. On every heartbeat a
+     ring rolls out from the shrine across the whole garden (uCall: the egg, and the call's phase — the bars of Eve's
+     own song when it is playing, on the music clock; her slow lub-dub when it is not). Faint at the start, it swells
+     as you climb the gradient toward her (uCallK.x), and when you reach her a single great bloom sweeps the garden
+     (uCallK.zw). The egg's own pulse keeps the same time. */
+const EDEN_LIVE={ uWake:{value:Array.from({length:36},()=>new T.Vector4(0,-1e5,0,99))}, uPack:{value:new T.Vector4(0,-1e5,0,0)},
+  uCall:{value:new T.Vector4(0,0,0,0)}, uCallK:{value:new T.Vector4(0.12,650,-1,0)} };
+const EDEN_LIVE_GLSL=`
+uniform vec4 uWake[36]; uniform vec4 uPack; uniform vec4 uCall; uniform vec4 uCallK;
+varying float vLive; varying float vGold;
+float edenLive(vec3 wp, out float wk, out float gold){
+  wk=0.0;
+  if(distance(wp,uPack.xyz)<uPack.w){ for(int i=0;i<36;i++){ vec4 q=uWake[i]; vec3 d=wp-q.xyz; wk+=exp(-dot(d,d)*0.00045-q.w*0.85); } }
+  wk=min(wk,1.6);
+  // fr: 0 as the ring's front passes this light, climbing to 1 by the next — a bright front, and a short afterglow behind it
+  float de=distance(wp.xz,uCall.xz), fr=fract(uCall.w-de/uCallK.y), f=min(fr,1.0-fr);
+  float ring=(exp(-f*f*150.0)+0.4*exp(-fr*7.0))*uCallK.x*1.7*exp(-de/5200.0);
+  float bloom=0.0; if(uCallK.z>0.0){ float bd=(de-uCallK.z)/230.0; bloom=(exp(-bd*bd)+0.25*step(de,uCallK.z)*exp(-(uCallK.z-de)/900.0))*uCallK.w; }   // the front, and the garden it leaves glowing behind it
+  gold=min(1.0, ring*0.22+bloom*0.55);   // the egg's own pearl-gold rides the call, and floods the bloom
+  return wk*2.4+ring+bloom;
+}`;
+const EDEN_LIVE_VTX=`
+  { float wk;
+    #ifdef USE_INSTANCING
+      vec3 eo=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;
+    #else
+      vec3 eo=(modelMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;
+    #endif
+    float gd; vLive=edenLive(eo, wk, gd); vGold=gd; SWELL }`;
+function edenLiveUniforms(sh){ for(const k in EDEN_LIVE) sh.uniforms[k]=EDEN_LIVE[k]; }
 function edenMat(o){
   o=o||{};
   const m=new T.MeshPhongMaterial({color:0xffffff, shininess:o.shin!=null?o.shin:38,
@@ -49981,7 +50251,8 @@ function edenMat(o){
   m.userData.edenU=U;
   m.onBeforeCompile=sh=>{
     sh.uniforms.uT=EDEN_T; sh.uniforms.uGlow=U.uGlow;
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;');
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nuniform float uT;'+(o.live?EDEN_LIVE_GLSL:''));
+    if(o.live){ edenLiveUniforms(sh); sh.vertexShader=sh.vertexShader.replace('#include <project_vertex>', EDEN_LIVE_VTX.replace('SWELL','')+'\n#include <project_vertex>'); }
     if(o.sway) sh.vertexShader=sh.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
       { float ph=0.0;
         #ifdef USE_INSTANCING
@@ -49989,18 +50260,26 @@ function edenMat(o){
         #endif
         float hh=max(0.0,transformed.y), a=${o.sway.toFixed(4)}*hh*hh;
         transformed.x+=a*sin(uT*0.83+ph); transformed.z+=a*0.7*sin(uT*0.61+ph*1.7+1.3); }`);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;')
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uGlow;'+(o.live?'\nvarying float vLive; varying float vGold;':''))
       .replace('#include <emissivemap_fragment>',`#include <emissivemap_fragment>
       #if defined(USE_COLOR)
         totalEmissiveRadiance+=vColor.rgb*uGlow;
-      #endif`);
+      #endif
+      ${o.live?'totalEmissiveRadiance=totalEmissiveRadiance*(1.0+vLive*0.8)+vec3(1.0,0.78,0.42)*vGold*(uGlow+0.15)*1.3;':''}`);
   };
-  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0);
+  m.customProgramCacheKey=()=>'eden-'+(o.sway||0)+'-'+(o.vc?1:0)+'-'+(o.map?1:0)+'-'+(o.tex?1:0)+(o.live?'-live':'');
   return m;
 }
 // pure light: fruit, rims, gills, beads. Unlit, fogged, coloured per instance.
 function edenGlowMat(o){ o=o||{};
-  return new T.MeshBasicMaterial({color:0xffffff, side:o.side||T.FrontSide}); }
+  const m=new T.MeshBasicMaterial({color:0xffffff, side:o.side||T.FrontSide});
+  m.onBeforeCompile=sh=>{ edenLiveUniforms(sh);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>'+EDEN_LIVE_GLSL)
+      .replace('#include <project_vertex>', EDEN_LIVE_VTX.replace('SWELL','transformed*=1.0+0.22*min(wk,1.0);')+'\n#include <project_vertex>');
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nvarying float vLive; varying float vGold;')
+      .replace('#include <fog_fragment>','gl_FragColor.rgb=mix(gl_FragColor.rgb*(1.0+vLive*0.75), vec3(1.0,0.86,0.58)*(1.0+vLive*0.3), vGold*0.8);\n#include <fog_fragment>'); };
+  m.customProgramCacheKey=()=>'eden-glow-live';
+  return m; }
 
 /* One InstancedMesh per tenth of the course, each with its own world-space bounding sphere,
    so the frustum drops the nine-tenths of the garden that are behind you or round the
@@ -50862,16 +51141,16 @@ function edenFlush(F){
   const bark=mats.bark=edenMat({shin:10, spec:0x221c34, glow:0.05, tex:edenBarkTex()});
   const lobe=mats.lobe=edenMat({shin:16, spec:0x22484c, glow:0.10});
   const fruit=mats.fruit=edenGlowMat();
-  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42});
+  const cap=mats.cap=edenMat({shin:80, spec:0x6a8aaa, glow:0.42, live:true});
   const stem=mats.stem=edenMat({shin:30, spec:0x3a3a5a, glow:0.10});
   const glowM=mats.glow=edenGlowMat({side:T.DoubleSide});
-  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a});
+  const curl=mats.curl=edenMat({vc:true, sway:0.05, glow:0.16, shin:46, spec:0x3a6a5a, live:true});
   const leaf=mats.leaf=edenMat({shin:40, spec:0x2a5a4a, glow:0.10, side:T.DoubleSide});
-  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide});
-  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50});
+  const cup=mats.cup=edenMat({shin:60, spec:0x6a5a8a, glow:0.62, side:T.DoubleSide, live:true});
+  const pod=mats.pod=edenMat({map:edenRingTex(), emi:0.62, shin:70, spec:0x5a6a50, live:true});
   const rock=mats.rock=edenMat({shin:70, spec:0x4a4a7a, glow:0.0});
-  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34});
-  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20});
+  const moss=mats.moss=edenMat({shin:20, spec:0x1a3a3a, glow:0.34, live:true});
+  const vineM=mats.vine=edenMat({shin:30, spec:0x2a4a3a, glow:0.20, live:true});
   edenBatch(new T.CylinderGeometry(0.78,1,1,9,1), bark, G.trunk);
   edenBatch(new T.SphereGeometry(1,10,7), lobe, G.lobe);
   edenBatch(new T.SphereGeometry(1,10,8), fruit, G.fruit);
@@ -51222,9 +51501,10 @@ function edenEggMat(){
   m.customProgramCacheKey=()=>'eden-egg';
   return m;
 }
-// idle: pearl light from within on a slow double heartbeat (lub-dub every 1.6 s)
+// idle: pearl light from within on a slow double heartbeat (lub-dub every 1.6 s) — on the call's clock when the garden keeps
+// one (edenLive: the bars of her song), so the egg beats in time with the rings it sends out
 function edenEggPulse(e, tsec){
-  const ph=tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
+  const ph=EDEN_CALL.on ? (EDEN_CALL.ph%1)*1.6 : tsec%1.6, b=Math.exp(-Math.pow((ph-0.10)/0.08,2))+0.6*Math.exp(-Math.pow((ph-0.40)/0.08,2));
   const s=1+0.025*b; e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.12;
   e.material.color.setRGB(0.93,0.89,0.86);
   e.material.emissive.setRGB(0.26+0.24*b, 0.21+0.19*b, 0.17+0.13*b);
@@ -51333,10 +51613,35 @@ function applyEdenLighting(){
   fill.color.setHex(0x8a4ad8); fill.intensity=0.26; fill.position.set(md.z*120, 30, -md.x*120);
   flesh.color.setHex(0xff6a2a);flesh.intensity=0.20; flesh.position.set(0,-30,0);
 }
+const EDEN_CALL={ on:false, ph:0, gain:1 };   // gain: race_fx edenLive can switch the living light off, for an A/B look   // the egg's call: its phase in heartbeats (see THE GARDEN ANSWERS)
+function edenLive(E, dt, tsec){
+  const L=EDEN_LIVE, W=L.uWake.value, H=E._wake||(E._wake={ t:0, buf:[] });
+  // the wake: every 0.18 s each racer's position goes into its own ring of six; ages count up every frame
+  H.t+=dt; if(H.t>=0.18){ H.t=0; let k=0; for(const r of racers){ if(k>=6) break; if(!r.obj || !isFinite(r.x) || r.spectator) continue;
+      const ring=H.buf[k]||(H.buf[k]=[]); ring.unshift([r.x, (isFinite(r.y)?r.y:0)+2, r.z, 0]); if(ring.length>6) ring.pop(); k++; } }
+  let i=0, cx=0, cy=0, cz=0, n=0;
+  for(const ring of H.buf) for(const p of ring){ p[3]+=dt; if(i<36){ W[i].set(p[0],p[1],p[2],p[3]); i++; cx+=p[0]; cy+=p[1]; cz+=p[2]; n++; } }
+  for(;i<36;i++) W[i].set(0,-1e5,0,99);
+  if(n && EDEN_CALL.gain>0){ cx/=n; cy/=n; cz/=n; let rr=0; for(const ring of H.buf) for(const p of ring) rr=Math.max(rr, Math.hypot(p[0]-cx,p[1]-cy,p[2]-cz)); L.uPack.value.set(cx,cy,cz,rr+140); }
+  else L.uPack.value.set(0,-1e5,0,0);
+  // the call: on the song's bars when it plays (the music clock), else the egg's own lub-dub; it swells as you near her
+  const mb=musicBeat(), per=mb&&mb.bpm ? 240/mb.bpm : 1.6;
+  EDEN_CALL.ph+=dt/per; if(mb && mb.bar!=null){ const f=EDEN_CALL.ph%1; let d=mb.bar-f; if(d>0.5) d-=1; if(d<-0.5) d+=1; EDEN_CALL.ph+=d*Math.min(1,dt*4); }
+  EDEN_CALL.on=true;
+  const egg=TRACK_PULSE.egg, me=racers.find(r=>r.you), u=me&&state!=='menu' ? Math.max(0,Math.min(1,me.idx/(SAMP.length-1))) : 0;
+  if(egg){ egg.getWorldPosition(_edV); L.uCall.value.set(_edV.x, _edV.y, _edV.z, EDEN_CALL.ph); }
+  const k=u<0.45?0:Math.min(1,(u-0.45)/0.52), amp=0.22+0.78*k*k*(3-2*k);
+  const C=L.uCallK.value; C.x+=(amp*EDEN_CALL.gain-C.x)*Math.min(1,EDEN_CALL.gain?dt*1.5:1); C.y=650;
+  // the bloom: you reached her — one great ring of light across the whole garden
+  if(eggAnim>0 && E.bloomT==null) E.bloomT=0;
+  if(E.bloomT!=null){ E.bloomT+=dt; C.z=E.bloomT*700; C.w=3.4*Math.exp(-E.bloomT/4.0); if(C.z>7000){ E.bloomT=null; C.z=-1; C.w=0; } }
+  if(state==='menu' || state==='count'){ E.bloomT=null; C.z=-1; C.w=0; if(state==='menu') H.buf.length=0; }
+}
 function edenTick(E, tsec){
   const dt=Math.min(0.1, Math.max(0, tsec-(E._lt==null?tsec:E._lt))); E._lt=tsec;
   EDEN_T.value=tsec;
   edenMood(E, dt);
+  edenLive(E, dt, tsec);
   if(E.rings) for(const r of E.rings) r.g.rotation.z=tsec*r.w;
   if(E.mist) E.mist.uAmp.value=0.85+0.15*Math.sin(tsec*0.17);
   if(E.rays) E.rays.opacity=0.16*(0.75+0.25*Math.sin(tsec*0.11)+0.1*Math.sin(tsec*0.29+1.3));
@@ -55389,7 +55694,9 @@ function buildTrack(idx){
     trackGroup.add(ophTerrain(OK.F, ccx, ccz));
     trackGroup.add(ophBanks(OK.F, innerSign));
     OK.geo=ophStreamGeo(OK.F, innerSign);
-    TRACK_PULSE.oph={sky:skyDome.material};
+    // every race starts in the afternoon: the hour's shared uniforms back to key 0 (ophTick holds it there until the off)
+    OPH_CS.value=OPH_HOURS[0].cs; OPH_RIM.value.setRGB(0,0,0); OPH_SUNW.value.copy(OPH.sun);
+    TRACK_PULSE.oph={sky:skyDome.material, u:0};
   } else if(hana){
     // Hana: the printed sky, the island's ground grid, the sea (see WOODBLOCK KIT)
     skyDome=hanaSky(); trackGroup.add(skyDome);
@@ -57309,6 +57616,7 @@ function buildTrack(idx){
     const fl=ophFloaters(innerSign, OK.geo.userData.lap, OK.F.toe);
     trackGroup.add(fl.pet); trackGroup.add(fl.eye); TRACK_PULSE.oph.float=fl;
     const sw=ophSwifts(harbRnd(0x5A1F7)); trackGroup.add(sw.mesh); TRACK_PULSE.oph.swifts=sw;
+    const ff=ophFireflies(OK.F, innerSign); trackGroup.add(ff.pts); TRACK_PULSE.oph.fly=ff;   // (dark until dusk: see THE HOUR)
   } else if(paint){
     /* THE FLEET. What was here before was 170 free-floating sails placed at
        sp.p.y + h*0.72 with a half-height of h*0.62 — so every one of them hung between 8
@@ -58583,6 +58891,10 @@ function wiggleTail(g, phase, amp, lift, st){
   // first the spine (sway, lift and the lash's pull and heading per ring), then the rings around it
   const SX=d.sx||(d.sx=new Float32Array(rings+1)), SY=d.sy||(d.sy=new Float32Array(rings+1)), SZ=d.sz||(d.sz=new Float32Array(rings+1)), SA=d.sa||(d.sa=new Float32Array(rings+1));
   for(let i=0;i<=rings;i++){ tailOffset(i*0.5*LK, i/rings, phase, amp, st); SX[i]=_tox; SY[i]=_toy; SZ[i]=_wlz; SA[i]=_wla; }
+  // normals are written with the positions: each vertex's normal IS its direction out from the spine (cb·ca, s, cb·sa),
+  // exact for a tube and seamless round the join — three's computeVertexNormals pass, every racer every frame, is gone
+  let nrm=geo.attributes.normal; if(!nrm || nrm.array.length!==pos.length){ nrm=new T.BufferAttribute(new Float32Array(pos.length),3); geo.setAttribute('normal',nrm); }
+  const N=nrm.array, CB=d.cbT||(d.cbT=Float32Array.from({length:sides+1},(_,j)=>Math.cos(j/sides*Math.PI*2))), SB=d.sbT||(d.sbT=Float32Array.from({length:sides+1},(_,j)=>Math.sin(j/sides*Math.PI*2)));
   let p=0;
   for(let i=0;i<=rings;i++){
     const t=i/rings;
@@ -58593,15 +58905,15 @@ function wiggleTail(g, phase, amp, lift, st){
     // thickness through the S instead of shearing thin. At rest the bend is 0 and the rings face straight back as ever.
     const a0=i>0?i-1:0, a1=i<rings?i+1:rings, yaw=_WL.on ? SA[i] : -Math.atan((SX[a1]-SX[a0])/(ringZ[a1]-ringZ[a0]));
     const ca=Math.cos(yaw), sa=Math.sin(yaw);
+    const yy=y+lift*t*t+sy+oy;
     for(let j=0;j<=sides;j++){
-      const ang=j/sides*Math.PI*2, cb=Math.cos(ang), c=cb*ca, s=Math.sin(ang), cs=cb*sa;
-      pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
-      pos[p]=y+lift*t*t+sy+oy+s*r;  outlinePos[p]=y+lift*t*t+sy+oy+s*ro;  p++;
-      pos[p]=cz+cs*r;     outlinePos[p]=cz+cs*ro;      p++;
+      const cb=CB[j], c=cb*ca, s=SB[j], cs=cb*sa;
+      N[p]=c; pos[p]=cx+c*r; outlinePos[p]=cx+c*ro; p++;
+      N[p]=s; pos[p]=yy+s*r;  outlinePos[p]=yy+s*ro;  p++;
+      N[p]=cs; pos[p]=cz+cs*r;     outlinePos[p]=cz+cs*ro;      p++;
     }
   }
-  geo.attributes.position.needsUpdate=true;
-  geo.computeVertexNormals();
+  geo.attributes.position.needsUpdate=true; nrm.needsUpdate=true;
   if(outlineGeo){ outlineGeo.attributes.position.needsUpdate=true; }
 }
 function celShade(g){
@@ -69070,12 +69382,13 @@ function cbWiggle(g, ct, phase, amp, lift){
     else { const ds=S[i]-S[i-1], dx=x-sx[i-1], dy=y-sy[i-1]; pz-=Math.sqrt(Math.max(ds*ds-dx*dx-dy*dy, ds*ds*0.06)); }
     sx[i]=x; sy[i]=y; sz[i]=pz+dz;
   }
+  const CS=ct.cs||(ct.cs=Float32Array.from({length:NS+1},(_,j)=>Math.cos(j/NS*6.2832))), SN=ct.sn||(ct.sn=Float32Array.from({length:NS+1},(_,j)=>Math.sin(j/NS*6.2832)));   // (once, not two trig calls per vertex per frame)
   for(let i=0,p=0;i<=NR;i++){
     const i0=i>0?i-1:0, i1=i<NR?i+1:NR;
     _cbT.set(sx[i1]-sx[i0], sy[i1]-sy[i0], sz[i1]-sz[i0]).normalize();
     _cbSd.crossVectors(_cbY,_cbT).normalize(); _cbUp.crossVectors(_cbT,_cbSd);
     const r=R[i], cx=sx[i], cy=HEAD_CY+sy[i], cz=sz[i];
-    for(let j=0;j<=NS;j++,p+=3){ const an=j/NS*6.2832, c=Math.cos(an), sn=Math.sin(an);
+    for(let j=0;j<=NS;j++,p+=3){ const c=CS[j], sn=SN[j];
       const nx=_cbSd.x*c+_cbUp.x*sn, ny=_cbSd.y*c+_cbUp.y*sn, nz=_cbSd.z*c+_cbUp.z*sn;
       pos[p]=cx+nx*r; pos[p+1]=cy+ny*r; pos[p+2]=cz+nz*r; nor[p]=nx; nor[p+1]=ny; nor[p+2]=nz; }
   }
@@ -71490,6 +71803,44 @@ function useItem(r){
 /* ============== SIM ============== */
 function angDiff(a,b){ let d=a-b; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return d; }
 
+/* ============== SLIPSTREAM ============== *
+ * Tuck in behind a rival — inside a narrow lane along ITS heading, 6 to 40 units back, both of you quick — and the air
+ * goes still: a little more top speed while you sit there (up to +6%), and a charge that builds. Held about a second and a
+ * half it fires a SLINGSHOT (a short boost) to pull out and pass. Everyone drafts, the AI included (it charges a little
+ * slower), so it is a way past a rival and a reason to break someone's tow. Your own tow shows as wind lines streaming past
+ * your kart, brighter the deeper you sit in it (DRAFT_FX). */
+const DRAFT={ RANGE:40, NEAR:6, LANE:5.5, MINSPD:70, CHARGE:1.4, SLING:0.7, GAIN:0.06, AI:0.65 };
+function draftOf(r){
+  if(MAZE || r.air || Math.abs(r.spd)<DRAFT.MINSPD) return 0;
+  let best=0;
+  for(const o of racers){ if(o===r || o.finished || o.spectator || o.air || Math.abs(o.spd)<DRAFT.MINSPD*0.8) continue;
+    const dx=o.x-r.x, dz=o.z-r.z, fx=Math.sin(o.head), fz=Math.cos(o.head), along=dx*fx+dz*fz;
+    if(along<DRAFT.NEAR || along>DRAFT.RANGE) continue;
+    const lat=Math.abs(dx*fz-dz*fx); if(lat>DRAFT.LANE || Math.abs((o.y||0)-(r.y||0))>6) continue;
+    const q=(1-lat/DRAFT.LANE)*(along<16?1:1-(along-16)/(DRAFT.RANGE-16)); if(q>best) best=q; }
+  return best;
+}
+const DRAFT_FX={ mesh:null, mat:null, N:36, seeds:null, t:0, o:0, d:null, force:null };   // force: an outside driver holds the lines up (race_fx)
+function draftFxEnsure(){ const F=DRAFT_FX; if(F.mesh){ if(F.mesh.parent!==scene) scene.add(F.mesh); return F; }
+  F.mat=new T.MeshBasicMaterial({ color:0xd8fff4, transparent:true, opacity:0, blending:T.AdditiveBlending, depthWrite:false, fog:false });
+  F.mesh=new T.InstancedMesh(new T.BoxGeometry(0.17,0.17,1), F.mat, F.N); F.mesh.frustumCulled=false; F.mesh.visible=false; F.mesh.name='slipstream';
+  F.seeds=Array.from({length:F.N},(_,i)=>({ a:i/F.N*6.2832+Math.random()*0.3, r:2.9+Math.random()*2.4, z0:Math.random()*26, v:0.75+Math.random()*0.5, len:3+Math.random()*4.5 }));
+  F.d=new T.Object3D(); scene.add(F.mesh); return F; }
+function draftFxTick(dt){
+  const me=racers.find(r=>r.you), F=DRAFT_FX;
+  const want=F.force!=null ? F.force : (me && state==='race' && !me.finished && !me.spectator && camMode!=='fp') ? Math.min(1,(me.draft||0)*1.7) : 0;
+  F.o+=(want-F.o)*Math.min(1,6*dt);
+  if(!F.mesh){ if(F.o<0.01) return; draftFxEnsure(); }
+  if(F.mesh.parent!==scene) scene.add(F.mesh);
+  F.mesh.visible=F.o>0.01 && !!me; if(!F.mesh.visible) return;
+  F.mesh.position.set(me.x, me.y, me.z); F.mesh.rotation.set(0, me.head, 0);   // (heading only: the lines are the air, not the kart)
+  F.mat.opacity=0.9*F.o; F.t+=dt;
+  const sp=Math.max(60,Math.abs(me.spd)), D=F.d;
+  for(let i=0;i<F.N;i++){ const q=F.seeds[i], z=9-((F.t*sp*0.55*q.v+q.z0)%26);
+    D.position.set(Math.cos(q.a)*q.r, 3.2+Math.sin(q.a)*q.r*0.7, z); D.scale.set(1,1,q.len*(0.5+0.5*F.o)); D.updateMatrix(); F.mesh.setMatrixAt(i, D.matrix); }
+  F.mesh.instanceMatrix.needsUpdate=true;
+}
+
 function updateRacer(r,dt){
   if(r.spectator){ specTick(r); return; }   // the spectator's hidden kart rides the one it watches (see SPEC); nothing below applies
   // A remote human's kart is authored on their machine; here it is pure playback.
@@ -71633,6 +71984,12 @@ function updateRacer(r,dt){
     if(thr>0.05) target *= (0.5 + 0.5*Math.min(1,thr));
   }
 
+  // slipstream (see SLIPSTREAM): sitting in a rival's tow lifts the top speed and charges a slingshot
+  { const q=onRoad?draftOf(r):0; r.draft=(r.draft||0)+(q-(r.draft||0))*Math.min(1,5*dt);
+    if(q>0.12){ r.draftCharge=(r.draftCharge||0)+dt*(0.5+0.5*q)*(r.you?1:DRAFT.AI); target*=1+DRAFT.GAIN*r.draft;
+      if(r.draftCharge>=DRAFT.CHARGE){ r.draftCharge=0; r.boostT=Math.max(r.boostT,DRAFT.SLING); r.slingN=(r.slingN||0)+1;
+        if(r.you){ SFX.boost(); kickShake(0.22); showToast('Slingshot!','t-green'); } } }
+    else r.draftCharge=Math.max(0,(r.draftCharge||0)-dt*0.9); }
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
   if(r.boostT>0) target=BOOSTV;
@@ -72324,7 +72681,7 @@ function collide(){
   for(const h of hazards){
     h.arm-=1/60;
     if(h.critter){   // crabs patrol laterally across the road, scuttling and snapping
-      const s=SAMP[h.ci], tN=performance.now()*0.001;
+      const s=SAMP[h.ci], tN=SIM.manual?SIM.t:performance.now()*0.001;   // (game time when driven from outside, so a film is the same every take)
       const off=Math.sin(tN*h.cspd+h.phase)*HW*0.8;
       h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
       h.mesh.position.set(h.x, s.p.y+1.6+Math.abs(Math.sin(tN*9))*0.4, h.z);   // scuttle-bob
@@ -72333,7 +72690,7 @@ function collide(){
       if(h.mesh.userData.claws) for(const c of h.mesh.userData.claws){
         c.userData.u.rotation.x=Math.PI/2-0.35-snap; c.userData.l.rotation.x=Math.PI/2+0.35+snap; }
     } else if(h.pill){   // Plan B pill: slower lateral drift + a hovering spin
-      const s=SAMP[h.ci], tN=performance.now()*0.001;
+      const s=SAMP[h.ci], tN=SIM.manual?SIM.t:performance.now()*0.001;
       const off=Math.sin(tN*h.cspd+h.phase)*HW*0.6;
       h.x=s.p.x+s.n.x*off; h.z=s.p.z+s.n.z*off;
       h.mesh.position.set(h.x, s.p.y+2.2+Math.sin(tN*2+h.phase)*0.3, h.z);
@@ -73391,6 +73748,17 @@ function flashFx(amt,color){
 const _camPush=new T.Vector3(), _camPushed=new T.Vector3(), _camLook=new T.Vector3(),
       _cpP=new T.Vector3(), _cpD=new T.Vector3();
 let _camRoll=0, _camPushOn=false;
+/* CAMERA WORK for the chase view, on top of where it already sits (all of it eased, none of it large):
+   · a drift swings the lens out round the kart, so the slide's angle shows instead of being hidden behind it;
+   · it leans into a turn from the actual yaw rate (a few degrees), as the first-person lens already did;
+   · the lens widens as speed builds (58 at a crawl to 64 flat out; a boost still kicks it to 74);
+   · a landing dips it on a spring, so a jump has a bottom;
+   · shake is a smooth tremor (summed sines at random phases), not a fresh random offset every frame;
+   · the lens rides along with the kart before it eases to its spot. Easing alone trailed by speed/4 (fifty units at boost),
+     so the kart shrank away down the road whenever it was quickest; now most of the motion is carried and the ease only
+     smooths the turns (a little lag is kept, so a boost still pulls away a touch). */
+const CAMFX={ t:0, swing:0, roll:0, rate:0, prevHead:null, land:0, landV:0, wasAir:false, px:null, py:0, pz:0, ph:[Math.random()*9,Math.random()*9,Math.random()*9] };
+function camTremor(axis){ const t=CAMFX.t, p=CAMFX.ph[axis]; return (Math.sin(t*41+p)*0.55+Math.sin(t*67.3+p*1.7)*0.3+Math.sin(t*23.1+p*2.3)*0.15); }
 /* VIEW OPTION: 'chase' (the original), 'close' (the same chase, pulled in so the racer fills more
    of a small phone screen) or 'fp' (first person, from the racer's own eyes — pairs with tilt
    steering). Remembered between visits; a first-time narrow portrait screen starts on 'close'. */
@@ -73652,23 +74020,37 @@ function updateCameraCore(dt){
   const hold=camHold(me);   // up and back while the start pack / a finishing rival is on top of the chase spot
   // close: 17 back, 8 up and a 54 lens (chase is 30 / 13 / 64), so the racer stands about twice as tall in frame; any nearer and
   // the tail tip would be at the glass
+  // the camera work (CAMFX): the drift swing turns `back` round the kart; the landing dip and the lean come after the aim
+  CAMFX.t+=dt;
+  { let dh=CAMFX.prevHead==null?0:me.head-CAMFX.prevHead; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; CAMFX.prevHead=me.head;
+    const rate=dt>0?ldClamp(dh/dt,-3,3):0; CAMFX.rate+=(rate-CAMFX.rate)*Math.min(1,5*dt);
+    const swingT=state==='race' && !me.finished ? ldClamp(-(me.slip||0)*0.75, -0.42, 0.42) : 0;
+    CAMFX.swing+=(swingT-CAMFX.swing)*Math.min(1,3.2*dt);
+    if(me.air) CAMFX.wasAir=true; else if(CAMFX.wasAir){ CAMFX.wasAir=false; CAMFX.landV-=Math.min(14, 5+Math.abs(me.vy||0)*0.08); }
+    CAMFX.landV=(CAMFX.landV-CAMFX.land*90*dt)*Math.exp(-9*dt); CAMFX.land+=CAMFX.landV*dt; }
   const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?6.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold,0));
+  if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
+  { const dx=me.x-(CAMFX.px??me.x), dy=me.y-CAMFX.py, dz=me.z-CAMFX.pz; CAMFX.px=me.x; CAMFX.py=me.y; CAMFX.pz=me.z;
+    if(!me._camSnap && dx*dx+dy*dy+dz*dz<1600) camera.position.x+=dx*0.85, camera.position.y+=dy*0.85, camera.position.z+=dz*0.85; }   // ride along (not across a respawn)
   if(me._camSnap){ camera.position.copy(want); me._camSnap=false; }
   else camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
-    camera.position.x += (Math.random()*2-1)*camShake;
-    camera.position.y += (Math.random()*2-1)*camShake;
-    camera.position.z += (Math.random()*2-1)*camShake;
+    camera.position.x += camTremor(0)*camShake*1.25;
+    camera.position.y += camTremor(1)*camShake*1.25;
+    camera.position.z += camTremor(2)*camShake*1.25;
     camShake=Math.max(0,camShake-dt*5);
   }
   const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(close?12:18)).add(new T.Vector3(0,close?0.6:4,0));
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
+  else { const rollT=state==='race' && !me.finished ? ldClamp(-CAMFX.rate*0.035, -0.055, 0.055) : 0;   // lean into the turn
+    CAMFX.roll+=(rollT-CAMFX.roll)*Math.min(1,4*dt); if(Math.abs(CAMFX.roll)>1e-4) camera.rotateZ(_camRoll=CAMFX.roll); }
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
-  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54)) : (tube?70:(boost?74:64));   // finish punch > tube squeeze > boost (close: a longer lens)
+  const spN=ldClamp(Math.abs(me.spd||0)/142, 0, 1), spW=state==='race'?(1-spN)*(1-spN):0;   // a crawl narrows the lens a little; flat out is the old 64
+  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW)) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
@@ -73689,15 +74071,21 @@ function drawMap(){
   const ox=pad+(W-pad*2-(b.maxx-b.minx)*sc)/2, oz=pad+(W-pad*2-(b.maxz-b.minz)*sc)/2;
   const X=x=>ox+(x-b.minx)*sc, Z=z=>oz+(z-b.minz)*sc;
   mx.clearRect(0,0,W,W);
-  const mapEnd=trackLoop?STEPS:STEPS-1;
-  const path=()=>{ mx.beginPath();
-    for(let i=0;i<=mapEnd;i+=3){const s=SAMP[Math.min(i,STEPS-1)]; const p=[X(s.p.x),Z(s.p.z)]; i?mx.lineTo(p[0],p[1]):mx.moveTo(p[0],p[1]);} };
-  mx.lineJoin='round';
-  mx.lineWidth=8; mx.strokeStyle='rgba(109,242,208,0.10)'; path(); mx.stroke();   // glow
-  mx.lineWidth=3.5; mx.strokeStyle='rgba(109,242,208,0.55)'; path(); mx.stroke(); // core
-  // start/finish tick
-  const s0=SAMP[0]; mx.fillStyle='#eafff8';
-  mx.fillRect(X(s0.p.x)-2,Z(s0.p.z)-2,4,4);
+  // the course itself (glow, core, start tick) is drawn once per layout into its own canvas and copied in each frame:
+  // stroking hundreds of points twice with round joins, sixty times a second, was the minimap's whole cost
+  const mc=drawMap.cache||(drawMap.cache={ cv:document.createElement('canvas'), b:null, samp:null, loop:null });
+  if(mc.b!==b || mc.samp!==SAMP || mc.loop!==trackLoop || mc.cv.width!==mapCv.width || mc.cv.height!==mapCv.height){
+    mc.b=b; mc.samp=SAMP; mc.loop=trackLoop; mc.cv.width=mapCv.width; mc.cv.height=mapCv.height;
+    const c=mc.cv.getContext('2d'); c.setTransform(mx.getTransform()); c.clearRect(0,0,W,W);
+    const mapEnd=trackLoop?STEPS:STEPS-1;
+    const path=()=>{ c.beginPath();
+      for(let i=0;i<=mapEnd;i+=3){ const s=SAMP[Math.min(i,STEPS-1)], px=X(s.p.x), pz=Z(s.p.z); i?c.lineTo(px,pz):c.moveTo(px,pz); } };
+    c.lineJoin='round';
+    c.lineWidth=8; c.strokeStyle='rgba(109,242,208,0.10)'; path(); c.stroke();   // glow
+    c.lineWidth=3.5; c.strokeStyle='rgba(109,242,208,0.55)'; path(); c.stroke(); // core
+    const s0=SAMP[0]; c.fillStyle='#eafff8'; c.fillRect(X(s0.p.x)-2,Z(s0.p.z)-2,4,4);   // start/finish tick
+  }
+  mx.save(); mx.setTransform(1,0,0,1,0,0); mx.drawImage(mc.cv,0,0); mx.restore();
   for(const r of racers){
     if(r.you){ mx.shadowColor='#fff'; mx.shadowBlur=8; mx.beginPath();
       mx.arc(X(r.x),Z(r.z),4.5,0,7); mx.fillStyle='#fff'; mx.fill(); mx.shadowBlur=0; }
@@ -73784,30 +74172,32 @@ function syncLeader(){
     `<span class="ld" style="background:hsl(${r.hue} 80% 62%)"></span>${r.name}`+
     `${r.remote&&r.human?'<span class="lhum">●</span>':''}</div>`).join('');
 }
+function hudText(id, v){ const el=$(id), t=String(v); if(el.textContent!==t) el.textContent=t; }
 function syncHUD(){
   const me=racers.find(r=>r.you);
   syncLeader();
   // always visible (was appear/disappear with range — players couldn't tell the move existed
   // until it flashed up); .ready lights it up orange only when actually usable. On keyboard
   // and mouse it's the lower-right indicator showing its key, and still clickable.
-  $('whipbtn').style.display = !me.finished ? 'inline-flex' : 'none';
+  { const d=!me.finished ? 'inline-flex' : 'none', b=$('whipbtn'); if(b.style.display!==d) b.style.display=d; }
   $('whipbtn').classList.toggle('ready', whipReady);
   // seek knobs only enabled for characters that actually have more than one station —
   // the screen itself (station/clock/speed) always shows regardless
   { const hasAlts=!!(chosenType && ALT_MAP[chosenType.id] && ALT_MAP[chosenType.id].length) || !!courseStyleId();   // a course record makes two stations
-    $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
+    if($('radioPrev').disabled!==!hasAlts) $('radioPrev').disabled=$('radioNext').disabled=!hasAlts; }
+  // (each written only when it changes: a write is a restyle and a relayout, sixty times a second)
   if(trackLoop){
-    $('laplbl').textContent='Lap'; $('lapn').textContent=Math.min(lapsOf(),me.lap+1); $('lapsuf').textContent='/'+lapsOf();
+    hudText('laplbl','Lap'); hudText('lapn',Math.min(lapsOf(),me.lap+1)); hudText('lapsuf','/'+lapsOf());
   } else {
-    $('laplbl').textContent='To Egg'; $('lapn').textContent=Math.round(me.prog*100)+'%'; $('lapsuf').textContent='';
+    hudText('laplbl','To Egg'); hudText('lapn',Math.round(me.prog*100)+'%'); hudText('lapsuf','');
   }
-  $('posn').textContent=ord(me.place);
-  $('radioClock').textContent=fmt(raceTime);
+  hudText('posn',ord(me.place));
+  hudText('radioClock',fmt(raceTime));
   const sp=Math.abs(me.spd);
   // sp is an in-game unit speed (max ~MAXV=142, ~BOOSTV=211 boosted) with no real-world
   // meaning — 0.7 scales that range to a believable arcade top speed (~99mph cruising,
   // ~148mph boosted) instead of showing the raw sim units.
-  $('radioSpeed').textContent=Math.round(sp*0.7);
+  hudText('radioSpeed',Math.round(sp*0.7));
   $('radioPanel').classList.toggle('boosting', me.boostT>0);
   const dial=dialOf(chosenType&&chosenType.id);
   // written when the station or the screen changes, and looked at again every 30 frames (on a
@@ -73884,6 +74274,9 @@ const PREVIEW_DELAY=350;
 // frame stats (More: "Frame stats"): a readout for a device that feels slow: fps, the loop's own ms per frame, the canvas's
 // pixel size, the last course build, the state and home style. Off by default (sr_diag).
 const DIAG={on:false, el:null, n:0, ms:0, t0:0, build:0, built:''};
+/* PERF: where a frame's time goes, segment by segment (race_perf turns it on). Off, each mark is one boolean test. */
+const PERF={on:false, n:0, t:0, seg:{}, calls:0, tris:0, geos:0, texs:0, worst:0, f0:0, drive:null};
+function perfMark(k){ if(!PERF.on) return; const t=performance.now(); PERF.seg[k]=(PERF.seg[k]||0)+t-PERF.t; PERF.t=t; }
 function diagTick(now, ms){
   if(!DIAG.on||!DIAG.el) return; DIAG.n++; DIAG.ms+=ms; if(now-DIAG.t0<500) return;
   const c=renderer.domElement, fps=DIAG.n*1000/(now-DIAG.t0);
@@ -73927,11 +74320,14 @@ function hzDraw(){
    hook at the end of this file): a software-rendered page draws a few frames a second, and the
    race must not slow to a crawl — or turn on how fast the machine drew — just because it is being
    watched. frame() calls this exactly as it always ran inline. */
-const SIM={manual:false, cam:null, tick:null, t:0};   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
+const SIM={manual:false, cam:null, tick:null, t:0, busy:false, warped:0};   // warped: frames left in which eased course state should snap (race_warp)
+const REC={on:false, pr:1, cam:null, k:0};   // race.recmode / race.rec: filming at a fixed frame rate   // t: the race's own clock while an outside driver steps it (manual), so timed animation runs on game time   // tick: a per-frame hook for the outside driver (the studio keeps its racer on the studio layer)
 /* A photographer's camera for the outside driver: orbit one racer at a fixed offset relative to
    its heading (azimuth 0 = in front, looking at its face; 180 = straight behind), after the chase
    camera has had its say. Only ever set from the MCP hook; null the rest of the time. */
 function simCamApply(){
+  if(SIM.cam && SIM.cam.free){ const c=SIM.cam; camera.position.set(c.from[0],c.from[1],c.from[2]); camera.lookAt(c.at[0],c.at[1],c.at[2]);
+    if(camera.fov!==c.fov){ camera.fov=c.fov; camera.updateProjectionMatrix(); } return; }   // (race_camera free: a fixed point in the world)
   const c=SIM.cam, r=racers.find(x=>c.who==null?x.you:x.name===c.who)||racers.find(x=>x.you); if(!r||!r.obj) return;
   const al=c.along||0, ox=r.obj.position.x+Math.sin(r.head)*al, oz=r.obj.position.z+Math.cos(r.head)*al;   // along: aim that far along the body (negative = toward the tail)
   const a=r.head+c.azimuth*Math.PI/180, e=c.elevation*Math.PI/180, d=c.distance, ty=r.obj.position.y+c.height;
@@ -73981,16 +74377,28 @@ function frame(now){
     renderer.render(scene,camera); requestAnimationFrame(frame); return;
   }
   const tsec=SIM.manual?SIM.t:now/1000;   // (manual: the clock race_drive advances — game time, not wall time)
-  { const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed
-  if(HZV.cover && state==='menu'){ diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the Horizon lobby covers the screen: nothing behind it is seen, so nothing is drawn
+  if(SIM.busy){ requestAnimationFrame(frame); return; }   // (race.frames is stepping the game itself: stand aside)
+  frameStep(now, dt, tsec, _f0, state==='race' && !cupPause && !SIM.manual, true);
+  requestAnimationFrame(frame);
+}
+/* One frame of the game: the race stepped (when `sim`), the racers, the camera, the world's animation, the particles,
+   and the picture drawn (when `draw`). frame() runs it on the display's clock; the MCP hook runs it on a fixed one
+   (race.frames), so a frame can be profiled, or recorded for film at an exact game time, at any speed the machine has. */
+function frameStep(now, dt, tsec, _f0, sim, draw){
+  if(PERF.on){ PERF.n++; PERF.t=PERF.f0=_f0; }
+  if(!(++_vsPoll%15)){ const vs=viewSize(); if(_vw!==vs.w||_vh!==vs.h) resize(); }   // self-heal framing if the visible viewport changed (resize events do the rest; every 15th frame is enough to catch a missed one)
+  if(HZV.cover && state==='menu'){ diagTick(now, performance.now()-_f0); return; }   // the Horizon lobby covers the screen: nothing behind it is seen, so nothing is drawn
   // the Horizon home: the course is drawn into its window only (its rectangle re-read on any layout change, and now and then anyway)
   const hzWin=HZV.shown && state==='menu' && !!HZV.measure;
   if(hzWin && (HZV.dirty || ++HZV.tick>=90)){ HZV.tick=0; HZV.measure(); }
   menuRes(state==='menu'?(hzWin?2:1):0);
   if(!hzWin && camera.aspect!==_vw/_vh){ camera.aspect=_vw/_vh; camera.updateProjectionMatrix(); }
-  if(state==='race' && !cupPause && !SIM.manual) raceStep(dt);   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
+  perfMark('setup');
+  if(PERF.on && PERF.drive && sim) try{ PERF.drive(PERF.n); }catch(e){ PERF.drive=null; console.error(e); }   // (race_perf drives your kart, so the camera travels the course)
+  if(sim) raceStep(dt);   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
+  perfMark('sim');
   if(state==='count') countdownGlance(dt, now);
-  if(racers.length){ syncObjects(dt,tsec); updateCamera(dt); if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); }   // no minimap in the maze unless the radar toggle is on
+  if(racers.length){ syncObjects(dt,tsec); draftFxTick(dt); perfMark('racers'); updateCamera(dt); if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); perfMark('camera'); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); perfMark('minimap'); }   // no minimap in the maze unless the radar toggle is on
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
@@ -74148,12 +74556,17 @@ function frame(now){
     } else { const s=1+Math.sin(tsec*2.2)*0.06;
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
+  perfMark('world');
+  if(SIM.warped) SIM.warped--;
   updateParticles(dt);
+  perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
   const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
-  if(!held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  if(draw && !held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  if(PERF.on){ perfMark('render'); const ri=renderer.info; if(draw){ PERF.calls+=ri.render.calls; PERF.tris+=ri.render.triangles; } PERF.geos=ri.memory.geometries; PERF.texs=ri.memory.textures;
+    const np=renderer.info.programs?renderer.info.programs.length:0; if(PERF.progN!=null && np!==PERF.progN && PERF.compiles.length<40) PERF.compiles.push({ frame:PERF.n, programs:np-PERF.progN, ms:+(performance.now()-PERF.f0).toFixed(1), what:renderer.info.programs.slice(Math.max(0,PERF.progN)).map(p=>p.name+(PERF.keyOf?PERF.keyOf(p):'')) }); PERF.progN=np;   // a frame that compiled shaders
+    const ft=performance.now()-PERF.f0; if(PERF.ft.length<20000) PERF.ft.push(ft); if(ft>PERF.worst){ PERF.worst=ft; PERF.worstAt={ frame:PERF.n, seg:Object.assign({}, PERF.seg), prev:PERF.prevSeg }; } PERF.prevSeg=Object.assign({}, PERF.seg); }
   diagTick(now, performance.now()-_f0);
-  requestAnimationFrame(frame);
 }
 
 /* ============== GHOSTS ==================================================================
@@ -75717,6 +76130,15 @@ function countdownGlance(dt, now){
 }
 
 /* ============== FLOW ============== */
+/* Compile every shader the course and the racers will need while the lights count down, not when a part of the course
+   first swings into view at speed. three compiles a program the first time an object is DRAWN, so a race used to stop
+   dead each time something new came on screen (race_perf: six compiles in ten seconds of Victoria, 0.5-4 s each on a
+   software GPU — tens to hundreds of ms on a real one). renderer.compile walks the whole scene, seen or not. */
+function warmShaders(){
+  setTimeout(()=>{ if(state!=='count' && state!=='race') return; const t0=performance.now();
+    try{ draftFxEnsure(); renderer.compile(scene, camera); }catch(e){ console.error(e); }   // (the slipstream's lines are made now, so their shader is in the warm-up)
+    DIAG.warm=performance.now()-t0; }, 60);   // (after the "3" has been drawn)
+}
 function countdown(){
   buildRacers();
   document.body.classList.remove('final-lap');   // clear any pulse left over from a previous race
@@ -75724,7 +76146,7 @@ function countdown(){
   $('cd').classList.remove('hidden'); $('count').textContent='3';
   // A flat three seconds: 3 / 2 / 1 / GO at 750ms each. It used to run 2.85s on an
   // uneven 750/750/600 split, which is not what a lights-out sequence should feel like.
-  state='count'; cdT0=performance.now(); let n=3;
+  state='count'; cdT0=performance.now(); let n=3; warmShaders();
   const tick=()=>{ n--;
     if(n>0){$('count').textContent=n;setTimeout(tick,750);}
     else if(n===0){$('count').textContent='GO!';setTimeout(tick,750);}
@@ -76161,7 +76583,7 @@ countdown = function(){
   const cd=$('count'); cd.textContent='3';
   const pulse=()=>{ cd.style.animation='none'; void cd.offsetWidth; cd.style.animation=''; };
   pulse();
-  state='count'; let n=3;
+  state='count'; let n=3; warmShaders();
   const tick=()=>{ n--;
     if(n>0){cd.textContent=n;pulse();SFX.count(false);setTimeout(tick,750);}
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
@@ -76184,6 +76606,25 @@ countdown = function(){
   if(netHoldStart(begin)) cd.textContent='…'; else begin();
 };
 
+/* Fold a group's still parts into one mesh per material: a model built from thirty little meshes is thirty draw calls
+   every frame, though only a few of its pieces ever move. Direct-child meshes not listed in `keep` (and not holding a
+   kept object) are merged, each baked with its own transform; the moving parts stay as they were. scene_profile found
+   the crabs at 35 draws apiece on every course that has them. */
+function mergeByMaterial(grp, keep){
+  keep=new Set(keep||[]); const buckets=new Map();
+  for(const m of [...grp.children]){
+    if(!m.isMesh || m.isInstancedMesh || keep.has(m) || m.children.length || Array.isArray(m.material)) continue;
+    m.updateMatrix(); const g=(m.geometry.index?m.geometry.toNonIndexed():m.geometry.clone()).applyMatrix4(m.matrix);
+    const b=buckets.get(m.material)||[]; b.push(g); buckets.set(m.material,b); grp.remove(m); m.geometry.dispose(); }
+  for(const [mat,gs] of buckets){
+    const out=new T.BufferGeometry(), uv=gs.every(g=>g.attributes.uv);
+    for(const name of ['position','normal'].concat(uv?['uv']:[])){
+      const n=gs[0].attributes[name].itemSize, arr=new Float32Array(gs.reduce((s,g)=>s+g.attributes[name].count*n,0)); let o=0;
+      for(const g of gs){ arr.set(g.attributes[name].array, o); o+=g.attributes[name].array.length; }
+      out.setAttribute(name, new T.BufferAttribute(arr, n)); }
+    for(const g of gs) g.dispose(); out.computeBoundingSphere(); grp.add(new T.Mesh(out, mat)); }
+  return grp;
+}
 // ---- track-hazard model builders (crab / Plan B pill / dental dam) ----
 // Enhanced crab: domed two-tone carapace, glossy back ridge + dark belly, segmented forward
 // pincer claws (animatable — see snap in the hazard loop), stalked eyes with pupils, antennae,
@@ -76224,7 +76665,7 @@ function makeCrab(){
     const foot=new T.Mesh(new T.ConeGeometry(0.12,0.7,4), shellDark); foot.position.set(sx*3.9,-1.5,zz); foot.rotation.z=sx*0.5; grp.add(foot);
   }
   grp.userData.claws=claws;
-  return grp;
+  return mergeByMaterial(grp);   // (the claw arms are groups, so they stay whole and keep snapping)
 }
 // Plan B pill: a classic two-tone capsule (white end + pink end, seam band at the middle),
 // laid horizontal. A hazard to AVOID — patrols laterally and spins out + shoves back any racer
@@ -76239,7 +76680,7 @@ function makePill(){
   const topCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,0,Math.PI/2), aMat); topCap.position.y=H/2; cap.add(topCap);
   const botCap=new T.Mesh(new T.SphereGeometry(R,16,8,0,Math.PI*2,Math.PI/2,Math.PI/2), bMat); botCap.position.y=-H/2; cap.add(botCap);
   const band=new T.Mesh(new T.CylinderGeometry(R*1.03,R*1.03,0.2,16), new T.MeshPhongMaterial({color:0xcfcfd6,emissive:0x333338})); cap.add(band);
-  cap.rotation.z=Math.PI/2; grp.add(cap);   // lay the capsule along local X (two ends left/right)
+  mergeByMaterial(cap); cap.rotation.z=Math.PI/2; grp.add(cap);   // lay the capsule along local X (two ends left/right)
   grp.add(glowSprite(0xff9dbd,4.5));   // small halo — enough to catch the eye without washing out the two-tone
   return grp;
 }
@@ -78140,7 +78581,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
   const offOf=r=>{ if(MAZE) return 0; const s=SAMP[nearest(r.x,r.z,r.air?null:r.y)]; return s?Math.hypot(r.x-s.p.x, r.z-s.p.z):0; };   // (r.idx is stale until a kart first moves)
   const view=r=>({ name:r.name, character:r.id, you:!!r.you, place:r.place, lap:r.lap, total:r3(r.total||0),
     speed:r1(r.spd||0), x:r1(r.x), z:r1(r.z), item:r.item||null, offRoad:!r.air && offOf(r)>HW,
-    spinning:(r.spinT||0)>0, boosting:(r.boostT||0)>0, finished:!!r.finished, time:r.finished?r1(r.finishT):null,
+    spinning:(r.spinT||0)>0, boosting:(r.boostT||0)>0, finished:!!r.finished, time:r.finished?r1(r.finishT):null, draft:r3(r.draft||0), slingshots:r.slingN||0,
     ...(r.obj&&r.obj.userData.expr?{ expression:r.obj.userData.expr.cur }:{}) });
   const course=()=>({ index:selTrack, name:TRACKS[selTrack].name, laps:lapsOf(), loop:trackLoop, maze:!!MAZE });
   const waitFor=(fn,ms,what)=>new Promise((res,rej)=>{ const t0=performance.now();
@@ -78156,6 +78597,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     return k;
   }
   const STUDIO={on:false, lights:[], course:[]};
+  const studioOff=()=>{ const S=STUDIO; if(!S.on) return; camera.layers.set(0); scene.background=S.bg; scene.fog=S.fog; for(const L of S.lights) L.parent&&L.parent.remove(L); S.lights=[];
+    for(const L of S.course) L.layers.disable(1); S.on=false; SIM.tick=null; };   // (also before any new race: a course build needs its fog and background back)
   const held=new Set();
   const hold=ks=>{ for(const k of held) keys.delete(k); held.clear(); for(const k of ks){ const q=String(k).toLowerCase(); keys.add(q); held.add(q); } };
 
@@ -78177,12 +78620,13 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     'race.start': async ({manual=true}={})=>{
       await waitFor(()=>state!=='load', 90000, 'the game to load');
       if(state==='count'||state==='race'){ state='menu'; }       // a race already running: abandon it for the new one
+      studioOff();                                               // (the studio takes the fog away: a course can't be built without it)
       SIM.manual=!!manual; SIM.cam=null; SIM.t=performance.now()/1000; hold([]);
       if(NET.on) netLeave(); chalSoloEnd(); cupStop();
       $('start').classList.add('hidden');
-      countdown();
-      await waitFor(()=>state==='race', 20000, 'the countdown');
-      return { state, manual:SIM.manual, course:course(), grid:racers.map(view) };
+      DIAG.warm=null; countdown();
+      await waitFor(()=>state==='race', 180000, 'the countdown');   // (long: on a software GPU the shader warm-up in the countdown takes a while)
+      return { state, manual:SIM.manual, course:course(), shaderWarmupMs:DIAG.warm==null?null:Math.round(DIAG.warm), programs:renderer.info.programs?renderer.info.programs.length:0, grid:racers.map(view) };
     },
 
     'race.manual': ({manual})=>{ if(manual && !SIM.manual) SIM.t=performance.now()/1000; SIM.manual=!!manual; if(!manual) last=performance.now(); hold([]); return { manual:SIM.manual, state }; },
@@ -78199,12 +78643,13 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
                 laps:[], spins:0, placeChanges:[], itemsPicked:[], itemsUsed:[], boosts:0, faces:{} };
       let px=m.x, pz=m.z, lap=m.lap, place=m.place, item=m.item, spin=(m.spinT||0)>0, boost=(m.boostT||0)>0, lapT=t0;
       let ended='time';
-      for(let i=0;i<n;i++){
+      // whole frames, not just the race: the course's own world runs every step too (Victoria's posters tearing as the pack
+      // passes, Eve's garden answering it), so a drive leaves the course exactly as playing it would; nothing is drawn
+      SIM.busy=true;
+      try{ for(let i=0;i<n;i++){
         if(state!=='race'){ ended='race over'; break; }
         hold(autopilot ? [...autoKeys(m,i), ...extra] : extra);
-        raceStep(dt);
-        SIM.t+=dt;
-        if(state==='race'||state==='done'){ syncObjects(dt, SIM.t); updateCamera(dt); }
+        SIM.t+=dt; { const t1=performance.now(); frameStep(t1, dt, SIM.t, t1, !cupPause, false); }
         M.steps++; M.distance+=Math.hypot(m.x-px, m.z-pz); px=m.x; pz=m.z;
         M.speedSum+=m.spd; M.minSpeed=Math.min(M.minSpeed,m.spd); M.maxSpeed=Math.max(M.maxSpeed,m.spd);
         if(m.air) M.airSeconds+=dt; else if(offOf(m)>HW) M.offRoadSeconds+=dt;
@@ -78216,7 +78661,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(m.obj && m.obj.userData.expr){ const f=m.obj.userData.expr.cur; M.faces[f]=(M.faces[f]||0)+dt; }   // what his face did, and for how long
         if(untilFinish && m.finished){ ended='finished'; break; }
         if(i%240===239) await new Promise(r=>setTimeout(r,0));   // let the page breathe (and the socket answer) on long drives
-      }
+      } } finally { SIM.busy=false; }
       hold([]);
       const secs=M.steps*dt;
       return { simulated:r1(secs), ended, raceTime:r1(raceTime), state,
@@ -78232,8 +78677,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          so whatever else lives in the scene stays out of frame without anyone having to know what it is. — */
     'race.studio': ({on=true, racer, background='#efe3c8', lighting='course'}={})=>{
       const S=STUDIO;
-      if(!on){ if(S.on){ camera.layers.set(0); scene.background=S.bg; scene.fog=S.fog; for(const L of S.lights) L.parent&&L.parent.remove(L); S.lights=[];
-        for(const L of S.course) L.layers.disable(1); S.on=false; SIM.tick=null; } return { studio:false }; }
+      if(!on){ studioOff(); return { studio:false }; }
       if(!racers.length) throw new Error('no racers on the course yet — race_start first');
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+racer+'"');
       if(!S.on){ S.bg=scene.background; S.fog=scene.fog; }
@@ -78345,7 +78789,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
 
     /* — PROFILE: what each racer costs to draw (meshes ≈ draw calls, triangles, materials, textures), and on request the
          whole roster, every character built off-screen once and measured, build time included — */
-    'race.profile': async ({roster=false}={})=>{
+    'race.profile': async ({roster=false, top=12, inView=false}={})=>{
       const cost=root=>{ let draws=0, tris=0; const mats=new Set(), tex=new Set();
         root.traverseVisible(o=>{ if(!(o.isMesh||o.isPoints||o.isLine||o.isSprite)) return; draws++;
           const g=o.geometry; if(g){ const n=g.index?g.index.count:(g.attributes.position?g.attributes.position.count:0);
@@ -78354,6 +78798,27 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         return { draws, triangles:Math.round(tris), materials:mats.size, textures:tex.size }; };
       const out={ racers:racers.map(r=>({ name:r.name, character:r.id, ...cost(r.obj) })).sort((a,b)=>b.draws-a.draws),
         track:trackGroup?cost(trackGroup):null, scene:cost(scene) };
+      // the course's heaviest pieces (the track's direct children, by draws then triangles), named as well as they can be
+      // identical pieces are rolled together (×count), each named by what is inside it: its first mesh's material, colour, geometry
+      const sig=o=>{ if(o.name) return o.name; let m=o.isMesh?o:null; if(!m) o.traverse(c=>{ if(!m && c.isMesh) m=c; });
+        if(!m) return o.type; const mt=Array.isArray(m.material)?m.material[0]:m.material;
+        return (o.isMesh?'':o.type+'›')+(m.isInstancedMesh?'Instanced·':'')+(mt?(mt.name||mt.type.replace('Material',''))+(mt.color?' #'+mt.color.getHexString():''):'')+' '+(m.geometry?m.geometry.type.replace('BufferGeometry','').replace('Geometry','')||'Buffer':''); };
+      const roll=(parent)=>{ const g=new Map(); for(const c of parent.children){ const k=cost(c); if(!k.draws) continue; const key=sig(c)+'|'+k.draws+'|'+k.triangles;
+          const e=g.get(key)||{ name:sig(c), count:0, draws:0, triangles:0, each:k.draws }; e.count++; e.draws+=k.draws; e.triangles+=k.triangles; g.set(key,e); }
+        return [...g.values()].sort((a,b)=>b.draws-a.draws||b.triangles-a.triangles).slice(0,top||12); };
+      if(trackGroup){ out.trackTop=roll(trackGroup); out.trackPieces=trackGroup.children.length; }
+      { const other=new T.Group(); other.children=scene.children.filter(c=>c!==trackGroup && !racers.some(r=>r.obj===c)); out.sceneOtherTop=roll(other); }   // outside the track and the racers: sky, particles, effects
+      // inView: only what the camera would actually draw now (visible, on its layers, inside the frustum as three tests it),
+      // rolled up by the piece it belongs to — where this frame's draw calls really come from
+      if(inView){ camera.updateMatrixWorld(true); const fr=new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        const g=new Map(); let draws=0, tris=0;
+        scene.traverseVisible(o=>{ if(!(o.isMesh||o.isPoints||o.isLine||o.isSprite) || !o.layers.test(camera.layers)) return;
+          if(o.frustumCulled && !(o.isSprite ? fr.intersectsSprite(o) : fr.intersectsObject(o))) return;
+          let top=o; while(top.parent && top.parent!==scene && top.parent!==trackGroup) top=top.parent;
+          const owner=racers.find(r=>r.obj===top) ? 'racer: '+racers.find(r=>r.obj===top).name : (top.parent===trackGroup?'track › ':'scene › ')+sig(top);
+          const gg=o.geometry, n=gg?(gg.index?gg.index.count:(gg.attributes.position?gg.attributes.position.count:0)):0, t=o.isMesh?(n/3)*(o.isInstancedMesh?o.count:1):0;
+          const e=g.get(owner)||{ name:owner, draws:0, triangles:0 }; e.draws++; e.triangles+=Math.round(t); g.set(owner,e); draws++; tris+=t; });
+        out.inView={ draws, triangles:Math.round(tris), top:[...g.values()].sort((a,b)=>b.draws-a.draws).slice(0,top||12) }; }
       if(roster){ const list=[];
         for(const t of SPERM_TYPES){ const t0=performance.now(); let o=null, err=null;
           try{ o=makeCell(t.hue, t.id); }catch(e){ err=String(e.message||e); }
@@ -78411,6 +78876,169 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          turn, the tail tip, every swaying part, and anything a character lists in ud.motionProbes. For each: how far it
          moves, and the RMS of its speed, acceleration and jerk (the third derivative: high jerk is what reads as
          snapping, popping, robotic); "snaps" are frames whose jerk is far above that probe's own median. — */
+    /* — PERF: the page's own frame, segment by segment (setup, sim, racers, camera, minimap, world, particles, render):
+         on:true starts counting, on:false returns ms per frame for each, the worst frame, draw calls and triangles. — */
+    'race.perf': ({on=true, autopilot=true, shaderChecks}={})=>{
+      if(on){ PERF.checks0=renderer.debug.checkShaderErrors; if(shaderChecks!=null) renderer.debug.checkShaderErrors=!!shaderChecks;   // (shaderChecks:false measures the game as players get it)
+        Object.assign(PERF, { on:true, drive:autopilot?(k=>hold(autoKeys(me(),k))):null, n:0, seg:{}, calls:0, tris:0, worst:0, worstAt:null, prevSeg:null, ft:[], compiles:[], progN:renderer.info.programs?renderer.info.programs.length:0 }); return { on:true }; }
+      PERF.on=false; if(PERF.drive){ PERF.drive=null; hold([]); } if(PERF.checks0!=null){ renderer.debug.checkShaderErrors=PERF.checks0; PERF.checks0=null; } const n=Math.max(1,PERF.n), seg={}; let tot=0;
+      for(const k in PERF.seg){ seg[k]=+(PERF.seg[k]/n).toFixed(3); tot+=PERF.seg[k]/n; }
+      let worstSeg=null; if(PERF.worstAt){ const a=PERF.worstAt.seg, b=PERF.worstAt.prev||{}; worstSeg={ frame:PERF.worstAt.frame };   // the worst frame, segment by segment (its own cost: this frame's running totals minus the last frame's)
+        for(const k in a){ const d=a[k]-(b[k]||0); if(d>0.5) worstSeg[k]=+d.toFixed(1); } }
+      const ft=PERF.ft.slice().sort((a,b)=>a-b), q=f=>+(ft[Math.min(ft.length-1, Math.floor(f*ft.length))]||0).toFixed(2);
+      return { frames:PERF.n, msPerFrame:+tot.toFixed(3), p50:q(0.5), p95:q(0.95), p99:q(0.99), segments:seg, worstFrameMs:+PERF.worst.toFixed(2), worstFrame:worstSeg,
+        shaderCompiles:PERF.compiles, programs:renderer.info.programs?renderer.info.programs.length:0, draws:Math.round(PERF.calls/n), triangles:Math.round(PERF.tris/n),
+        geometries:PERF.geos, textures:PERF.texs, state, course:TRACKS[selTrack]&&TRACKS[selTrack].name, racers:racers.length };
+    },
+
+    /* — FRAMES: whole game frames (race, racers, camera, world, particles, and the picture when draw) at a fixed step,
+         as fast as the machine allows; the display loop stands aside meanwhile. For profiling (race_perf) and for film. — */
+    'race.frames': async ({frames=60, dt=1/60, draw=true, autopilot=true, keys:extra=[]}={})=>{
+      if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+      SIM.busy=true;
+      try{ for(let k=0;k<frames;k++){
+        const sim=state==='race' && !cupPause;
+        if(sim) hold(autopilot?[...autoKeys(me(),k),...extra]:extra);
+        SIM.t+=dt; const t0=performance.now();
+        frameStep(t0, dt, SIM.t, t0, sim, draw);
+        if(k%30===29) await new Promise(res=>setTimeout(res,0));
+      } } finally { SIM.busy=false; hold([]); }
+      return { frames, raceTime:r1(raceTime), state };
+    },
+
+    /* — RECORD: film at an exact frame rate whatever the machine's speed. recmode on: the display loop stands aside (only
+         race.rec draws), the canvas renders at pixel ratio 1, the race is stepped by hand. Each race.rec advances the game
+         1/fps (in 1/60 s steps), places the camera (the chase cam, or a photo camera eased between two framings over the shot),
+         draws once and returns the frame as a JPEG. — */
+    'race.recmode': ({on=true, pixelRatio=1}={})=>{
+      if(on){ if(!REC.on){ REC.pr=renderer.getPixelRatio(); REC.cam=SIM.cam; } REC.on=true; SIM.busy=true; if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+        renderer.setPixelRatio(pixelRatio); resize(); }
+      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
+      const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
+    },
+    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false}={})=>{
+      if(!REC.on) throw new Error('race.recmode first');
+      // straight: the filmed racer looks down its own nose (no glancing at the grid) — set after the frame's pose, before its draw
+      const subj=cam && cam.who ? racers.find(r=>r.name===cam.who||r.id===cam.who) : me(), tick0=SIM.tick;
+      if(straight && subj) SIM.tick=()=>{ if(tick0) tick0(); const nk=subj.obj && subj.obj.userData.neck; if(nk){ nk.quaternion.identity(); nk.position.set(0,0,0); } };
+      if(cam && cam.mode==='chase' && k===0){ const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.swing=0; CAMFX.roll=0; }   // a shot opens on the chase cam already in place, not flying in from wherever it was left
+      if(cam){ if(cam.mode==='chase') SIM.cam=null;
+        else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
+          const L=key=>{ const a=A[key], b=B[key]; return a==null?(b==null?undefined:b):b==null?a:a+(b-a)*e; };
+          const who=cam.who?racers.find(r=>r.name===cam.who||r.id===cam.who):null;
+          SIM.cam={ who:who?who.name:null, azimuth:L('azimuth')??0, elevation:L('elevation')??10, distance:L('distance')??24, height:L('height')??3.5, fov:L('fov')??40, along:L('along')??0 }; } }
+      const steps=Math.max(1,Math.round(60/fps)), dt=1/60;
+      for(let i=0;i<steps;i++){
+        const sim=!still && state==='race' && !cupPause;
+        if(sim) hold(autopilot?[...autoKeys(me(),REC.k++),...extra]:extra);
+        SIM.t+=dt; const t0=performance.now();
+        frameStep(t0, dt, SIM.t, t0, sim, i===steps-1); }
+      SIM.tick=tick0;
+      const url=renderer.domElement.toDataURL('image/jpeg', quality);
+      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state };
+    },
+    /* — AUDIO: record what the speakers get (the produced songs play straight into the master bus) for `seconds` of real
+         time, as webm/opus, with the engine's hum muted meanwhile (a frozen race fires no other effects). Starts the audio
+         and the music if they are not running. — */
+    'race.audio': async ({seconds=30}={})=>{
+      initAudio(); if(!actx) throw new Error('no audio context');
+      if(actx.state!=='running') await actx.resume();
+      if(!musicTimer) startMusic();
+      await waitFor(()=>!!musicGain, 5000, 'the music');
+      const dest=actx.createMediaStreamDestination(), lim=actx.createDynamicsCompressor();
+      lim.threshold.value=-10; lim.ratio.value=8; masterGain.connect(lim); lim.connect(dest);
+      const eg=engineGain?engineGain.gain.value:null; if(engineGain) engineGain.gain.value=0;
+      const rec=new MediaRecorder(dest.stream, { mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:192000 }), parts=[];
+      rec.ondataavailable=e=>{ if(e.data.size) parts.push(e.data); };
+      const done=new Promise(res=>{ rec.onstop=res; });
+      rec.start(1000); await new Promise(r=>setTimeout(r, seconds*1000)); rec.stop(); await done;
+      try{ masterGain.disconnect(lim); }catch(_){} if(engineGain && eg!=null) engineGain.gain.value=eg;
+      const buf=new Uint8Array(await new Blob(parts,{type:'audio/webm'}).arrayBuffer()); let bin=''; for(let i=0;i<buf.length;i+=0x8000) bin+=String.fromCharCode.apply(null, buf.subarray(i,i+0x8000));
+      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat() };
+    },
+
+    /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
+         there: `to` is in laps on a lap course (2.5 = halfway round the third lap), a fraction on a point-to-point one.
+         You are put there and the field around you in race order (`spread` units apart), at speed, lap counts and
+         checkpoints set as if driven; eased course state (Ophelia's hour) snaps to it. — */
+    'race.warp': ({to=0, spread=26, you:at='back'}={})=>{
+      if(state!=='race') throw new Error('race_start first');
+      if(MAZE) throw new Error('the maze has no line to warp along');
+      let len=0; for(let i=1;i<STEPS;i++) len+=SAMP[i].p.distanceTo(SAMP[i-1].p); if(trackLoop) len+=SAMP[0].p.distanceTo(SAMP[STEPS-1].p);
+      const laps=lapsOf(), end=trackLoop?laps-0.03:0.96, t0=Math.max(0, Math.min(end, +to||0));
+      // where you sit in the field: at the back (the default: the chase camera sees the pack ahead, not a rival in its lens),
+      // at the front, or in the race's own order
+      const field=[...racers].filter(r=>!r.spectator && !r.remote).sort((a,b)=>a.place-b.place);
+      if(at!=='order'){ const m=field.findIndex(r=>r.you); if(m>=0){ const [y]=field.splice(m,1); if(at==='front') field.unshift(y); else field.push(y); } }
+      const mi=Math.max(0,field.findIndex(r=>r.you));
+      field.forEach((r,k)=>{
+        const t=Math.max(0, Math.min(end, t0+(mi-k)*spread/len));
+        const lap=trackLoop?Math.floor(t):0, u=trackLoop?t-lap:t, idx=trackLoop?Math.round(u*STEPS)%STEPS:Math.round(u*(STEPS-1)), sp=SAMP[idx];
+        const lane=((k%3)-1)*Math.min(6, HW*0.4);
+        r.x=sp.p.x+sp.n.x*lane; r.z=sp.p.z+sp.n.z*lane; r.y=sp.p.y+Math.sin(sp.bank||0)*lane+HOVER_H; r.surfY=r.y-HOVER_H;
+        r.head=Math.atan2(sp.t.x, sp.t.z); r.idx=idx; r.lap=lap; r.prog=u; r.total=lap+u; r._cp=trackLoop && u>0.4;
+        r.spd=Math.max(r.spd||0, MAXV*0.75); r.air=false; r.vy=0; r.hop=0; r.spinT=0; r.drift=0; r.driftDir=0; r.driftCharge=0; r.slip=0; r.offT=0;
+        r.finished=false; r.draft=0; r.draftCharge=0; });
+      rank(); const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.px=null; SIM.warped=3;
+      syncObjects(0, SIM.manual?SIM.t:performance.now()/1000);
+      return { to:+t0.toFixed(3), laps:trackLoop?laps:null, loop:trackLoop, trackLength:Math.round(len), you:view(m) };
+    },
+
+    /* — FRAMING: is a racer well shot from where the camera is? Two flat passes from the same camera: the racer alone
+         (its whole silhouette: how much of the frame it fills, where, whether the frame edge cuts it) and the racer
+         against the scene's depth (what is actually seen). Their difference is how much is hidden behind something.
+         A verdict against simple bounds, so a shot can be checked without looking at it. — */
+    'race.framing': async ({racer, cam, minFill=0.02, maxFill=0.6, maxHidden=0.25}={})=>{
+      const r=racers.find(x=>racer?(x.name===racer||x.id===racer):x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
+      const held=SIM.cam; if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:r.name });
+      if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+      if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
+      const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1);
+      const rt=new T.WebGLRenderTarget(W,H), a=new Uint8Array(W*H*4), v=new Uint8Array(W*H*4);
+      const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
+      const white=new T.MeshBasicMaterial({ color:0xffffff, fog:false }), black=new T.MeshBasicMaterial({ color:0x000000, fog:false });
+      const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white; o.layers.enable(3); }
+      const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear;
+      try{
+        scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
+        camera.layers.set(3); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,a);   // alone
+        // everything else in black, for its depth: only solid things hide a racer (not glows, sprites, haze, water, its own outline)
+        const hid=[]; scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
+            (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
+        for(const o of hid) o.visible=false;
+        camera.layers.mask=L; scene.overrideMaterial=black; renderer.clear(); renderer.render(scene,camera);
+        for(const o of hid) o.visible=true;
+        scene.overrideMaterial=null; renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
+        renderer.readRenderTargetPixels(rt,0,0,W,H,v);
+      } finally {
+        renderer.autoClear=ac; scene.overrideMaterial=null; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
+        for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } white.dispose(); black.dispose(); rt.dispose(); SIM.cam=held; }
+      let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4; if(a[i]>127){ A++; cx+=x; cy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+        if(x===0||y===0||x===W-1||y===H-1) edge++; if(v[i]>127) V++; } }
+      const fill=A/(W*H), hidden=A?1-V/A:1, f=n=>+n.toFixed(3);
+      const out={ racer:r.name, fill:f(fill), hidden:f(hidden), visibleFill:f(V/(W*H)),
+        box:A?[f(x0/W),f(1-y1/H),f((x1+1)/W),f(1-y0/H)]:null, center:A?[f(cx/A/W),f(1-cy/A/H)]:null, cutByEdge:edge>0 };
+      const why=[]; if(!A) why.push('not in frame'); else { if(fill<minFill) why.push('too small ('+f(fill)+' of the frame)'); if(fill>maxFill) why.push('too big ('+f(fill)+' of the frame)');
+        if(hidden>maxHidden) why.push(Math.round(hidden*100)+'% hidden behind something'); if(edge>Math.sqrt(A)*0.5) why.push('cut by the frame edge'); }
+      out.ok=!why.length; if(why.length) out.why=why; return out;
+    },
+
+    /* — IMAGE FIT: scale an image (base64 JPEG/PNG) to at most maxWidth wide, as a JPEG. Every picture an agent is
+         shown costs it in proportion to its pixels: tools return pictures at a working size, files keep full size. — */
+    'img.fit': async ({data, maxWidth=800, quality=0.85}={})=>{
+      const im=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('could not decode an image')); i.src='data:image/jpeg;base64,'+data; });
+      if(im.width<=maxWidth) return { data, width:im.width, height:im.height, scaled:false };
+      const w=maxWidth, h=Math.round(im.height*maxWidth/im.width), c=document.createElement('canvas'); c.width=w; c.height=h;
+      const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(im,0,0,w,h); const url=c.toDataURL('image/jpeg',quality);
+      return { data:url.slice(url.indexOf(',')+1), width:w, height:h, scaled:true };
+    },
+
+    /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
+    'race.fx': ({slipstream, edenLive}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
+      if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
+      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0 }; },
+
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
       if(!still && state!=='race') throw new Error('the race is not running; use still:true');
@@ -78474,7 +79102,15 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       return { screen:'select', character:{ id:t.id, name:t.name }, stage:{ visible:!!SEL3D.vis, live:!!SEL3D.live, mode:SEL3D.mode, ...SEL3D.stats } };   // (live:false = the stage judged this device too slow and fell back to 2D)
     },
 
-    'race.camera': ({mode='photo', racer, azimuth=30, elevation=12, distance=22, height=3.5, fov=35, along=0}={})=>{
+    'race.camera': ({mode='photo', racer, azimuth=30, elevation=12, distance=22, height=3.5, fov=35, along=0, from, at, hazard}={})=>{
+      if(mode==='free'){   // a camera anywhere: from a world point, looking at another (or at a hazard, from `distance` off its side)
+        if(hazard!=null){ const h=hazards[hazard|0]; if(!h) throw new Error('no hazard '+hazard+' ('+hazards.length+' on this course)');
+          const hp=h.mesh.position; at=[hp.x,hp.y+1,hp.z]; const a=azimuth*Math.PI/180, e=elevation*Math.PI/180;
+          from=[hp.x+Math.sin(a)*Math.cos(e)*distance, hp.y+1+Math.sin(e)*distance, hp.z+Math.cos(a)*Math.cos(e)*distance]; }
+        if(!from||!at) throw new Error('free needs from:[x,y,z] and at:[x,y,z], or a hazard index');
+        SIM.cam={ free:true, from, at, fov }; simCamApply();
+        return { mode:'free', from:from.map(v=>+(+v).toFixed(1)), at:at.map(v=>+(+v).toFixed(1)), fov, hazards:hazards.map((h,i)=>({ i, kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard') })) };
+      }
       if(mode==='chase'){ SIM.cam=null; if(racers.length) for(let i=0;i<120;i++) updateCamera(1/60); return { mode:'chase' }; }   // settled at once, not eased back from the photo position
       if(!racers.length) throw new Error('no racers on the course yet — race_start first');
       if(racer && !racers.some(r=>r.name===racer)) throw new Error('no racer "'+racer+'" (names: '+racers.map(r=>r.name).join(', ')+')');

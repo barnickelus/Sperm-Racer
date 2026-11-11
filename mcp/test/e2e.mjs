@@ -48,9 +48,9 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_options', 'race_palette', 'race_pose', 'race_realtime',
-    'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
-    'scene_profile', 'scene_screenshot', 'scene_stats']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_camera', 'race_drive', 'race_film', 'race_framing', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+    'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
 await check('nothing connected: tools say how to connect; a foreign origin is refused', async () => {
@@ -155,10 +155,11 @@ await check('race_drive untilFinish runs the race to the line', async () => {
 await check('the game\'s own real-time loop still runs the race (raceStep, called from frame)', async () => {
   json(await call('race_start', { manual: false }));
   const t0 = json(await call('race_state')).raceTime;
-  await new Promise(r => setTimeout(r, 4000));
-  const s = json(await call('race_state'));
+  // wait for the page's clock to move the race on: on a software GPU the first real frames each JIT-compile their pipelines
+  // and can take seconds, so this waits for progress (up to 30 s) rather than timing it
+  let s; for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 1000)); s = json(await call('race_state')); if (s.raceTime > t0 + 0.3) break; }
   assert.equal(s.manual, false);
-  assert.ok(s.raceTime > t0 + 0.1, `raceTime ${t0} -> ${s.raceTime}`);
+  assert.ok(s.raceTime > t0 + 0.3, `raceTime ${t0} -> ${s.raceTime}`);
   assert.ok(s.standings.some(r => r.speed > 5), 'karts are moving on their own');
   json(await call('race_realtime', { manual: true }));
 });
@@ -200,7 +201,7 @@ await check('race_studio isolates the racer; race_sheet draws turnaround and exp
   assert.equal(st.studio, true); assert.equal(st.racer, 'Rusty Malone');
   const t = await call('race_sheet', { kind: 'turnaround', cell: 160, title: 'TEST' });
   const ti = image(t); save(ti, 'rusty-turnaround.jpg');
-  assert.match(t.content.find(c => c.type === 'text').text, /^8 cells · 640×\d+/);
+  assert.match(t.content.find(c => c.type === 'text').text, /^8 cells · drawn 640×\d+/);
   assert.ok(Buffer.from(ti.data, 'base64').length > 20000, 'a real sheet');
   const e = await call('race_sheet', { kind: 'expressions', cell: 140 });
   save(image(e), 'rusty-expressions.jpg');
@@ -230,6 +231,8 @@ await check('scene_profile breaks the cost down per racer and over the whole ros
 });
 
 await check('race_palette measures how far apart a racer\'s parts are on screen (Rusty: hat and hair)', async () => {
+  // a fresh race, so this is Ophelia's afternoon: later laps run into golden hour and dusk, whose warm light pulls colours together
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' })); json(await call('race_start')); json(await call('race_drive', { seconds: 3 }));
   const p = json(await call('race_palette', { cam: { azimuth: 180, elevation: 20, distance: 26, height: 3.5 } }));
   assert.equal(p.racer, 'Rusty Malone');
   const parts = Object.fromEntries(p.parts.map(x => [x.part, x]));
@@ -285,6 +288,59 @@ await check('race_regress: a rest-pose sheet is the same pixels every time; the 
   const other = await call('race_regress');
   save(image(other), 'regress-heat.jpg');
   assert.equal(json(other).pass, false, 'Sid Spitfire is not Guido');
+});
+
+await check('race_perf: the frame split into segments, the browser\'s style work, CPU and allocation profiles; shaders compiled in the countdown', async () => {
+  json(await call('race_setup', { course: 'Victoria', character: 'guido', difficulty: 'medium' }));
+  const st = json(await call('race_start'));
+  assert.ok(st.programs > 20, `the countdown compiled the course's shaders (${st.programs} programs, ${st.shaderWarmupMs} ms)`);
+  const js = json(await call('race_perf', { seconds: 3, draw: false }));
+  assert.ok(js.frame.frames >= 170, `${js.frame.frames} frames`);
+  for (const k of ['sim', 'racers', 'camera', 'minimap', 'world', 'particles']) assert.ok(k in js.frame.segments, k);
+  assert.ok(js.frame.browser.styleMsPerFrame < 0.5, `style recalc ${js.frame.browser.styleMsPerFrame} ms a frame (a :has() on <html>/<body> made it 3 ms)`);
+  assert.ok(js.cpu.selfTop.length > 0 && js.cpu.gameInclusive.some(f => f.fn === 'frameStep'), 'the CPU profile sees the frame');
+  assert.ok(js.alloc.top.length > 0);
+  const drawn = json(await call('race_perf', { seconds: 1, cpu: false, alloc: false }));
+  assert.ok(drawn.frame.draws > 20, `${drawn.frame.draws} draw calls`);
+  assert.ok(drawn.frame.shaderCompiles.length <= 1, 'no shader compiles mid-race: ' + JSON.stringify(drawn.frame.shaderCompiles));
+});
+
+await check('race_record films at an exact frame rate; race_audio records the music; slipstream is reported', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-rec-'));
+  try {
+    const r = json(await call('race_record', { seconds: 0.5, fps: 12, dir, name: 'shot', cam: { mode: 'photo', from: { azimuth: 30, distance: 20 }, to: { azimuth: 60, distance: 16 } } }));
+    assert.equal(r.frames, 6); assert.equal(fs.readdirSync(dir).filter(f => f.endsWith('.jpg')).length, 6);
+    assert.ok(r.raceTime[1] > r.raceTime[0], 'game time moved on between frames');
+    const a = json(await call('race_audio', { seconds: 2, file: path.join(dir, 'm.webm') }));
+    assert.ok(a.bytes > 4000, `${a.bytes} bytes of music`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const st = json(await call('race_state'));
+  assert.ok(st.standings.every(s => typeof s.draft === 'number' && typeof s.slingshots === 'number'));
+  assert.equal(json(await call('race_fx', { slipstream: 1 })).slipstream, 1);
+  const sg = json(await call('scene_graph', { root: 'slipstream', depth: 0 }));
+  assert.ok(sg.root.instances >= 20, 'the wind lines are one instanced draw');
+  json(await call('race_fx', { slipstream: null }));
+});
+
+await check('Eve: race_warp jumps the race, race_framing judges a shot, the profiler sees what is drawn, the garden answers', async () => {
+  json(await call('race_setup', { course: 'Eve', character: 'guido', difficulty: 'medium' })); json(await call('race_start'));
+  const w = json(await call('race_warp', { to: 0.6 }));
+  assert.equal(w.loop, false); assert.ok(Math.abs(w.you.total - 0.6) < 0.05, `you at ${w.you.total}`);
+  json(await call('race_drive', { seconds: 0.5 }));
+  const good = json(await call('race_framing', { cam: { azimuth: 160, elevation: 10, distance: 26, height: 3.5 } }));
+  assert.ok(good.fill > 0.02 && good.box, JSON.stringify(good));
+  const inside = json(await call('race_framing', { cam: { azimuth: 0, elevation: 0, distance: 1.5, height: 3 } }));
+  assert.equal(inside.ok, false, 'a lens inside the racer is not a shot: ' + JSON.stringify(inside));
+  const prof = json(await call('scene_profile', { inView: true, top: 6 }));
+  assert.ok(prof.inView.draws > 20 && prof.inView.top.length, 'counts what the camera draws');
+  assert.ok(prof.trackTop.length && prof.sceneOtherTop.length, 'names the heaviest pieces');
+  const parts = json(await call('scene_graph', { root: 'particles', depth: 0 }));
+  assert.equal(parts.root.geometry, 'InstancedBufferGeometry', 'every particle in one instanced draw');
+  assert.equal(json(await call('race_fx', { edenLive: false })).edenLive, false);
+  assert.equal(json(await call('race_fx', { edenLive: true })).edenLive, true);
+  const free = json(await call('race_camera', { mode: 'free', from: [0, 400, 0], at: [0, 0, -100], screenshot: false }));
+  assert.equal(free.mode, 'free'); assert.ok(Array.isArray(free.hazards));
+  json(await call('race_camera', { mode: 'chase', screenshot: false }));
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
