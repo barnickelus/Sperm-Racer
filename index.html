@@ -73466,8 +73466,11 @@ let _camRoll=0, _camPushOn=false;
    · it leans into a turn from the actual yaw rate (a few degrees), as the first-person lens already did;
    · the lens widens as speed builds (58 at a crawl to 64 flat out; a boost still kicks it to 74);
    · a landing dips it on a spring, so a jump has a bottom;
-   · shake is a smooth tremor (summed sines at random phases), not a fresh random offset every frame. */
-const CAMFX={ t:0, swing:0, roll:0, rate:0, prevHead:null, land:0, landV:0, wasAir:false, ph:[Math.random()*9,Math.random()*9,Math.random()*9] };
+   · shake is a smooth tremor (summed sines at random phases), not a fresh random offset every frame;
+   · the lens rides along with the kart before it eases to its spot. Easing alone trailed by speed/4 (fifty units at boost),
+     so the kart shrank away down the road whenever it was quickest; now most of the motion is carried and the ease only
+     smooths the turns (a little lag is kept, so a boost still pulls away a touch). */
+const CAMFX={ t:0, swing:0, roll:0, rate:0, prevHead:null, land:0, landV:0, wasAir:false, px:null, py:0, pz:0, ph:[Math.random()*9,Math.random()*9,Math.random()*9] };
 function camTremor(axis){ const t=CAMFX.t, p=CAMFX.ph[axis]; return (Math.sin(t*41+p)*0.55+Math.sin(t*67.3+p*1.7)*0.3+Math.sin(t*23.1+p*2.3)*0.15); }
 /* VIEW OPTION: 'chase' (the original), 'close' (the same chase, pulled in so the racer fills more
    of a small phone screen) or 'fp' (first person, from the racer's own eyes — pairs with tilt
@@ -73743,6 +73746,8 @@ function updateCameraCore(dt){
   const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
+  { const dx=me.x-(CAMFX.px??me.x), dy=me.y-CAMFX.py, dz=me.z-CAMFX.pz; CAMFX.px=me.x; CAMFX.py=me.y; CAMFX.pz=me.z;
+    if(!me._camSnap && dx*dx+dy*dy+dz*dz<1600) camera.position.x+=dx*0.85, camera.position.y+=dy*0.85, camera.position.z+=dz*0.85; }   // ride along (not across a respawn)
   if(me._camSnap){ camera.position.copy(want); me._camSnap=false; }
   else camera.position.lerp(want, Math.min(1,4*dt));
   if(camShake>0){
@@ -78580,6 +78585,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
     'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9}={})=>{
       if(!REC.on) throw new Error('race.recmode first');
+      if(cam && cam.mode==='chase' && k===0){ const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.swing=0; CAMFX.roll=0; }   // a shot opens on the chase cam already in place, not flying in from wherever it was left
       if(cam){ if(cam.mode==='chase') SIM.cam=null;
         else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
           const L=key=>{ const a=A[key], b=B[key]; return a==null?(b==null?undefined:b):b==null?a:a+(b-a)*e; };
