@@ -472,15 +472,16 @@ tool('race_record', {
   description: 'Film a shot at an exact frame rate, however slow the machine: the game is stepped 1/fps of GAME time per frame (racing on autopilot, held keys, or still: frozen race, live animation), the camera placed for each frame (the chase cam, or a photo camera eased from one framing to another over the shot: azimuth relative to the racer\'s heading, elevation, distance, height, along its body, fov), and every frame written to disk as a JPEG. encode:true also makes an MP4 with ffmpeg. Returns the folder, the files, the race clock at both ends, and the shot\'s middle frame to look at. The display loop stands aside while it films, and the canvas renders at pixel ratio 1 (its size is the window\'s: open the scene at 1280x720 for 720p).',
   inputSchema: { page: pageArg, seconds: z.number().positive().max(60), fps: z.number().int().min(12).max(60).default(30), cam: z.object({ mode: z.enum(['chase', 'photo']).default('chase'), who: z.string().optional().describe('racer name or character id (default: you)'), ease: z.enum(['inout', 'linear', 'in', 'out']).default('inout'), from: frameZ.optional(), to: frameZ.optional() }).optional(),
     still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]), quality: z.number().min(0.5).max(1).default(0.9),
+    straight: z.boolean().default(false).describe('the filmed racer looks straight ahead (no glancing at rivals): for portraits'),
     dir: z.string().optional().describe('folder for the frames (default mcp/recordings)'), name: z.string().default('shot'), encode: z.boolean().default(false) },
-}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, dir, name, encode }) => {
+}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, straight, dir, name, encode }) => {
   const p = pick(page, 'race.rec');
   const out = path.resolve(dir || path.join(here, 'recordings')); fs.mkdirSync(out, { recursive: true });
   const n = Math.max(1, Math.round(seconds * fps)), files = []; let first = null, last = null, mid = null;
   await call(p, 'race.recmode', { on: true });
   try {
     for (let k = 0; k < n; k++) {
-      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality }, 120000);
+      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality, straight }, 120000);
       const file = path.join(out, `${name}_${String(k).padStart(4, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64')); files.push(file);
       if (k === 0) first = f.raceTime; last = f.raceTime; if (k === (n >> 1)) mid = f.data;
     }

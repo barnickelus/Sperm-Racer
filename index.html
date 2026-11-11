@@ -78778,8 +78778,11 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
       const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
     },
-    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9}={})=>{
+    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false}={})=>{
       if(!REC.on) throw new Error('race.recmode first');
+      // straight: the filmed racer looks down its own nose (no glancing at the grid) — set after the frame's pose, before its draw
+      const subj=cam && cam.who ? racers.find(r=>r.name===cam.who||r.id===cam.who) : me(), tick0=SIM.tick;
+      if(straight && subj) SIM.tick=()=>{ if(tick0) tick0(); const nk=subj.obj && subj.obj.userData.neck; if(nk){ nk.quaternion.identity(); nk.position.set(0,0,0); } };
       if(cam && cam.mode==='chase' && k===0){ const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.swing=0; CAMFX.roll=0; }   // a shot opens on the chase cam already in place, not flying in from wherever it was left
       if(cam){ if(cam.mode==='chase') SIM.cam=null;
         else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
@@ -78792,6 +78795,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(sim) hold(autopilot?[...autoKeys(me(),REC.k++),...extra]:extra);
         SIM.t+=dt; const t0=performance.now();
         frameStep(t0, dt, SIM.t, t0, sim, i===steps-1); }
+      SIM.tick=tick0;
       const url=renderer.domElement.toDataURL('image/jpeg', quality);
       return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state };
     },

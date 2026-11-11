@@ -48,9 +48,9 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_camera', 'race_drive', 'race_film', 'race_motion', 'race_audio', 'race_fx', 'race_options', 'race_palette', 'race_perf', 'race_pose', 'race_realtime',
-    'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page', 'scene_pages',
-    'scene_profile', 'scene_screenshot', 'scene_stats']);
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_camera', 'race_drive', 'race_film', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+    'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
 await check('nothing connected: tools say how to connect; a foreign origin is refused', async () => {
@@ -155,10 +155,11 @@ await check('race_drive untilFinish runs the race to the line', async () => {
 await check('the game\'s own real-time loop still runs the race (raceStep, called from frame)', async () => {
   json(await call('race_start', { manual: false }));
   const t0 = json(await call('race_state')).raceTime;
-  await new Promise(r => setTimeout(r, 4000));
-  const s = json(await call('race_state'));
+  // wait for the page's clock to move the race on: on a software GPU the first real frames each JIT-compile their pipelines
+  // and can take seconds, so this waits for progress (up to 30 s) rather than timing it
+  let s; for (let i = 0; i < 30; i++) { await new Promise(r => setTimeout(r, 1000)); s = json(await call('race_state')); if (s.raceTime > t0 + 0.3) break; }
   assert.equal(s.manual, false);
-  assert.ok(s.raceTime > t0 + 0.1, `raceTime ${t0} -> ${s.raceTime}`);
+  assert.ok(s.raceTime > t0 + 0.3, `raceTime ${t0} -> ${s.raceTime}`);
   assert.ok(s.standings.some(r => r.speed > 5), 'karts are moving on their own');
   json(await call('race_realtime', { manual: true }));
 });
