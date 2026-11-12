@@ -71138,6 +71138,10 @@ function dbHoseR(s){
   return DB_RH*0.9*Math.pow(Math.sin(Math.PI/2*(1-(v-0.66)/0.34)),0.9);
 }
 let _dbGeo=null, _dbFaceGeo=null, _dbBrowGeo=null;
+const DB_NECK={a0:3, r0:2.4, m0:-2, rx:2.5, ry:2.3, s:4.45};   // the neck fillet (filled by dbBodyGeometry); s: where the collar sits
+function dbNeckR(a){ const t=ldClamp((a-DB_NECK.a0)/(DB_SN-DB_NECK.a0),0,1), t2=t*t, t3=t2*t, N=DB_NECK;
+  const r=(2*t3-3*t2+1)*N.r0+(t3-2*t2+t)*N.m0+(-2*t3+3*t2)*DB_RH, asp=1-(t*t*(3-2*t));
+  return [r*(1+(N.rx/N.r0-1)*asp), r*(1+(N.ry/N.r0-1)*asp)]; }
 // the body: one lathe, nose to tail tip. position = rest place; normal = rest normal; aSk = (a: arc from the head's centre,
 // tail-ward; w: 1 = bound rigidly to the head, 0 = to its own ring on the spine; flick weight; the hose's u)
 function dbBodyGeometry(){
@@ -71153,6 +71157,7 @@ function dbBodyGeometry(){
   const last=rings[rings.length-1].pts; let zMin=1e9, zAvg=0, rx=0, ry=0;
   for(const p of last){ zMin=Math.min(zMin,p[2]); zAvg+=p[2]/S; rx=Math.max(rx,Math.abs(p[0])); ry=Math.max(ry,Math.abs(p[1]-DB_HY)); }
   const a0=DB_HZ-zMin+0.12, r0=(rx+ry)/2, m0=-1.15*(DB_SN-a0), NN=9;
+  DB_NECK.a0=a0; DB_NECK.r0=r0; DB_NECK.m0=m0; DB_NECK.rx=rx; DB_NECK.ry=ry;
   for(let k=1;k<=NN;k++){ const t=k/NN, a=a0+(DB_SN-a0)*t, t2=t*t, t3=t2*t;
     const r=(2*t3-3*t2+1)*r0+(t3-2*t2+t)*m0+(-2*t3+3*t2)*DB_RH, asp=1-(t*t*(3-2*t));
     const sx=r*(1+(rx/r0-1)*asp), sy=r*(1+(ry/r0-1)*asp), pts=[];
@@ -71248,7 +71253,7 @@ void dbSkin(vec3 pos, vec3 nrm, out vec3 P, out vec3 N){
 const DB_GLSL_L=`const vec3 DB_L=vec3(${DB_LV.x.toFixed(4)},${DB_LV.y.toFixed(4)},${DB_LV.z.toFixed(4)});`;
 const DB_BODY_VS=DB_GLSL_SKIN+DB_GLSL_L+`
 uniform float uOW, uPx;
-varying vec3 vNv;
+varying vec3 vNv; varying float vU;
 #include <fog_pars_vertex>
 void main(){
   vec3 P, N; dbSkin(position, normal, P, N);
@@ -71257,23 +71262,25 @@ void main(){
 #ifdef DB_OUT
   float sh=1.0-smoothstep(-0.4,0.3,dot(nv,DB_L));                     // the shadow side gets the heavier line
   float px=uPx>0.0 ? (-mvPosition.z)/uPx : 0.0;                        // a world unit's share of a pixel here
-  float ow=max(uOW*(0.8+0.7*sh), px*(1.4+0.6*sh));
-  mvPosition.xyz+=nv*ow; mvPosition.z-=ow*1.6;               // pushed back: only the rim shows, never a crease inside the drawing
+  float ow=max(uOW*(0.8+0.75*sh), px*(1.8+0.9*sh));
+  mvPosition.xyz+=nv*ow; mvPosition.xyz+=normalize(mvPosition.xyz)*ow*1.4;   // pushed back along its own view ray: the rim keeps its width on screen, no crease shows inside the drawing
 #endif
-  vNv=nv;
+  vNv=nv; vU=aSk.w;
   gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
 const DB_BODY_FS=DB_GLSL_L+`
-uniform vec3 uLit, uShd, uEm;
-varying vec3 vNv;
+uniform vec3 uLit, uShd, uEm, uAcc, uAccS;
+varying vec3 vNv; varying float vU;
 #include <fog_pars_fragment>
 void main(){
 #ifdef DB_OUT
   gl_FragColor=vec4(uShd,1.0);
 #else
-  float d=dot(normalize(vNv),DB_L)-0.06, fw=fwidth(d)*0.7+1e-4;
-  gl_FragColor=vec4(mix(uShd,uLit,smoothstep(-fw,fw,d))+uEm,1.0);
+  float th=mix(0.06,0.3,smoothstep(0.0,0.06,vU));                    // the hose carries a wider flat shadow band on its underside and away side
+  float d=dot(normalize(vNv),DB_L)-th, fw=fwidth(d)*0.7+1e-4, k=smoothstep(-fw,fw,d);
+  float fu=fwidth(vU)*0.7+1e-5, ac=smoothstep(0.866-fu,0.866+fu,vU);   // the teardrop flick, past its waist, in the accent
+  gl_FragColor=vec4(mix(mix(uShd,uLit,k),mix(uAccS,uAcc,k),ac)+uEm,1.0);
 #endif
   #include <fog_fragment>
   gl_FragColor=linearToOutputTexel(gl_FragColor);
@@ -71508,7 +71515,7 @@ const DB_EXPR={
   take:   {lidL:1.2,lidR:1.2,pup:0.32,eyeS:1.32,pop:1,brL:0.78,brR:0.78,brT:-0.4,brA:0.6,mW:1.42,mO:1.55,mC:0,mR:0.55,mT:0.3,mTg:1,chk:0,hp:-0.12},
   angry:  {lidL:0.52,lidR:0.52,slant:0.5,lidD:-0.85,brL:-0.28,brR:-0.28,brT:0.6,brA:-0.15,mW:1.24,mO:0.3,mC:-0.45,mT:1,chk:0,hp:0.1},
   boost:  {lidL:0.7,lidR:0.7,slant:0.25,lidD:-0.95,brL:-0.12,brR:-0.12,brT:0.34,brA:0,mW:1.24,mO:0.22,mC:0.22,mT:1,chk:0.3,hp:0.06},
-  fire:   {lidL:0.42,lidR:0.42,lidD:-0.5,lidDC:1,brL:0.45,brR:0.45,brT:-0.2,brA:0.5,mW:1.53,mO:1.05,mC:1,mT:0.75,mTg:1,chk:1,hp:-0.08},
+  fire:   {lidL:0.7,lidR:0.7,lidD:-0.85,lidDC:0.7,gy:0.3,brL:0.45,brR:0.45,brT:-0.2,brA:0.5,mW:1.53,mO:1.05,mC:1,mT:0.75,mTg:1,chk:1,hp:-0.08},
   tired:  {lidL:0.18,lidR:0.22,slant:-0.32,lidD:-0.9,brL:0.1,brR:0.1,brT:-0.45,brA:-0.1,mW:0.89,mO:0.45,mC:-0.35,mR:0.3,mTg:0.7,chk:0,gy:-0.3,hp:0.22},
   win:    {lidL:0.6,lidR:0.6,lidD:-0.6,lidDC:0.9,brL:0.5,brR:0.5,brT:-0.15,brA:0.6,mW:1.59,mO:0.95,mC:1.15,mT:1,mTg:0.55,chk:1,hp:-0.12},
   lose:   {lidL:0.18,lidR:0.18,slant:-0.5,lidD:-0.95,brL:0.25,brR:0.25,brT:-0.62,brA:0,mW:0.94,mO:0.12,mC:-0.95,chk:0,gy:-0.45,hp:0.25},
@@ -71522,9 +71529,13 @@ for(const k in DB_EXPR){ const a=new Float32Array(DBF.length); DBF.forEach((f,i)
 const DB_K=2*Math.PI*1.05, DB_ENV=u=>0.18+0.82*Math.pow(u,1.5);   // one long S down the hose, the tip sweeping most
 const DB_FLK={c:0.42, lag:0.6};                 // the flick: the drop at the tip trails the stroke by a little and snaps through
 const DB_FU=u=>{ const f=ldClamp((u-0.72)/0.28,0,1); return f*f; };
-const DB_WAVE=(()=>{ let re=0, im=0; const n=80, Lh=DB_L-DB_SN; for(let i=0;i<n;i++){ const u=(i+0.5)/n, f=DB_FLK.c*DB_FU(u);
-    re+=(DB_ENV(u)*Math.cos(DB_K*u)+f*Math.cos(DB_K+DB_FLK.lag))*Lh/n; im+=(DB_ENV(u)*Math.sin(DB_K*u)+f*Math.sin(DB_K+DB_FLK.lag))*Lh/n; }
-  return {gain:Math.hypot(re,im), d:Math.atan2(im,re)}; })();   // tip excursion = gain x amplitude; the phase that puts the tip's extreme (flick and all) on a whole stroke
+const DB_TC=u=>u*u;                               // the shape of the tip cut: nothing at the base, all of it at the tip
+const DB_WAVE=(()=>{ const T=[]; for(let k=0;k<=10;k++){ const tc=k*0.05; let re=0, im=0; const n=80, Lh=DB_L-DB_SN;
+    for(let i=0;i<n;i++){ const u=(i+0.5)/n, c=1-tc*DB_TC(u), f=DB_FLK.c*DB_FU(u)*(1-tc);
+      re+=(DB_ENV(u)*c*Math.cos(DB_K*u)+f*Math.cos(DB_K+DB_FLK.lag))*Lh/n; im+=(DB_ENV(u)*c*Math.sin(DB_K*u)+f*Math.sin(DB_K+DB_FLK.lag))*Lh/n; }
+    T.push({gain:Math.hypot(re,im), d:Math.atan2(im,re)}); }
+  return {gain:T[0].gain, d:T[0].d, T, dAt(tc){ const f=ldClamp(tc/0.05,0,9.999), i=Math.floor(f), t=f-i; return T[i].d+(T[i+1].d-T[i].d)*t; }}; })();
+// amplitudes are in units of tip excursion with the tip uncut (gain); dAt(tc): the phase that puts the tip's extreme (flick and all) on a whole stroke
 const DB_NOR={spd:0, head:0, boostT:0, spinT:0, celebT:0, place:1, finished:false};
 const _dbV=new T.Vector3(), _dbV2=new T.Vector3(), _dbM=new T.Matrix4(), _dbQ=new T.Quaternion(), _dbS=new T.Vector3();
 const _dbX=new T.Vector3(), _dbY=new T.Vector3(), _dbZ=new T.Vector3(), _dbUp=new T.Vector3(0,1,0);
@@ -71562,11 +71573,12 @@ function makeBeatTemplate(opts){
   const lit=dbLin(opts.body), shd=dbLin(opts.shade), tl=dbLin(opts.tail||opts.body), ink=dbLin(opts.ink), acc=dbLin(opts.accent);
   // ---- the body and its outline: one mesh, its uniforms shared by reference
   const U={ uP:{value:new Float32Array(DB_N*4)}, uT:{value:new Float32Array(DB_N*4)}, uHS:{value:new T.Vector3(1,1,1)}, uHO:{value:new T.Vector3()},
-    uBO:{value:new T.Vector3()}, uDs:{value:DB_DS}, uOW:{value:0.2}, uPx:DB_PX };
+    uBO:{value:new T.Vector3()}, uDs:{value:DB_DS}, uOW:{value:0.26}, uPx:DB_PX };
   const em=new T.Color(0x060403);
-  const bodyMat=dbShader(DB_BODY_VS, DB_BODY_FS, Object.assign({ uLit:{value:lit}, uShd:{value:shd}, uEm:{value:em} }, U));
+  const accS=acc.clone().multiplyScalar(0.62).lerp(shd,0.22);
+  const bodyMat=dbShader(DB_BODY_VS, DB_BODY_FS, Object.assign({ uLit:{value:lit}, uShd:{value:shd}, uEm:{value:em}, uAcc:{value:acc}, uAccS:{value:accS} }, U));
   bodyMat.emissive=em;                                   // syncObjects' boost flush brightens this (the uniform holds the same Color)
-  const outMat=dbShader(DB_BODY_VS, DB_BODY_FS, Object.assign({ uLit:{value:ink}, uShd:{value:ink}, uEm:{value:new T.Color(0)} }, U), {side:T.BackSide, defines:{DB_OUT:1}});
+  const outMat=dbShader(DB_BODY_VS, DB_BODY_FS, Object.assign({ uLit:{value:ink}, uShd:{value:ink}, uEm:{value:new T.Color(0)}, uAcc:{value:ink}, uAccS:{value:ink} }, U), {side:T.BackSide, defines:{DB_OUT:1}});
   const geo=dbBodyGeometry();
   const body=bodyPart(new T.Mesh(geo, bodyMat)); body.name='db-body'; body.frustumCulled=false; g.add(body);
   const out=bodyPart(new T.Mesh(geo, outMat)); out.name='db-ink'; out.frustumCulled=false; out.userData.isOutline=true; g.add(out);
@@ -71592,11 +71604,13 @@ function makeBeatTemplate(opts){
   const neck=bodyPart(sk('neck')), back=bodyPart(sk('back')), tailRoot=bodyPart(sk('tailRoot')), tailTip=bodyPart(sk('tailTip'));
   for(const o of [neck,back,tailRoot,tailTip]){ o.matrixAutoUpdate=false; g.add(o); }
   ud.sockets={crown, hair, face:faceS, brow, neck, back, tailRoot, tailTip};
+  { const [cx,cy]=dbNeckR(DB_NECK.s), r=(cx+cy)/2, tg=new T.TorusGeometry(r+0.05,0.24,10,36); tg.scale((cx+0.05)/(r+0.05),(cy+0.05)/(r+0.05),0.8);
+    const collar=new T.Mesh(tg, dbPropMat(opts.accent,0.6)); collar.name='db-collar'; neck.add(collar); ud.dbCollar=collar; }
   // ---- the crown piece: Dash's three-hair cowlick (ink), Dot's bow (the accent colour)
   if(!fem){
-    const parts=[]; [[-0.42,-0.35,1.25],[0.02,0.05,1.75],[0.44,0.4,1.4]].forEach(([x,lean,h])=>{
+    const parts=[]; [[-0.48,-0.38,1.45],[0.02,0.05,2.0],[0.5,0.44,1.6]].forEach(([x,lean,h])=>{
       const pts=[new T.Vector3(x,-0.3,0), new T.Vector3(x+lean*0.3,h*0.55,0.12), new T.Vector3(x+lean*0.9,h*0.95,0.5), new T.Vector3(x+lean*1.3,h*1.06,1.1)];
-      parts.push(new T.TubeGeometry(new T.CatmullRomCurve3(pts),10,0.21,6,false)); });
+      parts.push(new T.TubeGeometry(new T.CatmullRomCurve3(pts),10,0.27,6,false)); });
     const merged=dbMerge(parts, i=>{ const t=Math.floor(i/7)/10; return 1-0.7*t*t; });
     const cow=new T.Mesh(merged, new T.MeshBasicMaterial({color:ink})); cow.name='db-cowlick'; crown.add(cow);
     ud.dbCrown=cow;
@@ -71630,7 +71644,7 @@ function makeBeatTemplate(opts){
     gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, gWait:0, sig:0, lastB:null, amp:3, ampV:0, ampT:3,
     hd:null, yr:0, turnF:0, turnFV:0, turnT:0, turnTV:0, dS:0, dSV:0, spdP:0, acc:0, ov:0, ovV:0, st:0, stV:0, smT:9, smK:0, fl:0, flV:0, tipA:0,
     tk:-1, spH:0, spHV:0, spAcc:0, pSpin:false, pBoost:false, pAir:false, airK:0, land:0,
-    lookY:0, lookP:0, lookR:0, lookYV:0, lookPV:0, lookRV:0, F:new Float32Array(DB_EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(DB_EV.rest),
+    lookY:0, lookP:0, lookR:0, lookYV:0, lookPV:0, lookRV:0, lkT:0, lkPend:false, lkAt:0, lkBig:0, tc:0, tcV:0, arc:0, arcV:0, F:new Float32Array(DB_EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(DB_EV.rest),
     cur:'rest', want:'rest', next:null, nextAt:0, blinkAt:4, blink:0, blinkK:0, rs:7919+(fem?13:0),
     ev:{place:null, cand:null, candT:0, react:0, spin:false, angryT:-9, takeT:-9, fireT:-9, item:null, slow:0, alone:0, passT:-9, passK:null, ws:0, celeb:false},
     dance:0, lose:0, hs:new T.Vector3(1,1,1), ho:new T.Vector3(), bo:new T.Vector3(), lashTau:-1, lash:0, lashFw:0, psiH:0, phiH:0, rhoH:0, bob:0, tip:new T.Vector3(0,DB_HY,DB_HZ-DB_L) };
@@ -71646,7 +71660,7 @@ function dbMerge(list, taper){
   const pos=new Float32Array(n*3), nor=new Float32Array(n*3), idx=[]; let o=0;
   for(const gg of list){ const p=gg.attributes.position, q=gg.attributes.normal, c=p.count;
     for(let i=0;i<c;i++){ let k=1; if(taper) k=taper(i);
-      pos[(o+i)*3]=p.getX(i)-q.getX(i)*0.21*(1-k); pos[(o+i)*3+1]=p.getY(i)-q.getY(i)*0.21*(1-k); pos[(o+i)*3+2]=p.getZ(i)-q.getZ(i)*0.21*(1-k);
+      pos[(o+i)*3]=p.getX(i)-q.getX(i)*0.27*(1-k); pos[(o+i)*3+1]=p.getY(i)-q.getY(i)*0.27*(1-k); pos[(o+i)*3+2]=p.getZ(i)-q.getZ(i)*0.27*(1-k);
       nor[(o+i)*3]=q.getX(i); nor[(o+i)*3+1]=q.getY(i); nor[(o+i)*3+2]=q.getZ(i); }
     if(gg.index) for(let i=0;i<gg.index.count;i++) idx.push(gg.index.getX(i)+o); else for(let i=0;i<c;i++) idx.push(i+o);
     o+=c; }
@@ -71746,10 +71760,18 @@ function dbTick(o, r, now){
   if(spin && now-E.takeT<0.22) aT=0.2;                        // the take: stiff as a board
   aT*=1-0.4*S.airK;
   dbSpring(S,'amp','ampV',aT,4,1,dt);
+  const lashing=S.lashTau>=0, drifting=R.drift===1 || Math.abs(S.dS)>0.12;
+  const tcT=(fin||celeb||lashing||drifting||portrait)?0 : idle?0.15 : R.boostT>0?0.3 : 0.4;
+  const arcT=(fin||celeb||lashing||portrait)?0 : drifting?0.05 : idle?0.08 : 0.14;
+  dbSpring(S,'tc','tcV',tcT,6,1,dt); dbSpring(S,'arc','arcV',arcT,5,1,dt);
   // ---- the look (socialLook's neck), the head's answer to the stroke, the dance
-  const lkY=lk?ldClamp(lk.nk+(lk.shk>0?Math.sin(lk.t*38)*0.1*lk.shk:0),-1.6,1.6):0;
-  dbSpring(S,'lookY','lookYV',lkY*0.92,14,1,dt); dbSpring(S,'lookP','lookPV',lk?lk.pitch*0.8:0,14,1,dt); dbSpring(S,'lookR','lookRV',lk?(lk.tilt+lk.rl):0,14,1,dt);
-  const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.d;
+  const lkY=lk?ldClamp((Math.abs(lk.yaw)>Math.abs(lk.nk)?lk.yaw:lk.nk)*0.95+(lk.shk>0?Math.sin(lk.t*38)*0.1*lk.shk:0),-2.2,2.2):0;
+  if(Math.abs(lkY-S.lkT)<0.3 && !S.lkPend) S.lkT=lkY;
+  else if(!S.lkPend){ S.lkPend=true; S.lkAt=now+(C.rate>0?(1-((C.phase*2)%1))/(2*C.rate):0)-0.03; S.lkBig=1; }
+  if(S.lkPend && now>=S.lkAt){ S.lkT=lkY; S.lkPend=false; }
+  S.lkBig=Math.max(0,S.lkBig-dt*1.6);
+  dbSpring(S,'lookY','lookYV',S.lkT,14+5*S.lkBig,1-0.42*S.lkBig,dt); dbSpring(S,'lookP','lookPV',lk?lk.pitch*0.8:0,14,1,dt); dbSpring(S,'lookR','lookRV',lk?(lk.tilt+lk.rl):0,14,1,dt);
+  const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.dAt(S.tc);
   const dance=(fin||celeb)&&S.cur!=='lose'?1:0, lose=fin&&S.cur==='lose'?1:0;
   S.dance+=(dance-S.dance)*Math.min(1,dt*4); S.lose+=(lose-S.lose)*Math.min(1,dt*3);
   const db=Math.cos(Math.PI*B), dh2=Math.cos(Math.PI*B/2);
@@ -71778,17 +71800,18 @@ function dbTick(o, r, now){
 // the spine: angles along it (the line of action, the swim, the lash, the flick, the look), integrated from the neck both ways
 function dbPose(o, S, R, dt, init){
   const P=S.U.uP.value, Tt=S.U.uT.value, N=DB_N, Lh=DB_L-DB_SN, ds=DB_DS*(1+0.8*S.st), wd=1/Math.sqrt(1+0.8*S.st);
-  const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.d, lift=(R&&R._tailLift)||0;
+  const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.dAt(S.tc), lift=(R&&R._tailLift)||0, tc=S.tc;
   const fw=S.lashFw||0, tau=S.lashTau, ls=S.lash||0, rm=1;
   const psi=S._psi||(S._psi=new Float32Array(N)), phi=S._phi||(S._phi=new Float32Array(N));
   let tw=0;                                                // the swim's own excursion at the tip (the stroke, without the turn's bend): race_motion's tipSway
   for(let i=0;i<N;i++){
     const s=i*DB_DS, u=ldClamp((s-DB_SN)/Lh,0,1), wh=1-dbSm5((s-2.6)/(DB_SN-2.6)), wl=1-dbSm5((s-2.6)/(DB_SN+4-2.6));
-    let pt=-S.turnT*Lh*u*0.9 + S.dS*(-0.55*Math.sin(Math.PI*u)+1.25*u*u) + ar*DB_ENV(u)*Math.cos(sp-DB_K*u);
+    const cu=1-tc*DB_TC(u);
+    let pt=-S.turnT*Lh*u*0.9 + S.dS*(-0.55*Math.sin(Math.PI*u)+1.25*u*u) + ar*DB_ENV(u)*cu*Math.cos(sp-DB_K*u);
     if(ls) pt-=ls*WL_TH*(0.25+0.75*u)*wlAng(tau-WL_LAG*u)*fw;
-    const fu=DB_FU(u), sw=ar*DB_ENV(u)*Math.cos(sp-DB_K*u)+DB_FLK.c*ar*Math.cos(sp-DB_K-DB_FLK.lag)*fu; pt+=S.fl*fu+DB_FLK.c*ar*Math.cos(sp-DB_K-DB_FLK.lag)*fu;
+    const fu=DB_FU(u), fk=DB_FLK.c*ar*(1-tc)*Math.cos(sp-DB_K-DB_FLK.lag)*fu, sw=ar*DB_ENV(u)*cu*Math.cos(sp-DB_K*u)+fk; pt+=S.fl*fu+fk;
     if(i>DB_IA) tw-=Math.sin(sw)*ds;
-    let ft=-Math.atan(2*lift*u/Lh) + 0.3*S.lose*u + S.airK*(0.55*u-0.12);
+    let ft=-Math.atan(2*lift*u/Lh) + 0.3*S.lose*u + S.airK*(0.55*u-0.12) - S.arc*u;   // arc: the hose curves up, the tip riding above the road
     if(ls) ft-=1.5*WL_LY/Lh*Math.sqrt(u)*wlLift(tau-WL_LAG*0.5*u)*fw;
     psi[i]=wh*S.psiH+(1-wh)*pt+S.lookY*wl+S.spH;
     phi[i]=wh*S.phiH+(1-wh)*ft;
@@ -71806,7 +71829,10 @@ function dbPose(o, S, R, dt, init){
   H.position.set(P[0]+S.ho.x-_dbV.x, P[1]+S.ho.y-_dbV.y, P[2]+S.ho.z-_dbV.z);
   // the spine's sockets
   const K=S.sockets, sock=(so,i,up)=>{ dbFrame(Tt,i,_dbX,_dbY,_dbZ); so.matrix.makeBasis(_dbX,_dbY,_dbZ).setPosition(P[i*4]+_dbY.x*(up||0), P[i*4+1]+_dbY.y*(up||0), P[i*4+2]+_dbY.z*(up||0)); so.matrixWorldNeedsUpdate=true; };
-  sock(K.neck,ia-1); sock(K.tailRoot,ia+1); sock(K.back,ia+1,DB_RH); sock(K.tailTip,N-1);
+  { const f=DB_NECK.s/DB_DS, i=Math.floor(f), t=f-i; dbFrame(Tt,i,_dbX,_dbY,_dbZ); dbFrame(Tt,i+1,_dbV,_dbV2,_dbS);   // (between two spine points: lerped, re-squared)
+    _dbZ.lerp(_dbS,t).normalize(); _dbX.lerp(_dbV,t); _dbY.crossVectors(_dbZ,_dbX).normalize(); _dbX.crossVectors(_dbY,_dbZ).normalize();
+    K.neck.matrix.makeBasis(_dbX,_dbY,_dbZ).setPosition(P[i*4]+(P[i*4+4]-P[i*4])*t, P[i*4+1]+(P[i*4+5]-P[i*4+1])*t, P[i*4+2]+(P[i*4+6]-P[i*4+2])*t); K.neck.matrixWorldNeedsUpdate=true; }
+  sock(K.tailRoot,ia+1); sock(K.back,ia+1,DB_RH); sock(K.tailTip,N-1);
   const j=Math.round((DB_SN+0.9*Lh)/DB_DS); S.probes.tip.position.set(P[j*4],P[j*4+1],P[j*4+2]);
   (S.tip||(S.tip=new T.Vector3())).set(P[(N-1)*4],P[(N-1)*4+1],P[(N-1)*4+2]); S.tipW=tw;
 }
