@@ -48,8 +48,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
-    'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
@@ -360,6 +360,34 @@ await check('race_features maps the set pieces; race_warp lands short of a jump;
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const au = json(await call('race_audit'));
   assert.ok(au.pieces > 50 && Array.isArray(au.onRoad) && Array.isArray(au.overlaps), JSON.stringify(au.counts));
+});
+
+await check('blind spots: a seeded race repeats; surfaces, aliasing, shader counts, colour-blind pairs, HUD contrast, shot qa, audio analysis, a season', async () => {
+  const run = async () => { json(await call('race_setup', { course: 'Ophelia', character: 'kasi', difficulty: 'medium', seed: 21 })); json(await call('race_start'));
+    return json(await call('race_drive', { seconds: 2 })).standings.map(s => s.character + ':' + s.total).join(' '); };
+  const a = await run(), b = await run();
+  assert.equal(a, b, 'the same seed, the same race');
+  json(await call('race_setup', { seed: null }));
+  const surf = json(await call('race_surface', { scope: 'racer', cam: { azimuth: 30, elevation: 8, distance: 18, height: 3.5 } }));
+  assert.ok(surf.materials.length && 'plastic' in surf.totals, JSON.stringify(surf.totals));
+  assert.ok(surf.materials.some(m => m.detail === 'relief'), 'Kasi has textured surfaces');
+  const al = json(await call('race_alias', { factor: 2 }));
+  assert.ok(typeof al.meanAlias === 'number' && al.materials.length, 'aliasing by material');
+  const prof = json(await call('scene_profile'));
+  assert.ok(prof.programs.total > 10 && prof.racers.every(r => typeof r.programs === 'number'), 'shader programs counted');
+  const pal = json(await call('race_palette', { vision: 'all', cam: { azimuth: 35, elevation: 15, distance: 22, height: 3.5 } }));
+  assert.ok(pal.vision && pal.vision.deutan && pal.vision.protan && pal.vision.tritan, 'colour-blind pairs');
+  const hud = json(await call('race_hud'));
+  assert.ok(hud.elements.length && hud.elements.every(e => typeof e.worst === 'number'), 'HUD contrast');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-qa-'));
+  try {
+    const r = json(await call('race_record', { seconds: 0.5, fps: 12, dir, name: 'q', qa: true, cam: { mode: 'photo', from: { azimuth: 0, elevation: 0, distance: 2, height: 3 } } }));
+    assert.ok(Array.isArray(r.problems) && r.problems.some(p => /cut|hidden|frame/.test(p.what)), 'a lens inside the racer is a problem: ' + JSON.stringify(r.problems));
+    const au = json(await call('race_audio', { seconds: 3, file: path.join(dir, 'a.webm'), sfxProbe: true }));
+    assert.ok(au.analysis && au.analysis.loudnessDbfs < 0 && au.analysis.sfx && au.analysis.sfx.length, JSON.stringify(au.analysis && au.analysis.loudnessDbfs));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const se = json(await call('race_season', { characters: ['kasi'], courses: ['Ophelia'], maxSeconds: 12 }));
+  assert.equal(se.races.length, 1); assert.ok(se.hotspots.Ophelia, 'hotspots by course');
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {

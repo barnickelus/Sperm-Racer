@@ -74916,6 +74916,92 @@ function simCamApply(){
   camera.lookAt(ox, ty, oz);
   if(camera.fov!==c.fov){ camera.fov=c.fov; camera.updateProjectionMatrix(); }
 }
+/* — SEEDED RACES (MCP): a race built and run from a seed is the same race twice. Math.random becomes one stream from the
+     seed for the course's build, then a fresh stream at the green light, so the countdown's real-time frames (however
+     many there were) don't decide what happens after it. race_setup seed:null hands Math.random back. — */
+function seededRandom(seed){ let a=(seed>>>0)||1; return function(){ a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+const MATH_RANDOM=Math.random; let MCP_SEED=null;
+function mcpReseed(k){ Math.random = MCP_SEED==null ? MATH_RANDOM : seededRandom(MCP_SEED*1009+k); }
+// a build that may use more or fewer numbers depending on what is cached (a model's textures) draws from its own stream,
+// so the race's stream does not shift with it
+function mcpIsolate(fn, k){ if(MCP_SEED==null) return fn(); const keep=Math.random; Math.random=seededRandom(MCP_SEED*7919+k); try{ return fn(); } finally { Math.random=keep; } }
+
+/* — AN ID PASS BY MATERIAL (race_surface, race_alias): every visible solid mesh drawn in one flat colour per material (and
+     per instancing, see renderSolidBlack), so each pixel says which material is seen there. want(o) picks what is
+     measured; the rest of the solid scene is drawn black so it still hides what is behind it. Glows, sprites, particles,
+     lines, outlines and see-through things sit out. Returns the pixels and, per colour number, the material. — */
+function materialIdPass(want, W, H){
+  const rt=new T.WebGLRenderTarget(W,H), px=new Uint8Array(W*H*4), list=[], idx=new Map(), swapped=[], hid=[], blacks=new Map();
+  const variant=o=>(o.isInstancedMesh&&o.instanceColor?1:0)+(o.isSkinnedMesh?2:0);
+  const black=o=>{ const k=variant(o); if(!blacks.has(k)) blacks.set(k,new T.MeshBasicMaterial({ color:0x000000, fog:false, toneMapped:false, skinning:!!(k&2) })); return blacks.get(k); };
+  const idOf=(m,o)=>{ const key=m.uuid+'|'+variant(o); let e=idx.get(key);
+    if(!e){ const n=list.length+1; e={ n, material:m, objs:[], mat:new T.MeshBasicMaterial({ color:new T.Color(((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255), fog:false, toneMapped:false, side:m.side, skinning:!!(variant(o)&2) }) };
+      idx.set(key,e); list.push(e); }
+    if(e.objs.length<6 && !e.objs.includes(o)) e.objs.push(o); return e; };
+  scene.traverseVisible(o=>{ const m=o.material;
+    if(o.isSprite||o.isPoints||o.isLine||o.userData.isOutline||(m&&!Array.isArray(m)&&(m.blending===T.AdditiveBlending||(m.transparent&&m.opacity<0.9)))){ if(o.isMesh||o.isSprite||o.isPoints||o.isLine) hid.push(o); return; }
+    if(!o.isMesh||!m) return;
+    const ms=[].concat(m), w=want(o), rp=ms.map(mm=>w?idOf(mm,o).mat:black(o));
+    swapped.push([o,m]); o.material=Array.isArray(m)?rp:rp[0]; });
+  for(const o of hid) o.visible=false;
+  const bg=scene.background, ac=renderer.autoClear;
+  try{ scene.background=null; renderer.autoClear=true; renderer.setClearColor(0x000000,0); renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,px); }
+  finally{ for(const o of hid) o.visible=true; for(const [o,m] of swapped) o.material=m; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1); renderer.autoClear=ac;
+    for(const e of list) e.mat.dispose(); for(const m of blacks.values()) m.dispose(); rt.dispose(); }
+  return { px, list, W, H, at:i=>px[i+3]===0?0:((px[i]<<16)|(px[i+1]<<8)|px[i+2]) };
+}
+// what a material is made of, and whether it reads as plastic: no texture of any kind (colour, bump, normal, roughness)
+// and a smooth or clear-coated finish. A patched shader (onBeforeCompile: Eve's grain) or a custom one is not judged.
+function surfaceKind(m){
+  const patched=m.onBeforeCompile!==T.Material.prototype.onBeforeCompile;
+  const relief=!!(m.bumpMap||m.normalMap||m.roughnessMap||m.displacementMap||m.clearcoatNormalMap||m.metalnessMap);
+  let detail=relief?'relief':m.map?'colour':m.vertexColors?'vertex':'none', gloss=null, model;
+  if(m.isShaderMaterial||m.isRawShaderMaterial) model='custom';
+  else if(m.isMeshBasicMaterial) model='unlit';
+  else if(m.isMeshStandardMaterial){ model=m.isMeshPhysicalMaterial?'physical':'standard'; gloss=Math.min(1,(1-m.roughness)+(m.clearcoat||0)*(1-(m.clearcoatRoughness||0))*0.6); }
+  else if(m.isMeshPhongMaterial){ model='phong'; const sp=m.specular?Math.max(m.specular.r,m.specular.g,m.specular.b):0; gloss=Math.min(1,(m.shininess/80)*Math.min(1,sp*2.5)); }
+  else if(m.isMeshLambertMaterial) { model='lambert'; gloss=0; } else if(m.isMeshToonMaterial){ model='toon'; gloss=0; } else model=m.type;
+  if(patched && detail!=='relief') detail='shader';
+  const flags=[]; if(model!=='custom' && (detail==='none'||detail==='vertex')){ if(gloss!=null && gloss>=0.55) flags.push('plastic'); else if(model==='unlit') flags.push('flat'); else flags.push('untextured'); }
+  return { model, detail, gloss:gloss==null?null:+gloss.toFixed(2), ...(m.isMeshStandardMaterial?{ roughness:+m.roughness.toFixed(2), clearcoat:+(m.clearcoat||0).toFixed(2), metalness:+m.metalness.toFixed(2) }:{}),
+    ...(m.isMeshPhongMaterial?{ shininess:m.shininess }:{}), flags };
+}
+function materialName(m){ return m.name||(m.type.replace('Material','')+(m.color?' #'+m.color.getHexString():'')); }
+function ownerName(o){ for(let p=o;p&&p!==scene;p=p.parent){ if(p.userData&&p.userData.part) return p.userData.part; if(p.name) return p.name; } return o.type; }
+// the shot's subject from the camera as it stands: how much of the frame it fills, how much of it is hidden behind solid
+// things, its box, whether the frame edge cuts it (race_framing; race_record qa:true runs it every frame at a small size)
+function framingMeasure(r, W, H){
+  const rt=new T.WebGLRenderTarget(W,H), a=new Uint8Array(W*H*4), v=new Uint8Array(W*H*4);
+  const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
+  const whites=new Map(), white=o=>{ const k=(o.isInstancedMesh&&o.instanceColor?1:0)+(o.isSkinnedMesh?2:0);   // (one per instancing: see renderSolidBlack)
+    if(!whites.has(k)) whites.set(k, new T.MeshBasicMaterial({ color:0xffffff, fog:false, skinning:!!(k&2) })); return whites.get(k); };
+  const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white(o); o.layers.enable(3); }
+  const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear, hid=[];
+  try{
+    scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
+    camera.layers.set(3); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,a);   // alone
+    // everything else in black, for its depth: only solid things hide a racer (not glows, sprites, haze, water, its own outline)
+    scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
+        (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
+    for(const o of hid) o.visible=false;
+    camera.layers.mask=L; renderer.clear(); renderSolidBlack();
+    for(const o of hid) o.visible=true;
+    renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
+    renderer.readRenderTargetPixels(rt,0,0,W,H,v);
+  } catch(e){   // name whatever geometry broke the pass, so the fault can be found
+    const bad=[]; scene.traverse(o=>{ const g=o.geometry; if(!g) return; const at=g.attributes||{};
+      for(const k in at) if(!at[k]) bad.push((o.name||o.type)+'.'+k); if(g.index===undefined) bad.push((o.name||o.type)+'.index'); });
+    throw new Error(e.message+(bad.length?' — geometry with a missing attribute: '+bad.slice(0,8).join(', '):''));
+  } finally {
+    for(const o of hid) o.visible=true;
+    renderer.autoClear=ac; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
+    for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } for(const m of whites.values()) m.dispose(); rt.dispose(); }
+  let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4; if(a[i]>127){ A++; cx+=x; cy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+    if(x===0||y===0||x===W-1||y===H-1) edge++; if(v[i]>127) V++; } }
+  return { A, V, W, H, x0, y0, x1, y1, cx, cy, edge };
+}
+
 /* Every solid thing drawn in flat black, for its depth (race_framing, race_palette). Not scene.overrideMaterial: r128 reuses one
    override program across instanced meshes with and without instanceColor, and the one without has no buffer for it (a null
    attribute, mid-render). So each mesh gets a black that matches its own instancing and skinning, and gets its material back. */
@@ -77299,6 +77385,7 @@ const _origBuildRacers = buildRacers;
 // scratch on every flick of the course strip — up to half a second of the stall on an iPad — for a preview whose cast had not changed.
 // A race start never passes it: every race builds its own fresh line-up and state.
 buildRacers = function(reuse){
+  if(MCP_SEED!=null && !reuse) mcpReseed(3);   // (seeded: the line-up and the field drawn from their own stream, whatever the course build used)
   ghostClear();   // a new grid: whatever ghost was on the scene goes with the old one
   // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
   // more of a "race war" than the original 4, without going so wide it costs frame
@@ -77321,6 +77408,7 @@ buildRacers = function(reuse){
     }
   }
   else if(gpActive && gpLineup){ lineup=gpLineup; }
+  else if(SIM.lineup && SIM.lineup.length===6){ lineup=SIM.lineup; }   // (MCP race_season: the same five rivals for every character)
   else {
     const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
     for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
@@ -77385,7 +77473,7 @@ buildRacers = function(reuse){
     const s=SAMP[2];
     const lane=(k-(lineup.length-1)/2)*7.5;   // centered grid, spacing tightened from 9 to fit 6 within HW=22
     const keep=held[k];
-    const obj=keep ? keep.obj : makeCell(t.hue, t.id);        // full character model for everyone (you + opponents)
+    const obj=keep ? keep.obj : mcpIsolate(()=>makeCell(t.hue, t.id), 10+k);        // full character model for everyone (you + opponents)
     // start the grid well behind the start/finish gantry (built at SAMP[0], ~y+14, full
     // road width) instead of almost on top of it — spawning this close put the chase
     // camera and the countdown's orbit cam right in the gate geometry for the opening
@@ -79200,13 +79288,14 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       characters: SPERM_TYPES.map(t=>({ id:t.id, name:t.name, desc:t.desc, locked:isLocked(t), hidden:!!t.hidden })),
       difficulties: Object.keys(DIFF), current:{ course:selTrack, character:chosenType.id, difficulty } }),
 
-    'race.setup': ({course:c, character, difficulty:d}={})=>{
+    'race.setup': ({course:c, character, difficulty:d, seed}={})=>{
+      if(seed!==undefined){ MCP_SEED=seed==null?null:(seed|0); mcpReseed(0); }
       if(c!=null){ const i=typeof c==='number'?c:TRACKS.findIndex(t=>t.name.toLowerCase().includes(String(c).toLowerCase()));
         if(!(i>=0 && i<TRACKS.length)) throw new Error('no course "'+c+'" (race_options lists them)'); selTrack=i; }
       if(character){ const t=SPERM_TYPES.find(t=>t.id===character); if(!t) throw new Error('no character "'+character+'"'); chosenType=t; }
       if(d){ if(DIFF[d]==null) throw new Error('difficulty is easy, medium or hard'); difficulty=d; }
       const running=state==='count'||state==='race';
-      return { course:course(), character:{ id:chosenType.id, name:chosenType.name }, difficulty, ...(running?{ note:'a race is running: this applies from the next race_start' }:{}) };
+      return { course:course(), character:{ id:chosenType.id, name:chosenType.name }, difficulty, seed:MCP_SEED, ...(running?{ note:'a race is running: this applies from the next race_start' }:{}) };
     },
 
     'race.start': async ({manual=true}={})=>{
@@ -79216,9 +79305,12 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       SIM.manual=!!manual; SIM.cam=null; SIM.t=performance.now()/1000; hold([]);
       if(NET.on) netLeave(); chalSoloEnd(); cupStop();
       $('start').classList.add('hidden');
-      DIAG.warm=null; countdown();
+      DIAG.warm=null;
+      if(MCP_SEED!=null){ mcpReseed(1); buildTrack(selTrack); PREVIEW.built=selTrack; }   // seeded: the course built from the seed, the field next (countdown)
+      countdown();
       await waitFor(()=>state==='race', 180000, 'the countdown');   // (long: on a software GPU the shader warm-up in the countdown takes a while)
-      return { state, manual:SIM.manual, course:course(), shaderWarmupMs:DIAG.warm==null?null:Math.round(DIAG.warm), programs:renderer.info.programs?renderer.info.programs.length:0, grid:racers.map(view) };
+      if(MCP_SEED!=null){ mcpReseed(2); SIM.t=1000; }   // ...and the race itself from a fresh stream, on a clock that starts at the same time
+      return { state, manual:SIM.manual, course:course(), seed:MCP_SEED, shaderWarmupMs:DIAG.warm==null?null:Math.round(DIAG.warm), programs:renderer.info.programs?renderer.info.programs.length:0, grid:racers.map(view) };
     },
 
     'race.manual': ({manual})=>{ if(manual && !SIM.manual) SIM.t=performance.now()/1000; SIM.manual=!!manual; if(!manual) last=performance.now(); hold([]); return { manual:SIM.manual, state }; },
@@ -79388,8 +79480,12 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
             tris+=(o.isMesh?n/3:0)*(o.isInstancedMesh?o.count:(g.isInstancedBufferGeometry?(g.instanceCount===Infinity?1:g.instanceCount):1)); }
           for(const m of [].concat(o.material||[])){ mats.add(m); for(const k in m){ const v=m[k]; if(v&&v.isTexture) tex.add(v); } } });
         return { draws, triangles:Math.round(tris), materials:mats.size, textures:tex.size }; };
-      const out={ racers:racers.map(r=>({ name:r.name, character:r.id, ...cost(r.obj) })).sort((a,b)=>b.draws-a.draws),
-        track:trackGroup?cost(trackGroup):null, scene:cost(scene) };
+      // shader programs: how many distinct compiled shaders a thing needs (each one is a compile on first sight: the stall
+      // a player feels, and a cost that does not depend on how fast this machine is)
+      const progs=root=>{ const ks=new Set(); if(root) root.traverse(o=>{ for(const m of [].concat(o.material||[])){ const pp=renderer.properties.get(m); if(pp&&pp.programs) for(const k of pp.programs.keys()) ks.add(k); } }); return ks.size; };
+      const out={ racers:racers.map(r=>({ name:r.name, character:r.id, ...cost(r.obj), programs:progs(r.obj) })).sort((a,b)=>b.draws-a.draws),
+        track:trackGroup?{ ...cost(trackGroup), programs:progs(trackGroup) }:null, scene:cost(scene) };
+      { const by={}; for(const pr of (renderer.info.programs||[])) by[pr.name]=(by[pr.name]||0)+1; out.programs={ total:(renderer.info.programs||[]).length, byShader:by }; }
       // the course's heaviest pieces (the track's direct children, by draws then triangles), named as well as they can be
       // identical pieces are rolled together (×count), each named by what is inside it: its first mesh's material, colour, geometry
       const sig=o=>{ if(o.name) return o.name; let m=o.isMesh?o:null; if(!m) o.traverse(c=>{ if(!m && c.isMesh) m=c; });
@@ -79425,7 +79521,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
          Per part: its share of the racer's pixels and its mean on-screen colour; per pair: the colour difference
          (CIE ΔE76 — under ~10 reads as "the same colour" at racing distance). A part is mesh.userData.part, else the
          material's name, else its type and colour. — */
-    'race.palette': async ({racer, cam, minShare=0.02}={})=>{
+    'race.palette': async ({racer, cam, minShare=0.02, vision='normal'}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
       const held=SIM.cam; if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:r.name });
       await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
@@ -79472,7 +79568,16 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const pairs=[]; for(let i=0;i<rows.length;i++) for(let j=i+1;j<rows.length;j++){ const A=rows[i].lab, B=rows[j].lab;
         pairs.push({ a:rows[i].part, b:rows[j].part, dE:+Math.hypot(A[0]-B[0],A[1]-B[1],A[2]-B[2]).toFixed(1) }); }
       pairs.sort((a,b)=>a.dE-b.dE);
-      return { racer:r.name, pixels:total, parts:rows.map(({lab,...x})=>({ ...x, L:+lab[0].toFixed(1) })), closestPairs:pairs.slice(0,8) };
+      // colour-blind vision (Machado et al. 2009, full severity, on linear RGB): which parts merge for a player who has it
+      const CVD={ protan:[[0.152286,1.052583,-0.204868],[0.114503,0.786281,0.099216],[-0.003882,-0.048116,1.051998]],
+        deutan:[[0.367322,0.860646,-0.227968],[0.280085,0.672501,0.047413],[-0.011820,0.042940,0.968881]],
+        tritan:[[1.255528,-0.076749,-0.178779],[-0.078411,0.930809,0.147602],[0.004733,0.691367,0.303900]] };
+      const sim=(hex,M)=>{ const c=[1,3,5].map(i=>parseInt(hex.substr(i,2),16)/255), lin=c.map(v=>v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4)),
+        o=M.map(row=>Math.max(0,Math.min(1,row[0]*lin[0]+row[1]*lin[1]+row[2]*lin[2]))); return lab(o.map(v=>v<=0.0031308?v*12.92:1.055*Math.pow(v,1/2.4)-0.055)); };
+      const visions={}; for(const vk of (vision==='all'?['protan','deutan','tritan']:vision==='normal'?[]:[vision])){ const M=CVD[vk]; if(!M) throw new Error('vision is normal, protan, deutan, tritan or all');
+        const L=rows.map(x=>sim(x.color,M)), pp=[]; for(let i=0;i<rows.length;i++) for(let j=i+1;j<rows.length;j++) pp.push({ a:rows[i].part, b:rows[j].part, dE:+Math.hypot(L[i][0]-L[j][0],L[i][1]-L[j][1],L[i][2]-L[j][2]).toFixed(1) });
+        visions[vk]=pp.sort((a,b)=>a.dE-b.dE).slice(0,5); }
+      return { racer:r.name, pixels:total, parts:rows.map(({lab,...x})=>({ ...x, L:+lab[0].toFixed(1) })), closestPairs:pairs.slice(0,8), ...(Object.keys(visions).length?{ vision:visions }:{}) };
     },
 
     /* — MOTION: how fluidly a racer moves. Steps the page at 1/60 s (racing on autopilot, or still) and samples probes
@@ -79520,7 +79625,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
       const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
     },
-    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false}={})=>{
+    'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false, qa=false}={})=>{
       if(!REC.on) throw new Error('race.recmode first');
       // straight: the filmed racer looks down its own nose (no glancing at the grid) — set after the frame's pose, before its draw
       const subj=cam && cam.who ? racers.find(r=>r.name===cam.who||r.id===cam.who) : me(), tick0=SIM.tick;
@@ -79542,12 +79647,21 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       // what the filmed racer is doing this frame, so the exciting moments can be found in the footage afterwards
       const r=subj||me(), ev=r?{ place:r.place, speed:Math.round(r.spd||0), boost:(r.boostT||0)>0, air:!!r.air, spin:(r.spinT||0)>0, slings:r.slingN||0,
         draft:+(r.draft||0).toFixed(2), item:r.item||null, finished:!!r.finished, mega:(r.megaT||0)>0 }:null;
-      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state, ev };
+      // qa: is this frame usable? Its exposure (from a small copy of the frame just drawn), and the subject's framing
+      // (fill, hidden, cut by the edge) at a quarter size — so blocked lenses and blow-outs are found without looking
+      let q=null;
+      if(qa){ const qc=REC.qc||(REC.qc=document.createElement('canvas')); qc.width=96; qc.height=54; const g=qc.getContext('2d', { willReadFrequently:true });
+        g.drawImage(renderer.domElement,0,0,96,54); const d=g.getImageData(0,0,96,54).data; let sum=0, hi=0, lo=0;
+        for(let i=0;i<d.length;i+=4){ const l=0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2]; sum+=l; if(l>=248) hi++; if(l<=8) lo++; }
+        const N=d.length/4; q={ mean:Math.round(sum/N), blown:+(hi/N).toFixed(3), crushed:+(lo/N).toFixed(3) };
+        if(r && r.obj){ const F=framingMeasure(r, Math.max(2,renderer.domElement.width>>2), Math.max(2,renderer.domElement.height>>2));
+          Object.assign(q, { fill:+(F.A/(F.W*F.H)).toFixed(3), hidden:+(F.A?1-F.V/F.A:1).toFixed(2), cut:F.edge>Math.sqrt(F.A)*0.5 }); } }
+      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime), state, ev, ...(q?{ qa:q }:{}) };
     },
     /* — AUDIO: record what the speakers get (the produced songs play straight into the master bus) for `seconds` of real
          time, as webm/opus, with the engine's hum muted meanwhile (a frozen race fires no other effects). Starts the audio
          and the music if they are not running. — */
-    'race.audio': async ({seconds=30, style, bar}={})=>{
+    'race.audio': async ({seconds=30, style, bar, analyze=true, sfxProbe=false}={})=>{
       initAudio(); if(!actx) throw new Error('no audio context');
       if(actx.state!=='running') await actx.resume();
       if(style){ if(!MUSIC_STYLES[style]) throw new Error('no music style "'+style+'"'); musicOn=true; switchSong(style, bar==null?null:bar); await new Promise(r=>setTimeout(r,1500)); }   // (a produced record picks up on its next bar)
@@ -79559,12 +79673,53 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const rec=new MediaRecorder(dest.stream, { mimeType:'audio/webm;codecs=opus', audioBitsPerSecond:192000 }), parts=[];
       rec.ondataavailable=e=>{ if(e.data.size) parts.push(e.data); };
       const done=new Promise(res=>{ rec.onstop=res; });
-      rec.start(1000); const mb0=musicBeat(), h0=Object.values(producedStations).find(h=>h.running);
+      // the analysis taps the master bus BEFORE the recording's limiter: what the speakers get, clipping and all
+      const cap=analyze?{ L:[], R:[], t0:null, sp:actx.createScriptProcessor(4096,2,2) }:null;
+      // (a script node hands its input over one block late: the block's sound was played 4096 samples after playbackTime says)
+      if(cap){ cap.sp.onaudioprocess=e=>{ if(cap.t0==null) cap.t0=e.playbackTime+4096/actx.sampleRate; cap.L.push(new Float32Array(e.inputBuffer.getChannelData(0))); cap.R.push(new Float32Array(e.inputBuffer.getChannelData(1))); };
+        masterGain.connect(cap.sp); cap.sp.connect(actx.destination); }
+      rec.start(1000); const mb0=musicBeat(), h0=Object.values(producedStations).find(h=>h.running), ct0=actx.currentTime;
       const firstBar=mb0&&mb0.bpm ? +(((1-mb0.bar)%1)*240/mb0.bpm).toFixed(3) : null, atBar=h0&&h0.bar!=null ? h0.bar : null, section=h0&&h0.sectionId||null;
+      // sfxProbe: every sound effect fired once over the music (and the engine at racing speed), so the mix can be read
+      const probes=[]; if(sfxProbe){ const list=['boost','item','hit','turbo','lap','bump','whip','finalLap','finish','engine'];
+        list.forEach((nm,i)=>{ const at=1.5+i*Math.max(0.9,(seconds-3)/list.length); if(at>seconds-1) return;
+          probes.push({ name:nm, at }); setTimeout(()=>{ try{ if(nm==='engine'){ startEngine(); if(engineGain){ engineGain.gain.value=0.17; setTimeout(()=>{ engineGain.gain.value=0; },700); } } else SFX[nm](); }catch(_){} }, at*1000); }); }
       await new Promise(r=>setTimeout(r, seconds*1000)); rec.stop(); await done;
       try{ masterGain.disconnect(lim); }catch(_){} if(engineGain && eg!=null) engineGain.gain.value=eg;
+      let analysis=null;
+      if(cap){ try{ masterGain.disconnect(cap.sp); }catch(_){} try{ cap.sp.disconnect(); }catch(_){}
+        const sr=actx.sampleRate, n=cap.L.reduce((a,c)=>a+c.length,0), L=new Float32Array(n), R=new Float32Array(n); let o=0; for(let i=0;i<cap.L.length;i++){ L.set(cap.L[i],o); R.set(cap.R[i],o); o+=cap.L[i].length; }
+        const db=x=>x>0?+(20*Math.log10(x)).toFixed(1):-120, win=Math.round(sr*0.1), W=Math.floor(n/win), rms=new Float32Array(W);
+        let peak=0, clip=0, ss=0; for(let i=0;i<n;i++){ const a=Math.max(Math.abs(L[i]),Math.abs(R[i])); if(a>peak) peak=a; if(a>=0.999) clip++; ss+=(L[i]*L[i]+R[i]*R[i])/2; }
+        for(let w=0;w<W;w++){ let q=0; for(let i=w*win;i<(w+1)*win;i++) q+=(L[i]*L[i]+R[i]*R[i])/2; rms[w]=Math.sqrt(q/win); }
+        // short-term loudness (400 ms), its range, and the gaps (under -50 dBFS for 0.4 s or more)
+        const st=[]; for(let w=3;w<W;w++) st.push(db(Math.sqrt((rms[w]**2+rms[w-1]**2+rms[w-2]**2+rms[w-3]**2)/4)));
+        const sorted=[...st].filter(v=>v>-70).sort((a,b)=>a-b), pc=q=>sorted.length?sorted[Math.min(sorted.length-1,Math.floor(q*sorted.length))]:-120;
+        const gaps=[]; let g0=-1; for(let w=0;w<=W;w++){ const quiet=w<W && db(rms[w])<-50; if(quiet&&g0<0) g0=w; if(!quiet&&g0>=0){ if((w-g0)*0.1>=0.4) gaps.push([+(g0*0.1).toFixed(1),+(w*0.1).toFixed(1)]); g0=-1; } }
+        // the beat: energy onsets (rises in 10 ms energy) against the game's own beat clock
+        let beat=null; if(mb0 && mb0.bpm){ const hop=Math.round(sr*0.01), E=[]; for(let i=0;i+hop<=n;i+=hop){ let q=0; for(let j=i;j<i+hop;j++) q+=L[j]*L[j]+R[j]*R[j]; E.push(Math.log10(1e-9+q)); }
+          const fl=E.map((e,i)=>i?Math.max(0,e-E[i-1]):0), thr=[...fl].sort((a,b)=>a-b)[Math.floor(fl.length*0.97)]||0, period=60/mb0.bpm, phase0=(mb0.phase||0);
+          const offs=[], grid=[]; for(let i=1;i<fl.length-1;i++) if(fl[i]>thr && fl[i]>=fl[i-1] && fl[i]>=fl[i+1]){ const t=i*0.01+((cap.t0||ct0)-ct0);
+            let ph=((t/period+phase0)%1+1)%1; if(ph>0.5) ph-=1; offs.push(ph*period*1000); let g=((t/(period/4)+phase0*4)%1+1)%1; if(g>0.5) g-=1; grid.push(g*period/4*1000); }
+          // the sixteenth-note grid that fits the onsets best (its offset from the game's own clock is the audio's latency here),
+          // and how tightly the onsets sit on it: a steady record at the clock's tempo scores high whatever the latency
+          const ts=[]; for(let i=1;i<fl.length-1;i++) if(fl[i]>thr && fl[i]>=fl[i-1] && fl[i]>=fl[i+1]) ts.push(i*0.01);
+          const g16=period/4; let best=0, bestOff=0; for(let off=0;off<g16;off+=0.001){ let c=0; for(const t of ts){ let d=((t-off)/g16)%1; if(d<0) d+=1; if(Math.min(d,1-d)*g16<=0.02) c++; } if(c>best){ best=c; bestOff=off; } }
+          let lat=((bestOff-((-(phase0*period)-((cap.t0||ct0)-ct0))%g16+g16)%g16)%g16+g16)%g16; if(lat>g16/2) lat-=g16;
+          beat={ bpm:mb0.bpm, onsets:ts.length, tightness:ts.length?+(best/ts.length).toFixed(2):null, chance:+Math.min(1,0.04/g16).toFixed(2), clockOffsetMs:Math.round(lat*1000) }; }
+        // tone: share of energy under 250 Hz and over 4 kHz (one-pole filters): a muddy or a harsh mix shows here
+        let lo=0, hi=0, all=0, yl=0, yh=0, px=0; const al=1-Math.exp(-2*Math.PI*250/sr), ah=Math.exp(-2*Math.PI*4000/sr);
+        for(let i=0;i<n;i+=2){ const x=(L[i]+R[i])/2; yl+=al*(x-yl); yh=ah*(yh+x-px); px=x; lo+=yl*yl; hi+=yh*yh; all+=x*x; }
+        // each effect: its loudest 10 ms against the music's median 10 ms over the second before it
+        const w10=Math.round(sr*0.01), e10=new Float32Array(Math.floor(n/w10)); for(let k=0;k<e10.length;k++){ let q=0; for(let i=k*w10;i<(k+1)*w10;i++) q+=(L[i]*L[i]+R[i]*R[i])/2; e10[k]=Math.sqrt(q/w10); }
+        const lag=(cap.t0||ct0)-ct0, pr=probes.map(p=>{ const k0=Math.round((p.at-lag)/0.01), bedA=[...e10.slice(Math.max(0,k0-100),Math.max(0,k0-5))].sort((a,b)=>a-b), bed=bedA[bedA.length>>1]||1e-6, top=Math.max(...e10.slice(Math.max(0,k0-3),k0+50),1e-6);
+          return { name:p.name, overMusicDb:+(20*Math.log10(top/bed)).toFixed(1), peakDbfs:db(top) }; });
+        analysis={ seconds:+(n/sr).toFixed(1), loudnessDbfs:db(Math.sqrt(ss/Math.max(1,n))), peakDbfs:db(peak), clippedSamples:clip, crestDb:+(db(peak)-db(Math.sqrt(ss/Math.max(1,n)))).toFixed(1),
+          shortTerm:{ loudest:sorted.length?sorted[sorted.length-1]:null, p10:pc(0.1), p95:pc(0.95), range:+(pc(0.95)-pc(0.1)).toFixed(1) }, gaps,
+          tone:{ low:+(lo/Math.max(1e-9,all)).toFixed(2), high:+(hi/Math.max(1e-9,all)).toFixed(2) }, beat, ...(pr.length?{ sfx:pr }:{}),
+          curve:Array.from({length:Math.ceil(W/10)},(_,k)=>db(Math.sqrt(rms.slice(k*10,k*10+10).reduce((a,v)=>a+v*v,0)/Math.max(1,rms.slice(k*10,k*10+10).length)))) }; }
       const buf=new Uint8Array(await new Blob(parts,{type:'audio/webm'}).arrayBuffer()); let bin=''; for(let i=0;i<buf.length;i+=0x8000) bin+=String.fromCharCode.apply(null, buf.subarray(i,i+0x8000));
-      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat(), firstDownbeat:firstBar, startBar:atBar, section };
+      return { mimeType:'audio/webm', data:btoa(bin), seconds, style:curStyle&&(curStyle.name||curStyle.station)||null, beat:musicBeat(), firstDownbeat:firstBar, startBar:atBar, section, analysis };
     },
 
     /* — AUDIT: what on this course is where it shouldn't be. Every piece of scenery (each instance of an instanced batch
@@ -79680,35 +79835,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const held=SIM.cam; if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:r.name });
       if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
       if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
-      const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1);
-      const rt=new T.WebGLRenderTarget(W,H), a=new Uint8Array(W*H*4), v=new Uint8Array(W*H*4);
-      const meshes=[]; r.obj.traverseVisible(o=>{ if(o.isMesh && !o.isSprite && !o.userData.isOutline && !(o.material&&o.material.blending===T.AdditiveBlending)) meshes.push(o); });
-      const whites=new Map(), white=o=>{ const k=(o.isInstancedMesh&&o.instanceColor?1:0)+(o.isSkinnedMesh?2:0);   // (one per instancing: see renderSolidBlack)
-        if(!whites.has(k)) whites.set(k, new T.MeshBasicMaterial({ color:0xffffff, fog:false, skinning:!!(k&2) })); return whites.get(k); };
-      const saved=meshes.map(o=>[o,o.material,o.layers.mask]); for(const o of meshes){ o.material=white(o); o.layers.enable(3); }
-      const bg=scene.background, L=camera.layers.mask, ac=renderer.autoClear, hid=[];
-      try{
-        scene.background=null; renderer.setClearColor(0x000000,1); renderer.setRenderTarget(rt);
-        camera.layers.set(3); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,W,H,a);   // alone
-        // everything else in black, for its depth: only solid things hide a racer (not glows, sprites, haze, water, its own outline)
-        scene.traverseVisible(o=>{ const m=o.material; if(o===r.obj || o.isSprite || o.isPoints || o.isLine ||
-            (m && !Array.isArray(m) && (m.blending===T.AdditiveBlending || (m.transparent && m.opacity<0.9)))) hid.push(o); });
-        for(const o of hid) o.visible=false;
-        camera.layers.mask=L; renderer.clear(); renderSolidBlack();
-        for(const o of hid) o.visible=true;
-        renderer.autoClear=false; camera.layers.set(3); renderer.render(scene,camera);                 // the racer again, against that depth
-        renderer.readRenderTargetPixels(rt,0,0,W,H,v);
-      } catch(e){   // name whatever geometry broke the pass, so the fault can be found
-        const bad=[]; scene.traverse(o=>{ const g=o.geometry; if(!g) return; const at=g.attributes||{};
-          for(const k in at) if(!at[k]) bad.push((o.name||o.type)+'.'+k); if(g.index===undefined) bad.push((o.name||o.type)+'.index'); });
-        throw new Error(e.message+(bad.length?' — geometry with a missing attribute: '+bad.slice(0,8).join(', '):''));
-      } finally {
-        for(const o of hid) o.visible=true;
-        renderer.autoClear=ac; camera.layers.mask=L; scene.background=bg; renderer.setRenderTarget(null); renderer.setClearColor(0x1c1218,1);
-        for(const [o,m,mask] of saved){ o.material=m; o.layers.mask=mask; } for(const m of whites.values()) m.dispose(); rt.dispose(); SIM.cam=held; }
-      let A=0, V=0, x0=W, y0=H, x1=-1, y1=-1, cx=0, cy=0, edge=0;
-      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const i=(y*W+x)*4; if(a[i]>127){ A++; cx+=x; cy+=y; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
-        if(x===0||y===0||x===W-1||y===H-1) edge++; if(v[i]>127) V++; } }
+      let F; try{ F=framingMeasure(r, Math.max(2,renderer.domElement.width>>1), Math.max(2,renderer.domElement.height>>1)); } finally { SIM.cam=held; }
+      const { A, V, W, H, x0, y0, x1, y1, cx, cy, edge }=F;
       const fill=A/(W*H), hidden=A?1-V/A:1, f=n=>+n.toFixed(3);
       const out={ racer:r.name, fill:f(fill), hidden:f(hidden), visibleFill:f(V/(W*H)),
         box:A?[f(x0/W),f(1-y1/H),f((x1+1)/W),f(1-y0/H)]:null, center:A?[f(cx/A/W),f(1-cy/A/H)]:null, cutByEdge:edge>0 };
@@ -79794,6 +79922,144 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       await new Promise(r=>setTimeout(r,2500));   // the stage builds the model and eases its camera in
       return { screen:'select', character:{ id:t.id, name:t.name }, stage:{ visible:!!SEL3D.vis, live:!!SEL3D.live, mode:SEL3D.mode, ...SEL3D.stats } };   // (live:false = the stage judged this device too slow and fell back to 2D)
     },
+
+    /* — SURFACE: what reads as plastic. An ID pass by material over the frame (one racer, the course, or all of it): each
+         material's share of the pixels and what it is made of (texture or none, how rough, clear coat, lit or unlit).
+         No texture of any kind plus a smooth or clear-coated finish is "plastic". — */
+    'race.surface': async ({racer, cam, scope='racer', top=12}={})=>{
+      const r=scope==='racer'?racers.find(x=>racer?(x.name===racer||x.id===racer):x.you):null; if(scope==='racer'&&!r) throw new Error('no racer "'+(racer||'you')+'"');
+      const held=SIM.cam, sub=r||me(); if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:sub?sub.name:null });
+      if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+      if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
+      const roots=new Set(racers.map(x=>x.obj)), inRacer=o=>{ for(let p=o;p;p=p.parent) if(roots.has(p)) return true; return false; };
+      const want=scope==='racer'?(o=>{ for(let p=o;p;p=p.parent) if(p===r.obj) return true; return false; }):scope==='course'?(o=>!inRacer(o)):(()=>true);
+      let P; try{ P=materialIdPass(want, Math.max(2,renderer.domElement.width>>1), Math.max(2,renderer.domElement.height>>1)); } finally { SIM.cam=held; }
+      const cnt=new Map(); let total=0; for(let i=0;i<P.px.length;i+=4){ const n=P.at(i); if(!n) continue; cnt.set(n,(cnt.get(n)||0)+1); total++; }
+      const rows=P.list.filter(e=>cnt.get(e.n)).map(e=>({ material:materialName(e.material), share:+(cnt.get(e.n)/Math.max(1,total)).toFixed(3), ...surfaceKind(e.material),
+        varied:e.objs.some(o=>o.isInstancedMesh&&o.instanceColor), on:[...new Set(e.objs.map(ownerName))].slice(0,3) })).sort((a,b)=>b.share-a.share);
+      const sum=f=>+rows.filter(f).reduce((a,x)=>a+x.share,0).toFixed(3);
+      return { scope, racer:r?r.name:null, course:course(), frameShare:+(total/(P.W*P.H)).toFixed(3),
+        totals:{ plastic:sum(x=>x.flags.includes('plastic')), untextured:sum(x=>x.flags.includes('untextured')), flat:sum(x=>x.flags.includes('flat')),
+          relief:sum(x=>x.detail==='relief'), colourOnly:sum(x=>x.detail==='colour'), shader:sum(x=>x.detail==='shader'||x.model==='custom') },
+        materials:rows.slice(0,top) };
+    },
+
+    /* — ALIAS: where the picture will shimmer. The frame drawn at 1x and at `factor`x (box-filtered back down): what differs
+         is detail finer than a pixel, which crawls and sparkles as the camera moves. Attributed by material (the ID pass),
+         with a heat map. — */
+    'race.alias': async ({cam, scope='scene', racer, factor=3, top=10}={})=>{
+      const r=racer?racers.find(x=>x.name===racer||x.id===racer):me(), held=SIM.cam;
+      if(cam) SIM.cam=Object.assign({ azimuth:30, elevation:10, distance:24, height:3.5, fov:36, along:-1 }, cam, { who:r?r.name:null });
+      if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+      if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
+      const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1), F=Math.max(2,Math.min(4,factor|0));
+      const draw=(w,h)=>{ const rt=new T.WebGLRenderTarget(w,h), b=new Uint8Array(w*h*4); try{ renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,w,h,b); } finally { renderer.setRenderTarget(null); rt.dispose(); } return b; };
+      let a, big, P;
+      try{ a=draw(W,H); big=draw(W*F,H*F);
+        const roots=new Set(racers.map(x=>x.obj)), inRacer=o=>{ for(let p=o;p;p=p.parent) if(roots.has(p)) return true; return false; };
+        P=materialIdPass(scope==='racers'?inRacer:scope==='course'?(o=>!inRacer(o)):(()=>true), W, H); } finally { SIM.cam=held; }
+      const g=v=>Math.pow(v/255,1/2.2), luma=(b,i)=>0.2126*g(b[i])+0.7152*g(b[i+1])+0.0722*g(b[i+2]);
+      const d=new Float32Array(W*H), WB=W*F; let tot=0, hot=0;
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ let s2=0; for(let j=0;j<F;j++) for(let i=0;i<F;i++) s2+=luma(big,((y*F+j)*WB+(x*F+i))*4);
+        const v=Math.abs(luma(a,(y*W+x)*4)-s2/(F*F)); d[y*W+x]=v; tot+=v; if(v>0.08) hot++; }
+      const acc=new Map(); for(let k=0;k<W*H;k++){ const n=P.at(k*4); if(!n) continue; const e=acc.get(n)||{ s:0, c:0 }; e.s+=d[k]; e.c++; acc.set(n,e); }
+      const rows=P.list.filter(e=>acc.get(e.n)).map(e=>{ const q=acc.get(e.n); return { material:materialName(e.material), on:[...new Set(e.objs.map(ownerName))].slice(0,3),
+        share:+(q.c/(W*H)).toFixed(3), meanAlias:+(q.s/q.c).toFixed(3), ofAll:+(q.s/Math.max(1e-9,tot)).toFixed(3), detail:surfaceKind(e.material).detail }; }).sort((x,y)=>y.ofAll-x.ofAll);
+      const c=document.createElement('canvas'); c.width=W; c.height=H; const cg=c.getContext('2d'), im=cg.createImageData(W,H);
+      for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const v=Math.min(1,d[(H-1-y)*W+x]*6), o=(y*W+x)*4; im.data[o]=255*Math.min(1,v*2); im.data[o+1]=255*Math.max(0,v*2-1); im.data[o+2]=40; im.data[o+3]=255; }
+      cg.putImageData(im,0,0); const url=c.toDataURL('image/jpeg',0.85);
+      return { course:course(), meanAlias:+(tot/(W*H)).toFixed(4), hotShare:+(hot/(W*H)).toFixed(3), materials:rows.slice(0,top), heat:url.slice(url.indexOf(',')+1) };
+    },
+
+    /* — SEASON: many races, headless, to see balance and trouble spots. AI rivals don't use character stats — only the
+         player's character does — so each character in turn races as you (on the autopilot, the same driver for all)
+         against the same five rivals on the same seeded course. Per character: finishing time against the course's median,
+         place, spins, time off the road. Per course: where on the lap every racer spun, left the road or got stuck. — */
+    'race.season': async ({characters, courses, difficulty:dz='medium', seed=7, rivals, maxSeconds=300, bins=40}={})=>{
+      if(MAZE) throw new Error('leave the maze first');
+      const ids=(characters&&characters.length?characters:SPERM_TYPES.filter(t=>!t.hidden).map(t=>t.id));
+      const crs=(courses&&courses.length?courses:[selTrack]).map(c=>{ const i=typeof c==='number'?c:TRACKS.findIndex(t=>t.name.toLowerCase().includes(String(c).toLowerCase())); if(!(i>=0)) throw new Error('no course "'+c+'"'); return i; });
+      const pool=SPERM_TYPES.filter(t=>!t.hidden), riv=(rivals&&rivals.length===5?rivals:['guido','irish','king','kasi','outlaw']).map(id=>pool.find(t=>t.id===id)||pool[0]);
+      const keep={ sel:selTrack, ch:chosenType, d:difficulty, seed:MCP_SEED, manual:SIM.manual };
+      const results=[], spots={}, dt=1/60; difficulty=dz;
+      try{ for(const ci of crs){ if(TRACKS[ci].maze) continue; selTrack=ci; const H={ spin:new Array(bins).fill(0), off:new Array(bins).fill(0), stuck:new Array(bins).fill(0), wall:new Array(bins).fill(0) };
+        for(const id of ids){ const t=SPERM_TYPES.find(x=>x.id===id); if(!t) continue; chosenType=t;
+          SIM.lineup=[t, ...riv.map(x=>x.id===t.id?pool.find(y=>!riv.includes(y)&&y.id!==t.id):x)];
+          MCP_SEED=seed; mcpReseed(1); buildTrack(ci); PREVIEW.built=ci; buildRacers(); mcpReseed(2);
+          state='race'; raceTime=0; SIM.manual=true; SIM.busy=true; SIM.t=1000; const m=me(), lapsN=trackLoop?lapsOf():1;
+          const st=racers.map(()=>({ sp:false, slow:0, pv:0 })); let steps=0;
+          try{ while(state==='race' && raceTime<maxSeconds && !m.finished){
+              hold(autoKeys(m,steps)); SIM.t+=dt; { const t1=performance.now(); frameStep(t1, dt, SIM.t, t1, true, false); } steps++;
+              racers.forEach((x,k)=>{ const b=Math.min(bins-1,Math.floor((((x.total||0)%1)+1)%1*bins)), S=st[k];
+                const sp=(x.spinT||0)>0; if(sp&&!S.sp) H.spin[b]++; S.sp=sp;
+                if(!x.air && offOf(x)>HW) H.off[b]+=dt;
+                if(Math.abs(x.spd||0)<12 && raceTime>4 && !x.finished){ S.slow+=dt; if(S.slow>1.5){ H.stuck[b]++; S.slow=-3; } } else if(S.slow>0) S.slow=0;
+                const v=Math.abs(x.spd||0); if(S.pv>40 && v<S.pv*0.62 && !sp && !x.air && !(x.hitT>0)) H.wall[b]++; S.pv=v;   // a sudden stop: something solid
+                if(x.you){ if(sp&&!S.sp0) S.spins=(S.spins||0)+1; S.sp0=sp; if(!x.air && offOf(x)>HW) S.off=(S.off||0)+dt; } });
+              if(steps%600===0) await new Promise(res=>setTimeout(res,0)); } }
+          finally { SIM.busy=false; hold([]); }
+          const field=[...racers].sort((x,y)=>x.place-y.place);
+          const S0=st[racers.indexOf(m)]||{};
+          results.push({ course:TRACKS[ci].name, character:id, finished:!!m.finished, time:m.finished?r1(m.finishT):null, place:m.place, laps:lapsN,
+            spins:S0.spins||0, offRoadS:r1(S0.off||0), field:field.map(x=>x.id) });
+          state='menu'; }
+        spots[TRACKS[ci].name]=H; }
+      } finally { SIM.lineup=null; selTrack=keep.sel; chosenType=keep.ch; difficulty=keep.d; MCP_SEED=keep.seed; mcpReseed(0); SIM.manual=keep.manual; state='menu'; PREVIEW.built=-1; }
+      // per course, each time against the median; per character, the mean of that
+      const byCourse={}; for(const x of results) if(x.time!=null) (byCourse[x.course]=byCourse[x.course]||[]).push(x.time);
+      const med={}; for(const k in byCourse){ const a=byCourse[k].sort((p,q)=>p-q); med[k]=a[Math.floor(a.length/2)]; }
+      for(const x of results) x.vsMedian=x.time!=null&&med[x.course]?+((x.time/med[x.course]-1)*100).toFixed(2):null;
+      const chars={}; for(const x of results){ const c=chars[x.character]=chars[x.character]||{ character:x.character, races:0, finished:0, wins:0, places:0, vs:[] };
+        c.races++; if(x.finished){ c.finished++; c.vs.push(x.vsMedian); } c.places+=x.place; if(x.place===1) c.wins++; }
+      const table=Object.values(chars).map(c=>({ character:c.character, races:c.races, finished:c.finished, wins:c.wins, avgPlace:+(c.places/c.races).toFixed(2),
+        vsMedianPct:c.vs.length?+(c.vs.reduce((a,v)=>a+v,0)/c.vs.length).toFixed(2):null })).sort((a,b)=>(a.vsMedianPct??99)-(b.vsMedianPct??99));
+      const hot={}; for(const k in spots){ const H=spots[k], list=[]; for(let b=0;b<bins;b++){ const sc=H.spin[b]*2+H.stuck[b]*3+H.off[b]*0.5+H.wall[b]; if(sc>0) list.push({ at:+((b+0.5)/bins).toFixed(3), spins:H.spin[b], stuck:H.stuck[b], offRoadS:+H.off[b].toFixed(1), walls:H.wall[b], score:+sc.toFixed(1) }); }
+        hot[k]=list.sort((a,b)=>b.score-a.score).slice(0,8); }
+      return { difficulty:dz, seed, rivals:riv.map(x=>x.id), medians:med, characters:table, hotspots:hot, races:results };
+    },
+
+    /* — MEMORY: what the page is holding right now (for race_soak): GPU geometries, textures, programs, the scene's
+         object count, the JS heap. — */
+    'race.mem': ()=>{ let objs=0; scene.traverse(()=>objs++);
+      return { geometries:renderer.info.memory.geometries, textures:renderer.info.memory.textures, programs:(renderer.info.programs||[]).length, sceneObjects:objs,
+        heapMB:performance.memory?+(performance.memory.usedJSHeapSize/1048576).toFixed(1):null, racers:racers.length, course:course() }; },
+
+    /* — HUD: can the race's text be read over this course? For every visible piece of HUD text: its colour against what is
+         behind it (its glass panel blended over the frame as drawn), as a WCAG contrast ratio — median and worst tenth. — */
+    'race.hud': ()=>{
+      const c=renderer.domElement, cr=c.getBoundingClientRect(); { const t1=performance.now(); frameStep(t1, 0, SIM.t, t1, false, true); }
+      const sw=Math.max(1,Math.round(cr.width)), sh=Math.max(1,Math.round(cr.height)), sc=document.createElement('canvas'); sc.width=sw; sc.height=sh;
+      const sg=sc.getContext('2d', { willReadFrequently:true }); sg.drawImage(c,0,0,sw,sh); const img=sg.getImageData(0,0,sw,sh).data;
+      const parse=v=>{ const m=String(v).match(/rgba?\(([^)]+)\)/); if(!m) return null; const q=m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return [q[0],q[1],q[2],q[3]==null?1:q[3]]; };
+      const lum=([r,g,b])=>{ const f=v=>{ v/=255; return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4); }; return 0.2126*f(r)+0.7152*f(g)+0.0722*f(b); };
+      const ratio=(x,y)=>(Math.max(x,y)+0.05)/(Math.min(x,y)+0.05), out=[];
+      for(const el of document.querySelectorAll('#ui *')){
+        const own=[...el.childNodes].filter(n=>n.nodeType===3&&n.textContent.trim()).map(n=>n.textContent.trim()).join(' '); if(!own) continue;
+        const cs=getComputedStyle(el); let op=1, bgc=null;
+        for(let q=el;q&&q!==document.body;q=q.parentElement){ const s2=getComputedStyle(q); if(s2.display==='none'||s2.visibility==='hidden'){ op=0; break; } op*=+s2.opacity; if(!bgc){ const b=parse(s2.backgroundColor); if(b&&b[3]>0.02) bgc=b; } }
+        if(op<0.05) continue; const rc=el.getBoundingClientRect(); if(rc.width<2||rc.height<2) continue;
+        const fg=parse(cs.color); if(!fg) continue; const lf=lum(fg), rs=[];
+        for(let j=0;j<4;j++) for(let i=0;i<12;i++){ const x=Math.round(rc.left+rc.width*(i+0.5)/12-cr.left), y=Math.round(rc.top+rc.height*(j+0.5)/4-cr.top);
+          if(x<0||y<0||x>=sw||y>=sh) continue; const o=(y*sw+x)*4; let px=[img[o],img[o+1],img[o+2]];
+          if(bgc) px=px.map((v,k)=>v*(1-bgc[3])+bgc[k]*bgc[3]); rs.push(ratio(lf,lum(px))); }
+        if(!rs.length) continue; rs.sort((a,b)=>a-b);
+        const size=parseFloat(cs.fontSize), bold=(+cs.fontWeight||400)>=700, large=size>=24||(size>=18.66&&bold), need=large?3:4.5;
+        const outlined=cs.textShadow!=='none'||parseFloat(cs.webkitTextStrokeWidth||0)>0, worst=rs[Math.floor(rs.length*0.1)], median=rs[Math.floor(rs.length/2)];
+        out.push({ text:own.slice(0,40), el:el.id?'#'+el.id:(el.className&&typeof el.className==='string'?'.'+el.className.split(' ')[0]:el.tagName.toLowerCase()), size, bold, color:cs.color,
+          panel:bgc?'rgba('+bgc.join(',')+')':null, median:+median.toFixed(2), worst:+worst.toFixed(2), outlined, need, ok:worst>=need||(outlined&&worst>=need*0.6) }); }
+      return { course:course(), elements:out.sort((a,b)=>a.worst-b.worst) };
+    },
+
+    /* — FRAME: draw the current frame (nothing moves) and return it, for course snapshots — */
+    'race.frame': ({quality=0.9, racers:show=true}={})=>{ if(SIM.cam) simCamApply();
+      // racers:false — the course alone: the track, its sky and its lights. Racers, their trails, items, particles and effects
+      // run on their own clocks and pools, and are not the course
+      // (hidden in the frame's own hook: the frame step shows the racers again as it poses them, then draws)
+      // (and the course's own drifting sprites and points — motes, glows — whose positions are accumulated real time)
+      const hid=[], tick0=SIM.tick; if(!show) SIM.tick=()=>{ if(tick0) tick0(); for(const o of scene.children) if(o.visible && o!==trackGroup && o!==skyDome && !o.isCamera && !(o.isLight && !o.isPointLight && !o.isSpotLight)){ o.visible=false; hid.push(o); }   // (point lights out here ride the racers and effects)
+        if(trackGroup) trackGroup.traverseVisible(o=>{ if(o.isSprite||o.isPoints) hid.push(o); }); for(const o of hid) o.visible=false; };
+      let url; try{ const t1=performance.now(); frameStep(t1, 0, SIM.t, t1, false, true); url=renderer.domElement.toDataURL('image/jpeg', quality); } finally { SIM.tick=tick0; for(const o of hid) o.visible=true; }
+      return { data:url.slice(url.indexOf(',')+1), raceTime:r1(raceTime) }; },
 
     'race.camera': ({mode='photo', racer, azimuth=30, elevation=12, distance=22, height=3.5, fov=35, along=0, from, at, hazard}={})=>{
       if(mode==='free'){   // a camera anywhere: from a world point, looking at another (or at a hazard, from `distance` off its side)

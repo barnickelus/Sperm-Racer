@@ -283,12 +283,13 @@ tool('race_options', {
 
 tool('race_setup', {
   title: 'Choose course, character, difficulty',
-  description: 'Pick what the next race_start will race. course: index or (part of) a name. character: an id from race_options. Locked characters are allowed here (it is a test).',
+  description: 'Pick what the next race_start will race. course: index or (part of) a name. character: an id from race_options. Locked characters are allowed here (it is a test). seed: make the race repeatable, for before/after comparisons.',
   inputSchema: {
     page: pageArg,
     course: z.union([z.number().int(), z.string()]).optional(),
     character: z.string().optional(),
     difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+    seed: z.number().int().nullable().optional().describe('build and run the next race from this seed, so it is the same race twice (scenery, field, AI, effects; a fixed clock). null: random again'),
   },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.setup'), 'race.setup', a))));
 
@@ -388,7 +389,8 @@ tool('race_palette', {
   title: 'Analyse a racer\'s colours',
   description: 'Which of a racer\'s parts blend into each other on screen. Renders the frame and an ID pass from the same camera, then reports each part\'s share of the racer\'s pixels and mean on-screen colour, and the closest-coloured pairs by CIE ΔE (under ~10 reads as the same colour at racing distance). cam: photo-camera params, or omit for the current view.',
   inputSchema: { page: pageArg, racer: z.string().optional(), minShare: z.number().min(0).max(0.5).default(0.02),
-    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional() },
+    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional(),
+    vision: z.enum(['normal', 'protan', 'deutan', 'tritan', 'all']).default('normal').describe('also the closest pairs as a colour-blind player sees them (protanopia, deuteranopia, tritanopia; all three)') },
   annotations: { readOnlyHint: true },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.palette'), 'race.palette', a))));
 
@@ -483,6 +485,60 @@ tool('race_features', {
   annotations: { readOnlyHint: true },
 }, async ({ page }) => ok(text(await call(pick(page, 'race.features'), 'race.features'))));
 
+tool('race_surface', {
+  title: 'What reads as plastic',
+  description: 'An ID pass by MATERIAL over the frame: for one racer (scope racer), the course (course) or everything in view (scene), each material\'s share of the pixels and what it is made of — texture (relief: bump/normal/roughness map; colour: a map; vertex colours; none), how glossy (roughness, clear coat, Phong shininess), lit or unlit, whether its instances vary. A surface with no texture of any kind and a smooth finish is flagged plastic; totals give the plastic, untextured, flat (unlit) and textured shares. A deliberate flat art style (vector, felt) reads as flat or untextured by design: judge by the course\'s style.',
+  inputSchema: { page: pageArg, scope: z.enum(['racer', 'course', 'scene']).default('racer'), racer: z.string().optional(), top: z.number().int().min(1).max(40).default(12),
+    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional() },
+  annotations: { readOnlyHint: true },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.surface'), 'race.surface', a, 120000))));
+
+tool('race_alias', {
+  title: 'Where the picture will shimmer',
+  description: 'Find detail finer than a pixel — what crawls and sparkles in motion (a still frame hides it). The frame is drawn at 1x and at `factor`x (box-filtered back down); the difference, per pixel, is aliasing. Returns the mean, the share of hot pixels, the materials responsible (by an ID pass) and a heat map. Fine textures without mipmaps, thin geometry and high-contrast edges top the list.',
+  inputSchema: { page: pageArg, scope: z.enum(['scene', 'course', 'racers']).default('scene'), racer: z.string().optional(), factor: z.number().int().min(2).max(4).default(3), top: z.number().int().min(1).max(30).default(10),
+    cam: z.object({ azimuth: z.number().optional(), elevation: z.number().optional(), distance: z.number().optional(), height: z.number().optional(), along: z.number().optional(), fov: z.number().optional() }).optional() },
+  annotations: { readOnlyHint: true },
+}, async ({ page, ...a }) => { const p = pick(page, 'race.alias'); const r = await call(p, 'race.alias', a, 240000); const { heat, ...rest } = r;
+  return ok({ type: 'image', data: await fit(p, heat, 640), mimeType: 'image/jpeg' }, text(rest)); });
+
+tool('race_season', {
+  title: 'Run a season of races',
+  description: 'Balance and trouble spots from many headless races. AI rivals do not use character stats (only the player\'s character does), so each character in turn races as you — on the autopilot, the same driver for all — against the same five rivals on the same seeded course. Per character: finishing time against the course median (vsMedianPct: negative is faster), place, wins. Per course: hotspots — where on the lap every racer spun, got stuck, hit something solid or ran off the road (at: laps, for race_warp). Leaves the game on the menu: race_start after. Long: about 5-30 s of real time per race.',
+  inputSchema: { page: pageArg, characters: z.array(z.string()).optional().describe('character ids (default: the whole roster)'), courses: z.array(z.union([z.number().int(), z.string()])).optional().describe('default: the current course'),
+    difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'), seed: z.number().int().default(7), rivals: z.array(z.string()).optional().describe('five rival character ids'),
+    maxSeconds: z.number().positive().default(300), bins: z.number().int().min(10).max(100).default(40) },
+}, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.season'), 'race.season', a, 3600000))));
+
+tool('race_soak', {
+  title: 'Memory soak test',
+  description: 'Race the courses round and round (start, drive a few seconds, next; every race seeded, so each round is the same race), forcing a garbage collection between races, and record what the page holds each time: GPU geometries and textures, shader programs, scene objects, the JS heap. Growth on the same course from the second round to the last is a leak (the first round also fills caches).',
+  inputSchema: { page: pageArg, courses: z.array(z.union([z.number().int(), z.string()])).min(1), rounds: z.number().int().min(2).max(6).default(3), seconds: z.number().min(0.5).max(20).default(3) },
+}, async ({ page, courses, rounds, seconds }) => {
+  const p = pick(page, 'race.mem');
+  const cdp = p.headless ? await p.headless.context.newCDPSession(p.headless.tab) : null;
+  const rows = [];
+  try {
+    for (let k = 0; k < rounds; k++) for (const c of courses) {
+      await call(p, 'race.setup', { course: c, seed: 99 }); await call(p, 'race.start', { manual: true }, 200000); await call(p, 'race.drive', { seconds }, 300000);   // (seeded: every round the same race, so a difference is the page's)
+      if (cdp) await cdp.send('HeapProfiler.collectGarbage').catch(() => {});
+      const m = await call(p, 'race.mem', {}); rows.push({ round: k + 1, ...m, course: m.course && m.course.name || String(c) });
+    }
+  } finally { if (cdp) await cdp.detach().catch(() => {}); await call(p, 'race.setup', { seed: null }).catch(() => {}); }
+  // from the second round on: the first one also fills the caches (textures, shaders, models built once per session)
+  const growth = {}; for (const c of new Set(rows.map(r => r.course))) { const rs = rows.filter(r => r.course === c), a = rs[Math.min(1, rs.length - 2)], b = rs[rs.length - 1];
+    growth[c] = { geometries: b.geometries - a.geometries, textures: b.textures - a.textures, programs: b.programs - a.programs, sceneObjects: b.sceneObjects - a.sceneObjects, heapMB: a.heapMB != null ? +(b.heapMB - a.heapMB).toFixed(1) : null }; }
+  const leak = Object.values(growth).some(g => g.geometries > 0 || g.textures > 0 || g.sceneObjects > 20 || (g.heapMB || 0) > 15);
+  return ok(text({ leak, growth, rows }));
+});
+
+tool('race_hud', {
+  title: 'Can the HUD be read here',
+  description: 'For every visible piece of race HUD text: its colour against what is behind it — its glass panel blended over the frame as drawn — as a WCAG contrast ratio (median and worst tenth of the sampled points), the size and weight, whether it has an outline or shadow, and ok against the WCAG minimum (4.5:1, or 3:1 for large text). Run it in a race, on each course.',
+  inputSchema: { page: pageArg },
+  annotations: { readOnlyHint: true },
+}, async ({ page }) => ok(text(await call(pick(page, 'race.hud'), 'race.hud', {}))));
+
 tool('race_warp', {
   title: 'Jump the race to a point',
   description: 'Jump the running race to any point, so a late part of a course, or a late hour of its light, can be looked at without driving there. `to` is in laps on a lap course (2.5 = halfway round the third lap) and a fraction of the way to the egg on a point-to-point course. You are placed there with the field `spread` units apart (you at the back by default, so the chase camera sees the pack ahead), at speed, with lap counts and checkpoints set as if driven. Eased course state, such as Ophelia\'s hour, snaps to the new point.',
@@ -511,17 +567,18 @@ tool('race_record', {
   inputSchema: { page: pageArg, seconds: z.number().positive().max(60), fps: z.number().int().min(12).max(60).default(30), cam: z.object({ mode: z.enum(['chase', 'photo']).default('chase'), who: z.string().optional().describe('racer name or character id (default: you)'), ease: z.enum(['inout', 'linear', 'in', 'out']).default('inout'), from: frameZ.optional(), to: frameZ.optional() }).optional(),
     still: z.boolean().default(false), autopilot: z.boolean().default(true), keys: z.array(z.string()).default([]), quality: z.number().min(0.5).max(1).default(0.9),
     straight: z.boolean().default(false).describe('the filmed racer looks straight ahead (no glancing at rivals): for portraits'),
-    dir: z.string().optional().describe('folder for the frames (default mcp/recordings)'), name: z.string().default('shot'), encode: z.boolean().default(false) },
-}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, straight, dir, name, encode }) => {
+    dir: z.string().optional().describe('folder for the frames (default mcp/recordings)'), name: z.string().default('shot'), encode: z.boolean().default(false),
+    qa: z.boolean().default(false).describe('check every frame: the subject\'s framing (hidden, out of frame, tiny, cut by the edge) and the exposure (blown out, crushed, sudden flashes); the result lists the frame ranges with a problem') },
+}, async ({ page, seconds, fps, cam, still, autopilot, keys, quality, straight, dir, name, encode, qa }) => {
   const p = pick(page, 'race.rec');
   const out = path.resolve(dir || path.join(here, 'recordings')); fs.mkdirSync(out, { recursive: true });
   const n = Math.max(1, Math.round(seconds * fps)), files = [], evs = []; let first = null, last = null, mid = null;
   await call(p, 'race.recmode', { on: true });
   try {
     for (let k = 0; k < n; k++) {
-      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality, straight }, 120000);
+      const f = await call(p, 'race.rec', { k, n, fps, cam, still, autopilot, keys, quality, straight, qa }, 120000);
       const file = path.join(out, `${name}_${String(k).padStart(4, '0')}.jpg`); fs.writeFileSync(file, Buffer.from(f.data, 'base64')); files.push(file);
-      if (k === 0) first = f.raceTime; last = f.raceTime; if (k === (n >> 1)) mid = f.data; evs.push({ k, t: f.raceTime, ...(f.ev || {}) });
+      if (k === 0) first = f.raceTime; last = f.raceTime; if (k === (n >> 1)) mid = f.data; evs.push({ k, t: f.raceTime, ...(f.ev || {}), ...(f.qa ? { qa: f.qa } : {}) });
     }
   } finally { await call(p, 'race.recmode', { on: false }).catch(() => {}); }
   let mp4 = null;
@@ -534,26 +591,63 @@ tool('race_record', {
     if (b.boost && !a.boost) moments.push({ k: b.k, what: 'boost' }); if (b.air && !a.air) moments.push({ k: b.k, what: 'airborne' }); if (!b.air && a.air) moments.push({ k: b.k, what: 'landing' });
     if (b.slings > a.slings) moments.push({ k: b.k, what: 'slingshot' }); if (b.place < a.place) moments.push({ k: b.k, what: `overtake → P${b.place}` }); if (b.place > a.place) moments.push({ k: b.k, what: `passed → P${b.place}` });
     if (b.spin && !a.spin) moments.push({ k: b.k, what: 'spin' }); if (b.finished && !a.finished) moments.push({ k: b.k, what: 'finish' }); if (b.mega && !a.mega) moments.push({ k: b.k, what: 'mega' }); }
-  return ok({ type: 'image', data: await fit(p, mid), mimeType: 'image/jpeg' }, text({ moments, frames: n, fps, dir: out, first: files[0], last: files[files.length - 1], mp4, raceTime: [first, last] }));
+  // qa: runs of frames with a problem, so a shot can be trimmed or re-shot without looking at every frame
+  let problems = null;
+  if (qa) { const tests = [['subject out of frame', e => e.qa.fill === 0], ['subject mostly hidden', e => e.qa.fill > 0 && e.qa.hidden > 0.4], ['subject tiny', e => e.qa.fill > 0 && e.qa.fill < 0.006],
+      ['subject cut by the frame edge', e => e.qa.cut], ['blown out', e => e.qa.blown > 0.25], ['crushed', e => e.qa.crushed > 0.45]];
+    problems = [];
+    for (const [what, f] of tests) { let a = -1; for (let i = 0; i <= evs.length; i++) { const bad = i < evs.length && evs[i].qa && f(evs[i]); if (bad && a < 0) a = i; if (!bad && a >= 0) { if (i - a >= 2) problems.push({ what, from: a, to: i - 1, frames: i - a }); a = -1; } } }
+    for (let i = 1; i < evs.length; i++) { const d = evs[i].qa && evs[i - 1].qa ? evs[i].qa.mean - evs[i - 1].qa.mean : 0; if (Math.abs(d) > 70) problems.push({ what: d > 0 ? 'flash' : 'sudden dark', from: i, to: i, frames: 1 }); }
+    problems.sort((a, b) => a.from - b.from); }
+  return ok({ type: 'image', data: await fit(p, mid), mimeType: 'image/jpeg' }, text({ moments, ...(problems ? { problems, clean: !problems.length } : {}), frames: n, fps, dir: out, first: files[0], last: files[files.length - 1], mp4, raceTime: [first, last] }));
 });
 
 tool('race_audio', {
   title: 'Record the music',
-  description: 'Record the game\'s music (the master bus, with the engine hum muted) for `seconds` of real time and save it as a .webm (opus) file. Starts the audio and the current race\'s music if they are not playing. For a soundtrack under recorded footage.',
+  description: 'Record the game\'s music (the master bus, with the engine hum muted) for `seconds` of real time and save it as a .webm (opus) file, and ANALYSE it (you cannot hear it): loudness in dBFS, peak, clipped samples, short-term loudness range, gaps, the low/high balance, and how many onsets land on the game\'s beat clock. sfxProbe:true fires every sound effect over the music and reports how many dB each sits above it. Starts the audio and the current race\'s music if they are not playing.',
   inputSchema: { page: pageArg, seconds: z.number().positive().max(180).default(30), file: z.string(),
-    style: z.string().optional().describe('a music style to play instead: a character id (their home station, e.g. king) or a station id'), bar: z.number().int().min(0).optional().describe('with style: the bar of a produced record to start from') },
-}, async ({ page, seconds, file, style, bar }) => {
-  const a = await call(pick(page, 'race.audio'), 'race.audio', { seconds, style, bar }, (seconds + 40) * 1000);
+    style: z.string().optional().describe('a music style to play instead: a character id (their home station, e.g. king) or a station id'), bar: z.number().int().min(0).optional().describe('with style: the bar of a produced record to start from'),
+    analyze: z.boolean().default(true).describe('measure what the speakers get: loudness, peak and clipping, loudness range, gaps, low/high balance, and whether the sound lands on the game\'s beat clock'),
+    sfxProbe: z.boolean().default(false).describe('fire every sound effect once over the music (and the engine at speed) and report how far each sits above the music') },
+}, async ({ page, seconds, file, style, bar, analyze, sfxProbe }) => {
+  const a = await call(pick(page, 'race.audio'), 'race.audio', { seconds, style, bar, analyze, sfxProbe }, (seconds + 40) * 1000);
   const f = path.resolve(file); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(a.data, 'base64'));
-  return ok(text({ file: f, bytes: fs.statSync(f).size, seconds, style: a.style, beat: a.beat, firstDownbeat: a.firstDownbeat, startBar: a.startBar, section: a.section }));
+  return ok(text({ file: f, bytes: fs.statSync(f).size, seconds, style: a.style, beat: a.beat, firstDownbeat: a.firstDownbeat, startBar: a.startBar, section: a.section, ...(a.analysis ? { analysis: a.analysis } : {}) }));
 });
+
+/* course snapshots: a seeded race, warped to fixed points of the lap, the chase camera's frame at each, against goldens */
+async function courseSnapshots(p, course, points, update, threshold) {
+  const slug = String(course).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  await call(p, 'race.setup', { course, seed: 4242 });
+  try {
+    await call(p, 'race.start', { manual: true }, 200000);
+    const out = [], images = [];
+    for (let k = 0; k < points.length; k++) {
+      await call(p, 'race.warp', { to: points[k], you: 'back', spread: 26 });
+      await call(p, 'race.drive', { seconds: 0.4 }, 120000);
+      await call(p, 'race.camera', { mode: 'chase' });
+      const fr = await call(p, 'race.frame', { racers: false });
+      const file = path.join(BASELINES, `course-${slug}-${k}.jpg`);
+      fs.mkdirSync(BASELINES, { recursive: true });
+      if (update || !fs.existsSync(file)) { fs.writeFileSync(file, Buffer.from(fr.data, 'base64')); out.push({ at: points[k], saved: path.relative(ROOT, file) }); images.push(fr.data); continue; }
+      const d = await call(p, 'race.diff', { a: fs.readFileSync(file).toString('base64'), b: fr.data });
+      out.push({ at: points[k], golden: path.relative(ROOT, file), changed: d.changed, meanDelta: d.meanDelta, pass: d.changed <= threshold }); images.push(d.heat);
+    }
+    return { out, images };
+  } finally { await call(p, 'race.setup', { seed: null }).catch(() => {}); }
+}
 
 tool('race_regress', {
   title: 'Visual regression of a character',
   description: 'Render a character\'s reference sheet (studio-lit, on a plain backdrop) and compare it with its saved golden sheet, <character>-<kind>.jpg in mcp/baselines/ (or SPERM_RACER_MCP_BASELINES): the share of pixels changed beyond a tolerance, the mean change, a heat map of where, and pass/fail against `threshold`. No golden yet, or update:true, saves this render as the golden. Run after engine changes to catch characters that changed by accident.',
   inputSchema: { page: pageArg, character: z.string().optional().describe('character id (default: your racer)'), kind: z.enum(['turnaround', 'expressions']).default('turnaround'),
-    update: z.boolean().default(false), threshold: z.number().min(0).max(1).default(0.04) },
-}, async ({ page, character, kind, update, threshold }) => {
+    update: z.boolean().default(false), threshold: z.number().min(0).max(1).default(0.04),
+    course: z.union([z.number().int(), z.string()]).optional().describe('instead of a character: snapshot this COURSE — a seeded race warped to fixed points of the lap, the chase camera\'s frame at each, against its goldens (course-<name>-<k>.jpg)'),
+    points: z.array(z.number().min(0)).default([0.12, 0.45, 0.78]).describe('with course: where on the lap (laps; a fraction of the way on a point-to-point)') },
+}, async ({ page, character, kind, update, threshold, course, points }) => {
+  if (course != null) { const p = pick(page, 'race.frame'); const r = await courseSnapshots(p, course, points, update, Math.max(threshold, 0.1));
+    const imgs = []; for (const d of r.images.slice(0, 3)) imgs.push({ type: 'image', data: await fit(p, d, 480), mimeType: 'image/jpeg' });
+    return ok(...imgs, text({ course, points: r.out, pass: r.out.every(x => x.pass !== false) })); }
   const p = pick(page, 'race.sheet');
   const st = await call(p, 'race.state');
   const me = st.standings.find(r => r.you); const id = character || (me && me.character);
