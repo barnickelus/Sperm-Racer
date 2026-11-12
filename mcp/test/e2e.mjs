@@ -48,7 +48,7 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_camera', 'race_drive', 'race_film', 'race_framing', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
     'race_realtime', 'race_record', 'race_regress', 'race_select', 'race_setup', 'race_sheet', 'race_start', 'race_state', 'race_studio', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
@@ -233,7 +233,8 @@ await check('scene_profile breaks the cost down per racer and over the whole ros
 await check('race_palette measures how far apart a racer\'s parts are on screen (Rusty: hat and hair)', async () => {
   // a fresh race, so this is Ophelia's afternoon: later laps run into golden hour and dusk, whose warm light pulls colours together
   json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' })); json(await call('race_start')); json(await call('race_drive', { seconds: 3 }));
-  const p = json(await call('race_palette', { cam: { azimuth: 180, elevation: 20, distance: 26, height: 3.5 } }));
+  // from the front quarter: from behind, his own smoke trail hides most of him (race_palette counts only what is seen)
+  const p = json(await call('race_palette', { cam: { azimuth: 35, elevation: 15, distance: 22, height: 3.5 } }));
   assert.equal(p.racer, 'Rusty Malone');
   const parts = Object.fromEntries(p.parts.map(x => [x.part, x]));
   assert.ok(parts.hat && parts.hair, 'hat and hair both on screen: ' + p.parts.map(x => x.part).join(', '));
@@ -341,6 +342,24 @@ await check('Eve: race_warp jumps the race, race_framing judges a shot, the prof
   const free = json(await call('race_camera', { mode: 'free', from: [0, 400, 0], at: [0, 0, -100], screenshot: false }));
   assert.equal(free.mode, 'free'); assert.ok(Array.isArray(free.hazards));
   json(await call('race_camera', { mode: 'chase', screenshot: false }));
+});
+
+await check('race_features maps the set pieces; race_warp lands short of a jump; the recorder catches the take-off; race_audit; race_audio plays any song from a bar', async () => {
+  json(await call('race_setup', { course: 'Victoria', character: 'king', difficulty: 'medium' })); json(await call('race_start'));
+  const f = json(await call('race_features'));
+  assert.ok(f.jumps.length && f.boostPads.length, 'Victoria has jumps and boost pads');
+  assert.ok(f.jumps.every(j => typeof j.at === 'number' && j.n.length === 2), JSON.stringify(f.jumps[0]));
+  json(await call('race_warp', { jump: 0, you: 'front', lead: 120 }));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-mom-'));
+  try {
+    const r = json(await call('race_record', { seconds: 3, fps: 12, dir, name: 'j' }));
+    assert.ok(r.moments.some(m => m.what === 'airborne'), 'the take-off is a moment: ' + JSON.stringify(r.moments));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'j.events.json'), 'utf8')).length, r.frames);
+    const a = json(await call('race_audio', { seconds: 2, style: 'king', bar: 8, file: path.join(dir, 'k.webm') }));
+    assert.ok(a.bytes > 4000 && a.firstDownbeat >= 0 && a.firstDownbeat < 2, JSON.stringify(a));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const au = json(await call('race_audit'));
+  assert.ok(au.pieces > 50 && Array.isArray(au.onRoad) && Array.isArray(au.overlaps), JSON.stringify(au.counts));
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
