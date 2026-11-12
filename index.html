@@ -59736,8 +59736,21 @@ function clayifyScene(root, pulse, S){
 // Re-work a finished racer as felted fibre: matte Lambert everywhere, palette-pulled
 // colours, and a fleece of raw tufts over the crown — the same three-state rule the
 // course follows, applied to a body.
+// Felted Cleetus's wool, seen close: loose fibres and uneven dye (a map that only darkens, so each part keeps its colour),
+// with the fibres again as a bump. race_surface found him 100% untextured: felted wool that read as matte plastic.
+function feltCharTex(){
+  if(feltCharTex.c) return feltCharTex.c;
+  const map=cbTex(cbCanvas(128,128,(g,w,h)=>{ g.fillStyle='#ffffff'; g.fillRect(0,0,w,h);
+    const d=g.getImageData(0,0,w,h); for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const v=255*(0.86+0.14*cbFbm(x/14,y/14,3,128/14)), o=(y*w+x)*4; d.data[o]=d.data[o+1]=d.data[o+2]=v; } g.putImageData(d,0,0);
+    g.lineCap='round'; g.lineWidth=0.8;
+    for(const [st,n,seed] of [['rgba(0,0,0,0.16)',900,1],['rgba(255,255,255,0.22)',500,2]]){ g.strokeStyle=st; g.beginPath();
+      for(let i=0;i<n;i++){ const x=cbHash(i,seed*10+1)*w, y=cbHash(i,seed*10+2)*h, a=cbHash(i,seed*10+3)*6.283, l=1.5+cbHash(i,seed*10+4)*4;
+        g.moveTo(x,y); g.quadraticCurveTo(x+Math.cos(a+0.7)*l*0.5, y+Math.sin(a+0.7)*l*0.5, x+Math.cos(a)*l, y+Math.sin(a)*l); }
+      g.stroke(); } }), true, 5, 5);
+  return (feltCharTex.c={ map, bump:cbTextures().feltBump });
+}
 function feltify(g){
-  const hsl={h:0,s:0,l:0};
+  const hsl={h:0,s:0,l:0}, FC=feltCharTex();
   g.traverse(o=>{
     if(!o.isMesh || !o.material) return;
     if(o.userData.isOutline){ o.visible=false; return; }   // felt has no ink line
@@ -59746,7 +59759,7 @@ function feltify(g){
     col.getHSL(hsl);
     col.setHSL(hsl.h, Math.min(0.55,hsl.s*0.75), Math.max(0.10,Math.min(0.52,hsl.l*0.62)));
     const faint = old.transparent && old.opacity<0.6;
-    o.material=new T.MeshLambertMaterial({ color:col, map:old.map||null,
+    o.material=new T.MeshPhongMaterial({ color:col, map:old.map||FC.map, bumpMap:FC.bump, bumpScale:0.05, shininess:2, specular:0x060606,   // (matte wool, fibres in the bump)
       emissive: old.emissive ? old.emissive.clone().multiplyScalar(0.20) : new T.Color(0x000000),
       side:old.side, transparent:faint, opacity:faint?old.opacity:1 });
   });
