@@ -256,6 +256,31 @@ await check('Kasi: built, acting, and within the roster budget', async () => {
   assert.ok(tw.root.instances >= 150, 'the twists are one instanced draw (r128 reports InstancedMesh as type Mesh, with an instance count)');
 });
 
+await check('the flow body: one skin on one spine (no gap at the join, a tail that keeps its length, a head that eases); the stock body is an A/B away', async () => {
+  const run = async (character, flowBody) => {
+    json(await call('race_fx', { flowBody }));
+    json(await call('race_setup', { course: 'Ophelia', character, difficulty: 'medium', seed: 8 })); json(await call('race_start'));
+    json(await call('race_drive', { seconds: 2 }));
+    const m = json(await call('race_motion', { seconds: 4 }));
+    return { m, P: Object.fromEntries(m.probes.map(p => [p.probe, p])) };
+  };
+  const a = await run('proto', true);
+  assert.equal(a.m.body, 'flow');
+  assert.ok(a.m.skin.seamGap < 1e-3, `gap at the join: ${a.m.skin.seamGap}`);
+  assert.ok(a.m.skin.lengthMin > 0.98 && a.m.skin.lengthMax < 1.02, `the spine keeps its length: ${a.m.skin.lengthMin}..${a.m.skin.lengthMax} of rest`);
+  assert.ok(a.m.skin.maxBendDeg < 40, `sharpest bend between two rings: ${a.m.skin.maxBendDeg} deg`);
+  assert.ok(a.P.neck.snaps <= 2 && a.P.neck.jerk < 600, `the head eases: neck jerk ${a.P.neck.jerk}, ${a.P.neck.snaps} snaps`);
+  const sheet = await call('race_sheet', { rest: true, cell: 260 }); save(image(sheet), 'proto-sheet.jpg'); assert.ok(image(sheet));
+  const b = await run('proto', false);   // the same racer on the stock ball and tube
+  assert.equal(b.m.body, 'stock'); assert.equal(b.m.skin, undefined);
+  assert.ok(a.P.neck.snaps < b.P.neck.snaps / 3 && a.P.neck.jerk < b.P.neck.jerk / 4, `neck: stock ${b.P.neck.jerk}/${b.P.neck.snaps} -> flow ${a.P.neck.jerk}/${a.P.neck.snaps}`);
+  // a racer whose kit rides the tail (the Viking's bracer, pinned with flowRide) and one that asks its neck for more than a neck can give (Rick)
+  for (const id of ['viking', 'rick']) { const c = await run(id, 'all');
+    assert.equal(c.m.body, 'flow'); assert.ok(c.m.skin.seamGap < 1e-3 && c.m.skin.lengthMax < 1.02 && c.m.skin.maxBendDeg < 40, `${id}: ${JSON.stringify(c.m.skin)}`); }
+  const fx = json(await call('race_fx', { flowBody: true }));
+  assert.equal(fx.flowBody, true); assert.ok(fx.flowIds.includes('proto'));
+});
+
 await check('race_motion: the Fluid copy of Guido Tony moves without the snaps (same race, same seconds)', async () => {
   const run = async (character) => {
     json(await call('race_setup', { course: 'Ophelia', character, difficulty: 'medium' })); json(await call('race_start'));
