@@ -71545,9 +71545,12 @@ function dbGearRate(S, x){ if(!S.gOn) return S.g0; const u=ldClamp((x-S.gx0)/S.g
 function dbGearStep(S, x){   // at beat x: finish a window that is done, start the next one that is due
   if(S.gOn && x>=S.gx0+S.gL){ S.gs0=dbSigAt(S,S.gx0+S.gL); S.gx0=S.gx0+S.gL; S.g0=S.g1; S.gOn=false; }
   if(!S.gOn && S.gReq!==S.g0){
-    // the next beat ahead where a stroke ends (a slow gear also waits for beat 1 or 3)
-    for(let n=Math.ceil(x+1e-6), k=0;k<9;k++,n++){ const s=dbSigAt(S,n), b=((n+DBC.k)%4+4)%4;
-      if(Math.abs(s-Math.round(s))<1e-4 && ((S.g0>=1 && S.gReq>=1) || b===0 || b===2)){ S.gs0=s; S.gx0=n; S.g1=S.gReq; S.gL=dbGearLen(S.g0,S.g1); S.gOn=true; S.gWait=n; break; } }
+    // the next beat ahead where a stroke ends; a change to or from the slow gear waits for beat 1 or 3 if one comes in time
+    let pick=0, alt=0;
+    for(let n=Math.ceil(x+1e-6), k=0;k<9;k++,n++){ const s=dbSigAt(S,n); if(Math.abs(s-Math.round(s))>1e-4) continue;
+      const b=((n+DBC.k)%4+4)%4; if((S.g0>=1 && S.gReq>=1) || b===0 || b===2){ pick=n; break; } if(!alt) alt=n; }
+    if(!pick) pick=alt;
+    if(pick){ S.gs0=Math.round(dbSigAt(S,pick)); S.gx0=pick; S.g1=S.gReq; S.gL=dbGearLen(S.g0,S.g1); S.gOn=true; S.gWait=pick; }
   }
 }
 function dbRnd(S){ S.rs=(S.rs*16807)%2147483647; return (S.rs-1)/2147483646; }
@@ -71617,12 +71620,13 @@ function makeBeatTemplate(opts){
   ud.baseEmissive=em.clone();
   ud.tailHook=dbTailHook;                                   // wiggleTail stands aside (and hands the lash its tip)
   ud.tick=dbTick; ud.beatOf=beatOf; ud.whipHold=dbWhipHold;
-  const probeTip=new T.Object3D(), probeBeat=new T.Object3D(), probeBob=new T.Object3D(), probeSway=new T.Object3D();
-  for(const p of [probeBeat,probeBob,probeSway]) g.add(bodyPart(p));
-  ud.motionProbes=[['tailTip',tailTip,'pos'],['headTurn',head,'rot'],['flick',probeTip,'pos'],['beatClock',probeBeat,'pos'],['bob',probeBob,'pos'],['tipSway',probeSway,'pos']];
+  const probeTip=new T.Object3D(), probeBeat=new T.Object3D(), probeBob=new T.Object3D(), probeSway=new T.Object3D(), probeVT=new T.Object3D(), probeVB=new T.Object3D(), probeVS=new T.Object3D();
+  for(const p of [probeBeat,probeBob,probeSway,probeVT,probeVB,probeVS]) g.add(bodyPart(p));
+  // (vTip, vBob: the stroke's and the bob's signal carried on a steady 100 u/s drift, so race_motion's speed series IS their signed velocity)
+  ud.motionProbes=[['tailTip',tailTip,'pos'],['headTurn',head,'rot'],['flick',probeTip,'pos'],['beatClock',probeBeat,'pos'],['bob',probeBob,'pos'],['tipSway',probeSway,'pos'],['vTip',probeVT,'pos'],['vBob',probeVB,'pos'],['vStroke',probeVS,'pos']];   // vStroke: the strokes a second (the gait)
   g.add(bodyPart(probeTip));
   // ---- the rig's state
-  const S=ud.db={ fem, t:null, U, FU, BU, head, sockets:ud.sockets, probes:{tip:probeTip, beat:probeBeat, bob:probeBob, sway:probeSway},
+  const S=ud.db={ fem, t:null, U, FU, BU, head, sockets:ud.sockets, probes:{tip:probeTip, beat:probeBeat, bob:probeBob, sway:probeSway, vt:probeVT, vb:probeVB, vs:probeVS},
     gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, gWait:0, sig:0, lastB:null, amp:3, ampV:0, ampT:3,
     hd:null, yr:0, turnF:0, turnFV:0, turnT:0, turnTV:0, dS:0, dSV:0, spdP:0, acc:0, ov:0, ovV:0, st:0, stV:0, smT:9, smK:0, fl:0, flV:0, tipA:0,
     tk:-1, spH:0, spHV:0, spAcc:0, pSpin:false, pBoost:false, pAir:false, airK:0, land:0,
@@ -71712,7 +71716,7 @@ function dbTick(o, r, now){
   const c=spin?0:ldClamp(yr/Math.max(spd,30),-0.05,0.05);
   dbSpring(S,'turnF','turnFV',c,10,0.9,dt);
   dbSpring(S,'turnT','turnTV',c,4.2,0.62,dt);                // the tail trails into the turn, and swings a little past
-  dbSpring(S,'dS','dSV',(R.drift===1?0.62:0)*Math.sign(S.turnT||R.driftDir||1),5,0.7,dt);
+  dbSpring(S,'dS','dSV',(R.drift===1?0.45:0)*Math.sign(S.turnT||R.driftDir||1),5,0.7,dt);
   const acc=dt>0?((R.spd||0)-S.spdP)/dt:0; S.spdP=R.spd||0; S.acc+=(acc-S.acc)*Math.min(1,dt*12);
   dbSpring(S,'ov','ovV',ldClamp(-S.acc/260,-1,1),9,0.32,dt);   // the head lurches on a hard stop and settles
   const air=!!R.air; if(S.pAir && !air) S.stV-=3.2; S.pAir=air;
@@ -71735,7 +71739,7 @@ function dbTick(o, r, now){
   if(idle || S.cur==='tired' || (fin&&S.cur==='lose')) gq=0.5; else if(fin||celeb) gq=1;
   if(portrait) gq=1;
   S.gReq=gq;
-  if(S.lastB==null || Math.abs(B-S.lastB)>6){ if(S.gOn) S.g0=S.g1; S.gx0=Math.floor(B); S.gs0=Math.round(S.g0*S.gx0); S.g1=S.g0; S.gOn=false; }   // first sight, or the clock re-locked (unseen): straight to the gear it was heading for
+  if(S.lastB==null || Math.abs(B-S.lastB)>6){ if(S.gOn) S.g0=S.g1; S.gx0=Math.floor(B); if(S.g0<1 && (((S.gx0+C.k)%2)+2)%2) S.gx0--; S.gs0=Math.round(S.g0*S.gx0); S.g1=S.g0; S.gOn=false; }   // first sight, or the clock re-locked (unseen): straight to the gear it was heading for
   S.lastB=B; dbGearStep(S,B); S.sig=dbSigAt(S,B);
   let aT=idle?2.0 : spd<34?2.2 : dbGearRate(S,B)>1.5?2.3:2.7;
   if(R.boostT>0) aT=3.2; if(S.cur==='tired') aT=1.5; if(fin||celeb) aT=S.cur==='lose'?1.4:3.0;
@@ -71769,6 +71773,7 @@ function dbTick(o, r, now){
   // the probes race_motion reads: the beat (a step every beat), the bob, the tip's sway
   S.probes.beat.position.set(C.phase*2,0,0); S.probes.bob.position.set(0,sq*10,0);
   S.probes.sway.position.set(S.tipW||0,0,0);
+  const dr=100*((now-(S.t0==null?(S.t0=now):S.t0))%1000); S.probes.vt.position.set((S.tipW||0)+dr,0,0); S.probes.vb.position.set(0,sq*10+dr,0); S.probes.vs.position.set(S.sig+dr,0,0);
 }
 // the spine: angles along it (the line of action, the swim, the lash, the flick, the look), integrated from the neck both ways
 function dbPose(o, S, R, dt, init){
