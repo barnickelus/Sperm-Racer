@@ -56768,15 +56768,20 @@ function buildTrack(idx){
   const innerTube=new T.Mesh(new T.TubeGeometry(curve,STEPS,tubeRadius*0.7,12,loop),innerMat);
   innerTube.position.y-=9; trackGroup.add(innerTube);
   TRACK_PULSE.push({mat:innerMat,base:0x3a1418,amp:0.7});
-  const startS=SAMP[0];
+  // the fimbriae: the fringe at the tube's mouth, as an arch the pack passes under at the line. (They were a tuft of cones
+  // floating 6 off the centre line at kart height, in the racing line every lap: race_audit found them on all six of
+  // these courses.) Each cone stands out from the arch, fanned a little at random.
+  const startS=SAMP[0];   // (on the line itself, where the road runs straight: the start gantry stands inside the arch)
   const fimbriaeMat=new T.MeshPhongMaterial({color:0xff9999,emissive:0x552222});
-  for(let i=0;i<12;i++){
-    const angle=(i/12)*Math.PI*2;
-    const f=new T.Mesh(new T.ConeGeometry(1.5,8,6),fimbriaeMat);
-    f.position.copy(startS.p).add(startS.n.clone().multiplyScalar(6)).add(new T.Vector3(0,4,0));
-    f.rotation.x=1.2+Math.random()*0.4; f.rotation.y=angle; f.scale.set(1,1+Math.random()*0.5,1);
-    trackGroup.add(f);
-  }
+  { const up=new T.Vector3(0,1,0), R=HW+5, Hh=HW*0.85, dir=new T.Vector3(), q=new T.Quaternion(), tw=new T.Quaternion();
+    for(let i=0;i<18;i++){
+      const a=0.22+(i+0.5)/18*(Math.PI-0.44), f=new T.Mesh(new T.ConeGeometry(2.2,11,6),fimbriaeMat);   // (the arch starts clear of the road's edges)
+      f.position.copy(startS.p).addScaledVector(startS.n,Math.cos(a)*R).addScaledVector(up,Math.sin(a)*Hh+1.5);
+      dir.copy(startS.n).multiplyScalar(Math.cos(a)).addScaledVector(up,Math.sin(a)*Hh/R).normalize();
+      q.setFromUnitVectors(up,dir); tw.setFromAxisAngle(startS.t,(Math.random()-0.5)*0.5); f.quaternion.copy(tw).multiply(q);
+      f.position.addScaledVector(dir,5.5); f.scale.set(1,0.9+Math.random()*0.5,1);   // (based on the arch, tipped outward)
+      trackGroup.add(f);
+    } }
   }
 
   // ---- glowing road membrane + edge ropes + bio-motes ----
@@ -57735,11 +57740,12 @@ function buildTrack(idx){
     for(const side of [-1,1]){
       const nb=3+(Math.random()*2|0);
       for(let b=0;b<nb;b++){
-        const out=HW+1.0+b*1.7+Math.random()*1.6;
-        spots.push({x:s.p.x+s.n.x*side*out+(Math.random()*2-1)*1.5,
+        // (each blob sits by its own radius from the road's edge, and jitters along the road, not into it: they reached
+        // up to 3 units over the edge, race_audit found)
+        const r=0.7+Math.random()*1.9, out=HW+0.6+r+b*1.7+Math.random()*1.6, j=(Math.random()*2-1)*1.5;
+        spots.push({x:s.p.x+s.n.x*side*out+s.t.x*j,
           y:s.p.y-0.4+Math.random()*3.8,
-          z:s.p.z+s.n.z*side*out+(Math.random()*2-1)*1.5,
-          r:0.7+Math.random()*1.9});
+          z:s.p.z+s.n.z*side*out+s.t.z*j, r});
       }
     }
   }
@@ -57940,7 +57946,7 @@ function buildTrack(idx){
         h.position.set(lamps[k].x, lamps[k].y-1.5, lamps[k].z); trackGroup.add(h); }
     }
   } else {
-  const ringGeo=new T.TorusGeometry(HW+4,3,8,18);
+  const ringGeo=new T.TorusGeometry(HW+5.5,3,8,18);   // (its legs clear of the road's edges)
   const ringMat=new T.MeshPhongMaterial({color:0xc9627e,emissive:0x3a141c,side:T.DoubleSide,
     transparent:true,opacity:0.92,shininess:30});
   for(const seg of tun){
@@ -57949,7 +57955,10 @@ function buildTrack(idx){
       const s=SAMP[i%STEPS];
       const ring=new T.Mesh(ringGeo,ringMat);
       ring.position.copy(s.p).add(new T.Vector3(0,1,0));
-      ring.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), s.t);
+      // banked with the road (the ring's plane across it, its sides square to the banked deck): unbanked, one leg of each rib
+      // dipped into the road on every banked turn, race_audit found
+      { const bn=s.bn||s.n, zA=s.t.clone().normalize(), yA=new T.Vector3().crossVectors(zA,bn).normalize(), xA=new T.Vector3().crossVectors(yA,zA).normalize();
+        if(yA.y<0){ yA.negate(); xA.negate(); } ring.quaternion.setFromRotationMatrix(new T.Matrix4().makeBasis(xA,yA,zA)); }
       trackGroup.add(ring);
     }
   }
@@ -79811,7 +79820,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       boxes.forEach((B,k)=>{ const cx=Math.floor(B.c.x/C2), cz=Math.floor(B.c.z/C2);
         for(let a=-1;a<=1;a++) for(let bb=-1;bb<=1;bb++){ const L=H.get((cx+a)+':'+(cz+bb)); if(!L) continue;
           for(const j of L){ if(j<=k) continue; const A=boxes[j]; if(A.src===B.src && !B.src.isInstancedMesh) continue;
-            if(!sameKind && A.name===B.name) continue;   // (a clump of the same thing, palms or foam, is composed that way: sameKind:true lists those too)
+            if(!sameKind && A.name.replace(/ #\d+$/,'')===B.name.replace(/ #\d+$/,'')) continue;   // (instances of one batch carry their index: the same kind all the same)   // (a clump of the same thing, palms or foam, is composed that way: sameKind:true lists those too)
             if(!B.box.intersectsBox(A.box)) continue; I.copy(B.box).intersect(A.box); const r=vol(I)/Math.min(vol(B.box),vol(A.box));
             if(vol(I)/Math.max(vol(B.box),vol(A.box))>0.7) continue;   // (near-identical twins: an ink hull round its shape, a glow over its body — on purpose)
             if(r>=overlap){ const w=where(B.c.x,B.c.z); overlaps.push({ a:B.name, b:A.name, share:+r.toFixed(2), at:w?w.at:null, lateral:w?+w.lat.toFixed(1):null, x:Math.round(B.c.x), z:Math.round(B.c.z) }); } } } });
