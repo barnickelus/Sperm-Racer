@@ -49908,7 +49908,7 @@ function ophHour(P, u){
   if(h===0){ sun.position.copy(OPH.sun).multiplyScalar(200); OPH_SUNW.value.copy(OPH.sun); }
   else { OPH_SUNW.value.set(Math.cos(le)*Math.cos(az), Math.sin(le), Math.cos(le)*Math.sin(az)); sun.position.copy(OPH_SUNW.value).multiplyScalar(200); }
   if(scene.fog){   // (the MCP studio backdrop takes the fog away for a while)
-    scene.fog.color.copy(A.fog).lerp(B.fog,t); if(scene.background && scene.background.isColor) scene.background.copy(scene.fog.color);
+    if(scene.fog){ scene.fog.color.copy(A.fog).lerp(B.fog,t); if(scene.background && scene.background.isColor) scene.background.copy(scene.fog.color); }   // (no fog in the studio)
     scene.fog.near=L(A.fogN,B.fogN,t); scene.fog.far=L(A.fogF,B.fogF,t); }
   if(P.sky){ const U=P.sky.uniforms;
     for(let i=0;i<OPH_SKYU.length;i++){ const u=OPH_SKYU[i][0], k=OPH_SKYU[i][1];
@@ -51783,7 +51783,7 @@ function edenMood(E, dt){
   if(E._fn==null){ E._fn=n; E._ff=f; c.copy(ct); E._a=a.slice(); }
   E._fn+=(n-E._fn)*k; E._ff+=(f-E._ff)*k; c.lerp(ct,k);
   for(let j=0;j<4;j++) E._a[j]+=(a[j]-E._a[j])*k;
-  scene.fog.near=E._fn; scene.fog.far=E._ff; scene.fog.color.copy(edenLin(c.getHex()));
+  if(scene.fog){ scene.fog.near=E._fn; scene.fog.far=E._ff; scene.fog.color.copy(edenLin(c.getHex())); }   // (no fog in the studio)
   // the sky takes the same air: closed and dark in the hollow, a haze in the valley
   if(skyDome && skyDome.material.uniforms.uMood){ const hush=Math.max(0,Math.min(1,(1000-E._ff)/600));
     skyDome.material.uniforms.uMood.value.set(c.r,c.g,c.b, Math.min(0.85, hush*0.9)); }
@@ -54621,8 +54621,8 @@ function vicRigAt(P, px, py, pz, eye){
   rim.position.copy(G.v1).multiplyScalar(150); rim.color.copy(A.rim).lerp(B.rim,t); rim.intensity=L(A.z.rimI,B.z.rimI);
   fill.position.set(px-Rt.x*40, py+24, pz-Rt.z*40); fill.color.copy(A.fill).lerp(B.fill,t); fill.intensity=L(A.z.fillI,B.z.fillI);
   flesh.position.set(px, py-24, pz); flesh.color.copy(A.bnc).lerp(B.bnc,t); flesh.intensity=L(A.z.bncI,B.z.bncI);
-  scene.fog.color.copy(A.bg).lerp(B.bg,t); scene.background.copy(scene.fog.color);
-  scene.fog.near=L(A.z.fn,B.z.fn); scene.fog.far=L(A.z.ff,B.z.ff);
+  if(scene.fog){ scene.fog.color.copy(A.bg).lerp(B.bg,t); scene.background.copy(scene.fog.color);
+  scene.fog.near=L(A.z.fn,B.z.fn); scene.fog.far=L(A.z.ff,B.z.ff); }   // (the studio has no fog, and its own backdrop)
   // The sky seen from inside the mine is only ever the sky past its far mouth. So by mid-bore the dome is already the
   // dawn's: the light at the end of the tunnel is the dawn itself, the set beyond stands against it in the bore's violet
   // haze, and the poster over the mouth bursts onto it. (Lights and haze still change at the cut, as everywhere.)
@@ -70685,58 +70685,122 @@ function ksTextures(){
   // the tag: 254
   const tag=cv(64,64,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,w,h); gr.addColorStop(0,'#fff3c4'); gr.addColorStop(0.5,'#d9a92e'); gr.addColorStop(1,'#8a6414'); g.fillStyle=gr; g.fillRect(0,0,w,h);
     g.fillStyle='#3a2606'; g.font='bold 26px Impact, "Arial Black", sans-serif'; g.textAlign='center'; g.textBaseline='middle'; g.fillText('254',w/2,h/2+1); }, true);
-  return (ksTextures.c={ shuka, tail, tailGlow, tag });
+  // — the surfaces that stop him reading as a vinyl toy —
+  const rep=(t,x,y)=>{ t.wrapS=t.wrapT=T.RepeatWrapping; t.repeat.set(x,y); return t; };
+  const noiseCv=(w,h,f)=>{ const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d'), d=g.createImageData(w,h);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const v=f(x,y)*255, o=(y*w+x)*4; d.data[o]=d.data[o+1]=d.data[o+2]=v; d.data[o+3]=255; } g.putImageData(d,0,0); return c; };
+  const specks=(g,n,seed,w,h,size,styles)=>{ styles.forEach((st,b)=>{ g.fillStyle=st; g.beginPath();   // n specks in a few batched fills
+      for(let i=b;i<n;i+=styles.length){ const r=size[0]+cbHash(i,seed+2)*size[1]; g.rect(cbHash(i,seed)*w, cbHash(i,seed+1)*h, r, r); } g.fill(); }); };
+  // skin, painted on the head sphere's own UV (u 0.25 is the middle of the face, v runs down from the crown): warm at the
+  // cheeks and round the mouth, deeper in the eye sockets and under the jaw, light on the brow, and a soft mottle all over
+  const skinCol=rep(cv(512,256,(g,w,h)=>{ g.fillStyle=KS.skin; g.fillRect(0,0,w,h);
+    const blob=(u,v,rx,ry,c,a)=>{ for(const du of [0,1,-1]){ g.save(); g.translate((u+du)*w,v*h); g.scale(rx*w,ry*h);
+        const gr=g.createRadialGradient(0,0,0,0,0,1); gr.addColorStop(0,c); gr.addColorStop(1,'rgba(0,0,0,0)'); g.globalAlpha=a; g.fillStyle=gr; g.beginPath(); g.arc(0,0,1,0,7); g.fill(); g.restore(); } };
+    for(const du of [-0.14,0.14]) blob(0.25+du,0.53,0.075,0.11,'#7a3f27',0.32);   // cheeks
+    for(const du of [-0.06,0.06]) blob(0.25+du,0.41,0.05,0.055,'#3a1f12',0.4);   // eye sockets
+    blob(0.25,0.3,0.13,0.06,'#83532f',0.35); blob(0.25,0.64,0.09,0.06,'#6e3424',0.25);   // brow; round the mouth
+    for(const du of [-0.24,0.24]) blob(0.25+du,0.5,0.05,0.09,'#5b301c',0.3);    // in front of the ears
+    const gr=g.createLinearGradient(0,h*0.55,0,h); gr.addColorStop(0,'rgba(38,18,9,0)'); gr.addColorStop(1,'rgba(38,18,9,0.6)'); g.fillStyle=gr; g.fillRect(0,0,w,h);
+    g.globalCompositeOperation='overlay'; g.globalAlpha=0.28; g.drawImage(noiseCv(64,32,(x,y)=>cbFbm(x/2,y/2,3,32)),0,0,w,h);   // the mottle
+    g.globalCompositeOperation='source-over'; g.globalAlpha=1; }, true),1,1);
+  // its pores and grain, as a bump (the head's UV, so it shares the colour's transform)
+  const skinBump=rep(cv(1024,512,(g,w,h)=>{ g.drawImage(noiseCv(256,128,(x,y)=>0.5+0.2*(cbNoise(x,y,256)-0.5)),0,0,w,h);
+    specks(g,24000,60,w,h,[0.6,0.6],['rgba(255,255,255,0.08)','rgba(0,0,0,0.08)']);   // fine grain
+    specks(g,9000,1,w,h,[0.6,0.9],['rgba(40,40,40,0.55)']); }),1,1);                    // pores
+  // the fade: stubble, dense at the top, thinning to bare skin (alpha), so it melts instead of ending in an edge
+  const fade=cv(1024,128,(g,w,h)=>{ const den=v=>v<0.36?1:Math.max(0,1-(v-0.36)/0.62);
+    for(let y=0;y<h;y++){ g.fillStyle='rgba(20,13,10,'+(Math.pow(den(y/h),2.4)*0.93).toFixed(3)+')'; g.fillRect(0,y,w,1); }
+    g.lineCap='round'; g.lineWidth=0.6;
+    for(let b=0;b<6;b++){ g.strokeStyle='rgba('+(12+b*4)+','+(8+b*2)+',6,'+(0.45+b*0.07)+')'; g.beginPath();
+      for(let i=b;i<48000;i+=6){ const x=cbHash(i,11)*w, y=cbHash(i,12)*h; if(cbHash(i,13)>den(y/h)*1.05) continue;
+        g.moveTo(x,y); g.lineTo(x+(cbHash(i,16)-0.5)*0.9, y+0.6+cbHash(i,17)*1.1); }
+      g.stroke(); } }, true);
+  // the high-top: a mass of tight coils (colour and bump from the one canvas)
+  const coil=rep(cv(512,128,(g,w,h)=>{ g.fillStyle='#140c08'; g.fillRect(0,0,w,h); g.lineCap='round';
+    for(const [c,lw,n,s] of [['#22150e',2.6,900,1],['#312015',1.4,900,2],['#45301f',0.8,420,3]]){ g.strokeStyle=c; g.lineWidth=lw; g.beginPath();
+      for(let i=0;i<n;i++){ const x=cbHash(i+s*5000,21)*w, y=cbHash(i+s*5000,22)*h, r=2.6+cbHash(i,23)*2.4, a=cbHash(i,24)*6.28, sweep=s===3?1.2:3.4;
+        for(const dx of [0,-w,w]){ g.moveTo(x+dx+Math.cos(a)*r, y+Math.sin(a)*r); g.arc(x+dx,y,r,a,a+sweep); } }
+      g.stroke(); } }, true),4,1);
+  // a twist: the two strands wound round each other, as a ridge that spirals up it
+  const twist=rep(cv(64,32,(g,w,h)=>{ const d=g.createImageData(w,h);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const t=((x/w*2+y/h)%1+1)%1, v=110+120*Math.pow(Math.sin(t*Math.PI),0.6)+18*(cbHash(x,y)-0.5), o=(y*w+x)*4; d.data[o]=d.data[o+1]=d.data[o+2]=v; d.data[o+3]=255; }
+    g.putImageData(d,0,0); }),3,1);
+  // the shúkà's weave: the threads under the check (on the check's tile, so it shares its transform)
+  const weave=cv(256,256,(g,w,h)=>{ const d=g.createImageData(w,h);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const cx=x%4, cy=y%4, over=((x>>2)+(y>>2))%2, v=over?(cx===0||cx===3?90:200):(cy===0||cy===3?90:200), o=(y*w+x)*4;
+      const f=v+24*(cbHash(x>>2,y)-0.5); d.data[o]=d.data[o+1]=d.data[o+2]=f; d.data[o+3]=255; }
+    g.putImageData(d,0,0); });
+  // metal flake under the tail's clear coat: every flake tilted its own way, so it sparkles in the paint
+  const flake=cv(2048,256,(g,w,h)=>{ g.fillStyle='#808080'; g.fillRect(0,0,w,h);
+    specks(g,26000,32,w,h,[2,0],[0,1,2,3,4,5,6,7].map(k=>'rgb('+(k*36)+','+(k*36)+','+(k*36)+')')); });
+  // the nose: catches light on the bridge, deepens underneath, and has nostrils (the nose sphere's UV: u 0.25 faces forward)
+  const nose=cv(256,128,(g,w,h)=>{ const gr=g.createLinearGradient(0,0,0,h); gr.addColorStop(0,'#7a4a2c'); gr.addColorStop(0.45,KS.skin); gr.addColorStop(0.8,'#4e2b18'); gr.addColorStop(1,'#3a1f11');
+    g.fillStyle=gr; g.fillRect(0,0,w,h);
+    for(const du of [-0.075,0.075]){ g.save(); g.translate((0.25+du)*w,0.7*h); g.scale(0.045*w,0.07*h); const ng=g.createRadialGradient(0,0,0,0,0,1);
+      ng.addColorStop(0,'rgba(22,10,6,0.95)'); ng.addColorStop(0.6,'rgba(30,14,8,0.6)'); ng.addColorStop(1,'rgba(30,14,8,0)'); g.fillStyle=ng; g.beginPath(); g.arc(0,0,1,0,7); g.fill(); g.restore(); }
+    g.save(); g.translate(0.25*w,0.3*h); g.scale(0.07*w,0.12*h); const hg=g.createRadialGradient(0,0,0,0,0,1); hg.addColorStop(0,'rgba(150,100,70,0.35)'); hg.addColorStop(1,'rgba(150,100,70,0)');
+    g.fillStyle=hg; g.beginPath(); g.arc(0,0,1,0,7); g.fill(); g.restore(); }, true);
+  const skinFlat=cv(4,4,(g,w,h)=>{ g.fillStyle=KS.skin; g.fillRect(0,0,w,h); }, true);   // (a map of plain skin: so the small parts share the head's shader)
+  return (ksTextures.c={ shuka, tail, tailGlow, tag, skinCol, skinBump, fade, coil, twist, weave, flake, nose, skinFlat });
 }
 
 function dressKasi(g, K){
   const ud=g.userData, head=K.head, TX=ksTextures(), env=cbEnv();
   const phys=(hex,o={})=>new T.MeshPhysicalMaterial(Object.assign({ color:cbLin(hex), roughness:0.4, metalness:0, envMap:env, envMapIntensity:0.6 }, o));
   const M={
-    skin:phys(KS.skin,{ roughness:0.38, clearcoat:0.5, clearcoatRoughness:0.3, envMapIntensity:0.75 }),
-    fade:new T.MeshStandardMaterial({ color:0xffffff, vertexColors:true, roughness:0.85, envMap:env, envMapIntensity:0.3 }),
-    twist:new T.MeshStandardMaterial({ color:cbLin('#1e140f'), roughness:0.6, envMap:env, envMapIntensity:0.45 }),
+    // skin: no longer a satin coat — pores and grain in the bump, a warm sheen at the edges, the clear coat barely there.
+    // The head carries its painted colour; the small parts (nose, lids, the hard part) share the grain without it.
+    // (skin, head, nose and the collar share one set of features — map, bump, sheen, no clear coat — so one shader serves all four)
+    skin:phys('#ffffff',{ map:TX.skinFlat, roughness:0.46, sheen:new T.Color('#2c150c'), bumpMap:TX.skinBump, bumpScale:0.008, envMapIntensity:0.5 }),
+    nose:phys('#ffffff',{ map:TX.nose, roughness:0.42, sheen:new T.Color('#2c150c'), bumpMap:TX.skinBump, bumpScale:0.004, envMapIntensity:0.5 }),
+    head:phys('#ffffff',{ map:TX.skinCol, roughness:0.46, sheen:new T.Color('#2c150c'), bumpMap:TX.skinBump, bumpScale:0.008, envMapIntensity:0.5 }),
+    fade:new T.MeshStandardMaterial({ map:TX.fade, bumpMap:TX.fade, bumpScale:0.01, transparent:true, depthWrite:false, roughness:0.9, envMap:env, envMapIntensity:0.2 }),
+    twist:new T.MeshStandardMaterial({ color:cbLin('#2a1c14'), roughness:0.62, bumpMap:TX.twist, bumpScale:0.028, roughnessMap:TX.twist, envMap:env, envMapIntensity:0.45 }),
     visor:tfMat({ color:'#141821' }), frame:phys('#0b0c10',{ roughness:0.22, metalness:0.4, clearcoat:1, envMapIntensity:1 }),
     eye:phys('#f6f3ee',{ roughness:0.15, clearcoat:1, envMapIntensity:0.7 }), irisV:new T.MeshBasicMaterial({ vertexColors:true }),
     lid:null, cavity:new T.MeshBasicMaterial({ color:cbLin('#2a0f0c') }), teeth:phys('#f4f1ea',{ roughness:0.25, clearcoat:0.6 }),
     tongue:phys('#b2525a',{ roughness:0.5 }), ink:new T.MeshBasicMaterial({ color:cbLin('#2a1510') }),
-    shell:phys('#f2f2ee',{ roughness:0.22, clearcoat:1, clearcoatRoughness:0.08, envMapIntensity:0.9 }),
-    cushion:new T.MeshStandardMaterial({ color:cbLin('#17171b'), roughness:0.75, envMap:env, envMapIntensity:0.3 }),
+    shell:phys('#eeede8',{ roughness:0.5, clearcoat:0.3, clearcoatRoughness:0.35, envMapIntensity:0.55 }),   // soft-touch, not gloss
+    cushion:new T.MeshStandardMaterial({ color:cbLin('#17171b'), roughness:0.62, bumpMap:cbTextures().leatherBump, bumpScale:0.025, roughnessMap:cbTextures().leatherBump, envMap:env, envMapIntensity:0.35 }),
     neonC:new T.MeshBasicMaterial({ color:new T.Color('#21e6ff') }), neonM:new T.MeshBasicMaterial({ color:new T.Color('#ff2fa8') }),
-    collar:new T.MeshStandardMaterial({ map:TX.shuka, roughness:0.82, envMap:env, envMapIntensity:0.25 }),
+    collar:new T.MeshPhysicalMaterial({ map:TX.shuka, bumpMap:TX.weave, bumpScale:0.012, roughness:0.86, sheen:new T.Color('#5a2626'), envMap:env, envMapIntensity:0.25 }),
     beads:phys('#ffffff',{ vertexColors:true, roughness:0.18, clearcoat:1, envMapIntensity:0.8 }),
     tag:phys('#ffffff',{ map:TX.tag, metalness:0.7, roughness:0.25, envMapIntensity:1.2 }),
-    tail:phys('#ffffff',{ map:TX.tail, emissive:new T.Color(1,1,1), emissiveMap:TX.tailGlow, emissiveIntensity:0.8, roughness:0.28, clearcoat:1, clearcoatRoughness:0.06, envMapIntensity:0.8, side:T.DoubleSide }),
+    tail:phys('#ffffff',{ map:TX.tail, emissive:new T.Color(1,1,1), emissiveMap:TX.tailGlow, emissiveIntensity:0.8, roughness:0.34, bumpMap:TX.flake, bumpScale:0.012, clearcoat:1, clearcoatRoughness:0.05, envMapIntensity:0.85, side:T.DoubleSide }),
   };
   M.lid=M.skin;
-  for(const [k,n] of [['skin','skin'],['lid','skin'],['fade','hair'],['twist','hair'],['visor','shades'],['frame','shades frame'],['shell','headphones'],['cushion','headphones'],
+  for(const [k,n] of [['skin','skin'],['head','skin'],['nose','skin'],['lid','skin'],['fade','hair'],['twist','hair'],['visor','shades'],['frame','shades frame'],['shell','headphones'],['cushion','headphones'],
     ['collar','collar'],['beads','beads'],['tail','tail'],['teeth','teeth'],['eye','eyes']]) if(M[k] && !M[k].name) M[k].name=n;
   // the stock face goes; the stock head and tail are re-dressed; no ink outlines on a vinyl toy
   for(const c of g.children) if(c.isMesh && c!==head && c!==ud.tailMesh) c.visible=false;
   if(ud.glow) ud.glow.material.color.setRGB(0,0,0);   // no halo: his light is the neon
-  head.geometry.dispose(); head.geometry=new T.SphereGeometry(3.4,56,40); head.material=M.skin;
+  head.geometry.dispose(); head.geometry=new T.SphereGeometry(3.4,56,40); head.material=M.head;
   ud.tailMesh.material=M.tail; ud.ksTailMat=M.tail;
   const face=new T.Group(); face.name='kasi-face'; g.add(face);
 
   // — hair: the fade (sides and back, dark at the top, melting into skin at the bottom; a crisp lineup at the front) —
-  { const NU=72, NV=12, pos=[], col=[], idx=[], skin=cbLin(KS.skin), hair=cbLin(KS.hair), D=Math.PI/180;
+  { const NU=72, NV=12, pos=[], uv=[], idx=[], D=Math.PI/180;   // (stubble thinning down to skin: the fade texture's alpha)
     for(let j=0;j<=NV;j++) for(let i=0;i<=NU;i++){ const u=i/NU, v=j/NV, gap=0.95, ph=Math.PI/2+gap+u*(Math.PI*2-2*gap), th=(22+v*58)*D;
-      const p=headPt(th, ph, 1.012+0.008*(1-v)); pos.push(p[0],p[1],p[2]); const k=Math.pow(Math.min(1,Math.max(0,(v-0.45)/0.55)),1.3);
-      const c=hair.clone().lerp(skin,k); col.push(c.r,c.g,c.b); }
+      const p=headPt(th, ph, 1.012+0.008*(1-v)); pos.push(p[0],p[1],p[2]); uv.push(u,1-v); }
     for(let j=0;j<NV;j++) for(let i=0;i<NU;i++){ const a=j*(NU+1)+i, b=a+1, c=a+NU+1, d=c+1; idx.push(a,c,b,b,c,d); }
-    const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(pos,3)); fg.setAttribute('color',new T.Float32BufferAttribute(col,3)); fg.setIndex(idx); fg.computeVertexNormals();
+    const fg=new T.BufferGeometry(); fg.setAttribute('position',new T.Float32BufferAttribute(pos,3)); fg.setAttribute('uv',new T.Float32BufferAttribute(uv,2)); fg.setIndex(idx); fg.computeVertexNormals();
     face.add(new T.Mesh(fg, M.fade));
     // the hard part, shaved in on his left
     face.add(new T.Mesh(taperTube(new T.CatmullRomCurve3([33,38,44,52].map((a,k)=>new T.Vector3(...headPt(a*D, Math.PI/2-1.1-k*0.32, 1.024)))),16,4,()=>0.06), M.skin)); }
   // — the high-top, and the twists on it: one instanced draw —
-  { const top=new T.Mesh(new T.CylinderGeometry(1,1.04,1,40,1), new T.MeshStandardMaterial({ color:cbLin('#18100c'), roughness:0.85, envMap:env, envMapIntensity:0.2 }));
+  { const top=new T.Mesh(new T.CylinderGeometry(1,1.04,1,40,1), new T.MeshStandardMaterial({ map:TX.coil, bumpMap:TX.coil, bumpScale:0.035, roughness:0.88, envMap:env, envMapIntensity:0.2 }));
     top.material.name='hair'; top.scale.set(2.25,1.55,3.05); top.position.set(0,HEAD_CY+HEAD_RY+0.12,-0.35); face.add(top);
     const tw=new T.TubeGeometry(new (class extends T.Curve{ getPoint(t,o=new T.Vector3()){ const a=t*Math.PI*3; return o.set(Math.cos(a)*0.06, t*0.5, Math.sin(a)*0.06); } })(), 10, 0.12, 6, false);
     const spots=[]; for(let k=0;k<160;k++){ const a=k*2.39996, r=Math.sqrt((k+0.5)/160); spots.push([Math.cos(a)*r*2.1, Math.sin(a)*r*2.9, 0]); }
     for(let k=0;k<40;k++){ const a=k/40*6.2832; spots.push([Math.cos(a)*2.28, Math.sin(a)*3.1, 1]); }
+    for(const [n,dy,sc] of [[52,-0.42,0.8],[56,-0.82,0.68]]) for(let k=0;k<n;k++){ const a=(k+(dy<-0.6?0.5:0))/n*6.2832+(cbHash(k,n)-0.5)*0.08;   // two more rows down the sides
+      spots.push([Math.cos(a)*2.26, Math.sin(a)*3.08, 2, dy+(cbHash(k,7)-0.5)*0.12, sc]); }
     const im=new T.InstancedMesh(tw, M.twist, spots.length), d=new T.Object3D(), y0=top.position.y+0.775*1.55*0.5+0.25;
-    spots.forEach(([x,z,rim],k)=>{ if(rim){ d.position.set(x,top.position.y+0.2-((k*7)%3)*0.25,z+top.position.z); d.rotation.set(0,0,0); d.lookAt(d.position.clone().add(new T.Vector3(x,0,z))); d.rotateX(Math.PI/2); }
+    const tint=new T.Color();
+    spots.forEach(([x,z,rim,dy,sc],k)=>{ if(rim){ d.position.set(x,top.position.y+(rim===2?dy:0.2-((k*7)%3)*0.25),z+top.position.z); d.rotation.set(0,0,0); d.lookAt(d.position.clone().add(new T.Vector3(x,0,z))); d.rotateX(Math.PI/2+(rim===2?0.35:0)); }
       else { d.position.set(x, y0-0.1*(x*x/4.4+z*z/8.4), z+top.position.z); d.rotation.set((k%5-2)*0.08, k, (k%3-1)*0.1); }
-      const s=0.9+((k*37)%7)*0.05; d.scale.set(s,s*(rim?1.1:1),s); d.updateMatrix(); im.setMatrixAt(k,d.matrix); });
+      const s=(0.9+((k*37)%7)*0.05)*(sc||1); d.scale.set(s,s*(rim?1.1:1),s); d.updateMatrix(); im.setMatrixAt(k,d.matrix);
+      im.setColorAt(k, tint.setScalar(0.72+0.56*cbHash(k,41))); });   // (every twist its own shade: not a batch of clones)
     im.name='twists'; face.add(im); }
   // — eyes (seen when the shades are up or low) —
   const ER=0.66, eyes=[];
@@ -70754,7 +70818,7 @@ function dressKasi(g, K){
     const b=new T.Mesh(taperTube(new T.CatmullRomCurve3(pts),18,6,u=>{ const w=sx>0?u:1-u; return 0.1+0.15*Math.sin(Math.min(1,w*1.3)*Math.PI*0.9); }), M.twist); b.scale.z=0.55; piv.add(b);
     brows.push({ piv, sx, y0:piv.position.clone(), t:0, dy:0 }); }
   // — nose: broad, soft —
-  { const a=faceAnchor(0,3.2), n=new T.Mesh(new T.SphereGeometry(0.7,22,14), M.skin); n.position.copy(a.p).addScaledVector(a.n,0.22); n.scale.set(1.25,0.75,0.8); face.add(n); }
+  { const a=faceAnchor(0,3.2), n=new T.Mesh(new T.SphereGeometry(0.7,22,14), M.nose); n.position.copy(a.p).addScaledVector(a.n,0.22); n.scale.set(1.25,0.75,0.8); face.add(n); }
   // — mouths (the shared mouth builder; lips in a dark brown, not ink) —
   const mouths={}; for(const k of ['smirk','laugh','determined','surprised','suspicious','angry','wink','tired','victorious']){ const m=oxMouth(k,M); m.visible=false; face.add(m); mouths[k]=m; }
   // — the shield shades: one wrapped lens, a frame along the top, a bridge; on a pivot at the temples so they can
