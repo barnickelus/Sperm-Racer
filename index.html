@@ -71076,12 +71076,16 @@ const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid
  *     every frame from the face parameters, so a lid really sweeps over the eye and a lip really curls with the mouth.
  *   Under the tiles, the SETTING BED: the same surface, its colour darkened (BED), so a joint reads as the local colour
  *   in shadow, and any opening while the body bends shows bed, not a hole. A thin ink course (back-face shell) outlines it.
- *   Each tile is a small two-tone composition (disc in square, ring, lozenge, square in square): an accent hue split away
- *   from the tile's colour but EQUILUMINANT with it (the engine's rule: vibrate in colour, never in value), the base solved in
- *   linear light so the tile's mean IS its colour, and the face pays back the light its joint does not send. So from racing
- *   distance the tiles fuse into the character's colour and shading; close up (the select stage, the finish orbit) it is a
- *   mosaic. Anti-shimmer: the composition fades out with distance (uMos) and with the tile's size on screen, the joint fades
- *   below ~4 px, and nothing in a tile ever changes value at a sub-pixel scale (race_alias is the check).
+ *   Each tile is a Chuck-Close cell: a mark (disc, ring, lozenge, square, or a dot on a field) on a field, the two a
+ *   complementary pair round the tile's colour (the tile's split hue as a chroma offset), so close up every cell is vivid and
+ *   from afar they cancel into the skin. The LIGHT models the form: each tile takes the light's temperature (warm where the
+ *   scene's key light falls, cool in shadow, a cool rim at the silhouette that also glows a little), its mark is pushed
+ *   further warm-and-light or cool-and-deep, and the mark grows where light, shade or the rim is strongest. Tile SIZE models
+ *   it too: finest on the face, finer toward the outline the chase camera sees, largest where the back of the head faces it.
+ *   The face's own cells are quieter, so the features carry it. Grout is quiet (a light bed, a thin joint).
+ *   Anti-shimmer: the cell fades with the tile's measured size on screen (below ~5 px it is the plain tile tone) and partly
+ *   with distance; the joint goes below ~4 px; the per-tile variety goes below ~2 px; the light, shade and rim are per tile,
+ *   so they hold at any distance without sparkling (race_alias is the check).
  *
  * THE MOTION is all in the vertex shader: the CPU only fills a few uniforms per racer per frame (no per-vertex work).
  *   · the flagellum: wiggleTail's tessera branch (tessWiggle) samples the game's own spine (tailOffset: Juan's swim, the
@@ -71105,14 +71109,14 @@ const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid
  * give the character its own expressions by adding entries to TS_EXPR (the ten core names must stay); per-character swim is
  * the same TAIL_STYLE row every racer has. Nothing in a dress touches the rig, the shaders or the per-frame pipeline.
  * ------------------------------------------------------------------------------------------------------------------- */
-const TS={ CY:3.2, RX:3.45, RY:2.95, RZ:4.45, ZJ:-4.0, NB:2.6, ZT:-23.2, BED:0.5, SMAX:0.98, SMIN:0.27, LIFT:0.03 };
+const TS={ CY:3.2, RX:3.45, RY:2.95, RZ:4.45, ZJ:-4.0, NB:2.6, ZT:-23.2, BED:0.68, SMAX:0.98, SMIN:0.27, LIFT:0.03 };
 TS.TL=TS.ZJ-TS.ZT;
 // the face, per sex (the same rig: features, not bones, differ). Face coords: x across (+x = the racer's left), y up.
 const TS_FACE={
   m:{ EX:1.40, EY:3.86, RE:1.12, EIN:0.54, BX:0.36, BL:1.52, BY:5.08, ARCH:0.10, BROW:[0.17,0.17], MY:2.22, MW:1.06, RS:0.30, LIPL:0.0,
-      skin:'#f3c9a2', body:'#1f8f8a', tail:'#cfe8e2', brow:'#3b2416', lip:'#b8665a', iris:'#4f8a3c', blush:0.10 },
+      skin:'#f3c9a2', body:'#1f8f8a', tail:'#cfe8e2', brow:'#3b2416', lip:'#b8665a', iris:'#4f8a3c', blush:0.10, rim:'#7fdcff' },
   f:{ EX:1.40, EY:3.84, RE:1.22, EIN:0.54, BX:0.46, BL:1.42, BY:5.16, ARCH:0.30, BROW:[0.19], MY:2.20, MW:0.98, RS:0.36, LIPL:0.03,
-      skin:'#f6cfae', body:'#d4486e', tail:'#f6dbe2', brow:'#5a3422', lip:'#d2506a', iris:'#3f74c0', blush:0.32, lash:true },
+      skin:'#f6cfae', body:'#d4486e', tail:'#f6dbe2', brow:'#5a3422', lip:'#d2506a', iris:'#3f74c0', blush:0.32, lash:true, rim:'#d4aaff' },
 };
 // the two racers on the roster
 const TS_RACERS={ tplTessM:{ sex:'m', eye:'star' }, tplTessF:{ sex:'f', eye:'star' } };
@@ -71132,13 +71136,13 @@ function tsEqui(c,Y){ const y0=tsY(c[0],c[1],c[2]); if(y0<=1e-6) return [Y,Y,Y];
 const tsHash=(i,s)=>{ let a=(i*0x9E3779B1)^(s*0x85EBCA77); a=Math.imul(a^(a>>>15),0x2C1B3C6D); a=Math.imul(a^(a>>>12),0x297A2D39); return ((a^(a>>>15))>>>0)/4294967296; };
 // a tile's colour, hand-cut (a slight fixed lightness/hue jitter so runs of one colour read as tiles), and its accent:
 // a hue split away from it, warm or cool, made EQUILUMINANT with it, so the composition plays in colour only
-function tsTileCol(S, i, jit){
+function tsTileCol(S, i, jit, yk){   // yk: the accent's luminance as a share of the tile's (1 = equiluminant)
   const sr=S.map(tsL2S), [h,s,l]=tsHsl(sr[0],sr[1],sr[2]);
   const j=(jit==null?1:jit), L1=l+(tsHash(i,11)-0.5)*0.07*j, H1=h+(tsHash(i,12)-0.5)*0.02*j;
   const base=tsRgb(H1,s,L1).map(tsS2L);
-  const gray=s<0.08, sg=tsHash(i,13)<0.5?-1:1, split=(0.09+0.09*tsHash(i,14))*sg;
-  const acc=tsRgb(gray?(sg<0?0.08:0.58):H1+split, gray?0.45:Math.min(0.92,Math.max(0.6,s+0.32)), L1).map(tsS2L);
-  return [base, tsEqui(acc, tsY(base[0],base[1],base[2]))];
+  const gray=s<0.08, sg=tsHash(i,13)<0.5?-1:1, split=(0.14+0.16*tsHash(i,14))*sg;
+  const acc=tsRgb(gray?(sg<0?0.08:0.58):H1+split, gray?0.5:Math.min(0.95,Math.max(0.72,s+0.45)), L1).map(tsS2L);
+  return [base, tsEqui(acc, tsY(base[0],base[1],base[2])*(yk||1))];
 }
 
 /* ---- the body's profile: the ellipsoid head runs into the flagellum through a smooth max (one surface) ---- */
@@ -71177,10 +71181,10 @@ function tsLayout(cfg){
   // push one tile. reg: 0 laid on the body, 1 upper lid, 2 lower lid, 3 brow, 4 upper lip, 5 lower lip, 6 lash
   // glyph: 0 disc in square, 1 ring, 2 lozenge, 3 square in square, 4 plain
   const push=(p,nn,tg,su,sv,glyph,S,reg,f,jit)=>{
-    const [b,a]=tsTileCol(S, n, jit);
+    const [b,a]=tsTileCol(S, n, jit, p[2]>=TS.ZJ?0.72:1);   // on the head, a darker mark: equiluminant with a light skin it could only be grey
     out.P.push(p[0],p[1],p[2],su); out.N.push(nn[0],nn[1],nn[2],sv); out.Tn.push(tg[0],tg[1],tg[2],glyph);
     out.S.push(b[0],b[1],b[2],reg); out.A.push(a[0],a[1],a[2],tsHash(n,7)); out.F.push(f?f[0]:0,f?f[1]:0,f?f[2]:0,f?f[3]:0); n++; };
-  const glyphOf=i=>{ const h=tsHash(i,3); return h<0.3?0:h<0.5?1:h<0.75?2:3; };
+  const glyphOf=i=>{ const h=tsHash(i,3); return h<0.25?0:h<0.4?1:h<0.6?2:h<0.75?3:5; };
   // importance (the engine's importance map, by semantic region): 0 = the back of the head .. 1 = round the eyes
   const imp=(x,y,z)=>{
     const fz=sm(0.12,0.7,z/TS.RZ); if(fz<=0) return 0;
@@ -71190,6 +71194,9 @@ function tsLayout(cfg){
     { const bx=(Math.abs(x)-(FC.BX+FC.BL*0.5))/1.1, by=(y-FC.BY)/0.55; I=Math.max(I, fz*0.8*Math.exp(-(bx*bx+by*by))); }
     { const cx=(Math.abs(x)-1.6)/0.8, cy=(y-FC.MY-0.85)/0.6; I=Math.max(I, fz*0.6*Math.exp(-(cx*cx+cy*cy))); }
     return I; };
+  // the chase camera looks from behind and above: tiles grow finer toward the outline it sees, largest where the back of the
+  // head faces it, so the size gradient models the form (the engine's silhouette term)
+  const silI=(x,y,z)=>{ const n=tsEN(x,y,z), d=Math.abs(n[1]*0.467-n[2]*0.884); return 0.5*sm(0.35,0.9,1-d)*(1-sm(0.2,0.6,z/TS.RZ)); };
   const target=I=>TS.SMAX+(TS.SMIN-TS.SMAX)*Math.pow(I,0.85);
   // the mouth band: the lip courses cover it, so the laid tiles stay clear of it
   const restLine=x=>{ const s=Math.max(-1,Math.min(1,x/FC.MW)); return FC.MY+FC.RS*0.40*s*s; };
@@ -71210,7 +71217,7 @@ function tsLayout(cfg){
     const uc=u0+h/2, vc=v0+h/2; mp(F,uc,vc,c);
     if(c[2]<TS.ZJ-2.5) return;
     mp(F,u0,vc,Lp); mp(F,u0+h,vc,Rp); mp(F,uc,v0,Bp); mp(F,uc,v0+h,Tp);
-    const su=dist(Lp,Rp), sv=dist(Bp,Tp), I=imp(c[0],c[1],c[2]);
+    const su=dist(Lp,Rp), sv=dist(Bp,Tp), I=Math.max(imp(c[0],c[1],c[2]), silI(c[0],c[1],c[2]));
     if(Math.max(su,sv)>target(I)*1.1 && d<7){ const q=h/2; rec(F,u0,v0,q,d+1); rec(F,u0+q,v0,q,d+1); rec(F,u0,v0+q,q,d+1); rec(F,u0+q,v0+q,q,d+1); return; }
     if(c[2]<TS.ZJ-0.15*sv) return;                                               // the tail's courses take over here (the collar course overlaps the last of these)
     for(const sg of [-1,1]) if(Math.hypot(c[0]-sg*E[0],c[1]-E[1],c[2]-E[2])<FC.RE+0.12*Math.max(su,sv)) return;   // the eye sockets
@@ -71376,7 +71383,7 @@ float tsUpEdge(float b, float sg){
 // so a tile bends and breathes with the surface under it; feature tiles: from the face parameters, then the head)
 const TS_TILE_VS=`
 attribute vec4 aP; attribute vec4 aN; attribute vec4 aTn; attribute vec4 aS; attribute vec4 aA; attribute vec4 aF;
-varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying vec3 vB; varying float vGl; varying float vFx;
+varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying float vSeed; varying float vGl; varying float vFx; varying float vQ;
 `;
 const TS_TILE_MAIN=`
   vec3 tsPos; vec3 objectNormal;
@@ -71427,40 +71434,66 @@ const TS_TILE_MAIN=`
       tsPos=tsHeadP(c,1.0); objectNormal=tsHeadN(N,1.0);
     }
     float rp=tsRipple(aP.z); tsPos+=objectNormal*rp*(reg<0.5?1.0:0.3); vFx=rp;
-    vTUv=q; vSz=vec2(su,sv); vGl=aTn.w; vS=aS.rgb; vA=aA.rgb;
-    float cov = vGl<0.5?0.181 : vGl<1.5?0.204 : vGl<2.5?0.18 : vGl<3.5?0.144 : 0.0;
-    vB=clamp((vS-cov*vA)/max(1.0-cov,0.01),0.0,1.0);
+    vTUv=q; vSz=vec2(su,sv); vGl=aTn.w; vS=aS.rgb; vA=aA.rgb; vSeed=aA.w;
+    vQ=reg<0.5 ? 1.0-0.62*smoothstep(0.45,0.85,aF.x)*step(TS_ZJ,aP.z) : 0.3;   // the face's cells are quieter: the features carry it
   }
 `;
-// the composition: a rounded face in its joint, the accent shape on the base; the mean of it all is the tile's colour.
-// It fades with distance (uMos.xy) and with the tile's size on screen, so nothing sub-pixel ever changes value
+// the composition, Chuck Close's way: every tile a two-tone mark on a field, and the two tones model the form. Where the
+// light falls the mark is warm and light, in shadow cool and deep, in between the tile's own split hue; at the silhouette a
+// cool rim takes it. The mark grows where light, shade or the rim is strongest. Run once the normal is known (so it can read
+// the scene's own key light). It fades with distance (uMos.xy) and with the tile's size on screen, and the per-tile variety
+// fades before a tile is small enough to sparkle; the joint is quiet and goes below ~6 px.
 const TS_TILE_FS_PARS=`
-uniform vec4 uMos;
-varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying vec3 vB; varying float vGl; varying float vFx;
+uniform vec4 uMos; uniform vec4 uRimC;
+varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying float vSeed; varying float vGl; varying float vFx; varying float vQ;
 `;
 const TS_TILE_FS=`
-  vec3 tsCol;
+  vec3 tsCol; float tsRim;
   {
     vec2 sz=vSz, g=vTUv*sz;
-    float jw=0.055*min(sz.x,sz.y);
-    vec2 hf=0.5*sz-jw; float rr=0.22*min(hf.x,hf.y);
+    float jw=0.045*min(sz.x,sz.y);
+    vec2 hf=0.5*sz-jw; float rr=0.24*min(hf.x,hf.y);
     vec2 qd=abs(g)-hf+rr; float dF=length(max(qd,0.0))+min(max(qd.x,qd.y),0.0)-rr;
     float aa=max(fwidth(dF),1e-5), face=1.0-smoothstep(-aa,aa,dF);
-    float px=1.0/max(max(fwidth(vTUv.x),fwidth(vTUv.y)),1e-5);
-    float pxs=px*min(sz.x,sz.y)/max(max(sz.x,sz.y),1e-4);
-    float kJ=smoothstep(3.5,8.0,pxs)*(1.0-0.55*smoothstep(uMos.x,uMos.y,length(vViewPosition)));
-    float kP=smoothstep(7.0,18.0,pxs)*(1.0-smoothstep(uMos.x,uMos.y,length(vViewPosition)));
-    vec2 h=g/(2.0*max(min(hf.x,hf.y),1e-4));
-    float dG=1.0;
-    if(vGl<0.5) dG=length(h)-0.24;
-    else if(vGl<1.5) dG=abs(length(h)-0.25)-0.065;
-    else if(vGl<2.5) dG=(abs(h.x)+abs(h.y)-0.30)*0.7071;
-    else if(vGl<3.5) dG=max(abs(h.x),abs(h.y))-0.19;
-    float ag=max(fwidth(dG),1e-5), acc=(1.0-smoothstep(-ag,ag,dG))*step(vGl,3.5);
-    vec3 faceCol=mix(vS, mix(vB,vA,acc), kP);
-    float cf=clamp((4.0*hf.x*hf.y)/max(sz.x*sz.y,1e-4),0.3,1.0);
-    vec3 paid=min(faceCol*(1.0-(1.0-cf)*uMos.z)/cf, vec3(1.0));
-    tsCol=mix(faceCol, mix(vS*uMos.z, paid, face), kJ);
+    // the tile's extent on screen, in pixels, along its own two axes (fwidth sums the screen axes: it under-reads a turned tile)
+    float pxs=min(1.0/max(length(vec2(dFdx(vTUv.x),dFdy(vTUv.x))),1e-5), 1.0/max(length(vec2(dFdx(vTUv.y),dFdy(vTUv.y))),1e-5));
+    float far=smoothstep(uMos.x,uMos.y,length(vViewPosition));
+    float kJ=smoothstep(4.0,8.0,pxs)*(1.0-0.6*far);
+    float kP=smoothstep(4.5,9.0,pxs)*(1.0-0.55*far);
+    float kV=smoothstep(1.5,4.0,pxs);
+    vec3 Ld=normalize(vec3(0.3,0.8,0.5));
+    #if NUM_DIR_LIGHTS > 0
+      Ld=directionalLights[0].direction;
+    #endif
+    float lit=smoothstep(-0.2,0.8,dot(normal,Ld));
+    tsRim=pow(1.0-clamp(dot(normal,normalize(vViewPosition)),0.0,1.0),2.2);
+    float h1=fract(vSeed*43.7), h2=fract(vSeed*91.3), h3=fract(vSeed*17.9);
+    vec3 S=vS*(1.0+(h1-0.5)*0.24*kV);
+    S=mix(S, S*mix(vec3(1.14,0.98,0.80),vec3(0.84,0.96,1.16),h2), 0.55*kV);
+    // the light models the form, tile by tile: each tile takes the light's temperature (warm where it falls, cool in shadow,
+    // a cool rim at the silhouette); per tile, so it holds at any distance and never sparkles
+    float sh=(lit-0.5)*2.0;
+    vec3 T0=sh>0.0 ? S*mix(vec3(1.0),vec3(1.10,1.02,0.84),sh) : S*mix(vec3(1.0),vec3(0.80,0.88,1.12),-sh);
+    T0=mix(T0, mix(T0,uRimC.rgb,0.6), tsRim);
+    // the cell: a complementary pair round that tone (the tile's split hue, a chroma offset), quieter on the face, its mark
+    // pushed further warm-and-light or cool-and-deep by the light, taken by the rim at the silhouette
+    vec3 dC=(vA-vS)*1.25*vQ, field=max(T0-dC*0.42,0.0), acc=max(T0+dC,0.0);
+    acc=mix(acc, sh>0.0 ? acc*vec3(1.25,1.10,0.76)+vec3(0.04,0.03,0.0) : acc*vec3(0.48,0.56,1.0)+vec3(0.0,0.0,0.02), abs(sh)*0.75*vQ);
+    acc=mix(acc, uRimC.rgb, tsRim*0.6);
+    float gs=0.8+0.45*max(abs(lit-0.5)*2.0, tsRim)+0.12*(h3-0.5);
+    vec2 h=g/(2.0*max(min(hf.x,hf.y),1e-4))/gs;
+    float plain=step(3.5,vGl)*step(vGl,4.5);
+    float dG=1.0, dD=1.0;
+    if(vGl<0.5) dG=length(h)-0.34;
+    else if(vGl<1.5) dG=abs(length(h)-0.31)-0.09;
+    else if(vGl<2.5) dG=(abs(h.x)+abs(h.y)-0.42)*0.7071;
+    else if(vGl<3.5) dG=max(abs(h.x),abs(h.y))-0.27;
+    else if(vGl>4.5){ dG=0.21-length(h); dD=length(h)-0.11; }
+    float ag=max(fwidth(dG),1e-5), m1=(1.0-smoothstep(-ag,ag,dG))*(1.0-plain);
+    float ad=max(fwidth(dD),1e-5), m2=1.0-smoothstep(-ad,ad,dD);
+    vec3 comp=mix(mix(field,T0,plain),acc,m1); comp=mix(comp, T0*vec3(1.25,1.12,0.85)+vec3(0.05), m2*step(4.5,vGl));
+    vec3 faceCol=mix(mix(vS,T0,kV), comp, kP);
+    tsCol=mix(faceCol, mix(faceCol*uMos.z, faceCol, face), kJ);
     diffuseColor.rgb*=tsCol;
   }
 `;
@@ -71472,13 +71505,13 @@ function tsPatch(mat, U, key, fn){
 function tsTileMat(U){
   const m=new T.MeshToonMaterial({ color:new T.Color(FK_SKIN_K,FK_SKIN_K,FK_SKIN_K), gradientMap:SC_GRAD });
   m.extensions={derivatives:true};
-  return tsPatch(m, U, 'tessTpl-tile-1', sh=>{
+  return tsPatch(m, U, 'tessTpl-tile-2', sh=>{
     sh.vertexShader=TS_GLSL+TS_TILE_VS+sh.vertexShader
       .replace('#include <beginnormal_vertex>', TS_TILE_MAIN)
       .replace('#include <begin_vertex>', 'vec3 transformed=tsPos;');
     sh.fragmentShader=TS_TILE_FS_PARS+sh.fragmentShader
-      .replace('#include <color_fragment>', '#include <color_fragment>\n'+TS_TILE_FS)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance+=tsCol*uMos.w+vS*vFx*1.4;');
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n'+TS_TILE_FS)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance+=tsCol*uMos.w+vS*vFx*1.4+uRimC.rgb*tsRim*uRimC.w;');
   });
 }
 function tsBedMat(U){
@@ -71619,7 +71652,7 @@ function makeTessTemplate(opts){
     uEye:v4(L.E[0],L.E[1],L.E[2],FC.RE), uFaceA:v4(FC.BX,FC.BL,FC.BY,FC.ARCH), uFaceB:v4(FC.MY,FC.MW,FC.RS,FC.LIPL),
     uLid:v4(0,0,0,0), uLidLo:v4(0,0,0,0), uBrow:v4(0,0,0,0), uMA:v4(0,0,0,0), uMB:v4(0,0,0,0), uFx:v4(9,0,0,0),
     uMos:v4(28,50,TS.BED,FK_SKIN_E), uGaze:v4(0,0,0,0), uPup:v4(0.42,0,opts.eye==='round'?0:1,0),
-    uIrisA:{value:new T.Vector3(...irisLin)}, uIrisB:{value:new T.Vector3(...irisAcc)}, uInk:{value:0.10},
+    uIrisA:{value:new T.Vector3(...irisLin)}, uRimC:v4(...tsHex(FC.rim),0.38), uIrisB:{value:new T.Vector3(...irisAcc)}, uInk:{value:0.10},
   };
   // the tiles: one instanced draw
   const tg=new T.InstancedBufferGeometry();
