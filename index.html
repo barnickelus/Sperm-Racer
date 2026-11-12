@@ -36379,6 +36379,24 @@ const OP_ART={
   ], {W:'#f4f2ee',N:'#1f3fb0',G:'#f2b81e',S:'#f8d2de',K:'#f06aa0',E:'#ffffff',B:'#6b3320',
       P:'#141012',M:'#3a1417',T:'#ff5a94',V:'#b87cff'},
      11, 34, 40),
+  // The bead template proposals (V2, BEAD TEMPLATE KIT): the creature itself drawn in beads, big glass-dome eyes with
+  // star pupils ringed in dark and gold rows, a bead smile, the beaded face border and the striped tail curling away.
+  tplBeadM:opBeads([
+    '.....TTTTTT.....','...TTCWTTWCTT...','..TKKKKTTKKKKT..','.TYEEEEYYEEEEYT.',
+    '.YEEEPEEEEPEEEY.','.YEEPPPEEPPPEEY.','.YEEEPEEEEPEEEY.','.TYEEEEYYEEEEYT.',
+    '.TTYYYYSSYYYYTT.','.TSSSSSNNSSSSST.','.TSKSSSSSSSSKST.','..TSKKKKKKKKST..',
+    '...TSSSSSSSST...','....TWYWYWYT....','......TTCCW.....','.......CCWW.....',
+    '.....CCWW.......','...YCC..........',
+  ], {T:'#1fb3c4',C:'#1d3cb4',W:'#f7f2e6',K:'#111a2c',Y:'#ffc21a',E:'#fbf8ee',P:'#120e1c',S:'#c4f1ea',N:'#8fd8d4'},
+     10, 20, 30),
+  tplBeadF:opBeads([
+    '..L..PPPPPP..L..','.L.PPAYPPYAPP.L.','..PKKKKPPKKKKP..','.PYEEEEYYEEEEYP.',
+    '.YEEEDEEEEDEEEY.','.YEEDDDEEDDDEEY.','.YEEEDEEEEDEEEY.','.PYEEEEYYEEEEYP.',
+    '.PPYYYYSSYYYYPP.','.PSSBSSNNSSBSSP.','.PSSSRRRRRRSSSP.','..PSSRRRRRRSSP..',
+    '...PSSSSSSSSP...','....PWAWAWAP....','......PPVVW.....','.......VVWW.....',
+    '.....VVWW.......','...AVV..........',
+  ], {P:'#ff4b98',A:'#14b8b0',Y:'#ffd23a',W:'#fff4f0',K:'#24081e',L:'#24081e',E:'#fffaf4',D:'#160a16',S:'#ffd9e6',N:'#f7a8c4',B:'#ff8ab0',R:'#e0124c',V:'#7a3ce0'},
+     10, 20, 30),
   // Beaded Juan — wide beaded brim over big bead eyes.
   beadJuan:opBeads([
     '......GG......','.....GGGG.....','..RRGGGGGGRR..','.RGRGRGRGRGRG.',
@@ -69045,7 +69063,7 @@ function tbLayout(C){
   // the grid: rows evenly spaced in arc length down the side meridian, columns round the axis
   const NZ=1200, za=new Float64Array(NZ+1), aa=new Float64Array(NZ+1); let a=0;
   for(let i=0;i<=NZ;i++){ const z=TB.ZN-(TB.ZN-TB.ZJ)*i/NZ; if(i) a+=Math.hypot(z-za[i-1], tbR(z)-tbR(za[i-1])); za[i]=z; aa[i]=a; }
-  const AJ=a, NI=Math.ceil(AJ/0.11), NJ=128, zg=new Float64Array(NI+1);
+  const AJ=a, NI=Math.ceil(AJ/0.12), NJ=112, zg=new Float64Array(NI+1);
   for(let i=0,q=0;i<=NI;i++){ const t=AJ*i/NI; while(q<NZ-1 && aa[q+1]<t) q++; const f=(t-aa[q])/((aa[q+1]-aa[q])||1); zg[i]=za[q]+(za[q+1]-za[q])*f; }
   zg[0]=TB.ZN; zg[NI]=TB.ZJ;
   const NV=(NI+1)*NJ, FB=new Float32Array(NV), FF=new Float32Array(NV), pt=[0,0,0], pv=[0,0,0];
@@ -69059,11 +69077,13 @@ function tbLayout(C){
   const fvo=[0,0,0];
   const ftAt=(x,y,z)=>{ fv(x,y,z,fvo); return smin(smin(fvo[0],fvo[1],0.8),fvo[2],0.8); };   // the feature field: the eye domes and the mouth channel, gently blended
   const ftOwn=(x,y,z)=>{ fv(x,y,z,fvo); return fvo[0]<fvo[1]&&fvo[0]<fvo[2]?0:fvo[1]<fvo[2]?1:2; };
-  const wA=AJ*0.42, wB=AJ*0.86, LC=new Float32Array(NJ);
+  const wA=AJ*0.42, wB=AJ*0.86, LC=new Float32Array(NJ), SN=new Float64Array(NJ), CS=new Float64Array(NJ), PX=new Float64Array(NJ), PY=new Float64Array(NJ);
+  for(let j=0;j<NJ;j++){ SN[j]=Math.sin(j/NJ*Math.PI*2); CS[j]=Math.cos(j/NJ*Math.PI*2); }
   for(let i=0;i<=NI;i++){
-    let lm=0; for(let j=0;j<NJ;j++){ tbPt(zg[i], j/NJ*Math.PI*2, pt); if(i){ tbPt(zg[i-1], j/NJ*Math.PI*2, pv); LC[j]+=Math.hypot(pt[0]-pv[0],pt[1]-pv[1],pt[2]-pv[2]); } lm+=LC[j]; }
-    lm/=NJ; const w=tbSm(wA,wB,AJ*i/NI);
-    for(let j=0;j<NJ;j++){ const v=i*NJ+j; tbPt(zg[i], j/NJ*Math.PI*2, pt); FB[v]=(LC[j]*(1-w)+lm*w)/p+1e-5*tbHash(v); FF[v]=ftAt(pt[0],pt[1],pt[2])+1e-5*tbHash(v+0.5); }
+    const z=zg[i], r=tbR(z), e=tbE(z), w=tbSm(wA,wB,AJ*i/NI); let lm=0;
+    for(let j=0;j<NJ;j++){ const x=r*SN[j], y=TB.Y+r*e*CS[j]; if(i) LC[j]+=Math.hypot(x-PX[j],y-PY[j],z-zg[i-1]); PX[j]=x; PY[j]=y; lm+=LC[j]; }
+    lm/=NJ;
+    for(let j=0;j<NJ;j++){ const v=i*NJ+j; FB[v]=(LC[j]*(1-w)+lm*w)/p+1e-5*tbHash(v); FF[v]=(z>0.4?ftAt(PX[j],PY[j],z):99)+1e-5*tbHash(v+0.5); }   // the features only reach the front half
   }
   const fJ=FB[NI*NJ];
   const beads=[];
@@ -69071,10 +69091,10 @@ function tbLayout(C){
   tbMarch(FB,NI,NJ,zg,Math.floor(fJ-0.5)+0.01,(z,th)=>{ const P=tbPt(z,th); return ftAt(P[0],P[1],P[2])>TB_KF-0.3; },beads,p,0);
   tbMarch(FF,NI,NJ,zg,TB_KF,()=>true,beads,p,1);
   // feature rows have the right of way: a body-row bead that crowds one (or another body bead) is dropped
-  const HS=p, hash=new Map(), kept=[], cell=(x)=>Math.floor(x/HS);
-  const near=(P,r)=>{ const cx=cell(P[0]), cy=cell(P[1]), cz=cell(P[2]); for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) for(let dz=-1;dz<=1;dz++){
-      const q=hash.get((cx+dx)+','+(cy+dy)+','+(cz+dz)); if(q) for(const o of q){ if(Math.hypot(o.P[0]-P[0],o.P[1]-P[1],o.P[2]-P[2])<r) return true; } } return false; };
-  const add=b=>{ const k=cell(b.P[0])+','+cell(b.P[1])+','+cell(b.P[2]); let q=hash.get(k); if(!q) hash.set(k,q=[]); q.push(b); kept.push(b); };
+  const HS=p, hash=new Map(), kept=[], cell=(x)=>Math.floor(x/HS)+64, key=(a,b,c)=>(a*256+b)*256+c;
+  const near=(P,r)=>{ const cx=cell(P[0]), cy=cell(P[1]), cz=cell(P[2]), r2=r*r; for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) for(let dz=-1;dz<=1;dz++){
+      const q=hash.get(key(cx+dx,cy+dy,cz+dz)); if(q) for(const o of q){ const a=o.P[0]-P[0], b=o.P[1]-P[1], c=o.P[2]-P[2]; if(a*a+b*b+c*c<r2) return true; } } return false; };
+  const add=b=>{ const k=key(cell(b.P[0]),cell(b.P[1]),cell(b.P[2])); let q=hash.get(k); if(!q) hash.set(k,q=[]); q.push(b); kept.push(b); };
   beads.unshift({P:tbPt(TB.ZN-0.02,0), N:[0,0.1,1], Tg:[1,0,0], z:TB.ZN, th:0, lv:0, fam:1, size:p*1.5, nose:true});   // a bead nose
   beads.sort((a,b)=>(b.fam-a.fam)||((b.nose?1:0)-(a.nose?1:0))||(a.lv-b.lv));
   for(const b of beads) if(!near(b.P, b.nose?0:b.fam===1?p*0.55:p*0.74) && !(b!==beads[0] && Math.hypot(b.P[0]-beads[0].P[0],b.P[1]-beads[0].P[1],b.P[2]-beads[0].P[2])<p*1.05)) add(b);
@@ -69082,7 +69102,7 @@ function tbLayout(C){
     if(b.fam===0) b.fb=b.lv; else { let i=0; while(i<NI-1 && zg[i+1]>b.z) i++; const j=Math.round(((b.th/(Math.PI*2))%1+1)%1*NJ)%NJ; b.fb=FB[i*NJ+j]; } }
   beads.length=0; for(const b of kept) beads.push(b);
   // fill what the two families leave: wherever the wax would show more than a bead's gap, a bead goes in (as a beadworker fills)
-  { const NZf=Math.round(AJ/(p*0.33)), NTf=150, cand=[];
+  { const NZf=Math.round(AJ/(p*0.42)), NTf=120, cand=[];
     for(let i=1;i<NZf;i++){ const z=TB.ZN-(TB.ZN-TB.ZJ)*i/NZf, jn=z<TB.ZJ+0.7;
       if(z<1.2 && !jn) continue;                                    // the back is plain rings: only the face and the junction need it
       for(let j=0;j<NTf;j++){ const th=j/NTf*Math.PI*2, P=tbPt(z,th); fv(P[0],P[1],P[2],fvo); if(fvo[0]<0.25||fvo[1]<0.25||fvo[2]<0.1) continue;   // the domes and the lips' channel stay open
@@ -69090,7 +69110,7 @@ function tbLayout(C){
         cand.push([z,th,P]); } }
     for(const [z,th,P] of cand){ if(near(P,p*0.68)) continue;
       let best=null, bd=1e9; const cx=cell(P[0]), cy=cell(P[1]), cz=cell(P[2]);
-      for(let dx=-2;dx<=2;dx++) for(let dy=-2;dy<=2;dy++) for(let dz=-2;dz<=2;dz++){ const q=hash.get((cx+dx)+','+(cy+dy)+','+(cz+dz)); if(q) for(const o of q){ const d=Math.hypot(o.P[0]-P[0],o.P[1]-P[1],o.P[2]-P[2]); if(d<bd){ bd=d; best=o; } } }
+      for(let dx=-2;dx<=2;dx++) for(let dy=-2;dy<=2;dy++) for(let dz=-2;dz<=2;dz++){ const q=hash.get(key(cx+dx,cy+dy,cz+dz)); if(q) for(const o of q){ const d=Math.hypot(o.P[0]-P[0],o.P[1]-P[1],o.P[2]-P[2]); if(d<bd){ bd=d; best=o; } } }
       const b={P, N:tbNrm(z,th), Tg:best?best.Tg:[1,0,0], z, th, lv:best?best.lv:0, fam:best?best.fam:0, size:p, fill:true};
       b.ff=ftAt(P[0],P[1],P[2]); b.own=ftOwn(P[0],P[1],P[2]); b.fb=best?best.fb:0; add(b); beads.push(b); } }
   // the tail: rings on from the head's last row, the beads graduating smaller toward the tip, odd rings offset half a bead
@@ -69111,7 +69131,7 @@ function tbLayout(C){
 // ---- colour: the pattern lives in the rows ----
 // fb: the body field (rows from the nose), ff: the feature field (rows from the eyes / mouth), lv: the row, th: the angle
 // round the body (0 = the top line, which is what the chase camera sees)
-const TB_FACE=9.2;
+const TB_FACE=9.2; let TB_MOUTH_IN=-1;
 function tbColour(C,b){
   const th=((b.th+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI, at=Math.abs(th), r=tbR(b.z), xa=at*r/TB.P, f=C.sex==='f';
   const lvN=C.lvJ, bodyCol=()=>{
@@ -69187,7 +69207,7 @@ function tbBeadGeo(seg,rings){
  * tail: every bead placed on the swimming spine (uSp, 21 nodes) and its lagging twin (uLg: each bead's own spring lag),
  *   turned square to the bend, crowded on its inside. The tail's core tube rides the same spine. */
 const TB_GLSL_COMMON=`
-uniform float uPxK; varying float vSpecK;
+uniform float uPxK; varying float vSpecK; varying vec3 vAxis;
 uniform vec4 uRp; uniform float uRa;
 `;
 const TB_GLSL_MOUTH=`
@@ -69256,17 +69276,22 @@ function tbMat(kind,U,o){
         iM=mat4(vec4(R*iM[0].xyz*k,0.0), vec4(R*iM[1].xyz*k,0.0), vec4(R*iM[2].xyz*k,0.0), vec4(pc,1.0)); }\n`;
       v=v.replace('#include <defaultnormal_vertex>',`vec3 transformedNormal=objectNormal; { mat3 tbm=mat3(iM); transformedNormal/=vec3(dot(tbm[0],tbm[0]),dot(tbm[1],tbm[1]),dot(tbm[2],tbm[2])); transformedNormal=tbm*transformedNormal; }
         transformedNormal=normalMatrix*transformedNormal;`);
-      v=v.replace('#include <project_vertex>',`vec4 mvPosition=modelViewMatrix*(iM*vec4(transformed,1.0)); gl_Position=projectionMatrix*mvPosition;
-        vSpecK=smoothstep(1.2,7.0,length(iM[0].xyz)*uPxK/max(0.5,-mvPosition.z));`);
+      // a bead under a few pixels: grown a little to close the gaps, its shading eased toward the surface it sits on, its
+      // highlight broadened (the fragment side): the beadwork mip-maps into its colours instead of sparkling
+      v=v.replace('#include <project_vertex>',`vec4 mvC=modelViewMatrix*vec4(iM[3].xyz,1.0);
+        vSpecK=smoothstep(1.2,7.0,length(iM[0].xyz)*uPxK/max(0.5,-mvC.z));
+        vAxis=normalize(normalMatrix*iM[2].xyz);
+        vec4 mvPosition=modelViewMatrix*(iM*vec4(transformed*mix(1.2,1.0,vSpecK),1.0)); gl_Position=projectionMatrix*mvPosition;`);
     } else {
       if(kind==='tcore'){ pre=`vec3 tbP; mat3 tbR3; float tbCr; tbSpine(position,0.6,tbP,tbR3,tbCr);\n`;
         v=v.replace('#include <begin_vertex>',`vec3 transformed=tbP+tbR3*(position-vec3(0.0,uTl.z,position.z));`); }
       if(kind==='hcore') v=v.replace('#include <begin_vertex>','#include <begin_vertex>\nvRest=position;');
-      v=v.replace('#include <project_vertex>','#include <project_vertex>\nvSpecK=0.5;');
+      v=v.replace('#include <project_vertex>','#include <project_vertex>\nvSpecK=0.5; vAxis=vNormal;');
     }
     v=v.replace('#include <beginnormal_vertex>',pre+'#include <beginnormal_vertex>'+(kind==='tcore'?'\nobjectNormal=tbR3*objectNormal;':''));
-    fr=fr.replace('#include <common>','#include <common>\nvarying float vSpecK;\nuniform float uRim;'+(kind==='hcore'?'\nvarying vec3 vRest; uniform vec3 uMin;'+TB_GLSL_MOUTH:''));
+    fr=fr.replace('#include <common>','#include <common>\nvarying float vSpecK; varying vec3 vAxis;\nuniform float uRim;'+(kind==='hcore'?'\nvarying vec3 vRest; uniform vec3 uMin;'+TB_GLSL_MOUTH:''));
     if(kind==='hcore') fr=fr.replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.rgb=mix(diffuseColor.rgb,uMin,tbMouth(vRest,0.0,0.0));');
+    if(inst) fr=fr.replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nnormal=normalize(mix(normalize(vAxis),normal,0.3+0.7*vSpecK));');
     fr=fr.replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance*=diffuseColor.rgb*3.0;');
     fr=fr.replace('material.specularShininess = shininess;','material.specularShininess = shininess*mix(0.16,1.0,vSpecK);')
       .replace('material.specularStrength = specularStrength;','material.specularStrength = specularStrength*mix(0.42,1.0,vSpecK);');
@@ -69274,7 +69299,7 @@ function tbMat(kind,U,o){
       { float fz=pow(1.0-clamp(abs(dot(normal,normalize(vViewPosition))),0.0,1.0),3.0); outgoingLight+=uRim*fz*(diffuseColor.rgb*0.55+vec3(0.10,0.11,0.13)*vSpecK); }`);
     sh.vertexShader=v; sh.fragmentShader=fr;
   };
-  m.customProgramCacheKey=()=>'tplBead-'+kind+'-v1';
+  m.customProgramCacheKey=()=>'tplBead-'+kind+'-v2';
   return m;
 }
 function tbUniforms(kind){
@@ -69286,11 +69311,11 @@ function tbUniforms(kind){
   return U;
 }
 // the cores: a smooth skin just under the beads (the wax a beadwork sculpture is pressed into), in each bead's own colour, dark
-function tbCoreGeo(z0,z1,nz,nth,inset,colFn,headLocal){
+function tbCoreGeo(z0,z1,nz,nth,inset,colFn){
   const pos=[], nor=[], col=[], idx=[], P=[0,0,0], N=[0,0,0], c=new T.Color();
   for(let i=0;i<=nz;i++){ const z=z0+(z1-z0)*i/nz;
     for(let j=0;j<=nth;j++){ const th=j/nth*Math.PI*2; tbPt(z,th,P); tbNrm(z,th,N); const ins=Math.min(inset, tbR(z)*0.35);
-      pos.push(P[0]-N[0]*ins, P[1]-N[1]*ins, P[2]-N[2]*ins); nor.push(N[0],N[1],N[2]); c.setHex(colFn(z,th)).convertSRGBToLinear(); col.push(c.r*0.32,c.g*0.32,c.b*0.32); } }
+      pos.push(P[0]-N[0]*ins, P[1]-N[1]*ins, P[2]-N[2]*ins); nor.push(N[0],N[1],N[2]); const hx=colFn(z,th), k=hx===TB_MOUTH_IN?0.8:0.5; c.setHex(hx).convertSRGBToLinear(); col.push(c.r*k,c.g*k,c.b*k); } }
   for(let i=0;i<nz;i++) for(let j=0;j<nth;j++){ const a=i*(nth+1)+j, b=a+1, cc=a+nth+1, d=cc+1; idx.push(a,b,cc, b,d,cc); }
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new T.Float32BufferAttribute(nor,3));
   g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(idx); return g;
@@ -69344,9 +69369,13 @@ function makeBeadTemplateBuild(opts){
   body.instanceColor=new T.InstancedBufferAttribute(PK.hC.slice(),3); body.name='tbBodyBeads'; head.add(body);
   { const a=body.instanceMatrix.array; for(let i=0;i<nH;i++){ a[i*16+13]-=TB.Y; a[i*16+14]-=0.3; } body.position.set(0,TB.Y,0.3); UB.uOff.value.set(0,TB.Y,0.3); gB.boundingSphere.center.set(0,0,0); }   // its origin at the head's centre (race_motion's head probe)
   // the wax under them
-  const UHC=tbUniforms('hcore'); UHC.uMc=UB.uMc; UHC.uMb=UB.uMb; UHC.uMm=UB.uMm;
-  const coreCol=(z,th)=>{ const a=Math.abs(((th+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI); return z>2.2&&a>0.6 ? C.skin : C.body; };
-  const hcore=new T.Mesh(tbCoreGeo(TB.ZN-1e-3,TB.ZJ,36,36,0.12,coreCol), tbMat('hcore',UHC,{vertexColors:true, shininess:20, specular:0x101010}));
+  // (the wax is dark red wherever the mouth can open: the body's beads sink away there to show it)
+  TB_MOUTH_IN=C.mouthIn;
+  const coreCol=(z,th)=>{ const a=Math.abs(((th+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI), P=tbPt(z,th);
+    if(z>2.4 && Math.abs(P[0])<C.MW*1.35 && P[1]<C.MY+0.75 && P[1]>C.MY-1.7) return C.mouthIn;
+    return z>2.2&&a>0.6 ? C.skin : C.body; };
+  const hcm=new T.MeshPhongMaterial({vertexColors:true, shininess:20, specular:0x101010, emissive:0x000000}); hcm.userData.keepPhong=true;
+  const hcore=new T.Mesh(tbCoreGeo(TB.ZN-1e-3,TB.ZJ,36,36,0.12,coreCol,true), hcm);
   hcore.name='tbCore'; head.add(hcore);
   // the eyes: glass domes, each in its own group so it can widen
   const eyes=[], eyeG=[];
@@ -69371,7 +69400,7 @@ function makeBeadTemplateBuild(opts){
   }
   slot('ul',NU,C.lip); slot('ll',NL,C.lip); if(C.sex==='f') slot('li',8,C.lip);
   slot('tu',8,0xfdfbf4); slot('tl',7,0xfdfbf4); slot('tn',4,C.tongue);
-  const UF=tbUniforms('face'), mF=tbMat('face',UF,{shininess:110, specular:0x505050, emissive:0x262626});
+  const UF=tbUniforms('body'), mF=tbMat('body',UF,{shininess:110, specular:0x505050, emissive:0x262626}); UF.uMm.value.z=1e3;   // the body's own shader (one program fewer), its mouth and cheeks switched off
   const gF=tbBeadGeo(6); gF.boundingSphere=new T.Sphere(new T.Vector3(0,4,2.5),5.5);
   const face=new T.InstancedMesh(gF,mF,nF); face.name='tbFaceBeads';
   { const cc=new Float32Array(nF*3), c=new T.Color(); cols.forEach((h,i)=>{ c.setHex(h).convertSRGBToLinear(); const v=h===0xffffff?2.6:1; cc[i*3]=c.r*v; cc[i*3+1]=c.g*v; cc[i*3+2]=c.b*v; });
@@ -69402,11 +69431,10 @@ function makeBeadTemplateBuild(opts){
   // cheeks
   for(const [k,sx] of [['uCkL',-1],['uCkR',1]]){ const q=tbFront(sx*1.95,2.95), P=tbPt(q.z,q.th); UB[k].value.set(P[0],P[1],P[2]); }
   { const c=new T.Color(C.blush).convertSRGBToLinear(); UB.uCkC.value.set(c.r,c.g,c.b); }
-  { const c=new T.Color(C.mouthIn).convertSRGBToLinear(); UHC.uMin.value.set(c.r,c.g,c.b); }
-  if(sc!==1){ for(const c of [head,tail,tcore,glow,fl1,fl2]){ c.scale.multiplyScalar(sc); c.position.multiplyScalar(sc); } }
+    if(sc!==1){ for(const c of [head,tail,tcore,glow,fl1,fl2]){ c.scale.multiplyScalar(sc); c.position.multiplyScalar(sc); } }
   // the rig's state
   const TS={ C, L, head, body, face, tail, tcore, geo:[gB,gBl,gT,gTl], lod:0, eyes:L.eyes, eyeG, S, NB, KU, KL, NBR, BR, NU, NL,
-    UB, UF, UT, UTC, UHC, mats:[mB,mF,mT], spineLine, sockets,
+    UB, UF, UT, UTC, mats:[mB,mF,mT], spineLine, sockets,
     ctl:new Float32Array(TB_TGT.rest), vel:new Float32Array(TB_KEYS.length), tgt:new Float32Array(TB_TGT.rest),
     sp:new Float32Array(84), lg:new Float32Array(84), lv:new Float32Array(63), tip:new T.Vector3(0,TB.Y,TB.ZTIP), root:new T.Vector3(0,TB.Y,TB.ZJ),
     ph:0, amp:0, lift:0, wl:null, wlS:TB.L/21, hooked:false, t:0, lt:null, dt:1/60, r:null,
@@ -73119,6 +73147,9 @@ const SIGNATURE_ITEMS={
   // Oga Tunde sends the party's own pot down the road: jollof rice, heaped and steaming, a wooden spoon stood in it;
   // it trails steam and bursts into a shower of rice
   naija:    { name:'Party Jollof',   icon:'🍲', color:0xe8621e, emissive:0x4a1804, geo:partyJollofGeo, init:partyJollofFly },
+  // the bead templates throw the bead line's own shot, Juan's ball of glass beads
+  tplBeadM: { name:'Bead Burst',    icon:'✨', color:0xffc43a, emissive:0x4a3406, geo:beadBurstGeo, init:beadBurstFly },
+  tplBeadF: { name:'Bead Burst',    icon:'✨', color:0xffc43a, emissive:0x4a3406, geo:beadBurstGeo, init:beadBurstFly },
 };
 function giveItem(r){
   const roll=Math.random();
@@ -73729,7 +73760,7 @@ const BARKS={kasi:'Twende!', outlaw:'Reach for the sky!', cowboy:'Saddle up, par
   felt:'SPUN AND SPUN OUT!', bead:'STRUNG AND SLUNG!', paint:'ALLA PRIMA!',
   beadSalty:'THREADED, YARRR!', beadJuan:'BEAD BY BEAD!', samurai:'IPPON!',
   ukiyo:'THE WAVE BREAKS!', aviator:'CONTACT!', ryuKenji:'RIDE THE RAIN!',
-  dragoTony:'Ay, you just got TOASTED!', rastaDragon:'Easy now... BASS DROP!', punk:'OI!', sheikh:'YALLA!', desi:'Hero entry!', viking:'SKÅL.', fighter:'DING DING!', parkExec:'Per my last lap.', naija:'Naija no dey carry last!'};
+  dragoTony:'Ay, you just got TOASTED!', rastaDragon:'Easy now... BASS DROP!', punk:'OI!', sheikh:'YALLA!', desi:'Hero entry!', viking:'SKÅL.', fighter:'DING DING!', parkExec:'Per my last lap.', naija:'Naija no dey carry last!', tplBeadM:'Strung and ready!', tplBeadF:'Every bead counts!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   if(NET.on && netVictim(null,vic,'whip',{sp:0.5,sl:0.55,px:+(dx/d*5).toFixed(2),pz:+(dz/d*5).toFixed(2),by:atk.nk})) return;
@@ -74337,6 +74368,8 @@ const LOOK_PERSONA={
   viking:   {react:6, zeta:1.1, turn:0.9, chin:0.18, lid:0.8, smug:0.9, smirk:0.02, grump:0.7, wary:0.5, cur:0.7, det:1.6, tilt:0.06, blink:5.5, blinkLen:0.22, nod:0, bob:0.11, sway:0.05, swayF:2.3, back:0.6, ov:2.2, ovH:0.9, idle:6}, // heavy-lidded and near unblinking, barely a smirk, a slow stern look back over the shoulder; his head-bob is a metronome on the beat (bob, played by tickViking), so the free-running nod is off
   fighter:  {react:12, zeta:0.8, turn:1.05, chin:0.3, lid:0.88, smug:1.8, smirk:0.18, wink:0.6, tilt:0.18, grump:1.5, det:1.4, wary:0.9, cur:1.1, blink:3.4, nod:0.04, nodF:2.1, ov:2.2, ovH:0.8, idle:4.5}, // chin up and cocky: a smirk and a wink for whoever he passes (then the one-two), offended when passed, a look back over the shoulder every few seconds
   naija:    {react:8, zeta:0.9, turn:1.0, chin:0.26, lid:0.94, smug:1.5, smirk:0.1, wink:0.7, tilt:0.16, grump:0.45, det:0.6, wary:0.5, cur:1.2, blink:3.8, nod:0.045, nodF:6.7, sway:0.04, swayF:1.36, ov:2.1, ovH:0.85, idle:5}, // the big man arriving: chin up and beaming, a wink (and a toss of the sleeves) for whoever he passes, laughs off being passed, nods along on every other beat, a pleased look back over the shoulder every few seconds
+  tplBeadM: {react:9, zeta:0.85, smug:1.3, wink:0.8, chin:0.18, smirk:0.08, lid:0.96, tilt:0.18, cur:1.2, blink:3.6, nod:0.04, nodF:2.4, ov:2.0, ovH:0.7, idle:6},   // the bead template (V2): an all-rounder's look, a wink for whoever he passes and a look back over the shoulder now and then, so the face reaches the chase camera
+  tplBeadF: {react:9.5, zeta:0.82, smug:1.35, wink:0.9, chin:0.16, smirk:0.08, lid:0.98, tilt:0.22, cur:1.3, blink:3.2, nod:0.04, nodF:2.6, ov:2.0, ovH:0.75, idle:5.5},
 };
 const _lpC={};
 function lookPersona(id){
@@ -74664,6 +74697,8 @@ const FX_RACER={
   beadJuan:{ whip:'BEAD BY BEAD!', hit:'SCATTERED!', mat:'bead', outer:'#e0b060', inner:'#d94f3c', word:'#fffdf2' },
   beadBosun:{ whip:'AHOY!', hit:'ADRIFT!', mat:'bead', outer:'#f070b0', inner:'#f4f2ee', word:'#1f3fb0' },
   beadBandido:{ whip:'¡OLÉ!', hit:'¡AY!', mat:'bead', outer:'#8a5a32', inner:'#e8c06a', word:'#fffdf2' },
+  tplBeadM:{ whip:'STRUNG!', hit:'SCATTERED!', mat:'bead', outer:'#1fb3c4', inner:'#1d3cb4', word:'#ffc21a' },
+  tplBeadF:{ whip:'GLINT!', hit:'UNSTRUNG!', mat:'bead', outer:'#ff4b98', inner:'#14b8b0', word:'#ffd23a' },
   voxel:{ whip:'YARRR.EXE', hit:'ERR!', mat:'pixel', outer:'#f6f8fa', inner:'#1b3766', word:'#ffd24a' },
   kingVox:{ whip:'64-BIT!', hit:'LAG!', mat:'pixel', outer:'#ffd700', inner:'#845f2e', word:'#fffdf2' },
   mosaic:{ whip:'TOO MANY!', hit:'SHATTERED!', mat:'tile', outer:'#8a3dff', inner:'#ff2fb4', word:'#b6ff1c' },
@@ -78579,7 +78614,7 @@ const SEL3D=(function(){
   const LSK='sr_sel3d', HK='sr_sel3d_hint', N=36, FOVY=26, PHI=0.42, SWEEP=0.55, MARGIN=0.9, CACHE=3, HOLD_MS=20000, PTS=1500, ENV=300;
   const ELV=[-0.35,-0.06,0.3,0.8], E0=-0.06, PIT0=-0.35, PIT1=0.785, ZM0=0.72, ZM1=1.35;   // camera elevations the fit is tabled at; rest = eye level, a touch below; tilt and zoom limits
   const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
-  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
+  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5, tplBeadM:3, tplBeadF:3};   // (the bead templates lay out ~2600 beads row by row on their first build)              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
   const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
   const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
   const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), coach=$('stcoach'), msgEl=$('stmsg'), stage=$('selstage');
