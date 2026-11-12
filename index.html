@@ -326,6 +326,15 @@
   #leader .ld{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
   #mapwrap .ml{position:absolute;top:-7px;left:12px;font-size:8.5px;letter-spacing:.3em;
     color:var(--ink);text-transform:uppercase;background:#06222a;padding:0 5px;}
+  /* legible over any course: race_hud measured the small HUD text at 1.4-2.4:1 over Ophelia's bright stretch (the radio's
+     clock and MPH, the Lap and Pos labels, the whip key). A deeper glass, a lighter ink for the small labels, a dark halo
+     under the small text, and a dark backing for the whip button while it charges */
+  .glass{background:linear-gradient(160deg,rgba(6,26,32,.76),rgba(4,18,23,.62));}
+  #lap,#pos,#leader,#radioPanel{text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 8px rgba(0,0,0,.45);}
+  #lap,#pos,#radioClock,#radioSpeedWrap span,#leader .lrow{color:#b9ddd6;}
+  #leader .lrow.you,#leader .lrow.human{color:var(--bone);}
+  #whipbtn{background:rgba(18,13,8,.62);color:#b09a80;border-color:#6e5d4a;text-shadow:0 1px 2px rgba(0,0,0,.8);}
+  #quitbtn,.radioKnob{text-shadow:0 1px 3px rgba(0,0,0,.85);}
   /* short screens: smaller minimap + fewer standings rows so the leaderboard clears the
      bottom-left drift button (the player's own row always stays) */
   @media (max-height:480px){
@@ -59779,7 +59788,9 @@ function feltify(g){
                 c: Math.random()<0.76 ? (Math.random()<0.5?0xe8e4d9:0xd9d3c4)
                                       : FELT_WOOL[(Math.random()*FELT_WOOL.length)|0]});
   }
-  g.add(feltBatch(FELT_PUFF, puffs));
+  const fleece=feltBatch(FELT_PUFF, puffs);   // the fleece in the same wool (the batch's own material is the course's plain felt)
+  fleece.material=new T.MeshPhongMaterial({ color:0xffffff, map:FC.map, bumpMap:FC.bump, bumpScale:0.05, shininess:2, specular:0x060606 });
+  g.add(fleece);
 }
 // Re-work a finished racer in modelling clay. `S` picks the flavour (CLAY_STYLES).
 function clayify(g, S){
@@ -79758,6 +79769,14 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       trackGroup.updateMatrixWorld(true);
       const boxes=[], b=new T.Box3(), gb=new T.Box3(), mtx=new T.Matrix4();
       const add=(box,name,src,inst)=>{ const sz=box.getSize(new T.Vector3()), d=Math.max(sz.x,sz.y,sz.z); if(d>maxSize || d<minSize || !isFinite(d)) return; boxes.push({ box:box.clone(), name, src, inst }); };
+      // a decal: geometry that is flat (one local axis has no depth) and lies face-up in the world (petals and foam on Ophelia's
+      // water, boost strips on Stacey's slopes). A flat sign standing up in the road is not one.
+      const _dn=new T.Vector3(), _dm=new T.Matrix4();
+      const isDecal=(B)=>{ const src=B.src; if(!src||!src.isMesh) return false; const g=src.geometry; if(!g||!g.attributes.position) return false;   // (a single mesh: a group is not judged by one of its parts)
+        if(!g.boundingBox) g.computeBoundingBox(); const s3=g.boundingBox.getSize(new T.Vector3()), ax=[s3.x,s3.y,s3.z], mx=Math.max(...ax), k=ax.indexOf(Math.min(...ax));
+        if(!(mx>0) || ax[k]>mx*0.06) return false;
+        _dn.set(k===0?1:0, k===1?1:0, k===2?1:0); _dm.copy(src.matrixWorld); if(B.inst!=null && src.isInstancedMesh){ src.getMatrixAt(B.inst, mtx); _dm.multiply(mtx); }
+        _dn.transformDirection(_dm); return Math.abs(_dn.y)>0.7; };
       // the geometry itself, not its box: how many of a piece's vertices sit inside the corridor at kart height, and how deep
       const _v=new T.Vector3(), _m=new T.Matrix4();
       const inCorridor=(B)=>{ let n=0, deep=0, at=null; const visit=(mesh, inst)=>{ const pos=mesh.geometry&&mesh.geometry.attributes.position; if(!pos) return;
@@ -79778,6 +79797,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         let worst=null; for(const [x,z] of pts){ const w=where(x,z); if(!w) continue; const inside=HW+margin-Math.abs(w.lat);
           if(inside>0 && bx.min.y<w.y+7 && bx.max.y>w.y-1 && (!worst || inside>worst.inside)) worst={ ...w, inside }; }
         if(worst && bx.max.y-bx.min.y<0.8) worst=null;   // (a flat decal lying on the road: markings belong there)
+        if(worst && isDecal(B)) worst=null;               // (...and one on a slope, whose box is taller: flat geometry lying face-up)
         if(worst){ const g=inCorridor(B); if(!g.n) worst=null; else { worst=g.at; worst.inside=g.deep; worst.verts=g.n; } }   // (its box reaches the road; does its shape?)
         if(worst) onRoad.push({ name:B.name, at:worst.at, lateral:+worst.lat.toFixed(1), intoRoad:+worst.inside.toFixed(1), vertices:worst.verts, x:Math.round((bx.min.x+bx.max.x)/2), z:Math.round((bx.min.z+bx.max.z)/2), size:+bx.getSize(new T.Vector3()).length().toFixed(1) }); }
       onRoad.sort((a,b)=>b.intoRoad-a.intoRoad);
