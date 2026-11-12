@@ -80000,9 +80000,13 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       if(cam) await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
       if(SIM.cam) simCamApply(); camera.updateMatrixWorld(true);
       const W=Math.max(2,renderer.domElement.width>>1), H=Math.max(2,renderer.domElement.height>>1), F=Math.max(2,Math.min(4,factor|0));
-      const draw=(w,h)=>{ const rt=new T.WebGLRenderTarget(w,h), b=new Uint8Array(w*h*4); try{ renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.readRenderTargetPixels(rt,0,0,w,h,b); } finally { renderer.setRenderTarget(null); rt.dispose(); } return b; };
+      // the 1x frame multisampled as the canvas is (antialias:true): what is left is what MSAA can't fix — texture crawl,
+      // sub-pixel detail — not the plain edge stair-steps a player's GPU smooths anyway
+      const msaa=renderer.capabilities.isWebGL2 && T.WebGLMultisampleRenderTarget;
+      const draw=(w,h,ms)=>{ const rt=ms?new T.WebGLMultisampleRenderTarget(w,h,{ samples:4 }):new T.WebGLRenderTarget(w,h), b=new Uint8Array(w*h*4);
+        try{ renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene,camera); renderer.setRenderTarget(null); renderer.readRenderTargetPixels(rt,0,0,w,h,b); } finally { renderer.setRenderTarget(null); rt.dispose(); } return b; };
       let a, big, P;
-      try{ a=draw(W,H); big=draw(W*F,H*F);
+      try{ a=draw(W,H,msaa); big=draw(W*F,H*F,false);
         const roots=new Set(racers.map(x=>x.obj)), inRacer=o=>{ for(let p=o;p;p=p.parent) if(roots.has(p)) return true; return false; };
         P=materialIdPass(scope==='racers'?inRacer:scope==='course'?(o=>!inRacer(o)):(()=>true), W, H); } finally { SIM.cam=held; }
       const g=v=>Math.pow(v/255,1/2.2), luma=(b,i)=>0.2126*g(b[i])+0.7152*g(b[i+1])+0.0722*g(b[i+2]);
@@ -80015,7 +80019,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const c=document.createElement('canvas'); c.width=W; c.height=H; const cg=c.getContext('2d'), im=cg.createImageData(W,H);
       for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const v=Math.min(1,d[(H-1-y)*W+x]*6), o=(y*W+x)*4; im.data[o]=255*Math.min(1,v*2); im.data[o+1]=255*Math.max(0,v*2-1); im.data[o+2]=40; im.data[o+3]=255; }
       cg.putImageData(im,0,0); const url=c.toDataURL('image/jpeg',0.85);
-      return { course:course(), meanAlias:+(tot/(W*H)).toFixed(4), hotShare:+(hot/(W*H)).toFixed(3), materials:rows.slice(0,top), heat:url.slice(url.indexOf(',')+1) };
+      return { course:course(), msaa:!!msaa, meanAlias:+(tot/(W*H)).toFixed(4), hotShare:+(hot/(W*H)).toFixed(3), materials:rows.slice(0,top), heat:url.slice(url.indexOf(',')+1) };
     },
 
     /* — SEASON: many races, headless, to see balance and trouble spots. AI rivals don't use character stats — only the
