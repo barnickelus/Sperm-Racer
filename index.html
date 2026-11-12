@@ -71116,7 +71116,7 @@ const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid
  * ------------------------------------------------------------------------------------------------------------------ */
 const DB_HY=3.6, DB_HZ=0.9;                              // the head's centre (rest): the spine starts here, s=0
 const DB_AX=3.95, DB_AY=3.55, DB_AZ=3.7;                 // the bean's half width, height and depth
-const DB_SN=4.9, DB_L=25.0, DB_RH=0.95;                  // where the hose starts (arc from the head's centre), the tip, its radius
+const DB_SN=4.9, DB_L=25.0, DB_RH=0.82;                  // where the hose starts (arc from the head's centre), the tip, its radius
 const DB_N=32, DB_DS=DB_L/(DB_N-1);                      // spine points, and their spacing
 const DB_SIDES=22, DB_AN=2.42, DB_NH=18;                 // round the lathe; the head's last ring (polar angle from the nose)
 const DB_INK=0x141016;
@@ -71477,12 +71477,15 @@ function dbClock(now){
     if(snap){ C.beats=B; C.k=0; C.kWant=0; C.rate=R; C.rv=0; C.snaps=(C.snaps||0)+1; }   // nobody saw it (first sight, or a page that stood still): lock in place
   } else C.aH=null;
   C.src=h ? (h===((typeof MENU_MUSIC!=='undefined')&&MENU_MUSIC.station) ? 'menu' : 'station') : 'internal'; C.h=h;
-  let rc;
-  if(B==null){ rc=DB_BPM0/60; C.e=0; }
-  else { let e=B-C.beats; const k=Math.round(e); e-=k; C.e=e; C.kWant=k; rc=R*(1+ldClamp(DB_PLL.G*e,-DB_PLL.MAX,DB_PLL.MAX)); }
-  const w=DB_PLL.W, s=Math.min(dt,0.1);
-  C.rv+=(w*w*(rc-C.rate)-2*w*C.rv)*s; C.rate+=C.rv*s;
-  C.beats+=C.rate*dt;
+  // the loop, in steps of a 60th whatever the frame rate (a slow frame is many small steps: the same curve)
+  const w=DB_PLL.W, n=Math.min(60,Math.ceil(dt*60-1e-6)), hs=n>0?dt/n:0;
+  for(let i=1;i<=n;i++){
+    let rc;
+    if(B==null){ rc=DB_BPM0/60; C.e=0; }
+    else { let e=B-R*(dt-i*hs)-C.beats; const k=Math.round(e); e-=k; C.e=e; C.kWant=k; rc=R*(1+ldClamp(DB_PLL.G*e,-DB_PLL.MAX,DB_PLL.MAX)); }
+    C.rv+=(w*w*(rc-C.rate)-2*w*C.rv)*hs; C.rate+=C.rv*hs; C.beats+=C.rate*hs;
+  }
+  if(n===0 && B!=null){ let e=B-C.beats; const k=Math.round(e); C.e=e-k; C.kWant=k; }
   // the bar: beat 1 where the music's is. Its offset only moves where no accent is showing on either side of the move
   if(C.kWant!==C.k){ const d=((C.kWant-C.k)%4+4)%4, b=((C.beats+C.k)%4+4)%4;
     if((d===1 && b>0.7 && b<2.3) || (d===3 && b>1.7 && b<3.3) || (d===2 && b>0.7 && b<1.3)) C.k=C.kWant; }
@@ -71516,7 +71519,7 @@ const DB_NOW_EXPR={take:1, hit:1};                 // a surprise is not quantise
 const DB_EV={};                                    // each expression's pose as an array (filled below)
 for(const k in DB_EXPR){ const a=new Float32Array(DBF.length); DBF.forEach((f,i)=>a[i]=(DB_EXPR[k][f]!=null?DB_EXPR[k][f]:DB_EXPR_BASE[f])); DB_EV[k]=a; }
 // the swim's wave: how many radians the tip carries for each unit of tip excursion (computed once, so amplitudes are in units)
-const DB_K=2*Math.PI*1.3, DB_ENV=u=>0.3+0.7*Math.pow(u,1.3);
+const DB_K=2*Math.PI*1.05, DB_ENV=u=>0.18+0.82*Math.pow(u,1.5);   // one long S down the hose, the tip sweeping most
 const DB_FLK={c:0.42, lag:0.6};                 // the flick: the drop at the tip trails the stroke by a little and snaps through
 const DB_FU=u=>{ const f=ldClamp((u-0.72)/0.28,0,1); return f*f; };
 const DB_WAVE=(()=>{ let re=0, im=0; const n=80, Lh=DB_L-DB_SN; for(let i=0;i<n;i++){ const u=(i+0.5)/n, f=DB_FLK.c*DB_FU(u);
@@ -71588,9 +71591,9 @@ function makeBeatTemplate(opts){
   ud.sockets={crown, hair, face:faceS, brow, neck, back, tailRoot, tailTip};
   // ---- the crown piece: Dash's three-hair cowlick (ink), Dot's bow (the accent colour)
   if(!fem){
-    const parts=[]; [[-0.32,-0.2,0.9],[0.02,0.05,1.25],[0.34,0.25,1.0]].forEach(([x,lean,h])=>{
-      const pts=[new T.Vector3(x,-0.25,0), new T.Vector3(x+lean*0.3,h*0.55,0.12), new T.Vector3(x+lean*0.9,h*0.95,0.45), new T.Vector3(x+lean*1.3,h*1.08,0.95)];
-      parts.push(new T.TubeGeometry(new T.CatmullRomCurve3(pts),10,0.16,6,false)); });
+    const parts=[]; [[-0.42,-0.35,1.25],[0.02,0.05,1.75],[0.44,0.4,1.4]].forEach(([x,lean,h])=>{
+      const pts=[new T.Vector3(x,-0.3,0), new T.Vector3(x+lean*0.3,h*0.55,0.12), new T.Vector3(x+lean*0.9,h*0.95,0.5), new T.Vector3(x+lean*1.3,h*1.06,1.1)];
+      parts.push(new T.TubeGeometry(new T.CatmullRomCurve3(pts),10,0.21,6,false)); });
     const merged=dbMerge(parts, i=>{ const t=Math.floor(i/7)/10; return 1-0.7*t*t; });
     const cow=new T.Mesh(merged, new T.MeshBasicMaterial({color:ink})); cow.name='db-cowlick'; crown.add(cow);
     ud.dbCrown=cow;
@@ -71639,7 +71642,7 @@ function dbMerge(list, taper){
   const pos=new Float32Array(n*3), nor=new Float32Array(n*3), idx=[]; let o=0;
   for(const gg of list){ const p=gg.attributes.position, q=gg.attributes.normal, c=p.count;
     for(let i=0;i<c;i++){ let k=1; if(taper) k=taper(i);
-      pos[(o+i)*3]=p.getX(i)-q.getX(i)*0.16*(1-k); pos[(o+i)*3+1]=p.getY(i)-q.getY(i)*0.16*(1-k); pos[(o+i)*3+2]=p.getZ(i)-q.getZ(i)*0.16*(1-k);
+      pos[(o+i)*3]=p.getX(i)-q.getX(i)*0.21*(1-k); pos[(o+i)*3+1]=p.getY(i)-q.getY(i)*0.21*(1-k); pos[(o+i)*3+2]=p.getZ(i)-q.getZ(i)*0.21*(1-k);
       nor[(o+i)*3]=q.getX(i); nor[(o+i)*3+1]=q.getY(i); nor[(o+i)*3+2]=q.getZ(i); }
     if(gg.index) for(let i=0;i<gg.index.count;i++) idx.push(gg.index.getX(i)+o); else for(let i=0;i<c;i++) idx.push(i+o);
     o+=c; }
@@ -71734,8 +71737,8 @@ function dbTick(o, r, now){
   S.gReq=gq;
   if(S.lastB==null || Math.abs(B-S.lastB)>6){ if(S.gOn) S.g0=S.g1; S.gx0=Math.floor(B); S.gs0=Math.round(S.g0*S.gx0); S.g1=S.g0; S.gOn=false; }   // first sight, or the clock re-locked (unseen): straight to the gear it was heading for
   S.lastB=B; dbGearStep(S,B); S.sig=dbSigAt(S,B);
-  let aT=idle?2.3 : spd<34?2.6 : dbGearRate(S,B)>1.5?3.0:3.6;
-  if(R.boostT>0) aT=4.4; if(S.cur==='tired') aT=1.8; if(fin||celeb) aT=S.cur==='lose'?1.6:3.8;
+  let aT=idle?2.0 : spd<34?2.2 : dbGearRate(S,B)>1.5?2.3:2.7;
+  if(R.boostT>0) aT=3.2; if(S.cur==='tired') aT=1.5; if(fin||celeb) aT=S.cur==='lose'?1.4:3.0;
   if(spin && now-E.takeT<0.22) aT=0.2;                        // the take: stiff as a board
   aT*=1-0.4*S.airK;
   dbSpring(S,'amp','ampV',aT,4,1,dt);
@@ -71765,7 +71768,7 @@ function dbTick(o, r, now){
   if(celeb && !portrait){ o.position.y-=Math.abs(Math.sin(now*7))*2.2; o.rotation.y-=Math.sin(now*4.5)*0.35; o.rotation.z-=Math.sin(now*4.5+1)*0.15; }
   // the probes race_motion reads: the beat (a step every beat), the bob, the tip's sway
   S.probes.beat.position.set(C.phase*2,0,0); S.probes.bob.position.set(0,sq*10,0);
-  S.probes.sway.position.set(S.tip.x,0,0);
+  S.probes.sway.position.set(S.tipW||0,0,0);
 }
 // the spine: angles along it (the line of action, the swim, the lash, the flick, the look), integrated from the neck both ways
 function dbPose(o, S, R, dt, init){
@@ -71773,11 +71776,13 @@ function dbPose(o, S, R, dt, init){
   const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.d, lift=(R&&R._tailLift)||0;
   const fw=S.lashFw||0, tau=S.lashTau, ls=S.lash||0, rm=1;
   const psi=S._psi||(S._psi=new Float32Array(N)), phi=S._phi||(S._phi=new Float32Array(N));
+  let tw=0;                                                // the swim's own excursion at the tip (the stroke, without the turn's bend): race_motion's tipSway
   for(let i=0;i<N;i++){
     const s=i*DB_DS, u=ldClamp((s-DB_SN)/Lh,0,1), wh=1-dbSm5((s-2.6)/(DB_SN-2.6)), wl=1-dbSm5((s-2.6)/(DB_SN+4-2.6));
     let pt=-S.turnT*Lh*u*0.9 + S.dS*(-0.55*Math.sin(Math.PI*u)+1.25*u*u) + ar*DB_ENV(u)*Math.cos(sp-DB_K*u);
     if(ls) pt-=ls*WL_TH*(0.25+0.75*u)*wlAng(tau-WL_LAG*u)*fw;
-    const fu=DB_FU(u); pt+=(S.fl+DB_FLK.c*ar*Math.cos(sp-DB_K-DB_FLK.lag))*fu;
+    const fu=DB_FU(u), sw=ar*DB_ENV(u)*Math.cos(sp-DB_K*u)+DB_FLK.c*ar*Math.cos(sp-DB_K-DB_FLK.lag)*fu; pt+=S.fl*fu+DB_FLK.c*ar*Math.cos(sp-DB_K-DB_FLK.lag)*fu;
+    if(i>DB_IA) tw-=Math.sin(sw)*ds;
     let ft=-Math.atan(2*lift*u/Lh) + 0.3*S.lose*u + S.airK*(0.55*u-0.12);
     if(ls) ft-=1.5*WL_LY/Lh*Math.sqrt(u)*wlLift(tau-WL_LAG*0.5*u)*fw;
     psi[i]=wh*S.psiH+(1-wh)*pt+S.lookY*wl+S.spH;
@@ -71798,7 +71803,7 @@ function dbPose(o, S, R, dt, init){
   const K=S.sockets, sock=(so,i,up)=>{ dbFrame(Tt,i,_dbX,_dbY,_dbZ); so.matrix.makeBasis(_dbX,_dbY,_dbZ).setPosition(P[i*4]+_dbY.x*(up||0), P[i*4+1]+_dbY.y*(up||0), P[i*4+2]+_dbY.z*(up||0)); so.matrixWorldNeedsUpdate=true; };
   sock(K.neck,ia-1); sock(K.tailRoot,ia+1); sock(K.back,ia+1,DB_RH); sock(K.tailTip,N-1);
   const j=Math.round((DB_SN+0.9*Lh)/DB_DS); S.probes.tip.position.set(P[j*4],P[j*4+1],P[j*4+2]);
-  (S.tip||(S.tip=new T.Vector3())).set(P[(N-1)*4],P[(N-1)*4+1],P[(N-1)*4+2]);
+  (S.tip||(S.tip=new T.Vector3())).set(P[(N-1)*4],P[(N-1)*4+1],P[(N-1)*4+2]); S.tipW=tw;
 }
 // the frame at spine point i: x = lateral, y = up, z = forward (the head's way), rolled as the shader rolls it
 function dbFrame(Tt,i,X,Y,Z){
@@ -78590,7 +78595,7 @@ const SEL3D=(function(){
   const LSK='sr_sel3d', HK='sr_sel3d_hint', N=36, FOVY=26, PHI=0.42, SWEEP=0.55, MARGIN=0.9, CACHE=3, HOLD_MS=20000, PTS=1500, ENV=300;
   const ELV=[-0.35,-0.06,0.3,0.8], E0=-0.06, PIT0=-0.35, PIT1=0.785, ZM0=0.72, ZM1=1.35;   // camera elevations the fit is tabled at; rest = eye level, a touch below; tilt and zoom limits
   const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
-  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
+  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5, tplBeatM:1.5, tplBeatF:1.5};   // (DOWNBEAT: five shader programs of its own to compile on its first draw)              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
   const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
   const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
   const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), coach=$('stcoach'), msgEl=$('stmsg'), stage=$('selstage');
