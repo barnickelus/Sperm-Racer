@@ -59371,6 +59371,7 @@ function wiggleTail(g, phase, amp, lift, st){
   const jt=g.userData.juanTail; _WL.s=jt ? (jt.len||(jt.len=Math.abs(jt.rings[0].z-jt.rings[jt.rings.length-1].z)))/WL_LEN : g.userData.tailData ? 1 : 0.95;   // the lash is built for the 21-long tube: the 20-long ring tails and Juan's cone take it to scale
   if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
   const LK=TAIL_SWIM.lag; amp*=TAIL_SWIM.amp;   // every other tail swims to Juan's proportions (TAIL_SWIM)
+  if(g.userData.tessTail){ tessWiggle(g, phase, amp, lift, st); return; }   // the tessera template: its spine goes to the GPU (TESSERA TEMPLATE KIT)
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -71026,6 +71027,796 @@ function fluidTick(o, r, now){
 }
 const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid copies and the originals they are built from (Sid: the stiffest racer with swaying parts, by race_motion)
 
+/* ==== TESSERA TEMPLATE KIT: BEGIN ==== */
+/* ============== TESSERA TEMPLATE KIT (makeTessTemplate: racers tplTessM, tplTessF) ============== *
+ * BASE TEMPLATE PROPOSAL V3: the tessera mosaic. The foundation future characters are dressed on, laid as tesserae in the
+ * optical language of the owner's Tesserae Engine (tesserae-engine/docs/optical-language.md, examples/lib/tessera-kit.js),
+ * by way of the June voxel preview (every voxel face a mini Chuck-Close composition) and Tessa / Mosaic Seamus.
+ *
+ *   makeTessTemplate(opts) -> THREE.Group, usable anywhere makeCell()'s result is (makeCellBuild routes tplTessM/F here).
+ *   opts: { sex:'m'|'f', skin, body, tail (hex: head; midpiece/collar; flagellum), eye:'star'|'round', scale,
+ *           iris, lip, brow (hex, optional) }
+ *   ud.sockets = { crown, hair, face, brow, neck, back, tailRoot, tailTip }: Object3Ds that ride the animated rig (their
+ *           positions and turns are re-solved every frame from the same deformation the GPU applies), so a kit hangs a hat,
+ *           hair, a collar or a tail charm on them without touching the rig. +Y is up out of the surface, +Z forward.
+ *   ud.expr = { list, set(name, hold, instant), cur }: the API race_pose / race_sheet drive. Core: rest pass passed hit
+ *           angry boost fire tired win lose; extras: drift dizzy wink woo.
+ *   ud.tess = the rig: K.face (the face parameters as they are now), K.mo (the motion springs), K.U (the shader uniforms).
+ *
+ * THE SURFACE. One continuous body, nose to tail tip: an ellipsoid head that runs into the flagellum through a smooth fillet
+ * (no seam, no gap, no overlap where head meets tail: it is one surface). It is laid as tiles in three ways:
+ *   · the head: a cube-sphere quadtree, split by IMPORTANCE (the engine's octree, on the surface): small tiles where
+ *     expression lives (eyes, lids, brows, mouth, cheeks), tiles up to 4x larger over the back and top of the head;
+ *   · the flagellum: courses (rings) laid brick-bond down the tail, the first ring a collar course in the body colour;
+ *   · the features: lids, brows, lips and lashes are courses that FOLLOW their feature (opus vermiculatum), each tile placed
+ *     every frame from the face parameters, so a lid really sweeps over the eye and a lip really curls with the mouth.
+ *   Under the tiles, the SETTING BED: the same surface, its colour darkened (BED), so a joint reads as the local colour
+ *   in shadow, and any opening while the body bends shows bed, not a hole. A thin ink course (back-face shell) outlines it.
+ *   Each tile is a small two-tone composition (disc in square, ring, lozenge, square in square): an accent hue split away
+ *   from the tile's colour but EQUILUMINANT with it (the engine's rule: vibrate in colour, never in value), the base solved in
+ *   linear light so the tile's mean IS its colour, and the face pays back the light its joint does not send. So from racing
+ *   distance the tiles fuse into the character's colour and shading; close up (the select stage, the finish orbit) it is a
+ *   mosaic. Anti-shimmer: the composition fades out with distance (uMos) and with the tile's size on screen, the joint fades
+ *   below ~4 px, and nothing in a tile ever changes value at a sub-pixel scale (race_alias is the check).
+ *
+ * THE MOTION is all in the vertex shader: the CPU only fills a few uniforms per racer per frame (no per-vertex work).
+ *   · the flagellum: wiggleTail's tessera branch (tessWiggle) samples the game's own spine (tailOffset: Juan's swim, the
+ *     whip lash chain, the road lift) at 25 points, adds this rig's secondary motion (the tail trails into a turn, a drift
+ *     throws it wide, a boost streams it straight, it droops when tired and curls when airborne) and uploads them;
+ *   · the head: the game's neck look (poseNeck) plus squash and stretch (springs kicked by launch, boost, hit, landing, the
+ *     lash), the head answering every stroke of the tail, the idle hover, the expression's own tilt; the neck zone blends
+ *     between the head's turn and the tail's bend by rotating each point by its share of the angle, so it bends, not folds;
+ *   · the face: every parameter is a damped spring toward the acted expression, blinks and winks from the social look,
+ *     gaze from the look plus saccades; the jaw field moves the tiles round the mouth with it, so the face stays laid.
+ *   · the tiles themselves move sparingly: a hit sends a ripple from the face down the tail that lifts the tiles off their
+ *     bed and settles them; a boost runs a light down the tail.
+ * COST: about 1.6k tiles in ONE instanced draw, plus the bed, the ink course, the eyes, the irises and the mouth (8 draws
+ * with the glow and flames), ~20k triangles. Layouts are cached per look, so a rebuild is a handful of milliseconds.
+ *
+ * MOVING A CHARACTER ONTO THIS TEMPLATE: build with makeTessTemplate({sex, skin, body, tail, eye}) in place of the
+ * makeCellBuild path, then dress: hang meshes on ud.sockets (hat on crown, hair on hair, collar on neck, charm on tailTip;
+ * mark them bodyPart so rigNeck leaves them be); recolour regions through the opts (or new tile palettes in tsColour);
+ * give the character its own expressions by adding entries to TS_EXPR (the ten core names must stay); per-character swim is
+ * the same TAIL_STYLE row every racer has. Nothing in a dress touches the rig, the shaders or the per-frame pipeline.
+ * ------------------------------------------------------------------------------------------------------------------- */
+const TS={ CY:3.2, RX:3.45, RY:2.95, RZ:4.45, ZJ:-4.0, NB:2.6, ZT:-23.2, BED:0.5, SMAX:0.98, SMIN:0.27, LIFT:0.03 };
+TS.TL=TS.ZJ-TS.ZT;
+// the face, per sex (the same rig: features, not bones, differ). Face coords: x across (+x = the racer's left), y up.
+const TS_FACE={
+  m:{ EX:1.30, EY:3.86, RE:1.12, EIN:0.54, BX:0.36, BL:1.52, BY:5.08, ARCH:0.10, BROW:[0.17,0.17], MY:2.22, MW:1.06, RS:0.30, LIPL:0.0,
+      skin:'#f3c9a2', body:'#1f8f8a', tail:'#cfe8e2', brow:'#3b2416', lip:'#b8665a', iris:'#4f8a3c', blush:0.10 },
+  f:{ EX:1.31, EY:3.84, RE:1.22, EIN:0.54, BX:0.46, BL:1.42, BY:5.16, ARCH:0.30, BROW:[0.19], MY:2.20, MW:0.98, RS:0.36, LIPL:0.03,
+      skin:'#f6cfae', body:'#d4486e', tail:'#f6dbe2', brow:'#5a3422', lip:'#d2506a', iris:'#3f74c0', blush:0.32, lash:true },
+};
+// the two racers on the roster
+const TS_RACERS={ tplTessM:{ sex:'m', eye:'star' }, tplTessF:{ sex:'f', eye:'star' } };
+
+/* ---- colour: light adds in LINEAR units (the engine's rule 4) ---- */
+const tsS2L=c=>c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4), tsL2S=c=>c<=0.0031308?c*12.92:1.055*Math.pow(Math.max(0,c),1/2.4)-0.055;
+const tsY=(r,g,b)=>0.2126*r+0.7152*g+0.0722*b;
+function tsHex(hex){ const c=new T.Color(hex); return [tsS2L(c.r),tsS2L(c.g),tsS2L(c.b)]; }   // sRGB hex -> linear rgb
+function tsHsl(r,g,b){ const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2; if(mx===mn) return [0,0,l];
+  const d=mx-mn, s=l<=0.5?d/(mx+mn):d/(2-mx-mn), h=mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4; return [h/6,s,l]; }
+function tsRgb(h,s,l){ h=((h%1)+1)%1; s=Math.min(1,Math.max(0,s)); l=Math.min(1,Math.max(0,l)); if(s===0) return [l,l,l];
+  const q=l<=0.5?l*(1+s):l+s-l*s, p=2*l-q, f=t=>{ t=((t%1)+1)%1; return t<1/6?p+(q-p)*6*t:t<1/2?q:t<2/3?p+(q-p)*6*(2/3-t):p; };
+  return [f(h+1/3),f(h),f(h-1/3)]; }
+// scale a linear colour to luminance Y, giving up just enough saturation to stay in gamut (the engine's equiluminant)
+function tsEqui(c,Y){ const y0=tsY(c[0],c[1],c[2]); if(y0<=1e-6) return [Y,Y,Y]; let r=c[0]*Y/y0, g=c[1]*Y/y0, b=c[2]*Y/y0, k=0;
+  for(const v of [r,g,b]) if(v>1) k=Math.max(k,(v-1)/(v-Y)); return [r+(Y-r)*k, g+(Y-g)*k, b+(Y-b)*k]; }
+const tsHash=(i,s)=>{ let a=(i*0x9E3779B1)^(s*0x85EBCA77); a=Math.imul(a^(a>>>15),0x2C1B3C6D); a=Math.imul(a^(a>>>12),0x297A2D39); return ((a^(a>>>15))>>>0)/4294967296; };
+// a tile's colour, hand-cut (a slight fixed lightness/hue jitter so runs of one colour read as tiles), and its accent:
+// a hue split away from it, warm or cool, made EQUILUMINANT with it, so the composition plays in colour only
+function tsTileCol(S, i, jit){
+  const sr=S.map(tsL2S), [h,s,l]=tsHsl(sr[0],sr[1],sr[2]);
+  const j=(jit==null?1:jit), L1=l+(tsHash(i,11)-0.5)*0.07*j, H1=h+(tsHash(i,12)-0.5)*0.02*j;
+  const base=tsRgb(H1,s,L1).map(tsS2L);
+  const gray=s<0.08, sg=tsHash(i,13)<0.5?-1:1, split=(0.09+0.09*tsHash(i,14))*sg;
+  const acc=tsRgb(gray?(sg<0?0.08:0.58):H1+split, gray?0.45:Math.min(0.92,Math.max(0.6,s+0.32)), L1).map(tsS2L);
+  return [base, tsEqui(acc, tsY(base[0],base[1],base[2]))];
+}
+
+/* ---- the body's profile: the ellipsoid head runs into the flagellum through a smooth max (one surface) ---- */
+const tsSmax=(a,b,k)=>{ const h=Math.max(k-Math.abs(a-b),0)/k; return Math.max(a,b)+h*h*k*0.25; };
+const tsTailR=t=>1.18*Math.pow(Math.max(0,1-t),1.75)+0.11;
+function tsProf(z){   // cross-section radii [ax, ay] at z: one smooth function nose to tip (no step where head meets tail)
+  const kz=Math.sqrt(Math.max(0,1-(z/TS.RZ)*(z/TS.RZ))), r=tsTailR(Math.max(0,(TS.ZJ-z)/TS.TL));
+  return [tsSmax(TS.RX*kz, r, 0.7), tsSmax(TS.RY*kz, r*0.96, 0.7)];
+}
+const TS_ZF=-2.6;   // behind this the fillet starts to shape the head's back: points there are carried onto the true surface
+function tsOnBody(p){ if(p[2]>=TS_ZF) return p; const kz=Math.sqrt(Math.max(1e-6,1-(p[2]/TS.RZ)*(p[2]/TS.RZ))), pr=tsProf(p[2]);
+  return [p[0]*pr[0]/(TS.RX*kz), TS.CY+(p[1]-TS.CY)*pr[1]/(TS.RY*kz), p[2]]; }
+function tsBodyN(x,y,z){   // the surface normal: the ellipsoid's at the front, the profile's behind TS_ZF
+  if(z>=TS_ZF) return tsEN(x,y,z);
+  const pr=tsProf(z), pf=tsProf(z+0.02), pb=tsProf(z-0.02), dax=(pf[0]-pb[0])/0.04, day=(pf[1]-pb[1])/0.04;
+  const ca=x/pr[0], sa=(y-TS.CY)/pr[1], da=[-pr[0]*sa, pr[1]*ca, 0], dz=[dax*ca, day*sa, 1];
+  let nx=da[1]*dz[2]-da[2]*dz[1], ny=da[2]*dz[0]-da[0]*dz[2], nz=da[0]*dz[1]-da[1]*dz[0]; const l=Math.hypot(nx,ny,nz)||1; return [nx/l,ny/l,nz/l]; }
+// the face surface (the head's front is exactly the ellipsoid)
+const tsZs=(x,y)=>TS.RZ*Math.sqrt(Math.max(0.0004,1-(x*x)/(TS.RX*TS.RX)-((y-TS.CY)*(y-TS.CY))/(TS.RY*TS.RY)));
+const tsEN=(x,y,z)=>{ const a=x/(TS.RX*TS.RX), b=(y-TS.CY)/(TS.RY*TS.RY), c=z/(TS.RZ*TS.RZ), l=Math.hypot(a,b,c); return [a/l,b/l,c/l]; };
+
+/* ---- LAYING: where the tiles go, how big, how they run, what colour (cached per look) ---- */
+const TS_LAY={};
+function tsLayout(cfg){
+  const t0=performance.now(), FC=TS_FACE[cfg.sex];
+  const out={P:[],N:[],Tn:[],S:[],A:[],F:[]}; let n=0;
+  const C=k=>tsHex(cfg[k]);
+  const skin=C('skin'), body=C('body'), tail=C('tail'), browC=C('brow'), lipC=C('lip'), ink=tsHex('#24171a'), blushC=tsHex('#e8707a');
+  const mix=(a,b,k)=>[a[0]+(b[0]-a[0])*k, a[1]+(b[1]-a[1])*k, a[2]+(b[2]-a[2])*k];
+  const sm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+  // the eyes: centred so 58% of the ball stands proud of the face, along the face's normal there
+  const ez=tsZs(FC.EX,FC.EY), en=tsEN(FC.EX,FC.EY,ez), E=[FC.EX-en[0]*FC.EIN*FC.RE, FC.EY-en[1]*FC.EIN*FC.RE, ez-en[2]*FC.EIN*FC.RE];
+  out.E=E;
+  // push one tile. reg: 0 laid on the body, 1 upper lid, 2 lower lid, 3 brow, 4 upper lip, 5 lower lip, 6 lash
+  // glyph: 0 disc in square, 1 ring, 2 lozenge, 3 square in square, 4 plain
+  const push=(p,nn,tg,su,sv,glyph,S,reg,f,jit)=>{
+    const [b,a]=tsTileCol(S, n, jit);
+    out.P.push(p[0],p[1],p[2],su); out.N.push(nn[0],nn[1],nn[2],sv); out.Tn.push(tg[0],tg[1],tg[2],glyph);
+    out.S.push(b[0],b[1],b[2],reg); out.A.push(a[0],a[1],a[2],tsHash(n,7)); out.F.push(f?f[0]:0,f?f[1]:0,f?f[2]:0,f?f[3]:0); n++; };
+  const glyphOf=i=>{ const h=tsHash(i,3); return h<0.3?0:h<0.5?1:h<0.75?2:3; };
+  // importance (the engine's importance map, by semantic region): 0 = the back of the head .. 1 = round the eyes
+  const imp=(x,y,z)=>{
+    const fz=sm(0.12,0.7,z/TS.RZ); if(fz<=0) return 0;
+    let I=0.4*fz;
+    for(const sg of [-1,1]){ const d=Math.hypot(x-sg*E[0], y-E[1]), e=Math.max(0,d-FC.RE*0.95)/0.8; I=Math.max(I, fz*Math.exp(-e*e)); }
+    { const mx=x/1.55, my=(y-FC.MY)/0.8; I=Math.max(I, fz*0.92*Math.exp(-(mx*mx+my*my))); }
+    { const bx=(Math.abs(x)-(FC.BX+FC.BL*0.5))/1.1, by=(y-FC.BY)/0.55; I=Math.max(I, fz*0.8*Math.exp(-(bx*bx+by*by))); }
+    { const cx=(Math.abs(x)-1.6)/0.8, cy=(y-FC.MY-0.85)/0.6; I=Math.max(I, fz*0.6*Math.exp(-(cx*cx+cy*cy))); }
+    return I; };
+  const target=I=>TS.SMAX+(TS.SMIN-TS.SMAX)*Math.pow(I,0.85);
+  // the mouth band: the lip courses cover it, so the laid tiles stay clear of it
+  const restLine=x=>{ const s=Math.max(-1,Math.min(1,x/FC.MW)); return FC.MY+FC.RS*0.40*s*s; };
+  const lipUp=0.30, lipDn=0.28;
+  const inMouth=(x,y,z,s)=>z>0 && Math.abs(x)<FC.MW+0.10+s*0.3 && Math.abs(y-restLine(x))<s*0.5+0.05;
+  // the head's colour field: skin, a blush over the cheeks
+  const headCol=(x,y,z)=>{ let c=skin; const cx=(Math.abs(x)-1.75)/0.75, cy=(y-FC.MY-0.62)/0.5, bl=Math.exp(-(cx*cx+cy*cy))*sm(0.3,0.6,z/TS.RZ)*FC.blush;
+    if(bl>0.01) c=mix(c,blushC,bl); return c; };
+
+  // 1) the head: a cube-sphere quadtree on the ellipsoid, split by importance
+  const CF=[[[1,0,0],[0,0,-1],[0,1,0]],[[-1,0,0],[0,0,1],[0,1,0]],[[0,1,0],[1,0,0],[0,0,-1]],[[0,-1,0],[1,0,0],[0,0,1]],[[0,0,1],[1,0,0],[0,1,0]],[[0,0,-1],[-1,0,0],[0,1,0]]];
+  const mp=(F,u,v,o)=>{ const a=Math.tan(u*Math.PI/4), b=Math.tan(v*Math.PI/4);
+    const x=F[0][0]+F[1][0]*a+F[2][0]*b, y=F[0][1]+F[1][1]*a+F[2][1]*b, z=F[0][2]+F[1][2]*a+F[2][2]*b, l=Math.hypot(x,y,z);
+    o[0]=TS.RX*x/l; o[1]=TS.CY+TS.RY*y/l; o[2]=TS.RZ*z/l; return o; };
+  const c=[0,0,0], Lp=[0,0,0], Rp=[0,0,0], Bp=[0,0,0], Tp=[0,0,0], dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+  let heads=0;
+  const rec=(F,u0,v0,h,d)=>{
+    const uc=u0+h/2, vc=v0+h/2; mp(F,uc,vc,c);
+    if(c[2]<TS.ZJ-2.5) return;
+    mp(F,u0,vc,Lp); mp(F,u0+h,vc,Rp); mp(F,uc,v0,Bp); mp(F,uc,v0+h,Tp);
+    const su=dist(Lp,Rp), sv=dist(Bp,Tp), I=imp(c[0],c[1],c[2]);
+    if(Math.max(su,sv)>target(I)*1.1 && d<7){ const q=h/2; rec(F,u0,v0,q,d+1); rec(F,u0+q,v0,q,d+1); rec(F,u0,v0+q,q,d+1); rec(F,u0+q,v0+q,q,d+1); return; }
+    if(c[2]<TS.ZJ-0.15*sv) return;                                               // the tail's courses take over here (the collar course overlaps the last of these)
+    for(const sg of [-1,1]) if(Math.hypot(c[0]-sg*E[0],c[1]-E[1],c[2]-E[2])<FC.RE+0.12*Math.max(su,sv)) return;   // the eye sockets
+    if(inMouth(c[0],c[1],c[2],Math.min(su,sv))) return;
+    const cb=tsOnBody(c); c[0]=cb[0]; c[1]=cb[1];
+    const nn=tsBodyN(c[0],c[1],c[2]);
+    let tx=Rp[0]-Lp[0], ty=Rp[1]-Lp[1], tz=Rp[2]-Lp[2]; const dn=tx*nn[0]+ty*nn[1]+tz*nn[2]; tx-=dn*nn[0]; ty-=dn*nn[1]; tz-=dn*nn[2];
+    const tl=Math.hypot(tx,ty,tz)||1;
+    push([c[0],c[1],c[2]], nn, [tx/tl,ty/tl,tz/tl], su, sv, glyphOf(n), headCol(c[0],c[1],c[2]), 0, [I,0,0,0]); heads++;
+  };
+  for(const F of CF) rec(F,-1,-1,2,0);
+
+  // 2) the flagellum: brick-bond courses round it, from the collar course at the junction to the tip
+  let z=TS.ZJ, ring=0, tails=0;
+  while(z>TS.ZT+0.04){
+    const t=(TS.ZJ-z)/TS.TL, pr=tsProf(z), a0=pr[0], b0=pr[1];
+    const per=Math.PI*(3*(a0+b0)-Math.sqrt((3*a0+b0)*(a0+3*b0)));
+    const want=Math.min(0.80+0.12*sm(0.1,0.5,t), per/6);
+    const cnt=Math.max(6,Math.round(per/want)), su=per/cnt;
+    let sv=Math.max(0.16, Math.min(0.80+0.12*sm(0.1,0.5,t), su*1.6));
+    // step along the surface, not along z: the fillet falls away steeply
+    let dz=sv; for(let k=0;k<3;k++){ const p2=tsProf(z-dz); dz=sv/Math.hypot(1,(Math.max(p2[0],p2[1])-Math.max(a0,b0))/dz)*1.0; }
+    dz=Math.min(dz, z-TS.ZT); if(dz<0.05) break;
+    const zm=z-dz/2, pm=tsProf(zm), ax=pm[0], ay=pm[1], tm=(TS.ZJ-zm)/TS.TL;
+    const pf=tsProf(zm+0.02), pb=tsProf(zm-0.02), dax=(pf[0]-pb[0])/0.04, day=(pf[1]-pb[1])/0.04;
+    const col=ring===0 ? body : tm<0.13 ? body : mix(body, tail, sm(0.13,0.3,tm));
+    for(let j=0;j<cnt;j++){
+      const a=(j+0.5*(ring&1))/cnt*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+      const p=[ax*ca, TS.CY+ay*sa, zm];
+      const da=[-ax*sa, ay*ca, 0], dzv=[dax*ca, day*sa, 1];
+      let nx=da[1]*dzv[2]-da[2]*dzv[1], ny=da[2]*dzv[0]-da[0]*dzv[2], nz=da[0]*dzv[1]-da[1]*dzv[0]; const nl=Math.hypot(nx,ny,nz)||1;
+      const tl=Math.hypot(da[0],da[1])||1;
+      push(p, [nx/nl,ny/nl,nz/nl], [da[0]/tl,da[1]/tl,0], su*1.0, Math.hypot(dz,(Math.max(pf[0],pf[1])-Math.max(pb[0],pb[1]))/0.04*dz),
+        ring===0?1:glyphOf(n), col, 0, [0, ring===0?0.07:ring===1?0.035:0, 0,0]);
+      tails++;
+    }
+    z-=dz; ring++;
+  }
+
+  // 3) the features: courses that follow them
+  const BM=1.25;   // the lids' half-span across the eye (radians), TS_BM in the shader
+  for(const sg of [-1,1]){
+    // upper lid: 11 across, 7 rows up from the lid edge; the edge row is the ink line
+    const NBU=11, NR=7, dB=2*BM/NBU, dP=0.155;
+    for(let j=0;j<NR;j++) for(let i=0;i<NBU;i++){
+      const b=-BM+(i+0.5+(j&1)*0.25)*dB;
+      const S=j===0?ink:j===1?mix(skin,[skin[0]*0.8,skin[1]*0.72,skin[2]*0.7],0.35):skin;
+      push([sg*E[0],E[1]+FC.RE,E[2]], [0,0,1],[1,0,0], dB*1.04, (j===0?0.75:1)*dP*1.06, j===0?4:glyphOf(n), S, 1, [b,(j===0?0.375:j+0.25)*dP,sg,0], j===0?0.3:1);
+    }
+    // lower lid: 11 across, 3 rows down
+    for(let j=0;j<3;j++) for(let i=0;i<NBU;i++){
+      const b=-BM+(i+0.5)*dB, S=j===0?mix(skin,ink,0.35):skin;
+      push([sg*E[0],E[1]-FC.RE,E[2]], [0,0,1],[1,0,0], dB*1.04, 0.15*1.06, j===0?4:glyphOf(n), S, 2, [b,(j+0.5)*0.15,sg,0]);
+    }
+    // brow: slivers along the brow line, rows thick
+    const rows=FC.BROW, NBr=8;
+    rows.forEach((th,r)=>{ for(let i=0;i<NBr;i++){ const s=(i+0.5)/NBr;
+      push([sg*(FC.BX+s*FC.BL),FC.BY,1.5],[0,0,1],[1,0,0], FC.BL/NBr*1.08, th, 4, browC, 3, [s,(r-(rows.length-1)/2)*th,sg,cfg.sex==='f'?0.45:0.15], 0.5); } });
+    // lashes: three flicks at the outer end of each upper lid
+    if(FC.lash) for(let k=0;k<3;k++) push([sg*E[0],E[1]+FC.RE,E[2]],[0,0,1],[1,0,0], 0.085, 0.30+0.06*k, 4, ink, 6, [sg*(0.58+0.14*k)*BM, 0.30+0.06*k, sg, k], 0.2);
+  }
+  // lips: the edge row of the upper lip is the ink line of the mouth; the lip rows under/over it
+  { const NL=11, ds=2/NL;
+    const upRows=cfg.sex==='f'?[[0.09,ink],[0.15,lipC]]:[[0.11,ink]], dnRows=cfg.sex==='f'?[[0.15,lipC],[0.13,mix(lipC,skin,0.35)]]:[[0.15,mix(skin,lipC,0.55)]];
+    let off=0; upRows.forEach(([h,col],r)=>{ for(let i=0;i<NL;i++){ const s=-1+(i+0.5)*ds; push([s*FC.MW,FC.MY,4],[0,0,1],[1,0,0], ds, h, col===ink?4:0, col, 4, [s, off+h/2, 0, 0], col===ink?0.3:0.8); } off+=h; });
+    off=0; dnRows.forEach(([h,col],r)=>{ for(let i=0;i<NL;i++){ const s=-1+(i+0.5+(r&1)*0.5)*ds; if(s>1) continue; push([s*FC.MW,FC.MY,4],[0,0,1],[1,0,0], ds, h, 0, col, 5, [s, off+h/2, 0, 0], 0.8); } off+=h; });
+  }
+  const pack=a=>new Float32Array(a);
+  return { n, P:pack(out.P), N:pack(out.N), Tn:pack(out.Tn), S:pack(out.S), A:pack(out.A), F:pack(out.F), E, heads, tails, BM,
+    bed:tsBedGeo(cfg, skin, body, tail, E, FC), ms:performance.now()-t0 };
+}
+// the setting bed: the body as one mesh (rings nose to tip), each vertex the local colour darkened to BED
+function tsBedGeo(cfg, skin, body, tail, E, FC){
+  const NS=36, rings=[];
+  const thJ=Math.acos(TS.ZJ/TS.RZ), NH=30;
+  for(let k=0;k<=NH;k++){ const th=k/NH*thJ; rings.push(TS.RZ*Math.cos(th)); }
+  const NT=46; for(let k=1;k<=NT;k++) rings.push(TS.ZJ-TS.TL*Math.pow(k/NT,1.3));
+  const nv=rings.length*NS, pos=new Float32Array(nv*3), nor=new Float32Array(nv*3), col=new Float32Array(nv*3), idx=[];
+  const sm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+  rings.forEach((z,k)=>{
+    const pr=tsProf(z), ax=pr[0], ay=pr[1], t=Math.max(0,(TS.ZJ-z)/TS.TL);
+    const pf=tsProf(z+0.02), pb=tsProf(z-0.02), dax=(pf[0]-pb[0])/0.04, day=(pf[1]-pb[1])/0.04;
+    let c=z>=TS.ZJ ? skin : (t<0.13 ? body : body.map((v,i)=>v+(tail[i]-v)*sm(0.13,0.3,t)));
+    for(let j=0;j<NS;j++){
+      const a=j/NS*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a), i=k*NS+j;
+      const x=ax*ca, y=TS.CY+ay*sa;
+      pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+      let nn;
+      if(z>=TS_ZF){ nn=k===0?[0,0,1]:tsEN(x,y,z); }
+      else { const da=[-ax*sa, ay*ca, 0], dz=[dax*ca, day*sa, 1];
+        let nx=da[1]*dz[2]-da[2]*dz[1], ny=da[2]*dz[0]-da[0]*dz[2], nz=da[0]*dz[1]-da[1]*dz[0]; const l=Math.hypot(nx,ny,nz)||1; nn=[nx/l,ny/l,nz/l]; }
+      nor[i*3]=nn[0]; nor[i*3+1]=nn[1]; nor[i*3+2]=nn[2];
+      // the sockets round the eyes and the mouth line sit in shadow: the bed is darker there
+      let k2=TS.BED;
+      if(z>0) for(const sg of [-1,1]){ const d=Math.hypot(x-sg*E[0],y-E[1],z-E[2]); if(d<FC.RE+0.25) k2*=0.72; }
+      col[i*3]=c[0]*k2; col[i*3+1]=c[1]*k2; col[i*3+2]=c[2]*k2;
+    }
+  });
+  for(let k=0;k<rings.length-1;k++) for(let j=0;j<NS;j++){ const a=k*NS+j, b=k*NS+(j+1)%NS, c2=(k+1)*NS+j, d=(k+1)*NS+(j+1)%NS; idx.push(a,c2,b, b,c2,d); }
+  return { pos, nor, col, idx };
+}
+
+/* ---- the shaders: the deformation every part shares (GLSL), then each material ---- */
+const TS_GLSL=`
+#define TS_CY ${TS.CY.toFixed(4)}
+#define TS_RX ${TS.RX.toFixed(4)}
+#define TS_RY ${TS.RY.toFixed(4)}
+#define TS_RZ ${TS.RZ.toFixed(4)}
+#define TS_ZJ ${TS.ZJ.toFixed(4)}
+#define TS_NB ${TS.NB.toFixed(4)}
+#define TS_TL ${TS.TL.toFixed(4)}
+#define TS_BM 1.25
+uniform vec4 uSpine[25];
+uniform vec4 uNeck; uniform vec4 uSq; uniform vec4 uHO;
+uniform vec4 uEye; uniform vec4 uFaceA; uniform vec4 uFaceB;
+uniform vec4 uLid; uniform vec4 uLidLo; uniform vec4 uBrow; uniform vec4 uMA; uniform vec4 uMB; uniform vec4 uFx;
+vec3 tsRot(vec3 v, vec3 a, float g){ float c=cos(g), s=sin(g); return v*c+cross(a,v)*s+a*dot(a,v)*(1.0-c); }
+vec3 tsHeadP(vec3 p, float w){ vec3 q=(p-vec3(0.0,TS_CY,0.0))*mix(vec3(1.0),uSq.xyz,w); q=tsRot(q,uNeck.xyz,uNeck.w*w); return vec3(0.0,TS_CY,0.0)+q+uHO.xyz*w; }
+vec3 tsHeadN(vec3 n, float w){ n=normalize(n/mix(vec3(1.0),uSq.xyz,w)); return tsRot(n,uNeck.xyz,uNeck.w*w); }
+vec4 tsSpine(float t){ float f=clamp(t,0.0,1.0)*24.0; float fi=min(floor(f),23.0); int k=int(fi); return mix(uSpine[k],uSpine[k+1],f-fi); }
+float tsZs(float x, float y){ float q=1.0-x*x/(TS_RX*TS_RX)-(y-TS_CY)*(y-TS_CY)/(TS_RY*TS_RY); return TS_RZ*sqrt(max(q,0.0004)); }
+vec3 tsFN(vec3 p){ return normalize(vec3(p.x/(TS_RX*TS_RX),(p.y-TS_CY)/(TS_RY*TS_RY),p.z/(TS_RZ*TS_RZ))); }
+float tsMW(){ return uFaceB.y*(1.0+0.30*uMA.y-0.38*uMB.x); }
+float tsMBase(float s){ return uFaceB.x+((uFaceB.z+uMA.z)*0.40+uMA.w*s*0.24)*s*s; }
+float tsMOpen(float s){ return uMA.x*0.95*pow(max(1.0-s*s,0.0),0.65); }
+float tsYU(float s){ return tsMBase(s)+tsMOpen(s)*(0.18+0.45*uMB.x); }
+float tsYL(float s){ return tsMBase(s)-tsMOpen(s)*(0.82+0.10*uMB.x); }
+// the face field: the tiles round the mouth go with it (jaw below, upper lip above), the cheeks round up with a smile
+vec3 tsFace(vec3 p){
+  float fw=smoothstep(0.30,0.62,p.z/TS_RZ);
+  if(fw<=0.0) return p;
+  float W=tsMW(), sc=clamp(p.x/W,-1.0,1.0), sr=clamp(p.x/uFaceB.y,-1.0,1.0);
+  float yR=uFaceB.x+uFaceB.z*0.40*sr*sr;
+  float bx=max(abs(p.x)-W,0.0), fx=exp(-bx*bx*1.4);
+  float dy= p.y>=yR ? (tsYU(sc)-yR)*exp(-(p.y-yR)*1.5) : (tsYL(sc)-yR)*mix(1.0,0.72,smoothstep(0.0,2.0,yR-p.y));
+  float cx=abs(p.x)-1.55, cy=p.y-(uFaceB.x+0.85); float ck=exp(-(cx*cx*2.0+cy*cy*3.0));
+  dy=dy*fx*fw+ck*fw*(max(uMA.z,0.0)*0.16+uLidLo.z*0.04);
+  float y2=p.y+dy;
+  return vec3(p.x, y2, p.z+(tsZs(p.x,y2)-tsZs(p.x,p.y))*fw+ck*fw*uLidLo.z*0.30);
+}
+vec3 tsDeform(vec3 p){
+  float w=smoothstep(TS_ZJ-TS_NB,TS_ZJ,p.z);
+  vec3 q;
+  if(p.z<TS_ZJ){ vec4 S=tsSpine((TS_ZJ-p.z)/TS_TL); float c=cos(S.w), s=sin(S.w); q=vec3(S.x+p.x*c, p.y+S.y, p.z+S.z+p.x*s); }
+  else q=tsFace(p);
+  return tsHeadP(q,w);
+}
+vec3 tsDeformN(vec3 n, vec3 p){
+  float w=smoothstep(TS_ZJ-TS_NB,TS_ZJ,p.z);
+  if(p.z<TS_ZJ){ float a=tsSpine((TS_ZJ-p.z)/TS_TL).w; float c=cos(a), s=sin(a); n=vec3(n.x*c-n.z*s, n.y, n.x*s+n.z*c); }
+  return tsHeadN(n,w);
+}
+float tsRipple(float z){ if(uFx.x<0.0||uFx.x>3.0) return 0.0; float b=(uFx.y-z)-uFx.x*uFx.w; return uFx.z*exp(-b*b*0.3)*exp(-uFx.x*2.2); }
+void tsEyeFrame(float sg, out vec3 E, out vec3 f, out vec3 r, out vec3 u){
+  E=vec3(sg*uEye.x,uEye.y,uEye.z); f=normalize(vec3(sg*0.22,0.05,1.0)); r=normalize(cross(vec3(0.0,1.0,0.0),f)); u=cross(f,r); }
+float tsLoEdge(float b, float sg){ float lo=sg>0.0?uLidLo.x:uLidLo.y; float k=b/TS_BM; return mix(-0.82,-0.20,lo)+0.18*k*k; }
+float tsUpEdge(float b, float sg){
+  float lid=sg>0.0?uLid.x:uLid.y, tl=sg>0.0?uLid.z:uLid.w, k=b/TS_BM, inner=-k*sg;
+  return mix(0.80-0.32*k*k-tl*0.36*inner, tsLoEdge(b,sg)+0.06, lid); }
+`;
+// the tile: its four corners placed from its tile's frame (laid tiles: through the body's deformation, corner by corner,
+// so a tile bends and breathes with the surface under it; feature tiles: from the face parameters, then the head)
+const TS_TILE_VS=`
+attribute vec4 aP; attribute vec4 aN; attribute vec4 aTn; attribute vec4 aS; attribute vec4 aA; attribute vec4 aF;
+varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying vec3 vB; varying float vGl; varying float vFx;
+`;
+const TS_TILE_MAIN=`
+  vec3 tsPos; vec3 objectNormal;
+  {
+    float reg=aS.w; vec2 q=position.xy; float su=aP.w, sv=aN.w;
+    vec3 P, N, Tg, Bt;
+    if(reg<0.5){
+      N=aN.xyz; Tg=aTn.xyz; Bt=cross(N,Tg);
+      vec3 c=aP.xyz+N*(0.03+aF.y)+Tg*(q.x*su)+Bt*(q.y*sv);
+      tsPos=tsDeform(c);
+      objectNormal=tsDeformN(N,aP.xyz);
+    } else {
+      vec3 E, f, r, u;
+      if(reg<2.5){
+        tsEyeFrame(aF.z,E,f,r,u);
+        float b=aF.x, up=step(reg,1.5);
+        float al=up>0.5 ? tsUpEdge(b,aF.z)+aF.y : tsLoEdge(b,aF.z)-aF.y;
+        float R=uEye.w*(up>0.5?1.075:1.045);
+        vec3 fb=cos(b)*f+sin(b)*r;
+        N=cos(al)*fb+sin(al)*u; P=E+R*N;
+        Tg=normalize(-sin(b)*f+cos(b)*r); Bt=normalize(-sin(al)*fb+cos(al)*u);
+        su=R*max(cos(al),0.25)*aP.w; sv=aN.w*R;
+      } else if(reg<3.5){
+        float sg=aF.z, s=aF.x, lift=sg>0.0?uBrow.x:uBrow.y, tl=sg>0.0?uBrow.z:uBrow.w;
+        float y0=uFaceA.z+lift*0.50+uFaceA.w*sin(3.14159*s)*0.45;
+        float x=sg*(uFaceA.x+s*uFaceA.y), y=y0+tl*(0.5-s)*0.70+aF.y*(1.0-aF.w*s);
+        float x2=sg*(uFaceA.x+(s+0.02)*uFaceA.y), y2=uFaceA.z+lift*0.50+uFaceA.w*sin(3.14159*(s+0.02))*0.45+tl*(0.48-s)*0.70+aF.y*(1.0-aF.w*s);
+        P=vec3(x,y,tsZs(x,y)); N=tsFN(P); vec3 P2=vec3(x2,y2,tsZs(x2,y2));
+        N=normalize(mix(N,normalize(vec3(sg*0.25,0.1,1.0)),0.65)); P+=N*0.16;   // cartoon brows face forward, standing a little proud
+        Tg=normalize(P2+N*0.16-P); Tg=normalize(Tg-N*dot(Tg,N)); Bt=cross(N,Tg);
+        sv=aN.w*(1.0-aF.w*s);
+      } else if(reg<5.5){
+        float s=aF.x, W=tsMW(), th=1.0-0.45*s*s, x=s*W;
+        float y=reg<4.5 ? tsYU(s)+aF.y*th : tsYL(s)-aF.y*th;
+        float s2=s+0.02, y2=reg<4.5 ? tsYU(s2)+aF.y*(1.0-0.45*s2*s2) : tsYL(s2)-aF.y*(1.0-0.45*s2*s2);
+        P=vec3(x,y,tsZs(x,y)); N=tsFN(P); P+=N*(0.055+uFaceB.w);
+        Tg=normalize(vec3(s2*W,y2,tsZs(s2*W,y2))-P+N*(0.055+uFaceB.w)); Tg=normalize(Tg-N*dot(Tg,N)); Bt=cross(N,Tg);
+        su=aP.w*W*1.02; sv=aN.w*th;
+      } else {
+        tsEyeFrame(aF.z,E,f,r,u);
+        float b=aF.x, al=tsUpEdge(b,aF.z)-0.02, R=uEye.w*1.075;
+        vec3 fb=cos(b)*f+sin(b)*r, d=cos(al)*fb+sin(al)*u;
+        vec3 o=normalize(d*0.55+u*0.62+r*aF.z*0.55);
+        Tg=normalize(-sin(b)*f+cos(b)*r); Bt=o; N=normalize(cross(Tg,Bt)); if(dot(N,d)<0.0){ N=-N; Tg=-Tg; }
+        P=E+R*d+o*(aF.y*0.5);
+      }
+      vec3 c=P+N*0.012+Tg*(q.x*su)+Bt*(q.y*sv);
+      tsPos=tsHeadP(c,1.0); objectNormal=tsHeadN(N,1.0);
+    }
+    float rp=tsRipple(aP.z); tsPos+=objectNormal*rp*(reg<0.5?1.0:0.3); vFx=rp;
+    vTUv=q; vSz=vec2(su,sv); vGl=aTn.w; vS=aS.rgb; vA=aA.rgb;
+    float cov = vGl<0.5?0.181 : vGl<1.5?0.204 : vGl<2.5?0.18 : vGl<3.5?0.144 : 0.0;
+    vB=clamp((vS-cov*vA)/max(1.0-cov,0.01),0.0,1.0);
+  }
+`;
+// the composition: a rounded face in its joint, the accent shape on the base; the mean of it all is the tile's colour.
+// It fades with distance (uMos.xy) and with the tile's size on screen, so nothing sub-pixel ever changes value
+const TS_TILE_FS_PARS=`
+uniform vec4 uMos;
+varying vec2 vTUv; varying vec2 vSz; varying vec3 vS; varying vec3 vA; varying vec3 vB; varying float vGl; varying float vFx;
+`;
+const TS_TILE_FS=`
+  vec3 tsCol;
+  {
+    vec2 sz=vSz, g=vTUv*sz;
+    float jw=0.07*min(sz.x,sz.y);
+    vec2 hf=0.5*sz-jw; float rr=0.22*min(hf.x,hf.y);
+    vec2 qd=abs(g)-hf+rr; float dF=length(max(qd,0.0))+min(max(qd.x,qd.y),0.0)-rr;
+    float aa=max(fwidth(dF),1e-5), face=1.0-smoothstep(-aa,aa,dF);
+    float px=1.0/max(max(fwidth(vTUv.x),fwidth(vTUv.y)),1e-5);
+    float pxs=px*min(sz.x,sz.y)/max(max(sz.x,sz.y),1e-4);
+    float kJ=smoothstep(3.5,8.0,pxs);
+    float kP=smoothstep(7.0,18.0,pxs)*(1.0-smoothstep(uMos.x,uMos.y,length(vViewPosition)));
+    vec2 h=g/(2.0*max(min(hf.x,hf.y),1e-4));
+    float dG=1.0;
+    if(vGl<0.5) dG=length(h)-0.24;
+    else if(vGl<1.5) dG=abs(length(h)-0.25)-0.065;
+    else if(vGl<2.5) dG=(abs(h.x)+abs(h.y)-0.30)*0.7071;
+    else if(vGl<3.5) dG=max(abs(h.x),abs(h.y))-0.19;
+    float ag=max(fwidth(dG),1e-5), acc=(1.0-smoothstep(-ag,ag,dG))*step(vGl,3.5);
+    vec3 faceCol=mix(vS, mix(vB,vA,acc), kP);
+    float cf=clamp((4.0*hf.x*hf.y)/max(sz.x*sz.y,1e-4),0.3,1.0);
+    vec3 paid=min(faceCol*(1.0-(1.0-cf)*uMos.z)/cf, vec3(1.0));
+    tsCol=mix(faceCol, mix(vS*uMos.z, paid, face), kJ);
+    diffuseColor.rgb*=tsCol;
+  }
+`;
+function tsPatch(mat, U, key, fn){
+  mat.onBeforeCompile=sh=>{ for(const k in U) sh.uniforms[k]=U[k]; fn(sh); };
+  mat.customProgramCacheKey=()=>key;
+  return mat;
+}
+function tsTileMat(U){
+  const m=new T.MeshToonMaterial({ color:new T.Color(FK_SKIN_K,FK_SKIN_K,FK_SKIN_K), gradientMap:SC_GRAD });
+  m.extensions={derivatives:true};
+  return tsPatch(m, U, 'tessTpl-tile-1', sh=>{
+    sh.vertexShader=TS_GLSL+TS_TILE_VS+sh.vertexShader
+      .replace('#include <beginnormal_vertex>', TS_TILE_MAIN)
+      .replace('#include <begin_vertex>', 'vec3 transformed=tsPos;');
+    sh.fragmentShader=TS_TILE_FS_PARS+sh.fragmentShader
+      .replace('#include <color_fragment>', '#include <color_fragment>\n'+TS_TILE_FS)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance+=tsCol*uMos.w+vS*vFx*1.4;');
+  });
+}
+function tsBedMat(U){
+  const m=new T.MeshToonMaterial({ color:new T.Color(FK_SKIN_K,FK_SKIN_K,FK_SKIN_K), gradientMap:SC_GRAD, vertexColors:true });
+  return tsPatch(m, U, 'tessTpl-bed-1', sh=>{
+    sh.vertexShader=TS_GLSL+sh.vertexShader
+      .replace('#include <beginnormal_vertex>', 'vec3 tsPos=tsDeform(position); vec3 objectNormal=tsDeformN(normal,position);')
+      .replace('#include <begin_vertex>', 'vec3 transformed=tsPos;');
+  });
+}
+function tsInkMat(U){
+  const m=new T.MeshBasicMaterial({ color:0x1c1418, side:T.BackSide });
+  return tsPatch(m, U, 'tessTpl-ink-1', sh=>{
+    sh.uniforms.uInk=U.uInk;
+    sh.vertexShader=TS_GLSL+'uniform float uInk;\n'+sh.vertexShader
+      .replace('#include <begin_vertex>', 'vec3 transformed=tsDeform(position)+tsDeformN(normal,position)*uInk;');
+  });
+}
+// the iris: a rose window of tesserae (two tones round a dark limbal ring), the pupil (a four-point star or round, it
+// dilates and spins), and the sparkle of the catch-light. Drawn on a cap that turns about the eye's centre with the gaze.
+const TS_IA=0.52;
+function tsLensMat(U){
+  const m=new T.MeshBasicMaterial({ color:0xffffff });
+  m.extensions={derivatives:true};
+  return tsPatch(m, U, 'tessTpl-lens-1', sh=>{
+    sh.vertexShader=TS_GLSL+'attribute vec3 aPol;\nuniform vec4 uGaze;\nvarying vec2 vD;\n'+sh.vertexShader
+      .replace('#include <begin_vertex>', `
+        float sg=aPol.z; vec3 E,f,r,u; tsEyeFrame(sg,E,f,r,u);
+        vec2 gz=sg>0.0?uGaze.xy:uGaze.zw;
+        vec3 gd=normalize(f+r*tan(gz.x)+u*tan(gz.y));
+        vec3 rg=normalize(cross(vec3(0.0,1.0,0.0),gd)), ug=cross(gd,rg);
+        float a=aPol.x*${TS_IA.toFixed(3)};
+        vec3 transformed=E+uEye.w*1.012*(cos(a)*gd+sin(a)*(cos(aPol.y)*rg+sin(aPol.y)*ug));
+        vD=aPol.x*vec2(cos(aPol.y),sin(aPol.y));`);
+    sh.fragmentShader='uniform vec3 uIrisA; uniform vec3 uIrisB; uniform vec4 uPup;\nvarying vec2 vD;\n'+sh.fragmentShader
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `vec4 diffuseColor = vec4( diffuse, opacity );
+      {
+        vec2 d=vD; float r=length(d), aw=max(fwidth(r),1e-4)*1.2;
+        float an=atan(d.y,d.x), seg=6.2831853/12.0, sf=mod(an+6.2831853,seg)/seg;
+        float k=mod(floor((an+6.2831853)/seg),2.0);
+        vec3 col=mix(uIrisA,uIrisB,k)*(0.78+0.30*smoothstep(0.35,0.85,r));
+        float join=smoothstep(0.0,0.06,min(sf,1.0-sf))*smoothstep(0.30,0.36,abs(r-0.62)+0.3);
+        col=mix(uIrisA*0.45,col,join);
+        col=mix(col,vec3(0.012,0.008,0.012),smoothstep(0.84-aw,0.84+aw,r));
+        float ps=uPup.x, sp=uPup.y, ca=cos(sp), sa=sin(sp); vec2 e=vec2(ca*d.x-sa*d.y, sa*d.x+ca*d.y);
+        float pa=atan(e.y,e.x), star=uPup.z>0.5 ? ps*mix(0.46,1.0,pow(abs(cos(2.0*pa)),6.0)) : ps*0.62;
+        float rs=length(e);
+        col=mix(col,vec3(0.004,0.003,0.006),1.0-smoothstep(star-aw,star+aw,rs));
+        vec2 c1=d-vec2(-0.30,0.34); float s1=abs(c1.x)*abs(c1.y)*60.0+length(c1)*5.2;
+        col=mix(col,vec3(1.0),1.0-smoothstep(0.85,1.15,s1));
+        col=mix(col,vec3(0.85),1.0-smoothstep(0.075-aw,0.075+aw,length(d-vec2(0.30,-0.28))));
+        diffuseColor.rgb=col;
+      }`);
+  });
+}
+// the mouth's inside: a cavity between the two lip curves, teeth along the top (and the bottom when gritted), a tongue
+function tsMouthMat(U){
+  const m=new T.MeshBasicMaterial({ color:0xffffff });
+  m.extensions={derivatives:true};
+  return tsPatch(m, U, 'tessTpl-mouth-1', sh=>{
+    sh.vertexShader=TS_GLSL+'attribute vec2 aMv;\nvarying vec3 vMv;\n'+sh.vertexShader
+      .replace('#include <begin_vertex>', `
+        float s=aMv.x, W=tsMW(), x=s*W, yu=tsYU(s), yl=tsYL(s), y=mix(yu,yl,aMv.y);
+        vec3 transformed=vec3(x,y,tsZs(x,y)+0.03);
+        vMv=vec3(x, yu-y, y-yl);`);
+    sh.fragmentShader='varying vec3 vMv;\nuniform vec4 uMB; uniform vec4 uMA;\n'+sh.fragmentShader
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `vec4 diffuseColor = vec4( diffuse, opacity );
+      {
+        float x=vMv.x, du=vMv.y, dl=vMv.z, aw=max(fwidth(du),1e-4);
+        vec3 col=mix(vec3(0.035,0.004,0.007),vec3(0.13,0.012,0.02),smoothstep(0.0,0.4,dl));
+        float tg=uMB.w*(1.0-smoothstep(0.9,1.0,length(vec2(x/0.55,(dl-0.05)/0.26))));
+        col=mix(col,vec3(0.62,0.11,0.14),tg);
+        float tu=1.0-smoothstep(0.20*uMB.y-aw,0.20*uMB.y+aw,du), tl=1.0-smoothstep(0.15*uMB.z-aw,0.15*uMB.z+aw,dl);
+        float gap=smoothstep(0.0,0.035,abs(fract(x/0.21+0.5)-0.5)*0.21);
+        vec3 tooth=vec3(0.80,0.78,0.70)*mix(0.55,1.0,gap);
+        col=mix(col,tooth,max(tu,tl));
+        diffuseColor.rgb=col;
+      }`);
+  });
+}
+
+// geometry shared by every build (it is only ever re-posed in the shaders)
+let _tsGeo=null;
+function tsGeos(){
+  if(_tsGeo) return _tsGeo;
+  // the lens: a polar disc per eye; position holds a rest point (for framing and bounds), aPol the disc coordinates
+  const NRg=7, NSg=28, pol=[], ps=[], ix=[];
+  for(const sg of [1,-1]){ const o=pol.length/3;
+    for(let i=0;i<=NRg;i++) for(let j=0;j<=NSg;j++){ pol.push(i/NRg, j/NSg*Math.PI*2, sg); ps.push(sg*1.3, 4.0, 4.0); }
+    for(let i=0;i<NRg;i++) for(let j=0;j<NSg;j++){ const a=o+i*(NSg+1)+j, b=a+1, c=a+NSg+1, d=c+1; ix.push(a,c,b, b,c,d); } }
+  const lens=new T.BufferGeometry(); lens.setAttribute('position',new T.Float32BufferAttribute(ps,3)); lens.setAttribute('aPol',new T.Float32BufferAttribute(pol,3)); lens.setIndex(ix);
+  lens.boundingSphere=new T.Sphere(new T.Vector3(0,4,3.8),3.4);
+  // the mouth: a grid across (s) and between the lips (v)
+  const NMs=18, NMv=5, mv=[], mp=[], mi=[];
+  for(let j=0;j<=NMv;j++) for(let i=0;i<=NMs;i++){ mv.push(-1+2*i/NMs, j/NMv); mp.push((-1+2*i/NMs)*1.0, 2.2, 4.1); }
+  for(let j=0;j<NMv;j++) for(let i=0;i<NMs;i++){ const a=j*(NMs+1)+i, b=a+1, c=a+NMs+1, d=c+1; mi.push(a,c,b, b,c,d); }
+  const mouth=new T.BufferGeometry(); mouth.setAttribute('position',new T.Float32BufferAttribute(mp,3)); mouth.setAttribute('aMv',new T.Float32BufferAttribute(mv,2)); mouth.setIndex(mi);
+  mouth.boundingSphere=new T.Sphere(new T.Vector3(0,2.2,4),2.4);
+  return (_tsGeo={lens, mouth});
+}
+
+/* ---- the expressions: targets for every face parameter. lid 0 open .. 1 shut (below 0: wide); lo lower lid up;
+ *      lt lid tilt (+ inner corner down: anger); bl brow lift; bt brow tilt (+ inner end up: worry); op/wd/sm/as/pk mouth
+ *      open, wide, smile (below 0: frown), asym (+: the racer's left corner up), pucker; tu/tl teeth top/bottom; tg tongue;
+ *      ck cheek puff; pu pupil size; sp pupil spin (rad/s); gx/gy gaze; hp head pitch (+ chin down); hr head roll ---- */
+const TS_KEYS=['lidL','lidR','loL','loR','ltL','ltR','blL','blR','btL','btR','op','wd','sm','as','pk','tu','tl','tg','ck','pu','gx','gy','hp','hr'];
+const TS_REST={ lidL:0.05,lidR:0.05, loL:0.1,loR:0.1, ltL:0,ltR:0, blL:0,blR:0, btL:0,btR:0, op:0,wd:0,sm:0,as:0,pk:0, tu:0,tl:0,tg:0, ck:0, pu:0.42, gx:0,gy:0, hp:0,hr:0 };
+const TS_EXPR={
+  rest:  {},
+  pass:  { lidL:0.12,lidR:0.55, loR:0.45, blL:0.55,blR:-0.2, btR:-0.2, op:0.32, wd:0.25, sm:0.75, as:0.5, tu:0.9, gx:-0.32, hr:0.10, sp:0 },   // cheeky: the grin and a half wink back at them
+  passed:{ lidL:0.42,lidR:0.30, loL:0.35,loR:0.25, ltL:0.25, blL:-0.35,blR:0.30, btL:-0.3,btR:0.35, sm:-0.18, as:-0.3, wd:-0.25, pk:0.25, gx:0.36, hp:0.06 },   // suspicious: narrowed, one brow up, mouth pursed to one side
+  hit:   { lidL:-0.55,lidR:-0.55, loL:0,loR:0, blL:0.85,blR:0.85, btL:0.25,btR:0.25, op:0.85, pk:0.75, sm:-0.1, pu:0.24, hp:-0.10 },   // surprised: eyes wide, brows up, an O
+  angry: { lidL:0.32,lidR:0.32, loL:0.32,loR:0.32, ltL:0.75,ltR:0.75, blL:-0.55,blR:-0.55, btL:-0.9,btR:-0.9, op:0.38, wd:0.45, sm:-0.6, tu:1,tl:1, ck:0.4, pu:0.34, hp:0.12 },
+  boost: { lidL:0.30,lidR:0.30, loL:0.25,loR:0.25, ltL:0.45,ltR:0.45, blL:-0.30,blR:-0.30, btL:-0.5,btR:-0.5, op:0.16, wd:0.35, sm:0.28, tu:1,tl:1, hp:0.10 },   // determined: gritted grin
+  fire:  { lidL:0.72,lidR:0.72, loL:0.65,loR:0.65, blL:0.40,blR:0.40, btL:0.25,btR:0.25, op:0.88, wd:0.35, sm:0.95, tu:1, tg:0.8, ck:0.5, hp:-0.14 },   // laughing
+  tired: { lidL:0.58,lidR:0.62, loL:0.05,loR:0.05, ltL:-0.35,ltR:-0.35, blL:-0.12,blR:-0.12, btL:0.65,btR:0.65, op:0.40, sm:-0.32, pk:0.25, tg:0.3, pu:0.40, gy:-0.12, hp:0.18, hr:0.06 },   // crawling, panting
+  win:   { lidL:0.52,lidR:0.52, loL:0.55,loR:0.55, blL:0.55,blR:0.55, btL:0.2,btR:0.2, op:0.72, wd:0.40, sm:1.0, tu:1, tg:0.6, ck:0.55, hp:-0.16 },   // victorious
+  lose:  { lidL:0.40,lidR:0.40, loL:0.05,loR:0.05, ltL:-0.55,ltR:-0.55, blL:0.10,blR:0.10, btL:0.95,btR:0.95, op:0.08, sm:-0.85, wd:-0.1, gy:-0.2, hp:0.22 },   // sad
+  drift: { lidL:0.36,lidR:0.36, loL:0.30,loR:0.30, ltL:0.45,ltR:0.45, blL:-0.30,blR:-0.30, btL:-0.55,btR:-0.55, op:0.20, wd:0.60, sm:0.06, tu:1,tl:1, hp:0.08 },   // gritted teeth through the slide
+  dizzy: { lidL:0.18,lidR:0.34, loL:0.1,loR:0.2, blL:0.45,blR:-0.10, btL:0.4,btR:-0.2, op:0.34, sm:-0.2, as:0.45, pk:0.2, tg:0.5, pu:0.36, hr:0.12 },   // spun out: the pupils spin
+  wink:  { lidL:0.06,lidR:1.0, loR:0.45, blL:0.35,blR:-0.30, sm:0.80, as:0.45, op:0.12, wd:0.15, tu:0.5, hr:0.08 },
+  woo:   { lidL:-0.30,lidR:-0.30, blL:0.95,blR:0.95, btL:0.15,btR:0.15, op:1.0, pk:0.38, sm:0.35, tu:0.7, tg:0.8, ck:0.3, hp:-0.20 },
+};
+const TS_LIST=['rest','pass','passed','hit','angry','boost','fire','tired','win','lose','drift','dizzy','wink','woo'];
+const TS_SPIN={ dizzy:9, hit:0 };   // pupils spinning dizzily
+
+function makeTessTemplate(opts){
+  opts=Object.assign({ sex:'m', eye:'star', scale:1 }, opts||{});
+  const sex=opts.sex==='f'?'f':'m', FC=TS_FACE[sex];
+  const cfg={ sex, skin:opts.skin||FC.skin, body:opts.body||FC.body, tail:opts.tail||FC.tail, brow:opts.brow||FC.brow, lip:opts.lip||FC.lip };
+  const key=JSON.stringify(cfg), L=TS_LAY[key]||(TS_LAY[key]=tsLayout(cfg));
+  const g=new T.Group(), ud=g.userData, rig=bodyPart(new T.Group()); rig.name='tess-rig'; g.add(rig);
+  rig.scale.setScalar(opts.scale||1);
+  const v4=(x,y,z,w)=>({value:new T.Vector4(x,y,z,w)});
+  const irisLin=tsHex(opts.iris||FC.iris), irisAcc=tsEqui(tsRgb(tsHsl(...irisLin.map(tsL2S))[0]+0.12, 0.85, tsHsl(...irisLin.map(tsL2S))[2]).map(tsS2L), tsY(...irisLin));
+  const U={
+    uSpine:{value:new Float32Array(100)}, uNeck:v4(0,1,0,0), uSq:v4(1,1,1,0), uHO:v4(0,0,0,0),
+    uEye:v4(L.E[0],L.E[1],L.E[2],FC.RE), uFaceA:v4(FC.BX,FC.BL,FC.BY,FC.ARCH), uFaceB:v4(FC.MY,FC.MW,FC.RS,FC.LIPL),
+    uLid:v4(0,0,0,0), uLidLo:v4(0,0,0,0), uBrow:v4(0,0,0,0), uMA:v4(0,0,0,0), uMB:v4(0,0,0,0), uFx:v4(9,0,0,0),
+    uMos:v4(28,50,TS.BED,FK_SKIN_E), uGaze:v4(0,0,0,0), uPup:v4(0.42,0,opts.eye==='round'?0:1,0),
+    uIrisA:{value:new T.Vector3(...irisLin)}, uIrisB:{value:new T.Vector3(...irisAcc)}, uInk:{value:0.10},
+  };
+  // the tiles: one instanced draw
+  const tg=new T.InstancedBufferGeometry();
+  tg.setIndex([0,1,2, 0,2,3]);
+  tg.setAttribute('position', new T.Float32BufferAttribute([-0.5,-0.5,0, 0.5,-0.5,0, 0.5,0.5,0, -0.5,0.5,0],3));
+  const IA=(a,k)=>new T.InstancedBufferAttribute(a,k);
+  tg.setAttribute('aP',IA(L.P,4)); tg.setAttribute('aN',IA(L.N,4)); tg.setAttribute('aTn',IA(L.Tn,4));
+  tg.setAttribute('aS',IA(L.S,4)); tg.setAttribute('aA',IA(L.A,4)); tg.setAttribute('aF',IA(L.F,4));
+  tg.instanceCount=L.n;
+  tg.boundingSphere=new T.Sphere(new T.Vector3(0,TS.CY,-8),21);
+  const tiles=new T.Mesh(tg, tsTileMat(U)); tiles.name='tess-tiles'; rig.add(tiles);
+  // the setting bed and the ink course: one surface, two draws
+  const bg=new T.BufferGeometry(), B=L.bed;
+  bg.setAttribute('position',new T.BufferAttribute(B.pos,3)); bg.setAttribute('normal',new T.BufferAttribute(B.nor,3)); bg.setAttribute('color',new T.BufferAttribute(B.col,3)); bg.setIndex(B.idx);
+  bg.boundingSphere=tg.boundingSphere.clone();
+  const bed=new T.Mesh(bg, tsBedMat(U)); bed.name='tess-bed'; rig.add(bed);
+  const inkM=new T.Mesh(bg, tsInkMat(U)); inkM.name='tess-ink'; rig.add(inkM);
+  // the head's own parts ride headRig, whose matrix is the head's transform (the same one the shaders apply)
+  const head=new T.Group(); head.name='tess-head'; head.matrixAutoUpdate=false; rig.add(head);
+  { const sg=new T.SphereGeometry(1,26,18), parts=[];
+    for(const s of [1,-1]){ const q=sg.clone(); q.scale(FC.RE,FC.RE,FC.RE); q.translate(s*L.E[0],L.E[1],L.E[2]); parts.push(q); }
+    const eg=antonioMerge(parts); sg.dispose(); parts.forEach(p=>p.dispose());
+    const sclera=new T.Mesh(eg, new T.MeshToonMaterial({ color:new T.Color(0.62,0.62,0.6), emissive:new T.Color(0.30,0.30,0.29), gradientMap:SC_GRAD }));
+    sclera.name='tess-eyes'; head.add(sclera); }
+  const GE=tsGeos();
+  const lens=new T.Mesh(GE.lens, tsLensMat(U)); lens.name='tess-iris'; head.add(lens);
+  const mouth=new T.Mesh(GE.mouth, tsMouthMat(U)); mouth.name='tess-mouth'; head.add(mouth);
+  // the halo and the boost flames, as every racer has
+  const glow=glowSprite(new T.Color(cfg.body).lerp(new T.Color(0xffffff),0.35).getHex(),13); glow.position.set(0,3.4,0.5); g.add(glow); ud.glow=glow;
+  const fl1=glowSprite(0xffd27a,0.001); fl1.position.set(0,3.2,TS.ZT+1.5); const fl2=glowSprite(0xff7a3c,0.001); fl2.position.set(0,3.2,TS.ZT-1.5);
+  g.add(fl1); g.add(fl2); ud.flame=[fl1,fl2];
+  // the contract with the per-frame pipeline: the boost flush lands on the tiles' emissive; mouth / eyes / pupils are
+  // stand-ins the generic face code may scale (this rig reads the race itself); tailMesh is a one-point marker at the tip
+  ud.head=tiles; ud.baseEmissive=tiles.material.emissive.clone();
+  const mo=new T.Group(); mo.position.set(0,FC.MY,4); rig.add(mo); ud.mouth=mo; ud.mouthBase=mo.scale.clone();
+  const tipG=new T.BufferGeometry(); tipG.setAttribute('position',new T.BufferAttribute(new Float32Array(3),3));
+  const tip=new T.Points(tipG, new T.PointsMaterial({size:0.01})); tip.visible=false; tip.frustumCulled=false; rig.add(tip); ud.tailMesh=tip;
+  // sockets: rest position and rest frame (+Y out of the surface, +Z along the body toward the nose); `head` sockets ride
+  // the head's transform, the others the spine
+  const SK={
+    crown:   { p:[0, TS.CY+TS.RY, -0.2], up:[0,1,0], fw:[0,0,1], head:true },
+    hair:    { p:[0, TS.CY+TS.RY*0.80, -TS.RZ*0.48], up:[0,0.8,-0.6], fw:[0,0.6,0.8], head:true },
+    face:    { p:[0, FC.MY+0.95, tsZs(0,FC.MY+0.95)], up:[0,0,1], fw:[0,1,0], head:true },
+    brow:    { p:[0, FC.BY+0.25, tsZs(0,FC.BY+0.25)], up:tsEN(0,FC.BY+0.25,tsZs(0,FC.BY+0.25)), fw:[0,1,0], head:true },
+    neck:    { p:[0, TS.CY+tsProf(TS.ZJ)[1], TS.ZJ], up:[0,1,0], fw:[0,0,1], z:TS.ZJ },
+    back:    { p:[0, TS.CY+tsProf(TS.ZJ-1.6)[1], TS.ZJ-1.6], up:[0,1,0], fw:[0,0,1], z:TS.ZJ-1.6 },
+    tailRoot:{ p:[0, TS.CY, TS.ZJ-2.6], up:[0,1,0], fw:[0,0,1], z:TS.ZJ-2.6 },
+    tailTip: { p:[0, TS.CY, TS.ZT], up:[0,1,0], fw:[0,0,-1], z:TS.ZT },
+  };
+  const sockets={};
+  for(const k in SK){ const s=SK[k], o=bodyPart(new T.Object3D()); o.name='socket:'+k; rig.add(o); sockets[k]=o;
+    const up=new T.Vector3(...s.up).normalize(), fw=new T.Vector3(...s.fw).normalize(), x=new T.Vector3().crossVectors(up,fw).normalize();
+    s.q0=new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(x, up, new T.Vector3().crossVectors(x,up))); s.o=o; }
+  ud.sockets=sockets;
+  // the rig's state
+  const face={}; for(const k of TS_KEYS) face[k]={x:TS_REST[k], v:0};
+  const K={ U, L, FC, cfg, rig, head, face, sk:SK, tip, eye:opts.eye, hq:new T.Quaternion(), off:new T.Vector3(),
+    mo:{ bend:0, bendV:0, str:0, strV:0, sq:1, sqV:0, st:1, stV:0, air:0, airV:0, droop:0, flail:0, hover:1, tl:-1, amp:2.4, ph:0, lastSpd:0, wasAir:false, wasBoost:false, wasSpin:false, head0:null, hy:0 },
+    st:{ place:null, cand:null, candT:0, react:0, ev:null, evT:0, spin:false, spin0:0, angryT:0, fireT:0, item:null, slow:0, celeb:false, sacc:[0,0], saccT:0, spinA:0, lash:false },
+    fx:{ t:9, z0:TS.RZ, amp:0, sp:20 }, spineX:new Float32Array(25), spineY:new Float32Array(25), spineZ:new Float32Array(25), spineA:new Float32Array(25),
+    _v:new T.Vector3(), _q:new T.Quaternion(), _q2:new T.Quaternion(), _m:new T.Matrix4(), _s:new T.Vector3() };
+  ud.tess=K; ud.tessTail=true;
+  ud.expr={ list:TS_LIST.slice(), cur:'rest', hold:0, forced:null,
+    set(name, hold, instant){ if(!name){ this.forced=null; this.hold=0; return; } if(!TS_EXPR[name]) return; this.forced=name; this.hold=hold==null?8:hold; if(instant) tsSnap(K, name); } };
+  ud.motionProbes=[['face',sockets.face],['crown',sockets.crown],['tailRoot',sockets.tailRoot],['tailTip2',sockets.tailTip],['back',sockets.back]];
+  ud.tick=tickTessTpl;
+  tiles.renderOrder=-1; tiles.onBeforeRender=()=>tsLate(K, ud.neck, true);   // (drawn first among the racer's parts, so the late turn reaches them all)
+  ud.tessBuildMs=L.ms;
+  tessWiggle(g, 0, 0, 0, null);
+  tickTessTpl(g, null, 0);
+  return g;
+}
+// snap the face to an expression (sheets and poses want it at once, not blending in)
+function tsSnap(K, name){ const E=TS_EXPR[name]||{}; for(const k of TS_KEYS){ K.face[k].x=E[k]!=null?E[k]:TS_REST[k]; K.face[k].v=0; } }
+
+// called from wiggleTail: the game's own spine (Juan's swim, the lash, the road lift) sampled at 25 points, plus this
+// rig's secondary motion, uploaded for the shaders. _tox/_toy/_wlz are left at the tip, as the whip's crack expects.
+function tessWiggle(g, phase, amp, lift, st){
+  const K=g.userData.tess; if(!K) return;
+  const M=K.mo, A=K.U.uSpine.value, X=K.spineX, Y=K.spineY, Z=K.spineZ;
+  _WL.s=(TS.ZJ-TS.ZT+0.9)/WL_LEN;
+  const a=amp*(1-0.55*M.str)*(1+0.6*M.flail)*(1-0.35*M.droop), lag=8.175*TS.TL/21*(1+0.15*M.flail);
+  K.mo.amp=amp; K.mo.ph=phase;
+  for(let i=0;i<=24;i++){ const t=i/24;
+    tailOffset(t*lag, t, phase, a, st);
+    X[i]=_tox+M.bend*4.2*t*t; Y[i]=_toy+(lift||0)*t*t-M.droop*2.2*t*t+M.air*2.6*t*t*t-M.str*0.4*t*t; Z[i]=_wlz+M.str*0.9*t; }
+  for(let i=0;i<=24;i++){ const i0=Math.max(0,i-1), i1=Math.min(24,i+1), dz=-(i1-i0)/24*TS.TL+(Z[i1]-Z[i0]);
+    A[i*4]=X[i]; A[i*4+1]=Y[i]; A[i*4+2]=Z[i]; A[i*4+3]=Math.atan2(X[i1]-X[i0], -dz); }
+  _tox=X[24]; _toy=Y[24]-(lift||0); _wlz=Z[24];
+}
+
+const _tsV=new T.Vector3(), _tsQ=new T.Quaternion(), _tsE=new T.Euler(), _tsAx=new T.Vector3();
+function tickTessTpl(o, r, now){
+  const ud=o.userData, K=ud.tess; if(!K) return;
+  const t=now||0, dt=Math.min(0.05, Math.max(0.0, K.tl>=0 ? t-K.tl : 0.016)); K.tl=t;
+  const M=K.mo, S=K.st, F=K.face, U=K.U, E=ud.expr;
+  const spd=r?Math.abs(r.spd||0):0, racing=!!(r && typeof state!=='undefined' && state==='race' && !r.finished);
+  const L=r&&r._lk;
+  // ---- what the race says: the acted expression (an actor, not a weathervane: places must hold before they count)
+  const ev=(n,d)=>{ S.ev=n; S.evT=t+d; };
+  let spinning=false, boosting=false, air=false, lash=null;
+  if(r){
+    spinning=(r.spinT||0)>0; boosting=(r.boostT||0)>0; air=!!r.air; lash=(r._wl && r._wl.t>=0)?r._wl:null;
+    if(S.place==null){ S.place=r.place; S.cand=r.place; S.candT=t; }
+    if(r.place!==S.cand){ S.cand=r.place; S.candT=t; }
+    if(racing && S.cand!==S.place && t-S.candT>0.6){ if(t>S.react){ ev(S.cand<S.place?'pass':'passed', S.cand<S.place?1.2:1.5); S.react=t+3; } S.place=S.cand; }
+    if(spinning && !S.spin){ S.spin0=t; M.sqV-=2.8; K.fx={t:0, z0:TS.RZ, amp:0.38, sp:24}; }
+    if(!spinning && S.spin) S.angryT=t+2.2;
+    S.spin=spinning;
+    if(S.item && !r.item && !(r._roll>0)) S.fireT=t+0.95; S.item=r.item;
+    S.slow = racing && spd<35 ? S.slow+dt : 0;
+    if(boosting && !M.wasBoost){ M.stV+=2.4; K.fx={t:0, z0:TS.ZJ, amp:0.10, sp:30}; }
+    M.wasBoost=boosting;
+    if(M.wasAir && !air) M.sqV-=Math.min(3.2, 1.6+Math.abs(r.vy||0)*0.04);
+    M.wasAir=air;
+    if(lash && !S.lash) M.stV+=1.2; S.lash=!!lash;
+    if(racing && M.lastSpd<12 && spd>=12 && t-(M.launchT||-9)>4){ M.stV+=1.8; M.launchT=t; }
+    M.lastSpd=spd;
+  }
+  let want='rest';
+  const cel=r && (r.celebT||0)>0;
+  if(cel){ const q=6-r.celebT; want=q<1.4?'win':q<2.6?'wink':q<3.8?'woo':'win'; }
+  else if(r && r.finished) want=r.place===1?'win':r.place<=3?'fire':'lose';
+  else if(spinning) want=t-S.spin0<0.45?'hit':'dizzy';
+  else if(t<S.angryT) want='angry';
+  else if(t<S.fireT) want='fire';
+  else if(lash) want=lash.t<0.2?'angry':'pass';
+  else if(boosting) want='boost';
+  else if(S.ev && t<S.evT) want=S.ev;
+  else if(r && r.drift===1) want='drift';
+  else if(S.slow>1.5) want='tired';
+  if(E.forced){ want=E.forced; if(E.hold>0){ E.hold-=dt; if(E.hold<=0) E.forced=null; } }
+  E.cur=want;
+  // ---- the face: every parameter a damped spring toward the expression (+ the social look's mood when resting)
+  const X=TS_EXPR[want]||{};
+  for(const key of TS_KEYS){
+    let tg=X[key]!=null?X[key]:TS_REST[key];
+    if(want==='rest' && L && !E.forced){
+      if(key==='sm') tg+=0.45*L.sm-0.4*L.gr-0.15*L.w; else if(key==='as') tg+=0.3*L.sm;
+      else if(key==='lidL'||key==='lidR') tg+=0.18*L.sm+0.22*L.d+0.15*L.gr-0.35*L.w-0.15*L.c;
+      else if(key==='blL'||key==='blR') tg+=0.35*L.w+0.3*L.c-0.3*L.gr-0.2*L.d+(key==='blL'?0.2*L.sm:0);
+      else if(key==='btL'||key==='btR') tg+=-0.4*L.gr-0.3*L.d+0.2*L.w;
+    }
+    const s=F[key], w0=(key[0]==='l'&&key[1]==='i')?24:(key==='hp'||key==='hr')?9:15, ze=0.72;
+    s.v+=(w0*w0*(tg-s.x)-2*ze*w0*s.v)*dt; s.x+=s.v*dt;
+  }
+  // blinks and winks (the social look's), saccades
+  let blink=0; if(L && !E.forced) blink=Math.max(0,(1-(L.blink==null?1:L.blink))/0.92);
+  const wink=L && L.wk>0 && !E.forced && want==='rest';
+  if(t>S.saccT){ S.saccT=t+0.35+tsHash(Math.floor(t*7),5)*1.8; S.sacc=[(tsHash(Math.floor(t*13),6)-0.5)*0.16,(tsHash(Math.floor(t*11),9)-0.5)*0.10]; }
+  const lidL=F.lidL.x+(1-F.lidL.x)*blink, lidR=Math.max(F.lidR.x+(1-F.lidR.x)*blink, wink?1:0);
+  U.uLid.value.set(Math.min(1,lidL), Math.min(1,lidR), F.ltL.x, F.ltR.x);
+  U.uLidLo.value.set(Math.max(0,F.loL.x+(wink?0.4:0)), Math.max(0,F.loR.x), F.ck.x, 0);
+  U.uBrow.value.set(F.blL.x, F.blR.x, F.btL.x, F.btR.x);
+  U.uMA.value.set(Math.max(0,F.op.x), F.wd.x, F.sm.x, F.as.x);
+  U.uMB.value.set(Math.max(0,F.pk.x), Math.max(0,F.tu.x), Math.max(0,F.tl.x), Math.max(0,F.tg.x));
+  const look=L ? Math.max(-0.5,Math.min(0.5,L.eyeO||0)) : 0;
+  const gx=F.gx.x+look*0.9+S.sacc[0], gy=F.gy.x+S.sacc[1];
+  U.uGaze.value.set(gx-0.04, gy, gx+0.04, gy);
+  const spinR=(want==='dizzy'||(spinning&&want!=='hit')||(cel&&want==='woo'))?9:0;
+  S.spinA=spinR ? S.spinA+spinR*dt : S.spinA*Math.max(0,1-dt*8);
+  U.uPup.value.x=Math.max(0.18,F.pu.x*(1+0.08*Math.sin(t*1.3))); U.uPup.value.y=S.spinA;
+  // ---- the motion springs
+  const turn=r ? Math.max(-1.5,Math.min(1.5,(r.slip||0)*2.4 + (r.drift===1?(r.driftDir||0)*-0.9:0))) : 0;
+  M.bendV+=(36*(-turn*0.55-M.bend)-2*0.55*6*M.bendV)*dt; M.bend+=M.bendV*dt;            // the tail trails into a turn, a drift throws it wide
+  M.strV+=(25*((boosting?1:0)-M.str)-2*0.8*5*M.strV)*dt; M.str=Math.max(-0.2,Math.min(1.2,M.str+M.strV*dt));   // a boost streams it straight
+  M.airV+=(49*((air?1:0)-M.air)-2*0.6*7*M.airV)*dt; M.air+=M.airV*dt;
+  M.droop+=((want==='tired'||want==='lose'?1:0)-M.droop)*Math.min(1,dt*2.5);
+  M.flail+=((spinning?1:0)-M.flail)*Math.min(1,dt*(spinning?8:2));
+  M.sqV+=(-260*(M.sq-1)-2*0.32*16*M.sqV)*dt; M.sq+=M.sqV*dt; M.sq=Math.max(0.74,Math.min(1.3,M.sq));
+  M.stV+=(-220*(M.st-1)-2*0.34*15*M.stV)*dt; M.st+=M.stV*dt; M.st=Math.max(0.8,Math.min(1.26,M.st));
+  M.hover+=((spd<6?1:0)-M.hover)*Math.min(1,dt*1.5);
+  // the head: answers each stroke of the tail, carries the expression's tilt, the idle hover's sway, the game's look
+  const an=Math.min(1,(M.amp||0)/7), ph=M.ph||0, hv=M.hover;
+  const hy=-0.085*an*Math.sin(ph-0.6)*(1-0.6*M.str), hr=F.hr.x+0.05*an*Math.sin(ph-0.6)+hv*0.035*Math.sin(t*1.3);
+  const hp=F.hp.x*0.55-0.10*M.air+hv*0.03*Math.sin(t*1.9+0.5)+0.03*an*Math.sin(2*ph);
+  K.hq.setFromEuler(_tsE.set(hp, hy, hr, 'YXZ'));
+  const br=1+0.012*Math.sin(t*1.9)*hv, sy=M.sq*br, sz=M.st, sx=br/Math.sqrt(Math.max(0.5,sy*sz/br));
+  U.uSq.value.set(sx, sy, sz, 0);
+  K.off.set(0, 0.25*(M.sq-1), 0.6*(M.st-1));
+  // the idle hover: the whole rig floats on the grid and on the select stage
+  K.rig.position.y=hv*(0.30*Math.sin(t*1.8)+0.07*Math.sin(t*4.1+1));
+  // the tiles' own motion, used sparingly: a hit ripples from the face down the tail, a boost runs a light down it
+  const fx=K.fx; fx.t+=dt; U.uFx.value.set(fx.t<3?fx.t:9, fx.z0, fx.amp, fx.sp);
+  tsLate(K, ud.neck, false);
+}
+// the head's turn = the game's neck look (ud.neck, as poseNeck or a portrait tool left it) then this rig's own; written to
+// the shaders, the head group and the sockets. Run by the tick, and again just before the tiles draw.
+function tsLate(K, nk, render){
+  const U=K.U, qq=K._q;
+  if(nk) qq.copy(nk.quaternion).multiply(K.hq); else qq.copy(K.hq);
+  if(qq.w<0){ qq.x=-qq.x; qq.y=-qq.y; qq.z=-qq.z; qq.w=-qq.w; }
+  const ang=2*Math.acos(Math.min(1,qq.w)), sn=Math.sqrt(Math.max(0,1-qq.w*qq.w));
+  if(sn>1e-5) _tsAx.set(qq.x/sn, qq.y/sn, qq.z/sn); else _tsAx.set(0,1,0);
+  U.uNeck.value.set(_tsAx.x,_tsAx.y,_tsAx.z,ang);
+  _tsV.copy(K.off); if(nk) _tsV.applyQuaternion(nk.quaternion); U.uHO.value.set(_tsV.x,_tsV.y,_tsV.z,0);
+  const S=U.uSq.value;
+  // the head group: T(piv+off) R S T(-piv), exactly what tsHeadP does at w=1
+  K._m.compose(_tsV.set(_tsV.x,TS.CY+_tsV.y,_tsV.z), qq, K._s.set(S.x,S.y,S.z));
+  K._m.multiply(_tsM2.makeTranslation(0,-TS.CY,0)); K.head.matrix.copy(K._m); K.head.matrixWorldNeedsUpdate=true;
+  tsSockets(K);
+  if(render){ K.head.updateMatrixWorld(true); for(const k in K.sk) K.sk[k].o.updateMatrixWorld(true); }
+}
+const _tsM2=new T.Matrix4(), _tsSV=new T.Vector3(), _tsSQ=new T.Quaternion();
+function tsSpineAt(K, t){ const f=Math.max(0,Math.min(1,t))*24, i=Math.min(23,Math.floor(f)), k=f-i, A=K.U.uSpine.value;
+  return [A[i*4]+(A[i*4+4]-A[i*4])*k, A[i*4+1]+(A[i*4+5]-A[i*4+1])*k, A[i*4+2]+(A[i*4+6]-A[i*4+2])*k, A[i*4+3]+(A[i*4+7]-A[i*4+3])*k]; }
+// tsHeadP on the CPU: the head's scale and turn, applied in proportion w (1 = the head, 0 = the tail)
+function tsHeadPt(K, p, w, out){ const U=K.U, S=U.uSq.value, N=U.uNeck.value, H=U.uHO.value;
+  out.set(p.x*(1+(S.x-1)*w), (p.y-TS.CY)*(1+(S.y-1)*w), p.z*(1+(S.z-1)*w));
+  _tsSQ2.setFromAxisAngle(_tsAx2.set(N.x,N.y,N.z), N.w*w); out.applyQuaternion(_tsSQ2);
+  return out.set(out.x+H.x*w, out.y+TS.CY+H.y*w, out.z+H.z*w); }
+function tsSockets(K){
+  for(const name in K.sk){ const s=K.sk[name], o=s.o;
+    if(s.head){ _tsSV.set(...s.p).applyMatrix4(K.head.matrix); o.position.copy(_tsSV); o.quaternion.copy(K._q).multiply(s.q0); }
+    else { const z=s.p[2], w=z>=TS.ZJ?1:ldSmooth(TS.ZJ-TS.NB,TS.ZJ,z);
+      let yaw=0; _tsSV.set(...s.p);
+      if(z<TS.ZJ){ const sp=tsSpineAt(K,(TS.ZJ-z)/TS.TL), c=Math.cos(sp[3]), sn=Math.sin(sp[3]); yaw=sp[3];
+        _tsSV.set(sp[0]+s.p[0]*c, s.p[1]+sp[1], z+sp[2]+s.p[0]*sn); }
+      tsHeadPt(K, _tsSV, w, o.position);
+      _tsSQ.setFromAxisAngle(_tsAxY, -yaw); o.quaternion.copy(_tsSQ2).multiply(_tsSQ).multiply(s.q0); }
+  }
+  const tp=K.sk.tailTip.o.position, a=K.tip.geometry.attributes.position; a.array[0]=tp.x; a.array[1]=tp.y; a.array[2]=tp.z; a.needsUpdate=true;
+}
+const _tsAxY=new T.Vector3(0,1,0), _tsAx2=new T.Vector3(), _tsSQ2=new T.Quaternion();
+/* ==== TESSERA TEMPLATE KIT: END ==== */
+
 function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
 function makeCellBuild(hue, typeId){
   const fluidOf=(FLUID_COPIES.find(c=>c[0]===typeId)||[])[1]; if(fluidOf) typeId=fluidOf;   // a Fluid copy: the original's build, then the motion layer (fluidify, at the end)
@@ -71034,6 +71825,7 @@ function makeCellBuild(hue, typeId){
   if(typeId === 'beadBosun') return makeBosunCell();     // creature-lab iteration 3
   if(typeId === 'beadSalty') return makeSaltyCell();     // re-strung from the second reference
   if(typeId === 'juan') return makeJuanCell();           // the sombrero bead creature (JUAN KIT)
+  if(TS_RACERS[typeId]) return makeTessTemplate(TS_RACERS[typeId]);   // base template proposal V3: the tessera mosaic (TESSERA TEMPLATE KIT)
   if(BEAD_RACERS[typeId]) return makeBeadCell(typeId);   // strung-bead renditions
   // Clay is a surface treatment, not a different model: build Guido as normal, then
   // re-sculpt him at the end instead of cel-shading. (The motion half is in syncObjects.)
@@ -72065,6 +72857,8 @@ const SPERM_TYPES = [
   {id:'outlaw', name:'Rusty Malone', hue:16, desc:'Engraved, not drawn: a battered hat with two bullet holes in it, an X across the cheek, a cigar that never goes out and a grin that never quite reaches the eyes. Winks when he passes you. Squints when you pass him. Gets the bandage out after the third hit and races on anyway. DRAW.', stats:{skill:0.98, maxV:1.12, boostPower:1.25, spinResist:0.7}},
   {id:'kasi', name:'Baraka "Kasi" Mwangi', hue:289, desc:'Nairobi matatu artist and the fastest thing on Ngong Road. Paints his own tail, wears his shades at night and keeps the bass on round his neck. Passes you with a wink over the top of the lenses. TWENDE!', stats:{skill:1.03, accel:1.18, maxV:1.12, turn:1.08}},
   {id:'naija', name:'Oga Tunde', hue:253, desc:'Lagos big man on his way to a party: indigo agbada, gold-stitched neck, fila tipped just so, coral beads swinging. Tosses his sleeves at whoever he passes and is never, ever found at the back. NAIJA NO DEY CARRY LAST!', stats:{skill:0.99, accel:1.22, spinResist:0.6}},
+  {id:'tplTessM', name:'Tessera Template ♂', hue:174, desc:'BASE TEMPLATE PROPOSAL (V3, the tessera mosaic): the racer every character will be built on, laid as tesserae: fine tiles where the face lives, big ones down the back and the tail, each a little two-tone composition that melts into colour at speed. Male.', stats:{skill:1.0}},
+  {id:'tplTessF', name:'Tessera Template ♀', hue:340, desc:'BASE TEMPLATE PROPOSAL (V3, the tessera mosaic): the racer every character will be built on, laid as tesserae: fine tiles where the face lives, big ones down the back and the tail, each a little two-tone composition that melts into colour at speed. Female.', stats:{skill:1.0}},
 ];
 /* LOCKED RACERS: five style variants (8-Bit Salty, Play-Doh Juan, Vector Freak, Mosaic Seamus, 64-Bit Darius), each
    earned by finishing one Circuit Cup (t.reward = that cup's number, saved in sr_unlocks); three podium finishes in
