@@ -79670,7 +79670,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     'race.recmode': ({on=true, pixelRatio=1}={})=>{
       if(on){ if(!REC.on){ REC.pr=renderer.getPixelRatio(); REC.cam=SIM.cam; } REC.on=true; SIM.busy=true; if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
         renderer.setPixelRatio(pixelRatio); resize(); }
-      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
+      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]);
+        if(REC.camMode0!=null){ camMode=REC.camMode0; REC.camMode0=null; } }
       const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
     },
     'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false, qa=false}={})=>{
@@ -79679,7 +79680,10 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const subj=cam && cam.who ? racers.find(r=>r.name===cam.who||r.id===cam.who) : me(), tick0=SIM.tick;
       if(straight && subj) SIM.tick=()=>{ if(tick0) tick0(); const nk=subj.obj && subj.obj.userData.neck; if(nk){ nk.quaternion.identity(); nk.position.set(0,0,0); } };
       if(cam && cam.mode==='chase' && k===0){ const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.swing=0; CAMFX.roll=0; }   // a shot opens on the chase cam already in place, not flying in from wherever it was left
-      if(cam){ if(cam.mode==='chase') SIM.cam=null;
+      // fp: the game's own first-person lens (the View chip's "first person"), for the length of the shot
+      if(cam && cam.mode==='fp'){ if(REC.camMode0==null) REC.camMode0=camMode; camMode='fp'; if(k===0) _fpYaw=null; }
+      else if(REC.camMode0!=null){ camMode=REC.camMode0; REC.camMode0=null; }
+      if(cam){ if(cam.mode==='chase'||cam.mode==='fp') SIM.cam=null;
         else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
           const L=key=>{ const a=A[key], b=B[key]; return a==null?(b==null?undefined:b):b==null?a:a+(b-a)*e; };
           const who=cam.who?racers.find(r=>r.name===cam.who||r.id===cam.who):null;
@@ -79849,7 +79853,11 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         jumps:jumpPads.map(p=>spot(p.x,p.z)), boostPads:boostPads.map(p=>at(p.x,p.z)).sort((a,b)=>a-b),
         itemBoxes:items.filter(b=>b&&isFinite(b.x)).map(b=>at(b.x,b.z)).sort((a,b)=>a-b).slice(0,60),
         breakables:breakables.map(b=>spot(b.x,b.z)).sort((a,b)=>a.at-b.at).slice(0,60),
-        hazards:hazards.map(h=>({ kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard'), at:at(h.mesh.position.x,h.mesh.position.z) })) };
+        hazards:hazards.map(h=>({ kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard'), at:at(h.mesh.position.x,h.mesh.position.z) })),
+        // the course's shape seen from above, 96 points in a unit box (x right, y down = +z), for drawing it (the home deck's tiles)
+        outline:(()=>{ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const s of SAMP){ x0=Math.min(x0,s.p.x); x1=Math.max(x1,s.p.x); z0=Math.min(z0,s.p.z); z1=Math.max(z1,s.p.z); }
+          const sc=Math.max(x1-x0,z1-z0)||1, n=96, o=[]; for(let k=0;k<=n;k++){ const s=SAMP[Math.min(SAMP.length-1,Math.round(k/n*(trackLoop?STEPS:STEPS-1)))%SAMP.length];
+            o.push([+((s.p.x-x0)/sc+(sc-(x1-x0))/sc/2).toFixed(4), +((s.p.z-z0)/sc+(sc-(z1-z0))/sc/2).toFixed(4)]); } return o; })() };
     },
 
     /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
