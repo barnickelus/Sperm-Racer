@@ -174,9 +174,13 @@ async function openHeadless(rel, width, height) {
     const w = (page) => { if (page.hello.tag !== tag) return false; clearTimeout(to); resolve(page); return true; };
     helloWaiters.add(w);
   });
+  // if the load itself fails first, this promise's later rejection must not go unhandled: that takes the whole server down
+  // (it did, opening a page on a machine busy enough that the load took over two minutes)
+  joined.catch(() => {});
   const errors = [];
   tab.on('pageerror', e => errors.push(String(e)));
-  await tab.goto(`http://localhost:${PORT}/${rel}?mcp=${PORT}&mcpid=${tag}`, { waitUntil: 'load', timeout: 120000 });
+  try { await tab.goto(`http://localhost:${PORT}/${rel}?mcp=${PORT}&mcpid=${tag}`, { waitUntil: 'load', timeout: 120000 }); }
+  catch (e) { await context.close().catch(() => {}); throw e; }
   let page;
   try { page = await joined; }
   catch (e) { await context.close(); throw new Error(e.message + (errors.length ? `\npage errors:\n  ${errors.join('\n  ')}` : '')); }
