@@ -55977,6 +55977,10 @@ function disposeObject(o){
   const seen=new Set();
   const freeMat=m=>{ if(!m||seen.has(m)) return; seen.add(m);
     for(const k in m){ const v=m[k]; if(v&&v.isTexture) v.dispose(); }
+    // a shader's own textures live in its uniforms: let go of those too, or each rebuild leaves its predecessors on the GPU
+    // (race_soak found Ophelia's water and Victoria's decks, scenery and ground: three to four textures per race). A cached
+    // texture is safe to free here: three uploads it again the next time it is drawn.
+    if(m.uniforms) for(const k in m.uniforms){ const u=m.uniforms[k], v=u&&u.value; if(v&&v.isTexture) v.dispose(); else if(Array.isArray(v)) for(const x of v) if(x&&x.isTexture) x.dispose(); }
     m.dispose(); };
   o.traverse(c=>{ if(c.geometry) c.geometry.dispose();
     if(c.material) (Array.isArray(c.material)?c.material:[c.material]).forEach(freeMat); });
