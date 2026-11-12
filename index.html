@@ -36400,6 +36400,24 @@ const OP_ART={
   ], {W:'#f4f2ee',N:'#1f3fb0',G:'#f2b81e',S:'#f8d2de',K:'#f06aa0',E:'#ffffff',B:'#6b3320',
       P:'#141012',M:'#3a1417',T:'#ff5a94',V:'#b87cff'},
      11, 34, 40),
+  // The bead template proposals (V2, BEAD TEMPLATE KIT): the creature itself drawn in beads, big glass-dome eyes with
+  // star pupils ringed in dark and gold rows, a bead smile, the beaded face border and the striped tail curling away.
+  tplBeadM:opBeads([
+    '.....TTTTTT.....','...TTCWTTWCTT...','..TKKKKTTKKKKT..','.TYEEEEYYEEEEYT.',
+    '.YEEEPEEEEPEEEY.','.YEEPPPEEPPPEEY.','.YEEEPEEEEPEEEY.','.TYEEEEYYEEEEYT.',
+    '.TTYYYYSSYYYYTT.','.TSSSSSNNSSSSST.','.TSKSSSSSSSSKST.','..TSKKKKKKKKST..',
+    '...TSSSSSSSST...','....TWYWYWYT....','......TTCCW.....','.......CCWW.....',
+    '.....CCWW.......','...YCC..........',
+  ], {T:'#1fb3c4',C:'#1d3cb4',W:'#f7f2e6',K:'#111a2c',Y:'#ffc21a',E:'#fbf8ee',P:'#120e1c',S:'#c4f1ea',N:'#8fd8d4'},
+     10, 20, 30),
+  tplBeadF:opBeads([
+    '..L..PPPPPP..L..','.L.PPAYPPYAPP.L.','..PKKKKPPKKKKP..','.PYEEEEYYEEEEYP.',
+    '.YEEEDEEEEDEEEY.','.YEEDDDEEDDDEEY.','.YEEEDEEEEDEEEY.','.PYEEEEYYEEEEYP.',
+    '.PPYYYYSSYYYYPP.','.PSSBSSNNSSBSSP.','.PSSSRRRRRRSSSP.','..PSSRRRRRRSSP..',
+    '...PSSSSSSSSP...','....PWAWAWAP....','......PPVVW.....','.......VVWW.....',
+    '.....VVWW.......','...AVV..........',
+  ], {P:'#ff4b98',A:'#14b8b0',Y:'#ffd23a',W:'#fff4f0',K:'#24081e',L:'#24081e',E:'#fffaf4',D:'#160a16',S:'#ffd9e6',N:'#f7a8c4',B:'#ff8ab0',R:'#e0124c',V:'#7a3ce0'},
+     10, 20, 30),
   // Beaded Juan — wide beaded brim over big bead eyes.
   beadJuan:opBeads([
     '......GG......','.....GGGG.....','..RRGGGGGGRR..','.RGRGRGRGRGRG.',
@@ -59418,6 +59436,7 @@ function tailOffset(lag, t, phase, amp, st){
 }
 function wiggleTail(g, phase, amp, lift, st){
   lift=lift||0; st=st||null;   // tail-tip rise (world units, grows with t^2) so the rigid tail clears a road that climbs behind the racer
+  if(g.userData.tplBead){ tbWiggle(g, phase, amp, lift); return; }   // the bead template's spine (BEAD TEMPLATE KIT)
   if(g.userData.cowTail){ cbWiggle(g, g.userData.cowTail, phase, amp, lift); return; }   // Tex Calloway's flagellum (TEX CALLOWAY KIT)
   const jt=g.userData.juanTail; _WL.s=jt ? (jt.len||(jt.len=Math.abs(jt.rings[0].z-jt.rings[jt.rings.length-1].z)))/WL_LEN : g.userData.tailData ? 1 : 0.95;   // the lash is built for the 21-long tube: the 20-long ring tails and Juan's cone take it to scale
   if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
@@ -68920,6 +68939,832 @@ function tickJuan(o, r, now){
   hat.position.set(J.hat0.x, J.hat0.y+py, J.hat0.z+pz); hat.rotation.set(rx, ry, rz);
 }
 const _jnQ=new T.Quaternion(), _jnE=new T.Euler();
+/*@@TPLBEAD_KIT_BEGIN@@*/
+/* ============== BEAD TEMPLATE KIT (makeBeadTemplate): base template proposal V2, the Creature Lab ==============
+ * The foundation a future character dresses, built the way the owner's July "Creature Lab" was: a sculpted creature
+ * strung in glossy glass beads (the reference sculpture behind the eleven floating-bead-creature iterations, Beaded
+ * Salty, Bosun Pearl, the Bandido and Juan). Every surface is beads laid in ROWS that follow the form, the way a
+ * beadwork sculpture is made: rows run round each eye and round the mouth, merge into rows round the whole face, and
+ * from there become the rings of the body and run on down the tail; colour patterns live in the rows (eye rings, a
+ * face border, a dorsal motif the chase camera sees, bands and an ombre down the tail).
+ *
+ *   makeBeadTemplate(opts) -> THREE.Group, usable anywhere makeCell()'s result is (it is rigged with rigNeck).
+ *   opts: { sex:'m'|'f', body, tail, skin, accent, accent2 (hex colours, all optional), eye:'star'|'round', scale }
+ *   makeCellBuild routes the racer ids tplBeadM / tplBeadF here (their defaults are in TB_PRESET).
+ *
+ * SOCKETS  ud.sockets = { crown, hair, face, brow, neck, back, tailRoot, tailTip }: Object3Ds that ride the rig. crown/
+ *   hair/face/brow/neck/back live in the head (so they turn with the neck and the glances); tailRoot/tailTip are
+ *   re-posed every frame on the swimming spine (their local -z runs down the tail, as the tail does at rest).
+ * EXPRESSIONS  ud.expr = { list, set(name, hold, instant), cur }: the API race_pose / race_sheet drive. rest, pass,
+ *   passed, hit, angry, boost, fire, tired, win, lose, plus smug and dizzy. Each is a target for ~25 face controls
+ *   (lids, lid slant, brows, mouth open/smile/width/asymmetry/round, teeth, tongue, cheeks, blush, pupil size, eye
+ *   size, gaze bias); the controls follow on critically damped springs, so a change of face is always a blend.
+ * THE FACE IS BEADS: the eyes are glossy glass domes ringed in bead rows, with a bead star (or round bead) pupil and a
+ *   glint bead; the lids are rows of beads strung on arcs over the dome (closing slides the rows down over the eye,
+ *   more rows unrolling from behind it), the brows are strung rows over the lids, the lips are beads strung on two
+ *   curves whose shape is the expression (the beads slide along them as they re-shape), and opening the mouth
+ *   parts the body's own bead rows (they sink away inside the opening, showing the dark of the mouth, teeth and
+ *   tongue beads). Smiles puff the cheek rows up; blush tints them. Female: lash fringes of three beads, coloured lips,
+ *   a larger eye, finer arched brows, a coloured lid; male: heavier two-row brows, a plainer lip line.
+ * MOTION: the tail is Juan's swim (the game's speed-paced clock, ~1.3 waves along the tail, amplitude growing to the
+ *   tip, every ring turned square to the bend) on a spine of 21 nodes computed on the CPU each frame (cheap), with
+ *   layers on springs: it trails out of turns, a drift throws it wide, a boost streams it straight, throttle powers
+ *   the stroke, a spin flails it, airborne it floats up, the whip lash rides it (the shared _WL chain), and the head
+ *   answers each stroke. A second, lagging copy of the spine (an underdamped spring) gives every bead its own small
+ *   spring lag: the beadwork shimmers as it swims and settles when it stops. The vertex shader places every tail bead
+ *   on the spine (beads crowd on the inside of a bend and spread on the outside, as strung beads do); body beads are
+ *   static instances whose shader handles the mouth opening, the cheeks and a ripple that runs through the beads on a
+ *   hit, a landing or a boost. CPU per frame: the 21-node spine twice and ~300 face beads.
+ * COST: ~2900 beads in 4 instanced draws (body, face, tail, plus the cores and two eye domes): about 10 draws, no
+ *   textures, 6 shader programs shared by every template racer. The layout is computed once per look and cached.
+ * MIGRATION (how an existing character moves onto it): call makeBeadTemplate with its colours and sex, hang its props
+ *   on the sockets (Juan's sombrero on crown, a collar on neck, a charm on tailTip), add a LOOK_PERSONA row for its
+ *   gaze personality, and if it needs a signature face add an entry to TB_EXPR (the controls are all named numbers).
+ *   Nothing else in the rig needs to change.
+ * --------------------------------------------------------------------------------------------------------------- */
+const TB={ Y:3.2, ZN:5.05, ZC:0.7, RH:3.4, LF:4.35, LB:4.95, EH:0.84, ZT0:-1.6, ZTIP:-21.8, RT0:1.15, RTIP:0.12, TP:1.4, FK:1.3, ZJ:-4.7,
+  P:0.33, ALONG:0.93, N:20 };
+TB.L=TB.ZJ-TB.ZTIP;                               // tail length (root ring to tip)
+const tbSm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+function tbHash(n){ const s=Math.sin(n*12.9898+78.233)*43758.5453; return s-Math.floor(s); }
+// the body: a smooth union of an egg of a head (a blunt superellipse face, an elliptical back) and the tapering
+// tail cone, so the head runs into the tail through a fillet with no seam; the head's section is a little flattened
+function tbR(z){
+  let rh=0;
+  if(z>TB.ZC){ const u=(z-TB.ZC)/TB.LF; rh=u<1?TB.RH*Math.pow(1-Math.pow(u,2.4),1/2.4):0; }
+  else { const u=(TB.ZC-z)/TB.LB; rh=u<1?TB.RH*Math.sqrt(1-u*u):0; }
+  let rt=0; if(z<=TB.ZT0){ const t=Math.min(1,(TB.ZT0-z)/(TB.ZT0-TB.ZTIP)); rt=TB.RT0*Math.pow(1-t,TB.TP)+TB.RTIP*t; }
+  const k=TB.FK, h=Math.max(k-Math.abs(rh-rt),0)/k;
+  return Math.max(rh,rt)+h*h*k*0.25;
+}
+function tbE(z){ return 1-(1-TB.EH)*tbSm(-5.6,-2.6,z); }
+function tbPt(z,th,o){ const r=tbR(z), e=tbE(z); o=o||[0,0,0]; o[0]=r*Math.sin(th); o[1]=TB.Y+r*e*Math.cos(th); o[2]=z; return o; }
+const _tbA=[0,0,0], _tbB=[0,0,0], _tbC=[0,0,0], _tbD=[0,0,0];
+function tbNrm(z,th,o){
+  o=o||[0,0,0]; const h=1e-3;
+  if(z>TB.ZN-0.02){ o[0]=0; o[1]=0; o[2]=1; return o; }
+  tbPt(z+h,th,_tbA); tbPt(z-h,th,_tbB); tbPt(z,th+h,_tbC); tbPt(z,th-h,_tbD);
+  const ax=_tbA[0]-_tbB[0], ay=_tbA[1]-_tbB[1], az=_tbA[2]-_tbB[2], bx=_tbC[0]-_tbD[0], by=_tbC[1]-_tbD[1], bz=_tbC[2]-_tbD[2];
+  let x=ay*bz-az*by, y=az*bx-ax*bz, zz=ax*by-ay*bx; const l=Math.hypot(x,y,zz)||1;   // dP/dz x dP/dth: outward
+  o[0]=x/l; o[1]=y/l; o[2]=zz/l; return o;
+}
+// a face point (x,y) -> (z,th) on the front of the head (the front's radius falls monotonically to the nose: a table, inverted)
+let _tbFT=null;
+function tbFront(x,y){
+  const e=TB.EH, r=Math.hypot(x,(y-TB.Y)/e), th=Math.atan2(x,(y-TB.Y)/e);
+  if(!_tbFT){ _tbFT=new Float64Array(513); for(let i=0;i<=512;i++) _tbFT[i]=tbR(TB.ZC+(TB.ZN-TB.ZC)*i/512); }
+  const F=_tbFT; let lo=0, hi=512; while(hi-lo>1){ const m=(lo+hi)>>1; if(F[m]>r) lo=m; else hi=m; }
+  const f=(F[lo]-r)/((F[lo]-F[hi])||1), z=TB.ZC+(TB.ZN-TB.ZC)*(lo+Math.max(0,Math.min(1,f)))/512;
+  return {z, th};
+}
+const tbLin=hex=>{ const c=new T.Color(hex).convertSRGBToLinear(); return [c.r,c.g,c.b]; };
+// the two presets the racers use; opts override any colour
+const TB_PRESET={
+  m:{ body:0x1fb3c4, deep:0x147d9a, skin:0xc4f1ea, accent:0x1d3cb4, accent2:0xffc21a, white:0xf7f2e6, dark:0x191430,
+      tail:0x1d3cb4, tailTip:0xffc21a, lip:0x191430, lid:0x1fb3c4, lidEdge:0x191430, brow:0x191430, iris:0x1d3cb4, pupil:0x120e1c,
+      eyeWhite:0xfbf8ee, mouthIn:0x4a0c1c, tongue:0xf05a78, blush:0xff8aa0, glow:0x5ee8ff, eyeR:1.22, eyeX:1.42, brows:2, lash:false },
+  f:{ body:0xff4b98, deep:0xc8287a, skin:0xffd9e6, accent:0x14b8b0, accent2:0xffd23a, white:0xfff4f0, dark:0x2a0f2a,
+      tail:0x7a3ce0, tailTip:0x14b8b0, lip:0xe0124c, lid:0xff4b98, lidEdge:0x24081e, brow:0x3a1424, iris:0x14b8b0, pupil:0x160a16,
+      eyeWhite:0xfffaf4, mouthIn:0x52081e, tongue:0xff6a8a, blush:0xff6f9c, glow:0xff8ad0, eyeR:1.36, eyeX:1.5, brows:1, lash:true },
+};
+function tbCfg(o){
+  o=o||{}; const sex=o.sex==='f'?'f':'m', B=TB_PRESET[sex], C={};
+  for(const k in B) C[k]=B[k];
+  for(const k of ['body','tail','skin','accent','accent2','lip','iris','glow']) if(o[k]!=null) C[k]=o[k];
+  if(o.body!=null && o.deep==null){ const c=new T.Color(o.body), h={}; c.getHSL(h); C.deep=new T.Color().setHSL(h.h,h.s,h.l*0.72).getHex(); }
+  C.sex=sex; C.eye=o.eye==='round'?'round':'star'; C.scale=o.scale||1;
+  C.key=[sex,C.eye,C.body,C.tail,C.skin,C.accent,C.accent2,C.lip,C.iris].join(',');
+  // the face, at rest, in head coordinates: eye domes on the front-top (they break the head's outline seen from behind and
+  // above, where the chase camera sits, so the lids and brows read from there); the mouth on the front-lower face
+  C.EY=4.72; C.MY=2.25; C.MW=sex==='f'?0.86:0.98;
+  return C;
+}
+// the eye domes: where each one sits and its own frame (F: rest gaze, U: up, R: outward)
+function tbEyes(C){
+  const out=[];
+  for(const sx of [-1,1]){
+    const x=sx*C.eyeX, fp=tbFront(x,C.EY), S=tbPt(fp.z,fp.th), n=tbNrm(fp.z,fp.th);
+    const A=new T.Vector3(n[0],n[1]+0.08,n[2]+0.6).normalize(), Rd=C.eyeR;
+    const Cd=new T.Vector3(S[0],S[1],S[2]).addScaledVector(A,-Rd*0.36);
+    const F=new T.Vector3(sx*0.05,0.04,1).normalize(), U=new T.Vector3(0,1,0).addScaledVector(F,-F.y).normalize();
+    const R=new T.Vector3().crossVectors(U,F).normalize().multiplyScalar(sx);
+    out.push({sx, Cd, A, F, U, R, Rd});
+  }
+  return out;
+}
+// the mouth's rest lip line (face coords), for the channel the lips lie in
+function tbMouthRest(C){ const pts=[]; for(let i=0;i<=12;i++){ const u=i/12, x=-C.MW+2*C.MW*u, h=4*u*(1-u); pts.push([x, C.MY+0.06+0.42*0.38-(0.1+0.36*0.38)*h]); } return pts; }   // the rest smile (tbMouthShape at TB_REST)
+function tbSegDist(px,py,pts){ let d=1e9; for(let i=1;i<pts.length;i++){ const ax=pts[i-1][0], ay=pts[i-1][1], bx=pts[i][0]-ax, by=pts[i][1]-ay, l=bx*bx+by*by;
+  const t=Math.max(0,Math.min(1,((px-ax)*bx+(py-ay)*by)/(l||1))), dx=px-ax-bx*t, dy=py-ay-by*t; d=Math.min(d,Math.hypot(dx,dy)); } return d; }
+
+/* ---- THE ROW LAYOUT: rows laid the way beadwork is ----
+ * Two families of rows, each the level sets (f = k + 0.5) of a distance field over the head, found by marching squares on a
+ * (z, angle) grid of the surface, chained into loops and strung with beads at an even pitch:
+ *  - the FEATURE rows: concentric round each eye dome and round the mouth's channel (a smooth minimum of the three
+ *    distances, so the rows between the eyes merge), out to TB_KF rows;
+ *  - the BODY rows: the distance along the surface from the nose (blended, toward the back, into a plain ring round the
+ *    body, so the last head row meets the first tail ring): rings round the face that become the body's rings.
+ * Body-row beads inside the feature zone are dropped, so the two families butt together at the zone's edge as rows do in
+ * a beaded sculpture (an outline row covers the join). The tail is plain rings, its beads graduating smaller to the tip. */
+const TB_KF=4;
+const _tbCache={};
+function tbMarch(F,NI,NJ,zg,maxLv,keep,out,p,tagf){
+  // marching squares over F (rows i: z, columns j: angle, periodic), levels k+0.5 < maxLv
+  const lev=new Map(), ep=new Map();
+  const eid=(i,j,hz)=>((i*NJ+j)<<1)|(hz?0:1);
+  const link=(Lv,a,b)=>{ let m=lev.get(Lv); if(!m){ m=new Map(); lev.set(Lv,m); } let q=m.get(a); if(!q) m.set(a,q=[]); q.push(b); q=m.get(b); if(!q) m.set(b,q=[]); q.push(a); };
+  for(let i=0;i<NI;i++) for(let j=0;j<NJ;j++){
+    const j1=(j+1)%NJ, va=F[i*NJ+j], vb=F[i*NJ+j1], vc=F[(i+1)*NJ+j1], vd=F[(i+1)*NJ+j];
+    const lo=Math.min(va,vb,vc,vd), hi=Math.max(va,vb,vc,vd);
+    for(let k=Math.max(0,Math.ceil(lo-0.5)); k+0.5<hi && k+0.5<maxLv; k++){ const Lv=k+0.5; if(Lv<=lo) continue;
+      const cs=(va>Lv?1:0)|(vb>Lv?2:0)|(vc>Lv?4:0)|(vd>Lv?8:0); if(cs===0||cs===15) continue;
+      const E=[eid(i,j,1), eid(i,j1,0), eid(i+1,j,1), eid(i,j,0)];
+      const P_=[[i,j,(Lv-va)/(vb-va),1],[i,j1,(Lv-vb)/(vc-vb),0],[i+1,j,(Lv-vd)/(vc-vd),1],[i,j,(Lv-va)/(vd-va),0]];
+      const seg=(e1,e2)=>{ ep.set(E[e1]*64+k, P_[e1]); ep.set(E[e2]*64+k, P_[e2]); link(Lv,E[e1],E[e2]); };
+      const ctr=(va+vb+vc+vd)/4>Lv;
+      switch(cs){ case 1: case 14: seg(0,3); break; case 2: case 13: seg(0,1); break; case 3: case 12: seg(1,3); break; case 4: case 11: seg(1,2); break;
+        case 6: case 9: seg(0,2); break; case 7: case 8: seg(2,3); break;
+        case 5: if(ctr){ seg(0,1); seg(2,3); } else { seg(0,3); seg(1,2); } break;
+        case 10: if(ctr){ seg(0,3); seg(1,2); } else { seg(0,1); seg(2,3); } break; }
+    }
+  }
+  const zth=r=>{ const [i,j,t,hz]=r; return hz ? [zg[i], (j+t)/NJ*Math.PI*2] : [zg[i]+(zg[i+1]-zg[i])*t, j/NJ*Math.PI*2]; };
+  for(const [Lv,m] of lev){
+    const k=Lv-0.5, seen=new Set();
+    for(const st of m.keys()){ if(seen.has(st)) continue;
+      const loop=[st]; seen.add(st); let prev=-1, cur=st;
+      for(;;){ const nb=m.get(cur); let nx=-1; for(const q of nb) if(q!==prev && !seen.has(q)){ nx=q; break; } if(nx<0) break; seen.add(nx); loop.push(nx); prev=cur; cur=nx; }
+      if(loop.length<3) continue;
+      const pts=loop.map(e=>{ const q=zth(ep.get(e*64+k)), P=tbPt(q[0],q[1]); return {z:q[0], th:q[1], x:P[0], y:P[1], zz:P[2]}; });
+      pts.push(pts[0]);
+      let len=0; const cum=[0]; for(let q=1;q<pts.length;q++){ len+=Math.hypot(pts[q].x-pts[q-1].x, pts[q].y-pts[q-1].y, pts[q].zz-pts[q-1].zz); cum.push(len); }
+      const n=Math.max(3, Math.round(len/(p*TB.ALONG))), ph=tbHash(Lv*7.13+tagf);
+      for(let b=0,q=1;b<n;b++){ const s=(b+ph)/n*len; while(q<pts.length-1 && cum[q]<s) q++;
+        const u=(s-cum[q-1])/((cum[q]-cum[q-1])||1), A=pts[q-1], Bp=pts[q];
+        let dth=Bp.th-A.th; if(dth>Math.PI) dth-=Math.PI*2; if(dth<-Math.PI) dth+=Math.PI*2;
+        const z=A.z+(Bp.z-A.z)*u, th=A.th+dth*u;
+        if(!keep(z,th)) continue;
+        out.push({P:tbPt(z,th), N:tbNrm(z,th), Tg:[Bp.x-A.x, Bp.y-A.y, Bp.zz-A.zz], z, th, lv:Lv, fam:tagf, size:p}); }
+    }
+  }
+}
+function tbLayout(C){
+  if(_tbCache[C.key]) return _tbCache[C.key];
+  const t0=performance.now(), p=TB.P, eyes=tbEyes(C), mrest=tbMouthRest(C);
+  // the grid: rows evenly spaced in arc length down the side meridian, columns round the axis
+  const NZ=1200, za=new Float64Array(NZ+1), aa=new Float64Array(NZ+1); let a=0;
+  for(let i=0;i<=NZ;i++){ const z=TB.ZN-(TB.ZN-TB.ZJ)*i/NZ; if(i) a+=Math.hypot(z-za[i-1], tbR(z)-tbR(za[i-1])); za[i]=z; aa[i]=a; }
+  const AJ=a, NI=Math.ceil(AJ/0.12), NJ=112, zg=new Float64Array(NI+1);
+  for(let i=0,q=0;i<=NI;i++){ const t=AJ*i/NI; while(q<NZ-1 && aa[q+1]<t) q++; const f=(t-aa[q])/((aa[q+1]-aa[q])||1); zg[i]=za[q]+(za[q+1]-za[q])*f; }
+  zg[0]=TB.ZN; zg[NI]=TB.ZJ;
+  const NV=(NI+1)*NJ, FB=new Float32Array(NV), FF=new Float32Array(NV), pt=[0,0,0], pv=[0,0,0];
+  // the mouth channel as a 3-D polyline on the face, so the rows round it are spaced along the surface, not in projection
+  const m3=mrest.map(([x,y])=>{ const q=tbFront(x,y); return tbPt(q.z,q.th); });
+  const segD3=(x,y,z)=>{ let d=1e9; for(let i=1;i<m3.length;i++){ const A=m3[i-1], B=m3[i], bx=B[0]-A[0], by=B[1]-A[1], bz=B[2]-A[2], l=bx*bx+by*by+bz*bz;
+      const t=Math.max(0,Math.min(1,((x-A[0])*bx+(y-A[1])*by+(z-A[2])*bz)/(l||1))), dx=x-A[0]-bx*t, dy=y-A[1]-by*t, dz=z-A[2]-bz*t, q=dx*dx+dy*dy+dz*dz; if(q<d) d=q; } return Math.sqrt(d); };
+  const fv=(x,y,z,o)=>{ o[0]=(Math.hypot(x-eyes[0].Cd.x,y-eyes[0].Cd.y,z-eyes[0].Cd.z)-eyes[0].Rd)/p; o[1]=(Math.hypot(x-eyes[1].Cd.x,y-eyes[1].Cd.y,z-eyes[1].Cd.z)-eyes[1].Rd)/p;
+    o[2]=z>1.2?(segD3(x,y,z)-p*0.98)/p:99; return o; };
+  const smin=(a,b,k)=>{ const h=Math.max(k-Math.abs(a-b),0)/k; return Math.min(a,b)-h*h*k*0.25; };
+  const fvo=[0,0,0];
+  const ftAt=(x,y,z)=>{ fv(x,y,z,fvo); return smin(smin(fvo[0],fvo[1],0.8),fvo[2],0.8); };   // the feature field: the eye domes and the mouth channel, gently blended
+  const ftOwn=(x,y,z)=>{ fv(x,y,z,fvo); return fvo[0]<fvo[1]&&fvo[0]<fvo[2]?0:fvo[1]<fvo[2]?1:2; };
+  const wA=AJ*0.42, wB=AJ*0.86, LC=new Float32Array(NJ), SN=new Float64Array(NJ), CS=new Float64Array(NJ), PX=new Float64Array(NJ), PY=new Float64Array(NJ);
+  for(let j=0;j<NJ;j++){ SN[j]=Math.sin(j/NJ*Math.PI*2); CS[j]=Math.cos(j/NJ*Math.PI*2); }
+  for(let i=0;i<=NI;i++){
+    const z=zg[i], r=tbR(z), e=tbE(z), w=tbSm(wA,wB,AJ*i/NI); let lm=0;
+    for(let j=0;j<NJ;j++){ const x=r*SN[j], y=TB.Y+r*e*CS[j]; if(i) LC[j]+=Math.hypot(x-PX[j],y-PY[j],z-zg[i-1]); PX[j]=x; PY[j]=y; lm+=LC[j]; }
+    lm/=NJ;
+    for(let j=0;j<NJ;j++){ const v=i*NJ+j; FB[v]=(LC[j]*(1-w)+lm*w)/p+1e-5*tbHash(v); FF[v]=(z>0.4?ftAt(PX[j],PY[j],z):99)+1e-5*tbHash(v+0.5); }   // the features only reach the front half
+  }
+  const fJ=FB[NI*NJ];
+  const beads=[];
+  // body rows everywhere outside the feature zone, up to the junction; feature rows inside it
+  tbMarch(FB,NI,NJ,zg,Math.floor(fJ-0.5)+0.01,(z,th)=>{ const P=tbPt(z,th); return ftAt(P[0],P[1],P[2])>TB_KF-0.3; },beads,p,0);
+  tbMarch(FF,NI,NJ,zg,TB_KF,()=>true,beads,p,1);
+  // feature rows have the right of way: a body-row bead that crowds one (or another body bead) is dropped
+  const HS=p, hash=new Map(), kept=[], cell=(x)=>Math.floor(x/HS)+64, key=(a,b,c)=>(a*256+b)*256+c;
+  const near=(P,r)=>{ const cx=cell(P[0]), cy=cell(P[1]), cz=cell(P[2]), r2=r*r; for(let dx=-1;dx<=1;dx++) for(let dy=-1;dy<=1;dy++) for(let dz=-1;dz<=1;dz++){
+      const q=hash.get(key(cx+dx,cy+dy,cz+dz)); if(q) for(const o of q){ const a=o.P[0]-P[0], b=o.P[1]-P[1], c=o.P[2]-P[2]; if(a*a+b*b+c*c<r2) return true; } } return false; };
+  const add=b=>{ const k=key(cell(b.P[0]),cell(b.P[1]),cell(b.P[2])); let q=hash.get(k); if(!q) hash.set(k,q=[]); q.push(b); kept.push(b); };
+  beads.unshift({P:tbPt(TB.ZN-0.02,0), N:[0,0.1,1], Tg:[1,0,0], z:TB.ZN, th:0, lv:0, fam:1, size:p*1.5, nose:true});   // a bead nose
+  beads.sort((a,b)=>(b.fam-a.fam)||((b.nose?1:0)-(a.nose?1:0))||(a.lv-b.lv));
+  for(const b of beads) if(!near(b.P, b.nose?0:b.fam===1?p*0.55:p*0.74) && !(b!==beads[0] && Math.hypot(b.P[0]-beads[0].P[0],b.P[1]-beads[0].P[1],b.P[2]-beads[0].P[2])<p*1.05)) add(b);
+  for(const b of kept){ const P=b.P; b.ff=ftAt(P[0],P[1],P[2]); b.own=ftOwn(P[0],P[1],P[2]);
+    if(b.fam===0) b.fb=b.lv; else { let i=0; while(i<NI-1 && zg[i+1]>b.z) i++; const j=Math.round(((b.th/(Math.PI*2))%1+1)%1*NJ)%NJ; b.fb=FB[i*NJ+j]; } }
+  beads.length=0; for(const b of kept) beads.push(b);
+  // fill what the two families leave: wherever the wax would show more than a bead's gap, a bead goes in (as a beadworker fills)
+  { const NZf=Math.round(AJ/(p*0.42)), NTf=120, cand=[];
+    for(let i=1;i<NZf;i++){ const z=TB.ZN-(TB.ZN-TB.ZJ)*i/NZf, jn=z<TB.ZJ+0.7;
+      if(z<1.2 && !jn) continue;                                    // the back is plain rings: only the face and the junction need it
+      for(let j=0;j<NTf;j++){ const th=j/NTf*Math.PI*2, P=tbPt(z,th); fv(P[0],P[1],P[2],fvo); if(fvo[0]<0.25||fvo[1]<0.25||fvo[2]<0.1) continue;   // the domes and the lips' channel stay open
+        if(!jn && Math.min(fvo[0],fvo[1],fvo[2])>TB_KF+1.5) continue;
+        cand.push([z,th,P]); } }
+    for(const [z,th,P] of cand){ if(near(P,p*0.68)) continue;
+      let best=null, bd=1e9; const cx=cell(P[0]), cy=cell(P[1]), cz=cell(P[2]);
+      for(let dx=-2;dx<=2;dx++) for(let dy=-2;dy<=2;dy++) for(let dz=-2;dz<=2;dz++){ const q=hash.get(key(cx+dx,cy+dy,cz+dz)); if(q) for(const o of q){ const d=Math.hypot(o.P[0]-P[0],o.P[1]-P[1],o.P[2]-P[2]); if(d<bd){ bd=d; best=o; } } }
+      const b={P, N:tbNrm(z,th), Tg:best?best.Tg:[1,0,0], z, th, lv:best?best.lv:0, fam:best?best.fam:0, size:p, fill:true};
+      b.ff=ftAt(P[0],P[1],P[2]); b.own=ftOwn(P[0],P[1],P[2]); b.fb=best?best.fb:0; add(b); beads.push(b); } }
+  // the tail: rings on from the head's last row, the beads graduating smaller toward the tip, odd rings offset half a bead
+  const lvT0=Math.floor(fJ-0.5)+0.5, rJ=tbR(TB.ZJ), tail=[];
+  const szAt=s=>p*Math.max(0.55,Math.min(1,Math.pow(tbR(TB.ZJ-Math.max(0,s))/rJ,0.45)));
+  for(let s=(lvT0-fJ)*p, k=0; s<TB.L-0.06; k++){
+    const z=TB.ZJ-s, r=tbR(z), e=tbE(z), sz=szAt(s), n=Math.max(5, Math.round(Math.PI*r*(1+e)/(sz*TB.ALONG)));
+    for(let i=0;i<n;i++){ const th=(i+0.5*(k&1))/n*Math.PI*2, P=tbPt(z,th), N=tbNrm(z,th);
+      tail.push({P, N, Tg:[Math.cos(th)*r, -Math.sin(th)*r*e, 0], z, th, lv:lvT0+k, ring:k, fam:2, size:sz, s}); }
+    s+=szAt(s+sz*0.5);
+  }
+  tail.push({P:[0,TB.Y,TB.ZTIP-0.05], N:[0,0,-1], Tg:[1,0,0], z:TB.ZTIP, th:0, lv:999, ring:999, fam:3, size:0.34, s:TB.L});
+  const res={beads, tail, eyes, fJ, AJ, NI, NJ, lvT0, ms:performance.now()-t0};
+  _tbCache[C.key]=res;
+  return res;
+}
+
+// ---- colour: the pattern lives in the rows ----
+// fb: the body field (rows from the nose), ff: the feature field (rows from the eyes / mouth), lv: the row, th: the angle
+// round the body (0 = the top line, which is what the chase camera sees)
+const TB_FACE=9.2; let TB_MOUTH_IN=-1;
+function tbColour(C,b){
+  const th=((b.th+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI, at=Math.abs(th), r=tbR(b.z), xa=at*r/TB.P, f=C.sex==='f';
+  const lvN=C.lvJ, bodyCol=()=>{
+    const lv=b.lv, k=lv-TB_FACE-2, kc=lvN-lv;                                                   // kc: rows before the neck
+    if(kc>=0.5 && kc<4.5){ const r=Math.round(kc); if(r===1||r===4) return C.accent; return ((Math.round(xa)+r)%3===0) ? C.white : C.accent2; }   // a beaded collar at the neck
+    if(at>2.25) return C.belly;                                                                 // a lighter belly
+    if(!f){ // chevrons down the back, pointing forward, edged in white
+      if(xa<3.4 && k>1.5){ const q=((k-xa*1.15)%6+6)%6; if(q<1.5) return C.accent; if(q<2.3) return C.white; }
+      return at>1.8 ? C.deep : C.body;
+    }
+    // a string of four-petal flowers down the back (the beadworkers' peyote flower); dots along the flanks
+    if(k>1){ const m=Math.round((k-3.5)/6.5), kc2=3.5+6.5*m, dk=k-kc2;
+      if(m>=0 && Math.abs(dk)<=2 && xa<2.6){ const d=Math.abs(dk)+xa; if(d<0.9) return C.accent2; if((Math.abs(dk)<=1.6&&xa<0.9)||(Math.abs(dk)<0.7&&xa<2.1)) return C.accent; } }
+    if(k>0 && Math.round(k)%4===2 && at>0.95 && at<2.1 && Math.round(xa)%3===0) return C.white;
+    return at>1.8 ? C.deep : C.body;
+  };
+  if(b.fam===1){
+    if(b.nose) return C.skinDeep;
+    const k=Math.floor(b.ff);
+    if(b.own<2){ if(k<=0) return C.dark; if(k===1) return C.accent2; if(k===2 && f) return C.accent; }
+    else if(k<=0) return C.skinDeep;
+    return b.fb<TB_FACE ? C.skin : bodyCol();
+  }
+  if(b.fam===0){
+    if(b.fb<TB_FACE) return C.skin;
+    if(b.fb<TB_FACE+1) return (Math.round(xa)&1) ? C.white : C.accent2;   // a beaded border of alternating dots round the face
+    return bodyCol();
+  }
+  if(b.fam===3) return C.tailTip;
+  // the tail: rings, an ombre from the body colour into the tail colour, bands that shrink toward the tip
+  const s=b.s/TB.L, k=b.ring;
+  if(s>0.93) return C.tailTip;
+  if(!f){ const band=[6,7, 16,17, 26, 34, 41, 47, 52, 56, 59, 62];
+    if(band.indexOf(k)>=0) return (k===6||k===16)?C.white:C.accent2;
+    if(s<0.32 && xa<2.2){ const q=((k*1.0-xa*1.15)%6+6)%6; if(q<1.5) return C.accent; }
+    return s<0.22 ? C.body : s<0.42 ? C.mixBT : C.tail; }
+  if(k%6===3) return C.white; if(s>0.7 && k%3===0) return C.accent;
+  return s<0.25 ? C.body : s<0.45 ? C.mixBT : C.tail;
+}
+function tbPalette(C){
+  const mix=(a,b,t)=>new T.Color(a).lerp(new T.Color(b),t).getHex();
+  C.belly=mix(C.body,0xffffff,0.38); C.skinDeep=mix(C.skin,C.body,0.45); C.mixBT=mix(C.body,C.tail,0.5);
+}
+// a bead: x along its row (the thread), y across it, z its normal; seed beads sit a little narrower along the thread
+function tbPack(list,C,arrM,arrC,off){
+  const n=new T.Vector3(), t=new T.Vector3(), y=new T.Vector3(), col=new T.Color();
+  list.forEach((b,i)=>{ const k=(off+i)*16, s=b.size;
+    n.set(b.N[0],b.N[1],b.N[2]).normalize(); t.set(b.Tg[0],b.Tg[1],b.Tg[2]); t.addScaledVector(n,-t.dot(n)); if(t.lengthSq()<1e-8) t.set(1,0,0); t.normalize(); y.crossVectors(n,t);
+    const sa=s*0.97, sc=s*1.07, su=s*0.95, sink=s*0.14;
+    arrM[k]=t.x*sa; arrM[k+1]=t.y*sa; arrM[k+2]=t.z*sa; arrM[k+3]=0;
+    arrM[k+4]=y.x*sc; arrM[k+5]=y.y*sc; arrM[k+6]=y.z*sc; arrM[k+7]=0;
+    arrM[k+8]=n.x*su; arrM[k+9]=n.y*su; arrM[k+10]=n.z*su; arrM[k+11]=0;
+    arrM[k+12]=b.P[0]-n.x*sink; arrM[k+13]=b.P[1]-n.y*sink; arrM[k+14]=b.P[2]-n.z*sink; arrM[k+15]=1;
+    col.setHex(tbColour(C,b)).convertSRGBToLinear(); const v=0.93+0.12*tbHash((off+i)*1.618+b.lv);   // no two glass beads quite the same
+    arrC[(off+i)*3]=col.r*v; arrC[(off+i)*3+1]=col.g*v; arrC[(off+i)*3+2]=col.b*v; });
+}
+// the bead: a dome (apex, two rings), radius 0.5 across, its smooth normals those of the ellipsoid it is cut from
+function tbBeadGeo(seg,rings){
+  const pos=[], nor=[], idx=[], FL=0.86; rings=rings||[0.92,1.75];
+  pos.push(0,0,0.5*FL); nor.push(0,0,1);
+  for(const ph of rings) for(let a=0;a<seg;a++){ const az=(a+(ph>1?0.5:0))/seg*Math.PI*2, sp=Math.sin(ph), cp=Math.cos(ph);
+    pos.push(0.5*sp*Math.cos(az), 0.5*sp*Math.sin(az), 0.5*FL*cp); const nx=sp*Math.cos(az), ny=sp*Math.sin(az), nz=cp/FL, l=Math.hypot(nx,ny,nz); nor.push(nx/l,ny/l,nz/l); }
+  for(let a=0;a<seg;a++) idx.push(0, 1+a, 1+(a+1)%seg);
+  if(rings.length>1) for(let a=0;a<seg;a++){ const i0=1+a, i1=1+(a+1)%seg, o0=1+seg+a, o1=1+seg+(a+seg-1)%seg; idx.push(i0,o1,o0, i0,o0,i1); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new T.Float32BufferAttribute(nor,3)); g.setIndex(idx);
+  return g;
+}
+
+/* ---- the shaders: the game's own Phong (its lights, fog and colour space), patched ----
+ * every bead: specular anti-aliasing (a bead that covers few pixels gets a broader, dimmer highlight, so the glints do
+ * not sparkle in motion), self-light in the bead's own colour (a boost lights the glass), a glassy rim.
+ * body: the mouth opening (beads inside it sink away), the cheeks (puff on a smile, blush), a ripple through the beads.
+ * tail: every bead placed on the swimming spine (uSp, 21 nodes) and its lagging twin (uLg: each bead's own spring lag),
+ *   turned square to the bend, crowded on its inside. The tail's core tube rides the same spine. */
+const TB_GLSL_COMMON=`
+uniform float uPxK; varying float vSpecK; varying vec3 vAxis;
+uniform vec4 uRp; uniform float uRa;
+`;
+const TB_GLSL_MOUTH=`
+uniform vec4 uMc; uniform vec4 uMb; uniform vec4 uMm;
+float tbMouth(vec3 c, float mU, float mL){
+  if(c.z<uMm.z) return 0.0;
+  float w=max(0.05,uMc.z-uMc.x), u=(c.x-uMc.x)/w, uc=clamp(u,0.0,1.0), h=4.0*uc*(1.0-uc);
+  float yb=mix(uMc.y,uMc.w,uc), yu=yb+uMb.x*pow(max(h,1e-4),uMb.y)+mU, yl=yb+uMb.z*pow(max(h,1e-4),uMb.w)-mL;
+  float dy=max(c.y-yu, yl-c.y), dx=max(-u,u-1.0)*w;
+  float d=dx>0.0 ? (dy>0.0 ? length(vec2(dx,dy)) : dx) : dy;
+  return 1.0-smoothstep(-0.06,0.1,d);
+}`;
+const TB_GLSL_SPINE=`
+uniform vec4 uSp[21]; uniform vec4 uLg[21]; uniform vec4 uTl; uniform vec3 uRT;
+vec3 tbCR(vec3 a, vec3 b, vec3 c, vec3 d, float t){ float t2=t*t, t3=t2*t; return 0.5*((2.0*b)+(c-a)*t+(2.0*a-5.0*b+4.0*c-d)*t2+(3.0*b-a-3.0*c+d)*t3); }
+vec3 tbCRd(vec3 a, vec3 b, vec3 c, vec3 d, float t){ return 0.5*((c-a)+2.0*(2.0*a-5.0*b+4.0*c-d)*t+3.0*(3.0*b-a-3.0*c+d)*t*t); }
+vec3 tbCRdd(vec3 a, vec3 b, vec3 c, vec3 d, float t){ return 0.5*(2.0*(2.0*a-5.0*b+4.0*c-d)+6.0*(3.0*b-a-3.0*c+d)*t); }
+// a rest point c of the tail -> where it is now (P + R*offset) and the frame R; lagW: how much of its own spring lag it takes
+void tbSpine(vec3 c, float lagW, out vec3 P, out mat3 R, out float crowd){
+  float s=clamp((uTl.x-c.z)/uTl.y,0.0,1.0), f=s*20.0; int i=int(min(floor(f),19.0)); float u=f-float(i);
+  int i0=i>0?i-1:0; int i3=i<19?i+2:20;
+  vec3 b=uSp[i].xyz, cc=uSp[i+1].xyz, a=i>0?uSp[i0].xyz:2.0*b-cc, d=i<19?uSp[i3].xyz:2.0*cc-b;
+  P=tbCR(a,b,cc,d,u); vec3 dP=tbCRd(a,b,cc,d,u), ddP=tbCRdd(a,b,cc,d,u);
+  vec3 lb=uLg[i].xyz, lc=uLg[i+1].xyz, la=i>0?uLg[i0].xyz:2.0*lb-lc, ld=i<19?uLg[i3].xyz:2.0*lc-lb;
+  vec3 lag=tbCR(la,lb,lc,ld,u)-P; float ll=length(lag); if(ll>uTl.w) lag*=uTl.w/ll;
+  P+=lag*lagW;
+  vec3 Tn=normalize(dP); if(i==0) Tn=normalize(mix(uRT,Tn,smoothstep(0.0,1.0,u)));
+  float roll=mix(uSp[i].w,uSp[i+1].w,u);
+  vec3 sd=cross(vec3(0.0,1.0,0.0),Tn); sd=length(sd)>1e-4?normalize(sd):vec3(1.0,0.0,0.0); vec3 up=cross(Tn,sd);
+  vec3 sd2=cos(roll)*sd+sin(roll)*up; up=cross(Tn,sd2);
+  R=mat3(-sd2,up,-Tn);
+  float dl=dot(dP,dP); vec3 kap=(ddP-Tn*dot(ddP,Tn))/max(dl,1e-4);
+  vec3 o=c-vec3(0.0,uTl.z,uTl.x-s*uTl.y); vec3 od=R*o;
+  crowd=dot(kap,od);
+}`;
+// one material per part, all the game's Phong underneath
+function tbMat(kind,U,o){
+  const m=new T.MeshPhongMaterial(Object.assign({color:0xffffff, shininess:90, specular:0x3c3c3c}, o||{}));
+  m.userData.keepPhong=true;
+  const inst=kind==='body'||kind==='face'||kind==='tail';
+  m.onBeforeCompile=sh=>{
+    Object.assign(sh.uniforms,U);
+    let v=sh.vertexShader, fr=sh.fragmentShader;
+    v=v.replace('#include <common>','#include <common>\n'+TB_GLSL_COMMON+(kind==='body'?TB_GLSL_MOUTH+'\nuniform vec4 uCk; uniform vec3 uCkL; uniform vec3 uCkR; uniform vec3 uCkC; uniform vec3 uOff;':'')+(kind==='tail'||kind==='tcore'?TB_GLSL_SPINE:'')
+      +(kind==='hcore'?'\nvarying vec3 vRest;':''));
+    let pre='';
+    if(inst){ pre='mat4 iM=instanceMatrix;\n';
+      if(kind==='body') pre+=`{ vec3 c=iM[3].xyz+uOff, n=normalize(iM[2].xyz); float bs=length(iM[0].xyz);
+        float hide=tbMouth(c,0.17,0.17), k=max(1.0-hide,0.001); vec3 dc=-n*hide*0.3;
+        float wl=exp(-dot(c-uCkL,c-uCkL)*1.3), wr=exp(-dot(c-uCkR,c-uCkR)*1.3);
+        dc+=n*(uCk.x*wl+uCk.y*wr)*0.3+vec3(0.0,0.12,0.0)*(uCk.x*wl+uCk.y*wr);
+        #ifdef USE_INSTANCING_COLOR
+        vColor=mix(vColor,uCkC,clamp(uCk.z*wl+uCk.w*wr,0.0,0.75)*smoothstep(0.04,0.25,dot(vColor,vec3(0.3,0.6,0.1))));   // (only the light beads blush)
+        #endif
+        if(uRp.w>0.0){ float d=length(c-uRp.xyz), ph=uRp.w*9.0-d; dc+=n*uRa*exp(-uRp.w*2.2)*sin(ph*4.2)*smoothstep(0.0,0.5,ph)*exp(-max(ph,0.0)*0.45); }
+        iM[0].xyz*=k; iM[1].xyz*=k; iM[2].xyz*=k; iM[3].xyz=c+dc-uOff; }\n`;
+      if(kind==='tail') pre+=`{ vec3 c=iM[3].xyz; float h=fract(sin(dot(c,vec3(12.9898,78.233,45.164)))*43758.5453);
+        float lw=0.35+0.65*h; vec3 P; mat3 R; float cr;
+        tbSpine(c,lw,P,R,cr);
+        float sq=clamp(1.0-cr,0.72,1.12), k=mix(1.0,sq,0.55);
+        vec3 o=c-vec3(0.0,uTl.z,c.z); vec3 od=R*vec3(o.xy,0.0); float ol=length(od);
+        vec3 pc=P+od+(ol>1e-4?od/ol:vec3(0.0))*(1.0-min(sq,1.0))*ol*0.32;
+        float s=clamp((uTl.x-c.z)/uTl.y,0.0,1.0);
+        if(s>=1.0){ pc=P+R*(c-vec3(0.0,uTl.z,uTl.x-uTl.y)); }
+        if(uRp.w>0.0){ float d=abs(s*uTl.y-uRp.x), ph=uRp.w*16.0-d; pc+=(ol>1e-4?od/ol:vec3(0.0))*uRa*exp(-uRp.w*2.0)*sin(ph*2.6)*smoothstep(0.0,0.6,ph)*exp(-max(ph,0.0)*0.2); }
+        iM=mat4(vec4(R*iM[0].xyz*k,0.0), vec4(R*iM[1].xyz*k,0.0), vec4(R*iM[2].xyz*k,0.0), vec4(pc,1.0)); }\n`;
+      v=v.replace('#include <defaultnormal_vertex>',`vec3 transformedNormal=objectNormal; { mat3 tbm=mat3(iM); transformedNormal/=vec3(dot(tbm[0],tbm[0]),dot(tbm[1],tbm[1]),dot(tbm[2],tbm[2])); transformedNormal=tbm*transformedNormal; }
+        transformedNormal=normalMatrix*transformedNormal;`);
+      // a bead under a few pixels: grown a little to close the gaps, its shading eased toward the surface it sits on, its
+      // highlight broadened (the fragment side): the beadwork mip-maps into its colours instead of sparkling
+      v=v.replace('#include <project_vertex>',`vec4 mvC=modelViewMatrix*vec4(iM[3].xyz,1.0);
+        vSpecK=smoothstep(1.2,7.0,length(iM[0].xyz)*uPxK/max(0.5,-mvC.z));
+        vAxis=normalize(normalMatrix*iM[2].xyz);
+        vec4 mvPosition=modelViewMatrix*(iM*vec4(transformed*mix(1.2,1.0,vSpecK),1.0)); gl_Position=projectionMatrix*mvPosition;`);
+    } else {
+      if(kind==='tcore'){ pre=`vec3 tbP; mat3 tbR3; float tbCr; tbSpine(position,0.6,tbP,tbR3,tbCr);\n`;
+        v=v.replace('#include <begin_vertex>',`vec3 transformed=tbP+tbR3*(position-vec3(0.0,uTl.z,position.z));`); }
+      if(kind==='hcore') v=v.replace('#include <begin_vertex>','#include <begin_vertex>\nvRest=position;');
+      v=v.replace('#include <project_vertex>','#include <project_vertex>\nvSpecK=0.5; vAxis=vNormal;');
+    }
+    v=v.replace('#include <beginnormal_vertex>',pre+'#include <beginnormal_vertex>'+(kind==='tcore'?'\nobjectNormal=tbR3*objectNormal;':''));
+    fr=fr.replace('#include <common>','#include <common>\nvarying float vSpecK; varying vec3 vAxis;\nuniform float uRim;'+(kind==='hcore'?'\nvarying vec3 vRest; uniform vec3 uMin;'+TB_GLSL_MOUTH:''));
+    if(kind==='hcore') fr=fr.replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.rgb=mix(diffuseColor.rgb,uMin,tbMouth(vRest,0.0,0.0));');
+    if(inst) fr=fr.replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nnormal=normalize(mix(normalize(vAxis),normal,0.3+0.7*vSpecK));');
+    fr=fr.replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance*=diffuseColor.rgb*3.0;');
+    fr=fr.replace('material.specularShininess = shininess;','material.specularShininess = shininess*mix(0.16,1.0,vSpecK);')
+      .replace('material.specularStrength = specularStrength;','material.specularStrength = specularStrength*mix(0.42,1.0,vSpecK);');
+    fr=fr.replace('#include <envmap_fragment>',`#include <envmap_fragment>
+      { float fz=pow(1.0-clamp(abs(dot(normal,normalize(vViewPosition))),0.0,1.0),3.0); outgoingLight+=uRim*fz*(diffuseColor.rgb*0.55+vec3(0.10,0.11,0.13)*vSpecK); }`);
+    sh.vertexShader=v; sh.fragmentShader=fr;
+  };
+  m.customProgramCacheKey=()=>'tplBead-'+kind+'-v2';
+  return m;
+}
+function tbUniforms(kind){
+  const U={uPxK:{value:500}, uRp:{value:new T.Vector4(0,0,0,0)}, uRa:{value:0}, uRim:{value:kind==='hcore'||kind==='tcore'?0.0:0.55}};
+  if(kind==='body'||kind==='hcore'){ U.uMc={value:new T.Vector4(-1,2.3,1,2.3)}; U.uMb={value:new T.Vector4(0,1,0,1)}; U.uMm={value:new T.Vector4(0,0,2.6,0)}; }
+  if(kind==='body'){ U.uOff={value:new T.Vector3()}; U.uCk={value:new T.Vector4()}; U.uCkL={value:new T.Vector3()}; U.uCkR={value:new T.Vector3()}; U.uCkC={value:new T.Vector3(1,0.4,0.5)}; }
+  if(kind==='hcore') U.uMin={value:new T.Vector3(0.08,0.005,0.02)};
+  if(kind==='tail'||kind==='tcore'){ U.uSp={value:new Float32Array(84)}; U.uLg={value:new Float32Array(84)}; U.uTl={value:new T.Vector4(TB.ZJ,TB.L,TB.Y,0.3)}; U.uRT={value:new T.Vector3(0,0,-1)}; }
+  return U;
+}
+// the cores: a smooth skin just under the beads (the wax a beadwork sculpture is pressed into), in each bead's own colour, dark
+function tbCoreGeo(z0,z1,nz,nth,inset,colFn){
+  const pos=[], nor=[], col=[], idx=[], P=[0,0,0], N=[0,0,0], c=new T.Color();
+  for(let i=0;i<=nz;i++){ const z=z0+(z1-z0)*i/nz;
+    for(let j=0;j<=nth;j++){ const th=j/nth*Math.PI*2; tbPt(z,th,P); tbNrm(z,th,N); const ins=Math.min(inset, tbR(z)*0.35);
+      pos.push(P[0]-N[0]*ins, P[1]-N[1]*ins, P[2]-N[2]*ins); nor.push(N[0],N[1],N[2]); const hx=colFn(z,th), k=hx===TB_MOUTH_IN?0.8:0.5; c.setHex(hx).convertSRGBToLinear(); col.push(c.r*k,c.g*k,c.b*k); } }
+  for(let i=0;i<nz;i++) for(let j=0;j<nth;j++){ const a=i*(nth+1)+j, b=a+1, cc=a+nth+1, d=cc+1; idx.push(a,b,cc, b,d,cc); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal',new T.Float32BufferAttribute(nor,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(col,3)); g.setIndex(idx); return g;
+}
+
+// ---- the expressions: targets for the face's controls (lids, brows, mouth, cheeks, eyes) ----
+// lu/ll: upper lid closed / lower lid raised (0..1) [the -x eye, the +x eye]; lt: lid slant (+ = outer corner up: cross);
+// by: brow raise; bt: brow slant (+ = inner end down: angry, - = inner end up: worried); mo: mouth open; ms: smile (-1 frown);
+// mw: width; ma: one corner up (smirk); mr: round "O"; mt / mg: upper teeth / clenched lower teeth; mn: tongue; ck: cheeks
+// puffed; bl: blush; ps: pupil size; ew: eye size; gx / gy: gaze bias; mx: mouth shifted sideways
+const TB_KEYS=['luL','luR','llL','llR','ltL','ltR','byL','byR','btL','btR','mo','ms','mw','ma','mr','mt','mg','mn','ck','bl','ps','ew','gx','gy','mx'];
+const TB_REST={lu:[0.05,0.05], ll:[0.1,0.1], lt:[0,0], by:[0,0], bt:[0,0], mo:0, ms:0.38, mw:1, ma:0, mr:0, mt:0, mg:0, mn:0, ck:0.15, bl:0.06, ps:1, ew:1, gx:0, gy:0, mx:0};
+const TB_EXPR={
+  rest:  {},
+  pass:  {lu:[0.04,0.96], ll:[0.3,0.62], lt:[0,0.12], by:[0.5,-0.18], bt:[-0.1,0.25], mo:0.2, ms:0.75, mw:1.05, ma:0.8, mt:0.7, ck:0.75, bl:0.5, ps:1.05, gx:-0.32, gy:0.05},
+  passed:{lu:[0.46,0.3], ll:[0.38,0.24], lt:[0.16,-0.06], by:[-0.4,0.55], bt:[0.38,-0.3], ms:-0.22, mw:0.72, ma:-0.6, ck:0, bl:0, ps:0.88, ew:0.97, gx:0.42, mx:0.25},
+  hit:   {lu:[0,0], ll:[0,0], lt:[-0.1,-0.1], by:[1,1], bt:[-0.28,-0.28], mo:0.85, ms:-0.1, mw:0.62, mr:1, mt:0.25, ck:0, bl:0, ps:0.6, ew:1.15, gy:0.1},
+  angry: {lu:[0.38,0.38], ll:[0.32,0.32], lt:[0.4,0.4], by:[-0.55,-0.55], bt:[0.62,0.62], mo:0.42, ms:-0.45, mw:1.12, mt:1, mg:1, ck:0.1, bl:0.35, ps:0.84, ew:0.96},
+  boost: {lu:[0.32,0.32], ll:[0.22,0.22], lt:[0.2,0.2], by:[-0.32,-0.32], bt:[0.34,0.34], mo:0.16, ms:0.1, mw:1.02, mt:0.9, mg:0.75, ck:0.25, bl:0, ps:1.1},
+  fire:  {lu:[0.6,0.6], ll:[0.74,0.74], lt:[-0.12,-0.12], by:[0.55,0.55], bt:[-0.18,-0.18], mo:0.9, ms:1, mw:1.25, mt:1, mn:0.9, ck:1, bl:0.6},
+  tired: {lu:[0.6,0.62], ll:[0.1,0.1], lt:[-0.3,-0.3], by:[-0.1,-0.1], bt:[-0.42,-0.42], mo:0.45, ms:-0.3, mw:0.8, mr:0.3, mn:0.7, ck:0, bl:0, ps:0.95, ew:0.97, gy:-0.26},
+  win:   {lu:[0.05,0.05], ll:[0.5,0.5], lt:[-0.05,-0.05], by:[0.85,0.85], bt:[-0.12,-0.12], mo:1, ms:1, mw:1.3, mt:1, mn:0.5, ck:1, bl:0.85, ps:1.25, ew:1.07, gy:0.06},
+  lose:  {lu:[0.5,0.5], ll:[0.18,0.18], lt:[-0.34,-0.34], by:[0.3,0.3], bt:[-0.64,-0.64], mo:0.1, ms:-0.85, mw:0.82, ck:0, bl:0, ps:0.9, ew:0.98, gy:-0.3},
+  smug:  {lu:[0.42,0.5], ll:[0.25,0.3], lt:[0.08,0.08], by:[0.15,-0.1], bt:[0,0.12], mo:0.05, ms:0.55, mw:1, ma:0.6, ck:0.5, bl:0.25, gx:-0.2},
+  dizzy: {lu:[0.2,0.35], ll:[0.15,0.1], lt:[-0.2,0.25], by:[0.6,0.2], bt:[-0.3,0.2], mo:0.5, ms:-0.15, mw:0.8, mr:0.6, mn:0.6, ck:0, bl:0, ps:0.8, ew:1.05},
+};
+const TB_LIST=['rest','pass','passed','hit','angry','boost','fire','tired','win','lose','smug','dizzy'];
+const TB_TGT={};
+for(const n of TB_LIST){ const E=Object.assign({}, TB_REST, TB_EXPR[n]), a=new Float32Array(TB_KEYS.length); let i=0;
+  for(const k of ['lu','ll','lt','by','bt']){ a[i++]=E[k][0]; a[i++]=E[k][1]; }
+  for(const k of ['mo','ms','mw','ma','mr','mt','mg','mn','ck','bl','ps','ew','gx','gy','mx']) a[i++]=E[k];
+  TB_TGT[n]=a; }
+const TB_W=new Float32Array(TB_KEYS.map(k=>/^lu|^ll|^lt/.test(k)?20:/^m/.test(k)?15:/^b[yt]/.test(k)?12:10));
+const TB_CI={}; TB_KEYS.forEach((k,i)=>TB_CI[k]=i);
+
+// ---- build ----
+function makeBeadTemplate(opts){ return rigNeck(makeBeadTemplateBuild(opts)); }
+const _tbPack={};
+function makeBeadTemplateBuild(opts){
+  const C=tbCfg(opts); tbPalette(C);
+  const L=tbLayout(tbCfg({sex:C.sex})), nH=L.beads.length, nT=L.tail.length; C.lvJ=L.lvT0;
+  let PK=_tbPack[C.key];
+  if(!PK){ PK=_tbPack[C.key]={hM:new Float32Array(nH*16), hC:new Float32Array(nH*3), tM:new Float32Array(nT*16), tC:new Float32Array(nT*3)};
+    tbPack(L.beads,C,PK.hM,PK.hC,0); tbPack(L.tail,C,PK.tM,PK.tC,0); }
+  const g=new T.Group(), ud=g.userData, head=new T.Group(); head.name='tbHead'; g.add(head);
+  const sc=C.scale;
+  // the body's beads (static instances: the shader parts the mouth, puffs the cheeks, runs the ripple)
+  const UB=tbUniforms('body'), mB=tbMat('body',UB,{shininess:95, specular:0x464646, emissive:0x262626});
+  const gB=tbBeadGeo(5), gBl=tbBeadGeo(5,[1.62]); gB.boundingSphere=new T.Sphere(new T.Vector3(0,TB.Y,0.3),7.2); gBl.boundingSphere=gB.boundingSphere;   // near / far (a bead under ~3 px)
+  const body=new T.InstancedMesh(gB,mB,nH); body.instanceMatrix.array.set(PK.hM); body.instanceMatrix.needsUpdate=true;
+  body.instanceColor=new T.InstancedBufferAttribute(PK.hC.slice(),3); body.name='tbBodyBeads'; head.add(body);
+  { const a=body.instanceMatrix.array; for(let i=0;i<nH;i++){ a[i*16+13]-=TB.Y; a[i*16+14]-=0.3; } body.position.set(0,TB.Y,0.3); UB.uOff.value.set(0,TB.Y,0.3); gB.boundingSphere.center.set(0,0,0); }   // its origin at the head's centre (race_motion's head probe)
+  // the wax under them
+  // (the wax is dark red wherever the mouth can open: the body's beads sink away there to show it)
+  TB_MOUTH_IN=C.mouthIn;
+  const coreCol=(z,th)=>{ const a=Math.abs(((th+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI), P=tbPt(z,th);
+    if(z>2.4 && Math.abs(P[0])<C.MW*1.35 && P[1]<C.MY+0.75 && P[1]>C.MY-1.7) return C.mouthIn;
+    return z>2.2&&a>0.6 ? C.skin : C.body; };
+  const hcm=new T.MeshPhongMaterial({vertexColors:true, shininess:20, specular:0x101010, emissive:0x000000}); hcm.userData.keepPhong=true;
+  const hcore=new T.Mesh(tbCoreGeo(TB.ZN-1e-3,TB.ZJ,36,36,0.12,coreCol,true), hcm);
+  hcore.name='tbCore'; head.add(hcore);
+  // the eyes: glass domes, each in its own group so it can widen
+  const eyes=[], eyeG=[];
+  const domeM=new T.MeshPhongMaterial({color:C.eyeWhite, emissive:0x2e2c28, shininess:150, specular:0x8a8a8a}); domeM.userData.keepPhong=true;
+  for(const E of L.eyes){
+    const eg=new T.Group(); eg.position.copy(E.Cd); head.add(eg); eyeG.push(eg);
+    const dg=new T.SphereGeometry(E.Rd,22,12,0,Math.PI*2,0,2.05);
+    dg.applyMatrix4(new T.Matrix4().makeRotationFromQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),E.A)));
+    const dm=new T.Mesh(dg,domeM); dm.name='tbEye'; eg.add(dm);
+    const dot=new T.Object3D(); eg.add(dot); eyes.push(dot);   // (syncObjects scales ud.eyes for its own wink: these carry no geometry)
+  }
+  // the face's beads (lids, brows, lashes, pupils, glints, lips, teeth, tongue): one batch, re-strung every frame
+  const S={}, cols=[]; let nF=0; const slot=(name,n,hex)=>{ S[name]=nF; for(let i=0;i<n;i++) cols.push(hex); nF+=n; };
+  const NB=11, KU=6, KL=3, NBR=C.sex==='f'?9:10, BR=C.brows, NU=C.sex==='f'?11:11, NL=C.sex==='f'?11:12;
+  for(let e=0;e<2;e++){
+    for(let k=0;k<KU;k++) slot('lu'+e+'_'+k,NB,k===0?C.lidEdge:C.lid);
+    for(let k=0;k<KL;k++) slot('ll'+e+'_'+k,NB,C.lid);
+    for(let k=0;k<BR;k++) slot('br'+e+'_'+k,NBR,C.brow);
+    if(C.eye==='round'){ slot('pu'+e,1,C.pupil); slot('pr'+e,8,C.iris); } else slot('pu'+e,9,C.pupil);
+    slot('gl'+e,1,0xffffff);
+    if(C.lash) slot('la'+e,15,C.lidEdge);
+  }
+  slot('ul',NU,C.lip); slot('ll',NL,C.lip); if(C.sex==='f') slot('li',8,C.lip);
+  slot('tu',8,0xfdfbf4); slot('tl',7,0xfdfbf4); slot('tn',4,C.tongue);
+  const UF=tbUniforms('body'), mF=tbMat('body',UF,{shininess:110, specular:0x505050, emissive:0x262626}); UF.uMm.value.z=1e3;   // the body's own shader (one program fewer), its mouth and cheeks switched off
+  const gF=tbBeadGeo(6); gF.boundingSphere=new T.Sphere(new T.Vector3(0,4,2.5),5.5);
+  const face=new T.InstancedMesh(gF,mF,nF); face.name='tbFaceBeads';
+  { const cc=new Float32Array(nF*3), c=new T.Color(); cols.forEach((h,i)=>{ c.setHex(h).convertSRGBToLinear(); const v=h===0xffffff?2.6:1; cc[i*3]=c.r*v; cc[i*3+1]=c.g*v; cc[i*3+2]=c.b*v; });
+    face.instanceColor=new T.InstancedBufferAttribute(cc,3); }
+  head.add(face);
+  // the tail: bead rings and a core tube, both placed on the spine by the vertex shader
+  const UT=tbUniforms('tail'), mT=tbMat('tail',UT,{shininess:95, specular:0x464646, emissive:0x262626});
+  const gT=tbBeadGeo(5), gTl=tbBeadGeo(5,[1.62]);
+  const tail=new T.InstancedMesh(gT,mT,nT); tail.instanceMatrix.array.set(PK.tM); tail.instanceMatrix.needsUpdate=true;
+  tail.instanceColor=new T.InstancedBufferAttribute(PK.tC.slice(),3); tail.frustumCulled=false; tail.name='tbTailBeads'; bodyPart(tail); g.add(tail);
+  const UTC=tbUniforms('tcore'); UTC.uSp=UT.uSp; UTC.uLg=UT.uLg; UTC.uTl=UT.uTl; UTC.uRT=UT.uRT;
+  const tcore=new T.Mesh(tbCoreGeo(TB.ZJ+0.02,TB.ZTIP,60,10,0.07,()=>C.tail), tbMat('tcore',UTC,{vertexColors:true, shininess:20, specular:0x101010}));
+  tcore.frustumCulled=false; tcore.name='tbTailCore'; bodyPart(tcore); g.add(tcore);
+  // the spine, as a line nobody sees: race_motion's tail-tip probe reads its last point
+  const sg=new T.BufferGeometry(); sg.setAttribute('position',new T.BufferAttribute(new Float32Array(63),3));
+  const spineLine=new T.Line(sg,new T.LineBasicMaterial({color:0xffffff})); spineLine.visible=false; spineLine.frustumCulled=false; g.add(spineLine);
+  // glow and boost flames (the tip of the tail, as every racer)
+  const glow=glowSprite(C.glow,13); glow.position.set(0,3.4,0.5); g.add(glow);
+  const tz=TB.ZTIP, fl1=glowSprite(0xffd27a,0.001), fl2=glowSprite(0xff7a3c,0.001); fl1.position.set(0,TB.Y,tz-1.5); fl2.position.set(0,TB.Y,tz-4.5); g.add(fl1); g.add(fl2);
+  // sockets
+  const sock=(name,parent,x,y,z)=>{ const o=new T.Object3D(); o.name='socket:'+name; o.position.set(x,y,z); parent.add(o); return o; };
+  const topAt=z=>TB.Y+tbR(z)*tbE(z);
+  const browY=Math.max(L.eyes[0].Cd.y,L.eyes[1].Cd.y)+C.eyeR*1.25;
+  const sockets={ crown:sock('crown',head,0,topAt(TB.ZC),TB.ZC), hair:sock('hair',head,0,topAt(-1.4),-1.4), face:sock('face',head,0,TB.Y,TB.ZN),
+    brow:sock('brow',head,0,browY,tbFront(0,Math.min(browY,TB.Y+2.5)).z), neck:sock('neck',head,0,TB.Y,TB.ZJ), back:sock('back',head,0,topAt(-2.8),-2.8),
+    tailRoot:sock('tailRoot',g,0,TB.Y,TB.ZJ), tailTip:sock('tailTip',g,0,TB.Y,TB.ZTIP) };
+  bodyPart(sockets.tailRoot); bodyPart(sockets.tailTip);
+  // cheeks
+  for(const [k,sx] of [['uCkL',-1],['uCkR',1]]){ const q=tbFront(sx*1.95,2.95), P=tbPt(q.z,q.th); UB[k].value.set(P[0],P[1],P[2]); }
+  { const c=new T.Color(C.blush).convertSRGBToLinear(); UB.uCkC.value.set(c.r,c.g,c.b); }
+    if(sc!==1){ for(const c of [head,tail,tcore,glow,fl1,fl2]){ c.scale.multiplyScalar(sc); c.position.multiplyScalar(sc); } }
+  // the rig's state
+  const TS={ C, L, head, body, face, tail, tcore, geo:[gB,gBl,gT,gTl], lod:0, eyes:L.eyes, eyeG, S, NB, KU, KL, NBR, BR, NU, NL,
+    UB, UF, UT, UTC, mats:[mB,mF,mT], spineLine, sockets,
+    ctl:new Float32Array(TB_TGT.rest), vel:new Float32Array(TB_KEYS.length), tgt:new Float32Array(TB_TGT.rest),
+    sp:new Float32Array(84), lg:new Float32Array(84), lv:new Float32Array(63), tip:new T.Vector3(0,TB.Y,TB.ZTIP), root:new T.Vector3(0,TB.Y,TB.ZJ),
+    ph:0, amp:0, lift:0, wl:null, wlS:TB.L/21, hooked:false, t:0, lt:null, dt:1/60, r:null,
+    trail:0, trailV:0, drift:0, driftV:0, kB:0, kS:0, kA:0, kC:0, kT:0, acc:0, spd0:0, yawRate:0, head0:null,
+    sac:[0,0], sacT:0, sacV:[0,0], gaze:[0,0], spin:0, blink:0, cur:'rest', ev:null, evT:0, st:{place:null, cand:null, candT:0, react:0, spin:false, angryT:0, item:null, fireT:0, slow:0, hits:0},
+    sq:0, sqV:0, st2:0, stV:0, air:false, vy:0, launched:false, rip:-1, ripT:-1, ripA:0, tripA:0, nkLast:new T.Quaternion(), nkT:[0,0,0], nk3:[0,0,0], nk3v:[0,0,0], wasBoost:false };
+  ud.tplBead=TS; ud.head=body; ud.baseEmissive=mB.emissive.clone(); ud.eyes=eyes; ud.glow=glow; ud.flame=[fl1,fl2]; ud.tailMesh=spineLine;
+  ud.sockets=sockets; ud.motionProbes=[['tailMid',sock('tailMid',g,0,TB.Y,TB.ZJ-TB.L*0.5),'pos'],['crown',sockets.crown,'pos']]; bodyPart(ud.motionProbes[0][1]);
+  ud.expr={ list:TB_LIST.slice(), cur:'rest', hold:0, forced:null,
+    set(name, hold, instant){ if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.hold=hold==null?8:hold; if(instant) TS.snap=true; } };
+  ud.tick=tbTick; ud.real=true;
+  tbPx(body,UB); tbPx(face,UF); tbPx(tail,UT);
+  tbSpine(TS, g, 0); tbFace(TS, 0);
+  return g;
+}
+
+// ---- per frame ----
+// wiggleTail's hook: the game hands over its swim (the speed-paced clock, the amplitude, the tail lift, the lash chain)
+function tbWiggle(g, phase, amp, lift){
+  const TS=g.userData.tplBead; if(!TS) return;
+  TS.ph=phase; TS.amp=amp; TS.lift=lift||0; TS.hooked=true;
+  _WL.s=TB.L/WL_LEN;
+  TS.wl=_WL.on ? _WL : null;
+  tbSpine(TS, g, TS.dt);
+}
+const _tbQ=new T.Quaternion(), _tbQ2=new T.Quaternion(), _tbE=new T.Euler(), _tbV=new T.Vector3(), _tbV2=new T.Vector3(), _tbV3=new T.Vector3(), _tbM=new T.Matrix4();
+const TB_PIV=new T.Vector3(0,TB.Y,-0.7);   // the head turns about the back of the skull, so a glance swings the face and barely moves the tail's root
+// the spine: root on the head (it turns with the neck), Juan's swim along it, the springs' layers, the lash; then its lagging twin
+function tbSpine(TS, g, dt){
+  const ud=g.userData, nk=ud.neck, N=TB.N, L=TB.L, ds=L/N, sp=TS.sp, lg=TS.lg;
+  // the head answers the stroke: a small counter-yaw and roll in time with the tail, on top of the look's neck pose
+  if(nk){
+    // the look's neck pose, through a critically damped spring of our own (the look's own spring is snappy: an actor's
+    // glance; on a body that drags a strung tail it reads better a beat smoother), plus the head's answer to the stroke
+    const fresh=!nk.quaternion.equals(TS.nkLast); if(fresh){ _tbE.setFromQuaternion(nk.quaternion,'YZX'); TS.nkT[0]=_tbE.x; TS.nkT[1]=_tbE.y; TS.nkT[2]=_tbE.z; }
+    const w=15, h=Math.min(dt,1/30), A3=TS.nk3, V3=TS.nk3v;
+    if(dt>0) for(let a=0;a<3;a++){ V3[a]+=(w*w*(TS.nkT[a]-A3[a])-2*w*V3[a])*h; A3[a]+=V3[a]*h; } else for(let a=0;a<3;a++){ A3[a]=TS.nkT[a]; V3[a]=0; }
+    const Ak=Math.min(1.3,TS.amp/6.9)*(1-0.6*TS.kB), ph=TS.ph;
+    nk.quaternion.setFromEuler(_tbE.set(A3[0]+0.018*Ak*Math.sin(2*ph+0.4), A3[1]-0.055*Ak*Math.sin(ph-0.9), A3[2]+0.035*Ak*Math.cos(ph-0.9),'YZX'));
+    nk.position.copy(TB_PIV).sub(_tbV.copy(TB_PIV).applyQuaternion(nk.quaternion));
+    TS.nkLast.copy(nk.quaternion);
+  }
+  const q=nk?nk.quaternion:_tbQ2.identity();
+  const P0=_tbV.set(0,TB.Y,TB.ZJ).sub(TB_PIV).applyQuaternion(q).add(TB_PIV);
+  const D0=_tbV2.set(0,0,-1).applyQuaternion(q);
+  const yaw0=Math.atan2(-D0.x,-D0.z), pit0=Math.asin(Math.max(-1,Math.min(1,D0.y)));
+  // the roll at the root (the ring there must sit exactly as the head's last row does)
+  const sd=_tbV3.set(-1,0,0).applyQuaternion(q);
+  let tx=-D0.z, tz=D0.x; const tl=Math.hypot(tx,tz)||1; tx/=tl; tz/=tl;   // twist-free side: cross(up, D0) normalised
+  const upx=D0.y*tz, upy=D0.z*tx-D0.x*tz, upz=-D0.y*tx;                    // cross(D0, side)
+  const roll0=Math.atan2(sd.x*upx+sd.y*upy+sd.z*upz, sd.x*tx+sd.z*tz);
+  TS.UT.uRT.value.copy(D0);
+  // Juan's swim: ~1.3 waves along the tail, the sway growing as t^2, the amplitude the game's (speed, the lash's share) at Juan's proportions
+  const kap=8.17/L*(1-0.18*TS.kB), A=TS.amp*0.42*L/11.45*(1-0.5*TS.kB)*(1+0.55*TS.kS+0.35*TS.kC)*(1+0.18*Math.max(-1,Math.min(1,TS.acc/60)))*(1-0.3*TS.kA);
+  const Lb=L*0.3, W=TS.wl, S=TS.wlS, stretch=1+0.06*TS.kB;
+  let x=P0.x, y=P0.y, z=P0.z;
+  for(let k=0;k<=N;k++){
+    const s=k*ds, t=s/L;
+    if(k>0){ const sm=(k-0.5)*ds, f=1-tbSm(0,Lb,sm), tm=sm/L;
+      const psi=yaw0*f + TS.trail*Math.pow(tm,1.3) - TS.drift*tbSm(0,L*0.65,sm), pit=pit0*f;
+      x+=-Math.sin(psi)*Math.cos(pit)*ds*stretch; y+=Math.sin(pit)*ds*stretch; z+=-Math.cos(psi)*Math.cos(pit)*ds*stretch; }
+    let w=A*t*t*Math.sin(TS.ph-kap*s);
+    if(TS.kS>0.01) w+=A*0.35*TS.kS*t*t*Math.sin(2.3*TS.ph-1.7*kap*s);
+    let wy=TS.lift*t*t + 1.3*TS.kA*t*t - 0.9*TS.kT*t*t + (0.32*t*t*Math.sin(TS.ph*0.5+1.1)+0.5*TS.kC*t*t*Math.sin(TS.ph*0.5))*(1-Math.min(1,TS.spd0/20));
+    let wx=0, wz=0;
+    if(W){ const fi=Math.max(0,Math.min(WL_N-1e-6,t*WL_N)), i=fi|0, u=fi-i; wx=(W.x[i]+(W.x[i+1]-W.x[i])*u)*S; wy+=(W.y[i]+(W.y[i+1]-W.y[i])*u)*S; wz=(W.z[i]+(W.z[i+1]-W.z[i])*u)*S; }
+    const o=k*4; sp[o]=x+w+wx; sp[o+1]=y+wy; sp[o+2]=z+wz; sp[o+3]=roll0*(1-tbSm(0,Lb*0.6,s));
+  }
+  // the lagging twin: each node an underdamped spring after the spine (the shader hands every bead its own share of it)
+  const LV=TS.lv; if(TS.lgInit!==true){ lg.set(sp); TS.lgInit=true; }
+  if(dt>0){ const w0=15, ze=0.3, h=Math.min(dt,1/30);
+    for(let k=0;k<=N;k++) for(let a=0;a<3;a++){ const i=k*4+a, j=k*3+a; LV[j]+=(w0*w0*(sp[i]-lg[i])-2*ze*w0*LV[j])*h; lg[i]+=LV[j]*h; } }
+  TS.UT.uSp.value=sp; TS.UT.uLg.value=lg;
+  // the tip, the root and the sockets that ride them; the probe line
+  const n4=N*4; TS.tip.set(sp[n4],sp[n4+1],sp[n4+2]); TS.root.set(sp[0],sp[1],sp[2]);
+  const pa=TS.spineLine.geometry.attributes.position.array; for(let k=0;k<=N;k++){ pa[k*3]=sp[k*4]; pa[k*3+1]=sp[k*4+1]; pa[k*3+2]=sp[k*4+2]; }
+  TS.spineLine.geometry.attributes.position.needsUpdate=true;
+  const so=TS.sockets, tt=_tbV3.set(sp[n4]-sp[n4-4],sp[n4+1]-sp[n4-3],sp[n4+2]-sp[n4-2]).normalize();
+  so.tailTip.position.copy(TS.tip); so.tailTip.quaternion.setFromUnitVectors(_tbV.set(0,0,-1),tt);
+  so.tailRoot.position.copy(TS.root); so.tailRoot.quaternion.copy(q);
+  const mid=ud.motionProbes&&ud.motionProbes[0][1]; if(mid){ const m=(N>>1)*4; mid.position.set(sp[m],sp[m+1],sp[m+2]); }
+}
+// the face: every control into bead positions
+const _fA=new T.Vector3(), _fB=new T.Vector3(), _fN=new T.Vector3(), _fT=new T.Vector3(), _fU=new T.Vector3(), _fR=new T.Vector3(), _fF=new T.Vector3(), _fG=new T.Vector3(), _fX=new T.Vector3(1,0,0);
+function tbPut(arr,i,P,N,Tg,sa,sc,su){
+  _fN.copy(N).normalize(); _fT.copy(Tg).addScaledVector(_fN,-Tg.dot(_fN)); if(_fT.lengthSq()<1e-10) _fT.set(1,0,0); _fT.normalize(); _fB.crossVectors(_fN,_fT);
+  const k=i*16; arr[k]=_fT.x*sa; arr[k+1]=_fT.y*sa; arr[k+2]=_fT.z*sa; arr[k+3]=0; arr[k+4]=_fB.x*sc; arr[k+5]=_fB.y*sc; arr[k+6]=_fB.z*sc; arr[k+7]=0;
+  arr[k+8]=_fN.x*su; arr[k+9]=_fN.y*su; arr[k+10]=_fN.z*su; arr[k+11]=0; arr[k+12]=P.x; arr[k+13]=P.y; arr[k+14]=P.z; arr[k+15]=1;
+}
+const _tbFP=[0,0,0], _tbFN=[0,0,0];
+function tbOnFace(x,y,lift,P,N){ const q=tbFront(x,y); tbPt(q.z,q.th,_tbFP); tbNrm(q.z,q.th,_tbFN); N.set(_tbFN[0],_tbFN[1],_tbFN[2]); P.set(_tbFP[0],_tbFP[1],_tbFP[2]).addScaledVector(N,lift); }
+function tbMouthShape(TS){
+  const c=TS.ctl, C=TS.C, I=TB_CI, mo=c[I.mo], ms=c[I.ms], mr=Math.max(0,c[I.mr]), mg=c[I.mg];
+  const wv=C.MW*c[I.mw]*(1-0.42*mr), sh=c[I.mx]*0.45, yc=C.MY+0.06+0.42*ms*(1-mr)-0.3*mo*mr;
+  const M={xL:-wv+sh, xR:wv+sh, yL:yc-0.24*c[I.ma], yR:yc+0.24*c[I.ma],
+    bU:-0.1-0.36*ms+mo*(0.18+0.32*mr), qU:Math.max(0.3,1-0.25*mr-0.35*mg),
+    bL:-0.1-0.36*Math.max(ms,0)+0.1*Math.max(-ms,0)-mo*(0.92+0.3*mr+0.16*Math.max(ms,0)), qL:Math.max(0.3,1-0.45*mr-0.35*Math.max(ms,0)*Math.min(1,mo*2)-0.4*mg)};
+  M.yu=u=>{ const h=4*u*(1-u); return M.yL+(M.yR-M.yL)*u+M.bU*Math.pow(Math.max(h,1e-4),M.qU); };
+  M.yl=u=>{ const h=4*u*(1-u); return M.yL+(M.yR-M.yL)*u+M.bL*Math.pow(Math.max(h,1e-4),M.qL); };
+  M.x=u=>M.xL+(M.xR-M.xL)*u;
+  return M;
+}
+function tbFace(TS, dt){
+  const c=TS.ctl, I=TB_CI, C=TS.C, arr=TS.face.instanceMatrix.array, S=TS.S, NB=TS.NB, lb=TB.P*0.92, P=_fA, N=_fN;
+  const hide=i=>{ const k=i*16; for(let a=0;a<16;a++) arr[k+a]=0; };
+  for(let e=0;e<2;e++){
+    const E=TS.eyes[e], ew=c[I.ew], rd=E.Rd*ew, Cd=E.Cd, F=E.F, sx=E.sx;
+    TS.eyeG[e].scale.setScalar(ew);
+    const tau=c[I.ltL+e], Rr=_fR.copy(E.R).multiplyScalar(Math.cos(tau)).addScaledVector(E.U,Math.sin(tau)), Uu=_fU.copy(E.U).multiplyScalar(Math.cos(tau)).addScaledVector(E.R,-Math.sin(tau));
+    const rl=rd+lb*0.42, dA=lb/rl, bm=1.3;
+    const gl=Math.min(1,Math.max(0,c[I.llL+e])), ge=0.3+1.05*gl;
+    const cu=Math.min(1,Math.max(0,Math.max(c[I.luL+e],TS.blink))), ae=Math.min(0.3+1.32*cu, Math.PI-ge-0.12);
+    // upper lid: rows strung over the dome, the edge row first; closing slides them down and unrolls more from behind
+    for(let k=0;k<TS.KU;k++){ const a=ae-k*dA, vis=tbSm(-0.62,-0.62+dA,a), o=S['lu'+e+'_'+k];
+      for(let i=0;i<NB;i++){ const b=-bm+2*bm*(i+0.5)/NB, cb=Math.cos(b), sb=Math.sin(b);
+        _fG.copy(Uu).multiplyScalar(Math.cos(a)).addScaledVector(F,Math.sin(a));
+        N.copy(_fG).multiplyScalar(cb).addScaledVector(Rr,sb); P.copy(Cd).addScaledVector(N,rl);
+        _fT.copy(_fG).multiplyScalar(-sb).addScaledVector(Rr,cb);
+        const s=lb*(0.7+0.3*cb)*vis; if(s<1e-3) hide(o+i); else tbPut(arr,o+i,P,N,_fT,s*0.97,s*1.05,s*0.9);
+        if(k===0 && C.lash && i>=6){ // the lashes: three beads each, strung out from the lid's edge and curling up
+          const j0=S['la'+e]+(i-6)*3, dpa=_fB.copy(Uu).multiplyScalar(-Math.sin(a)).addScaledVector(F,Math.cos(a)).multiplyScalar(cb);
+          const D=_fX.copy(N).multiplyScalar(0.7).addScaledVector(dpa,-0.75).addScaledVector(Rr,0.3+0.1*(i-6)).normalize();
+          for(let m=0;m<3;m++){ const P2=_tbV.copy(P).addScaledVector(D,0.13+m*0.15).addScaledVector(Uu,0.035*m*m), sz=lb*(0.6-0.12*m);
+            tbPut(arr,j0+m,P2,D,Uu,sz,sz,sz); }
+          _fX.set(1,0,0); }
+      } }
+    // lower lid
+    for(let k=0;k<TS.KL;k++){ const a=ge-k*dA, vis=tbSm(-0.35,-0.35+dA,a), o=S['ll'+e+'_'+k];
+      for(let i=0;i<NB;i++){ const b=-bm+2*bm*(i+0.5)/NB, cb=Math.cos(b), sb=Math.sin(b);
+        _fG.copy(Uu).multiplyScalar(-Math.cos(a)).addScaledVector(F,Math.sin(a));
+        N.copy(_fG).multiplyScalar(cb).addScaledVector(Rr,sb); P.copy(Cd).addScaledVector(N,rl);
+        _fT.copy(_fG).multiplyScalar(-sb).addScaledVector(Rr,cb);
+        const s=lb*(0.7+0.3*cb)*vis; if(s<1e-3) hide(o+i); else tbPut(arr,o+i,P,N,_fT,s*0.97,s*1.05,s*0.9); } }
+    // brows: strung arcs over the lids; raised, slanted, arched
+    { const by=c[I.byL+e], bt=c[I.btL+e], bb=C.sex==='f'?TB.P*0.8:TB.P*1.08, arch=C.sex==='f'?0.32:0.12, bmx=C.sex==='f'?1.2:1.1;
+      const Rb=_fR.copy(E.R).multiplyScalar(Math.cos(bt)).addScaledVector(E.U,Math.sin(bt)), Ub=_fU.copy(E.U).multiplyScalar(Math.cos(bt)).addScaledVector(E.R,-Math.sin(bt));
+      const rb=rd+lb*0.42+bb*0.62+0.3*Math.max(0,by), a0=0.1-0.24*by;
+      for(let k=0;k<TS.BR;k++){ const o=S['br'+e+'_'+k];
+        for(let i=0;i<TS.NBR;i++){ const u=(i+0.5)/TS.NBR*2-1, b=u*bmx, a=a0+arch*u*u-k*0.24, cb=Math.cos(b), sb=Math.sin(b);
+          _fG.copy(Ub).multiplyScalar(Math.cos(a)).addScaledVector(F,Math.sin(a));
+          N.copy(_fG).multiplyScalar(cb).addScaledVector(Rb,sb); P.copy(Cd).addScaledVector(N,rb+(k?0.04:0));
+          _fT.copy(_fG).multiplyScalar(-sb).addScaledVector(Rb,cb);
+          const s=bb*(0.7+0.3*Math.cos(u*1.5))*(k?0.85:1); tbPut(arr,o+i,P,N,_fT,s*0.92,s*1.08,s); } } }
+    // the pupil: a star of beads (or a round bead in a ring of iris beads) riding the dome where the eye looks
+    { const gy=c[I.gx]+TS.gaze[0], gp=c[I.gy]+TS.gaze[1], ps=c[I.ps];
+      const G=_fG.copy(F).multiplyScalar(Math.cos(gy)*Math.cos(gp)).addScaledVector(_fX,Math.sin(gy)*Math.cos(gp)).addScaledVector(E.U,Math.sin(gp)).normalize();
+      const Tu=_fU.copy(E.U).addScaledVector(G,-E.U.dot(G)).normalize(), Tr=_fR.crossVectors(Tu,G).normalize();
+      const at=(d,ang,sz,slot)=>{ N.copy(G).addScaledVector(Tr,Math.cos(ang)*d/rd).addScaledVector(Tu,Math.sin(ang)*d/rd).normalize(); P.copy(Cd).addScaledVector(N,rd+sz*0.06);
+        _fT.copy(Tr).multiplyScalar(Math.cos(ang)).addScaledVector(Tu,Math.sin(ang)); tbPut(arr,slot,P,N,_fT,sz,sz,sz*0.6); };
+      const o=S['pu'+e];
+      if(C.eye==='round'){ at(0,0,0.5*rd*ps,o); for(let k=0;k<8;k++) at(0.4*rd*ps,k*Math.PI/4+TS.spin,0.21*rd*ps,S['pr'+e]+k); }
+      else { at(0,0,0.36*rd*ps,o); for(let k=0;k<4;k++){ const ang=TS.spin+k*Math.PI/2; at(0.27*rd*ps,ang,0.2*rd*ps,o+1+k*2); at(0.47*rd*ps,ang,0.13*rd*ps,o+2+k*2); } }
+      // the glint stays where the light is
+      N.copy(F).addScaledVector(E.U,0.5).addScaledVector(_fX,-0.34).normalize(); P.copy(Cd).addScaledVector(N,rd+0.04); tbPut(arr,S['gl'+e],P,N,E.U,0.15*rd,0.15*rd,0.1*rd); }
+  }
+  // the mouth: beads strung on two curves; the body's own rows part inside the opening
+  const M=tbMouthShape(TS), lp=C.sex==='f'?TB.P*0.95:TB.P*0.88;
+  const string=(slot,n,yf,dy,lift,u0,u1,szf)=>{ for(let i=0;i<n;i++){ const u=u0+(u1-u0)*(n>1?i/(n-1):0.5), du=0.01;
+      tbOnFace(M.x(u),yf(u)+dy,lift,P,N); _fT.set(M.x(u+du)-M.x(u-du), yf(u+du)-yf(u-du), 0);
+      const s=lp*(szf?szf(u):1); tbPut(arr,slot+i,P,N,_fT,s*0.95,s*1.05,s*0.9); } };
+  string(S.ul,TS.NU,M.yu,lp*0.34,0.07,0,1,u=>0.82+0.18*Math.sin(u*Math.PI));
+  string(S.ll,TS.NL,M.yl,-lp*0.34,0.07,0.03,0.97,u=>0.85+0.25*Math.sin(u*Math.PI));
+  if(S.li!=null) string(S.li,8,M.yl,-lp*1.12,0.05,0.22,0.78,u=>0.62+0.2*Math.sin(u*Math.PI));
+  const gap=u=>M.yu(u)-M.yl(u), mt=c[I.mt], mg=c[I.mg], mn=c[I.mn], ts=TB.P*0.78;
+  for(let i=0;i<8;i++){ const u=0.14+0.72*i/7, v=mt*tbSm(0.08,0.32,gap(u)); if(v<0.02){ hide(S.tu+i); continue; }
+    tbOnFace(M.x(u),M.yu(u)-ts*0.42,-0.05,P,N); tbPut(arr,S.tu+i,P,N,_fX,ts*v,ts*1.15*v,ts*0.8*v); }
+  for(let i=0;i<7;i++){ const u=0.18+0.64*i/6, v=mg*tbSm(0.1,0.34,gap(u)); if(v<0.02){ hide(S.tl+i); continue; }
+    tbOnFace(M.x(u),M.yl(u)+ts*0.42,-0.05,P,N); tbPut(arr,S.tl+i,P,N,_fX,ts*v,ts*1.1*v,ts*0.8*v); }
+  for(let i=0;i<4;i++){ const v=mn*tbSm(0.35,0.7,gap(0.5)); if(v<0.02){ hide(S.tn+i); continue; }
+    const x=M.x(0.5)+(i-1.5)*0.2, y=M.yl(0.5)+0.18+(i===1||i===2?0.06:0); tbOnFace(x,y,-0.1,P,N); const s=TB.P*1.15*v; tbPut(arr,S.tn+i,P,N,_fX,s,s,s*0.7); }
+  TS.face.instanceMatrix.needsUpdate=true;
+  // the body's side of it: the opening, the cheeks
+  TS.UB.uMc.value.set(M.xL,M.yL,M.xR,M.yR); TS.UB.uMb.value.set(M.bU,M.qU,M.bL,M.qL);
+  const ck=c[I.ck], ma=c[I.ma]; TS.UB.uCk.value.set(Math.max(0,ck*(1-0.4*ma)), Math.max(0,ck*(1+0.4*ma)), c[I.bl], c[I.bl]);
+}
+// which face the race calls for (an actor, not a weathervane: a place must hold a moment before it is acted on)
+function tbPick(TS, r, t, dt){
+  const S=TS.st, L=r&&r._lk, racing=r && typeof state!=='undefined' && state==='race' && !r.finished;
+  const ev=(n,d)=>{ TS.ev=n; TS.evT=t+d; };
+  if(r){
+    if(S.place==null){ S.place=r.place; S.cand=r.place; S.candT=t; }
+    if(r.place!==S.cand){ S.cand=r.place; S.candT=t; }
+    if(racing && S.cand!==S.place && t-S.candT>0.6){ if(t>S.react){ ev(S.cand<S.place?'pass':'passed', S.cand<S.place?1.4:1.6); S.react=t+2.6; } S.place=S.cand; }
+    if(L && L.g && L.g!==S.g && racing){ S.g=L.g; if(L.g.k==='smug' && t>S.react){ ev('pass',1.4); S.react=t+2.6; } else if(L.g.k==='dbl' && t>S.react){ ev('passed',1.5); S.react=t+2.6; } }
+    const spin=(r.spinT||0)>0; if(spin && !S.spin) S.hits++; if(!spin && S.spin) S.angryT=t+2.2; S.spin=spin;
+    if(S.item && !r.item && !(r._roll>0)) S.fireT=t+1.2; S.item=r.item;
+    S.slow=racing && Math.abs(r.spd||0)<35 ? S.slow+dt : 0;
+  }
+  let want='rest';
+  if(r && r.finished) want=(r.place||9)<=3?'win':'lose';
+  else if(r && (r.celebT||0)>0) want='win';
+  else if(S.spin) want='hit';
+  else if(t<(S.angryT||0)) want='angry';
+  else if(t<(S.fireT||0)) want='fire';
+  else if(r && (r.boostT||0)>0) want='boost';
+  else if(TS.ev && t<TS.evT) want=TS.ev;
+  else if(S.slow>1.5) want='tired';
+  else if(L && L.sm>0.45) want='smug';
+  return want;
+}
+function tbTick(o, r, now){
+  const ud=o.userData, TS=ud.tplBead; if(!TS) return;
+  const t=now||0, dt=Math.min(0.05, Math.max(0, TS.lt==null?1/60:t-TS.lt)); TS.lt=t; if(dt>0) TS.dt=dt;
+  TS.r=r; TS.t+=dt;
+  const L=r&&r._lk, spd=r?Math.abs(r.spd||0):0, racing=r && typeof state!=='undefined' && state==='race';
+  // --- the springs behind the tail's layers ---
+  if(r){
+    if(TS.head0==null) TS.head0=r.head||0;
+    let dh=(r.head||0)-TS.head0; dh-=Math.round(dh/(Math.PI*2))*Math.PI*2; TS.head0=r.head||0;
+    const yr=dt>0?Math.max(-2.6,Math.min(2.6,dh/dt)):0; TS.yawRate+=(yr-TS.yawRate)*Math.min(1,dt*6);
+    const spin=(r.spinT||0)>0, w1=10, z1=0.42;
+    const trT=spin?0:-TS.yawRate*0.42; TS.trailV+=(w1*w1*(trT-TS.trail)-2*z1*w1*TS.trailV)*dt; TS.trail+=TS.trailV*dt;
+    const drT=spin?0:Math.max(-0.9,Math.min(0.9,(r.slip||0)*1.6)); TS.driftV+=(64*(drT-TS.drift)-2*0.45*8*TS.driftV)*dt; TS.drift+=TS.driftV*dt;
+    const ease=(k,v,rate)=>TS[k]+=(v-TS[k])*Math.min(1,dt*rate);
+    ease('kB',(r.boostT||0)>0?1:0,5); ease('kS',spin?1:0,6); ease('kA',r.air?1:0,4); ease('kC',(r.celebT||0)>0?1:0,4); ease('kT',TS.st.slow>1.5?1:0,2);
+    const a=dt>0?(spd-TS.spd0)/dt:0; TS.acc+=(a-TS.acc)*Math.min(1,dt*4); TS.spd0=spd;
+  }
+  if(!TS.hooked) tbSpine(TS, o, dt);   // a rest pose (a reference sheet) has no swim: the spine still follows the neck
+  TS.hooked=false;
+  // --- the face ---
+  const E=ud.expr; let want=tbPick(TS, r, t, dt);
+  if(E.forced){ want=E.forced; if(E.hold>0){ E.hold-=dt; if(E.hold<=0) E.forced=null; } }
+  E.cur=want; TS.cur=want;
+  const tg=TS.tgt; tg.set(TB_TGT[want]||TB_TGT.rest);
+  const I=TB_CI;
+  // acting on top of the pose: the laugh's ha-ha, the pant, the gritted tremble, the victory bounce
+  if(want==='fire'){ tg[I.mo]+=0.14*Math.sin(t*15); tg[I.ck]+=0.1*Math.sin(t*15); }
+  else if(want==='tired'){ tg[I.mo]+=0.12*Math.sin(t*5.5); }
+  else if(want==='angry'){ tg[I.mw]+=0.03*Math.sin(t*31); }
+  else if(want==='win'){ tg[I.mo]+=0.08*Math.sin(t*9); tg[I.byL]+=0.1*Math.sin(t*9); tg[I.byR]+=0.1*Math.sin(t*9); }
+  const c=TS.ctl, v=TS.vel;
+  if(TS.snap){ c.set(tg); v.fill(0); TS.snap=false; }
+  else { const h=Math.min(dt,1/30), n=dt>h?Math.ceil(dt/h):1, hh=dt/n;
+    for(let s=0;s<n;s++) for(let i=0;i<c.length;i++){ const w=TB_W[i]; v[i]+=(w*w*(tg[i]-c[i])-2*w*v[i])*hh; c[i]+=v[i]*hh; } }
+  // blinks (the social look's), not mid-wink and not while posed for a sheet
+  TS.blink=(L && !E.forced && want!=='pass' && want!=='fire') ? Math.max(0,Math.min(1,(1-L.blink)/0.92)) : 0;
+  // gaze: the look's target, small saccades, the camera when the glance goes back over the shoulder
+  if(t>TS.sacT){ TS.sacT=t+0.45+1.6*tbHash(t*3.7+1); const k=E.forced?0:1; TS.sac[0]=(tbHash(t*5.3)-0.5)*0.22*k; TS.sac[1]=(tbHash(t*7.1+2)-0.5)*0.12*k; }
+  let gx=(L?Math.max(-0.5,Math.min(0.5,L.eyeO))*1.1:0)+TS.sac[0], gy=TS.sac[1];
+  if(L && L.g && L.g.ov && typeof camera!=='undefined'){ const G=L.g, dd=G.dur, hold=ldSmooth(0,0.15,G.t)*(1-ldSmooth(dd-0.4,dd,G.t));
+    if(hold>0){ TS.head.updateWorldMatrix(true,false); _tbV.copy(camera.position); TS.head.worldToLocal(_tbV); _tbV.sub(TS.eyes[0].Cd).normalize();
+      gx+=(Math.atan2(_tbV.x,_tbV.z)-gx)*hold; gy+=(Math.asin(Math.max(-1,Math.min(1,_tbV.y)))-gy)*hold*0.6; } }
+  gx=Math.max(-0.62,Math.min(0.62,gx)); gy=Math.max(-0.45,Math.min(0.45,gy));
+  const wg=40; TS.sacV[0]+=(wg*wg*(gx-TS.gaze[0])-2*wg*TS.sacV[0])*dt; TS.gaze[0]+=TS.sacV[0]*dt; TS.sacV[1]+=(wg*wg*(gy-TS.gaze[1])-2*wg*TS.sacV[1])*dt; TS.gaze[1]+=TS.sacV[1]*dt;
+  // the star pupils spin when he is spun (and twinkle at the finish); otherwise they settle back square
+  if(r && ((r.spinT||0)>0 || want==='dizzy')) TS.spin+=dt*14; else if(r && (r.celebT||0)>0) TS.spin+=dt*6;
+  else { const q=Math.round(TS.spin/(Math.PI/2))*Math.PI/2; TS.spin+=(q-TS.spin)*Math.min(1,dt*6); }
+  // the face is re-strung only when something on it moved
+  { let d=Math.abs(TS.gaze[0]-(TS.fg0||0))+Math.abs(TS.gaze[1]-(TS.fg1||0))+Math.abs(TS.blink-(TS.fbl||0))+Math.abs(TS.spin-(TS.fsp||0)); const pc=TS.fc||(TS.fc=new Float32Array(c.length).fill(9));
+    for(let i=0;i<c.length;i++) d+=Math.abs(c[i]-pc[i]);
+    if(d>2e-4){ tbFace(TS, dt); pc.set(c); TS.fg0=TS.gaze[0]; TS.fg1=TS.gaze[1]; TS.fbl=TS.blink; TS.fsp=TS.spin; } }
+  // far away (a bead under about three pixels) the beads drop to a five-sided cap
+  if(typeof camera!=='undefined'){ const far=racing && camera.position.distanceTo(o.position)>(TS.lod?62:70)*(o.scale.x||1); if(far!==!!TS.lod){ TS.lod=far?1:0; TS.body.geometry=TS.geo[far?1:0]; TS.tail.geometry=TS.geo[far?3:2]; } }
+  // --- the body: squash and stretch on launch and landing, a hover on the grid, ripples through the beads ---
+  if(r){
+    if(r.air && !TS.air) TS.vy=0; if(r.air) TS.vy=Math.min(TS.vy,r.vy||0);
+    if(!r.air && TS.air){ const k=Math.min(1,Math.abs(TS.vy)/40+0.35); TS.sqV-=7*k; tbRipple(TS,0,1.2,1.5,0.16*k,0.12*k); }
+    TS.air=!!r.air;
+    if(racing && !TS.launched && spd>15){ TS.launched=true; TS.stV+=6; }
+    if(!racing) TS.launched=false;
+    const boost=(r.boostT||0)>0; if(boost && !TS.wasBoost){ TS.stV+=4; tbRipple(TS,0,TB.Y,-4,0.08,0.14); } TS.wasBoost=boost;
+    if((r.spinT||0)>0 && !TS.st.spinR){ tbRipple(TS,0,4,4.5,0.14,0.18); } TS.st.spinR=(r.spinT||0)>0;
+  }
+  TS.sqV+=(-260*TS.sq-12*TS.sqV)*dt; TS.sq=Math.max(-0.3,Math.min(0.3,TS.sq+TS.sqV*dt));
+  TS.stV=(TS.stV||0)+(-200*(TS.st2||0)-11*(TS.stV||0))*dt; TS.st2=Math.max(-0.25,Math.min(0.25,(TS.st2||0)+TS.stV*dt));
+  if(Math.abs(TS.sq)>1e-4 || Math.abs(TS.st2)>1e-4){ o.scale.x*=1-0.5*TS.sq-0.35*TS.st2; o.scale.y*=1+TS.sq-0.35*TS.st2; o.scale.z*=1-0.5*TS.sq+TS.st2; }
+  if(spd<12 && !(r && r.air)) o.position.y+=0.22*Math.sin(t*2.3)*(1-spd/12);
+  if(TS.rip>=0){ TS.rip+=dt; if(TS.rip>2.2) TS.rip=-1; }
+  TS.UB.uRp.value.w=Math.max(0,TS.rip); TS.UB.uRa.value=TS.rip>=0?TS.ripA:0;
+  TS.UT.uRp.value.w=Math.max(0,TS.rip); TS.UT.uRa.value=TS.rip>=0?TS.tripA:0; TS.UTC.uRp.value.w=0;
+  // the glass lights up on a boost (its own colour), and the whole creature a little at the finish
+  const em=((r&&(r.boostT||0)>0)?0x5a:0x26)+((r&&(r.celebT||0)>0)?0x18:0);
+  for(const m of TS.mats) m.emissive.setRGB(em/255,em/255,em/255);
+  // the highlight's size on screen (the specular anti-aliasing) is set as each part is drawn
+}
+function tbRipple(TS,x,y,z,a,ta){ TS.rip=0; TS.UB.uRp.value.set(x,y,z,0); TS.ripA=a; TS.UT.uRp.value.set(0,0,0,0); TS.tripA=ta; }
+const _tbSz=new T.Vector2();
+function tbPx(mesh,U){ mesh.onBeforeRender=(rd,sc,cam)=>{ rd.getDrawingBufferSize(_tbSz); U.uPxK.value=_tbSz.y*cam.projectionMatrix.elements[5]*0.5; }; }
+/*@@TPLBEAD_KIT_END@@*/
 /* ============== SEAMUS O'LUCKY KIT ==============
  * The cheerful chancer from the county fair: a pale freckled face with green eyes, one brow
  * cocked and a lopsided grin that is always about to become a real one; a tweed flat cap
@@ -71894,6 +72739,7 @@ function makeCellBuild(hue, typeId){
   if(typeId === 'beadSalty') return makeSaltyCell();     // re-strung from the second reference
   if(typeId === 'juan') return makeJuanCell();           // the sombrero bead creature (JUAN KIT)
   if(TPL_PRESETS[typeId]) return makeTemplateAvatar(Object.assign({ id:typeId, swim:TAIL_STYLE[typeId] }, TPL_PRESETS[typeId]));   // the base template (TEMPLATE AVATAR KIT)
+  if(typeId === 'tplBeadM' || typeId === 'tplBeadF') return makeBeadTemplateBuild({sex:typeId==='tplBeadF'?'f':'m'});   // base template proposal V2 (BEAD TEMPLATE KIT)
   if(BEAD_RACERS[typeId]) return makeBeadCell(typeId);   // strung-bead renditions
   // Clay is a surface treatment, not a different model: build Guido as normal, then
   // re-sculpt him at the end instead of cel-shading. (The motion half is in syncObjects.)
@@ -72927,6 +73773,8 @@ const SPERM_TYPES = [
   {id:'naija', name:'Oga Tunde', hue:253, desc:'Lagos big man on his way to a party: indigo agbada, gold-stitched neck, fila tipped just so, coral beads swinging. Tosses his sleeves at whoever he passes and is never, ever found at the back. NAIJA NO DEY CARRY LAST!', stats:{skill:0.99, accel:1.22, spinResist:0.6}},
   {id:'tplToonM', name:'Sammy · Template', hue:174, desc:'BASE TEMPLATE PROPOSAL (V1, One Piece cel), male. The plain racer every character can be dressed on: one seamless cel-shaded cell, star eyes, fifteen faces acted from the race, and a tail that beats faster and wider the harder he pushes. Winks when he passes you. No costume yet.', stats:{skill:1}},
   {id:'tplToonF', name:'Sally · Template', hue:282, desc:'BASE TEMPLATE PROPOSAL (V1, One Piece cel), female. The same rig as Sammy with her own features: lashes, arched brows, rosy lips and a ponytail with a bow that swings with every turn. Star eyes, fifteen faces, a tail that answers the throttle. No costume yet.', stats:{skill:1}},
+  {id:'tplBeadM', name:'Bead Template ♂', hue:187, desc:'BASE TEMPLATE PROPOSAL (V2, the Creature Lab): the male foundation every future racer would be dressed on. A sculpted creature strung in glossy glass beads, rows running round its eyes and down its tail; a face made of beads that slide along their strings to act; Juan\'s swim with every bead on its own spring.', stats:{skill:1.0}},
+  {id:'tplBeadF', name:'Bead Template ♀', hue:330, desc:'BASE TEMPLATE PROPOSAL (V2, the Creature Lab): the female foundation every future racer would be dressed on. The same bead-strung rig as the male, with lash fringes, coloured lips and lids, a larger eye and her own bead patterns; Juan\'s swim with every bead on its own spring.', stats:{skill:1.0}},
 ];
 /* LOCKED RACERS: five style variants (8-Bit Salty, Play-Doh Juan, Vector Freak, Mosaic Seamus, 64-Bit Darius), each
    earned by finishing one Circuit Cup (t.reward = that cup's number, saved in sr_unlocks); three podium finishes in
@@ -73164,6 +74012,9 @@ const SIGNATURE_ITEMS={
   // the base templates throw their signature: a gold star, like their pupils
   tplToonM: { name:'Star Burst',     icon:'⭐', color:0xffd24a, emissive:0x5a4006, geo:tplStarGeo },
   tplToonF: { name:'Star Burst',     icon:'⭐', color:0xffd24a, emissive:0x5a4006, geo:tplStarGeo },
+  // the bead templates throw the bead line's own shot, Juan's ball of glass beads
+  tplBeadM: { name:'Bead Burst',    icon:'✨', color:0xffc43a, emissive:0x4a3406, geo:beadBurstGeo, init:beadBurstFly },
+  tplBeadF: { name:'Bead Burst',    icon:'✨', color:0xffc43a, emissive:0x4a3406, geo:beadBurstGeo, init:beadBurstFly },
 };
 function giveItem(r){
   const roll=Math.random();
@@ -73774,7 +74625,7 @@ const BARKS={kasi:'Twende!', outlaw:'Reach for the sky!', cowboy:'Saddle up, par
   felt:'SPUN AND SPUN OUT!', bead:'STRUNG AND SLUNG!', paint:'ALLA PRIMA!',
   beadSalty:'THREADED, YARRR!', beadJuan:'BEAD BY BEAD!', samurai:'IPPON!',
   ukiyo:'THE WAVE BREAKS!', aviator:'CONTACT!', ryuKenji:'RIDE THE RAIN!',
-  dragoTony:'Ay, you just got TOASTED!', rastaDragon:'Easy now... BASS DROP!', punk:'OI!', sheikh:'YALLA!', desi:'Hero entry!', viking:'SKÅL.', fighter:'DING DING!', parkExec:'Per my last lap.', naija:'Naija no dey carry last!', tplToonM:'Tail to the metal!', tplToonF:'Catch me if you can!'};
+  dragoTony:'Ay, you just got TOASTED!', rastaDragon:'Easy now... BASS DROP!', punk:'OI!', sheikh:'YALLA!', desi:'Hero entry!', viking:'SKÅL.', fighter:'DING DING!', parkExec:'Per my last lap.', naija:'Naija no dey carry last!', tplToonM:'Tail to the metal!', tplToonF:'Catch me if you can!', tplBeadM:'Strung and ready!', tplBeadF:'Every bead counts!'};
 function doWhip(atk,vic){
   const dx=vic.x-atk.x, dz=vic.z-atk.z, d=Math.hypot(dx,dz)||1;
   if(NET.on && netVictim(null,vic,'whip',{sp:0.5,sl:0.55,px:+(dx/d*5).toFixed(2),pz:+(dz/d*5).toFixed(2),by:atk.nk})) return;
@@ -74057,6 +74908,7 @@ function wlTipFx(r,o,w){
   const S=_WL.s, jt=o.userData.juanTail, tt=o.userData.tplTip;
   if(tt) w.lt.copy(tt);   // the template's tail (TEMPLATE AVATAR KIT): its tip, as its last tick posed it
   else if(jt){ const n=jt.rings.length-1, R=jt.rings[n]; w.lt.set(jt.ox[n], R.y+jt.oy[n], R.z+jt.oz[n]); }   // Juan's cone keeps its own rings
+  else if(o.userData.tplBead) w.lt.copy(o.userData.tplBead.tip);   // the bead template's spine tip
   else w.lt.set(_tox, 3.2+_toy+(r._tailLift||0), -2-WL_LEN*S+_wlz);   // the last ring posed is the tip
   wlW(o,w.lt,w.tip);
   const near=r.you || (w.hit && w.hit.you) || camera.position.distanceToSquared(w.tip)<260*260;
@@ -74384,6 +75236,8 @@ const LOOK_PERSONA={
   naija:    {react:8, zeta:0.9, turn:1.0, chin:0.26, lid:0.94, smug:1.5, smirk:0.1, wink:0.7, tilt:0.16, grump:0.45, det:0.6, wary:0.5, cur:1.2, blink:3.8, nod:0.045, nodF:6.7, sway:0.04, swayF:1.36, ov:2.1, ovH:0.85, idle:5}, // the big man arriving: chin up and beaming, a wink (and a toss of the sleeves) for whoever he passes, laughs off being passed, nods along on every other beat, a pleased look back over the shoulder every few seconds
   tplToonM: {react:7.5, zeta:0.85, smug:1.3, wink:0.8, chin:0.18, smirk:0.08, tilt:0.2, cur:1.3, blink:3.4, nod:0.04, nodF:2.4, ov:2.25, ovH:0.8, idle:5}, // the base template: quick, open and friendly, a look back over the shoulder every few seconds so the face reaches the chase camera
   tplToonF: {react:8, zeta:0.85, smug:1.2, wink:0.9, chin:0.16, smirk:0.07, tilt:0.24, cur:1.4, blink:3.0, nod:0.045, nodF:2.6, ov:2.25, ovH:0.8, idle:4.5}, // the same, a little brighter: she looks round more and blinks a beat sooner
+  tplBeadM: {react:9, zeta:0.85, smug:1.3, wink:0.8, chin:0.18, smirk:0.08, lid:0.96, tilt:0.18, cur:1.2, blink:3.6, nod:0.04, nodF:2.4, ov:2.0, ovH:0.7, idle:6},   // the bead template (V2): an all-rounder's look, a wink for whoever he passes and a look back over the shoulder now and then, so the face reaches the chase camera
+  tplBeadF: {react:9.5, zeta:0.82, smug:1.35, wink:0.9, chin:0.16, smirk:0.08, lid:0.98, tilt:0.22, cur:1.3, blink:3.2, nod:0.04, nodF:2.6, ov:2.0, ovH:0.75, idle:5.5},
 };
 const _lpC={};
 function lookPersona(id){
@@ -74713,6 +75567,8 @@ const FX_RACER={
   beadJuan:{ whip:'BEAD BY BEAD!', hit:'SCATTERED!', mat:'bead', outer:'#e0b060', inner:'#d94f3c', word:'#fffdf2' },
   beadBosun:{ whip:'AHOY!', hit:'ADRIFT!', mat:'bead', outer:'#f070b0', inner:'#f4f2ee', word:'#1f3fb0' },
   beadBandido:{ whip:'¡OLÉ!', hit:'¡AY!', mat:'bead', outer:'#8a5a32', inner:'#e8c06a', word:'#fffdf2' },
+  tplBeadM:{ whip:'STRUNG!', hit:'SCATTERED!', mat:'bead', outer:'#1fb3c4', inner:'#1d3cb4', word:'#ffc21a' },
+  tplBeadF:{ whip:'GLINT!', hit:'UNSTRUNG!', mat:'bead', outer:'#ff4b98', inner:'#14b8b0', word:'#ffd23a' },
   voxel:{ whip:'YARRR.EXE', hit:'ERR!', mat:'pixel', outer:'#f6f8fa', inner:'#1b3766', word:'#ffd24a' },
   kingVox:{ whip:'64-BIT!', hit:'LAG!', mat:'pixel', outer:'#ffd700', inner:'#845f2e', word:'#fffdf2' },
   mosaic:{ whip:'TOO MANY!', hit:'SHATTERED!', mat:'tile', outer:'#8a3dff', inner:'#ff2fb4', word:'#b6ff1c' },
@@ -78631,7 +79487,7 @@ const SEL3D=(function(){
   const LSK='sr_sel3d', HK='sr_sel3d_hint', N=36, FOVY=26, PHI=0.42, SWEEP=0.55, MARGIN=0.9, CACHE=3, HOLD_MS=20000, PTS=1500, ENV=300;
   const ELV=[-0.35,-0.06,0.3,0.8], E0=-0.06, PIT0=-0.35, PIT1=0.785, ZM0=0.72, ZM1=1.35;   // camera elevations the fit is tabled at; rest = eye level, a touch below; tilt and zoom limits
   const BUILD_MS=400, FPS_MIN=8, WARM=7, SAMPLE=24;      // build budget (ms), the slowest acceptable frame rate, frames skipped after a build, frames measured
-  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5};              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
+  const HEAVY={kingVox:6, mosaic:4, juan:4, viking:2, parkExec:1.5, fighter:1.5, sheikh:1.5, naija:1.5, tplBeadM:3, tplBeadF:3};   // (the bead templates lay out ~2600 beads row by row on their first build)              // racers whose own build is heavy by design: their budget is scaled so one slow racer cannot switch 3D off for all
   const TAU=Math.PI*2, OX=4000, OZ=-4000, C0=0x05181f;   // the set stands far from the course, so nothing in a rig that looks at 'the racers near me' can see the preview grid
   const RMQ=matchMedia('(prefers-reduced-motion:reduce)');
   const selEl=$('select'), win=$('stwin'), ph=$('stph'), bark=$('stbark'), tog=$('sttog'), coach=$('stcoach'), msgEl=$('stmsg'), stage=$('selstage');
