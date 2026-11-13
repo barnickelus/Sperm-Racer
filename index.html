@@ -75474,16 +75474,16 @@ function dressNeoProto(g, K){
   ud.eyes=eyes;
   // the tuft: Sammy's three spikes off the crown, his hair materials (tplFlex), a dark teal
   const base=new T.Vector3(0, HEAD_CY+HEAD_RY*0.97, 0.75), parts=[], hc=dbLin(NEO.tuftCol); let ttip=null;
-  for(const [sx,hh,l,w] of [[0,1.75,1.7,0.5],[-0.62,1.3,1.35,0.4],[0.62,1.35,1.4,0.4]]){
+  for(const [sx,hh,l,w] of [[0,2.2,2.1,0.62],[-0.72,1.65,1.7,0.5],[0.72,1.7,1.75,0.5]]){
     const pts=[[sx*0.55,-0.25,0.15],[sx*0.62,hh*0.55,-0.05],[sx*0.78,hh*0.92,-l*0.55],[sx*0.95,hh,-l]].map(p=>[base.x+p[0], base.y+p[1], base.z+p[2]]);
     const [tg, fl]=tplStrand(pts, 16, 9, u=>w*Math.pow(1-u,0.85)+0.015); parts.push([tg, hc, fl]); if(!ttip) ttip=new T.Vector3(...pts[pts.length-1]); }
   const HU={ uFlex:{ value:new T.Vector4() }, uFlexRoot:{ value:base.clone() }, uGloss:cel.uGloss, uCel:cel.uCel }, [tuM, tuI]=tplHairMats(HU, ink), tgeo=tplMergeHair(parts);
   const tuft=new T.Mesh(tgeo, tuM), tink=new T.Mesh(tgeo, tuI); tuft.name='neo-tuft'; tink.userData.isOutline=true; rig.add(tuft); rig.add(tink);
   const tProbe=new T.Object3D(); tProbe.position.copy(ttip); rig.add(tProbe);
   // probes for race_motion: the beat (a step each beat), the bob, the gait (on a steady drift: its speed is the signed rate), the tuft's tip
-  const pr={ beat:new T.Object3D(), bob:new T.Object3D(), vb:new T.Object3D(), vs:new T.Object3D() };
+  const pr={ beat:new T.Object3D(), bob:new T.Object3D(), vb:new T.Object3D(), vs:new T.Object3D(), sw:new T.Object3D() };
   for(const k in pr) g.add(bodyPart(pr[k]));
-  ud.motionProbes=[['beatClock',pr.beat,'pos'],['bob',pr.bob,'pos'],['vBob',pr.vb,'pos'],['vStroke',pr.vs,'pos'],['tuftTip',tProbe,'pos']];
+  ud.motionProbes=[['beatClock',pr.beat,'pos'],['bob',pr.bob,'pos'],['vBob',pr.vb,'pos'],['vStroke',pr.vs,'pos'],['tipSway',pr.sw,'pos'],['tuftTip',tProbe,'pos']];   // tipSway: the swim's sideways reach at the tip, as asked of the skin this frame
   ud.neo={ t:null, rig, FU, BU, UH, HU, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
     F:new Float32Array(DB_EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(DB_EV.rest), cur:'rest', want:'rest', next:null, nextAt:0,
     blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, lose:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
@@ -75549,7 +75549,8 @@ function neoTick(o, r, now){
   S.gReq=gq;
   if(S.lastB==null || Math.abs(B-S.lastB)>6){ if(S.gOn) S.g0=S.g1; S.gx0=Math.floor(B); if(S.g0<1 && (((S.gx0+C.k)%2)+2)%2) S.gx0--; S.gs0=Math.round(S.g0*S.gx0); S.g1=S.g0; S.gOn=false; }
   S.lastB=B; dbGearStep(S,B); S.sig=dbSigAt(S,B);
-  S.tph=Math.PI*S.sig+Math.PI/2+NEO_LAG; S.tphV=Math.PI*dbGearRate(S,B)*C.rate; S.tdt=dt;   // the tip's swing is at its widest on every whole stroke
+  const Fw=ud.flow, lagTip=Fw ? Fw.t[Fw.n-1]*NEO_LAG : NEO_LAG;   // (the wave runs a hair past t=1 at the tip)
+  S.tph=Math.PI*S.sig+Math.PI/2+lagTip; S.tphV=Math.PI*dbGearRate(S,B)*C.rate; S.tdt=dt;   // the tip's swing is at its widest on every whole stroke
   // ---- the bob: squash on the downbeat, stretch on the off-beat, volume kept, beat 1 harder (the laugh at double time)
   dbSpring(S,'lf','lfV',S.cur==='fire'?1:0,9,1,dt);
   const bob=Math.cos(2*Math.PI*C.phase)*(1-S.lf)+Math.cos(4*Math.PI*B)*S.lf, bd=Math.min(C.bar,4-C.bar), accent=Math.exp(-(bd*bd)/0.1);
@@ -75581,6 +75582,7 @@ function neoTick(o, r, now){
   // ---- the probes race_motion reads
   const P=S.pr, drf=100*((now-(S.t0==null?(S.t0=now):S.t0))%1000);
   P.beat.position.set(C.phase*2,0,0); P.bob.position.set(0,sq*10,0); P.vb.position.set(0,sq*10+drf,0); P.vs.position.set(S.sig+drf,0,0);
+  const F=ud.flow; if(F) P.sw.position.set(F.bx[F.n-1],0,0);
 }
 
 function makeCell(hue, typeId){ return rigNeck(flowKeep(makeCellBuild(hue, typeId))); }
@@ -83965,7 +83967,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     speed:r1(r.spd||0), x:r1(r.x), z:r1(r.z), item:r.item||null, offRoad:!r.air && offOf(r)>HW,
     spinning:(r.spinT||0)>0, boosting:(r.boostT||0)>0, finished:!!r.finished, time:r.finished?r1(r.finishT):null, draft:r3(r.draft||0), slingshots:r.slingN||0,
     ...(r.obj&&r.obj.userData.expr?{ expression:r.obj.userData.expr.cur }:{}),
-    ...(r.obj&&r.obj.userData.beatOf?{ beat:(b=>{ const S=r.obj.userData.db; return { bpm:+b.bpm.toFixed(2), phase:+b.phase.toFixed(3), bar:+b.bar.toFixed(3), src:b.src, lockErr:+(b.e||0).toFixed(3), gear:S?(S.gOn?[S.g0,S.g1]:S.g0):null, stroke:S?+S.sig.toFixed(3):null }; })(r.obj.userData.beatOf()) }:{}) });
+    ...(r.obj&&r.obj.userData.beatOf?{ beat:(b=>{ const S=r.obj.userData.db||r.obj.userData.neo; return { bpm:+b.bpm.toFixed(2), phase:+b.phase.toFixed(3), bar:+b.bar.toFixed(3), src:b.src, lockErr:+(b.e||0).toFixed(3), gear:S?(S.gOn?[S.g0,S.g1]:S.g0):null, stroke:S?+S.sig.toFixed(3):null }; })(r.obj.userData.beatOf()) }:{}) });
   const course=()=>({ index:selTrack, name:TRACKS[selTrack].name, laps:lapsOf(), loop:trackLoop, maze:!!MAZE });
   const waitFor=(fn,ms,what)=>new Promise((res,rej)=>{ const t0=performance.now();
     const go=()=>{ if(fn()) return res(); if(performance.now()-t0>ms) return rej(new Error('timed out waiting for '+what+' (state: '+state+')')); setTimeout(go,50); }; go(); });
