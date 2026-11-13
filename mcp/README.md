@@ -67,7 +67,7 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_film` | **A filmstrip:** N frames over game time in one image, so motion can be judged. `still:true` keeps the race frozen while the racers' own animation (smoke, cloth, faces) runs |
 | `scene_profile` | **Render cost per racer** (draw calls, triangles, materials, textures), the track and the scene. `trackTop` names the course's heaviest pieces and rolls identical ones together. `inView:true` counts only what the camera draws right now, by the piece it belongs to. `roster:true` builds every character off-screen and returns the whole table, build times included. It also counts **shader programs** per racer, for the track and in all: each is a compile the first time it is seen, a cost that does not depend on how fast the machine is |
 | `race_palette` | **Which parts of a racer blend together on screen.** It renders the frame and an ID pass from the same camera (wind lines, glows and sprites sit out, and only the parts actually seen count, not what is behind a rival or smoke), then reports each part's share of the pixels, its real on-screen colour, and the closest pairs by CIE ΔE. Under about 10 reads as the same colour at racing distance. `vision` adds the closest pairs as a colour-blind player sees them (protanopia, deuteranopia, tritanopia) |
-| `race_motion` | **How fluidly a racer moves.** It steps the race at 1/60 s and tracks the head, the neck's turn, the tail tip and every swaying part in the racer's own space. Per probe it reports RMS speed, acceleration and jerk, and *snaps*: frames whose jerk is far above that probe's median. Low jerk with few snaps reads as fluid; high jerk reads as popping. `series:true` adds the per-frame speed and the frames each snap fell on |
+| `race_motion` | **How fluidly a racer moves.** It steps the race at 1/60 s and tracks the head, the neck's turn, the tail tip and every swaying part in the racer's own space. Per probe it reports RMS speed, acceleration and jerk, and *snaps*: frames whose jerk is far above that probe's median. Low jerk with few snaps reads as fluid; high jerk reads as popping. For a racer on the flow body it also reports the skin as drawn: the gap at the join, the spine's length against its rest length, and the sharpest bend between two rings. `series:true` adds the per-frame speed and the frames each snap fell on |
 | `race_regress` | **Visual regression.** It draws a rest-pose turnaround (or the expressions) in studio light and compares it with that character's golden sheet: the share of pixels changed, a heat map of where, and pass/fail. The first run, or `update:true`, saves the golden. `course` snapshots a **course** instead: a seeded race warped to fixed points of the lap, the course alone (no racers, particles or effects) in the chase camera's frame, against its goldens |
 | `scene_page` | The whole page as a player sees it (HUD, menus, overlays), not only the canvas. Headless pages only |
 | `race_perf` | **Where the frame time goes.** It runs whole frames at a fixed step (or on the page's own clock) and reports: the frame by segment (sim, racers, camera, minimap, world, particles, render) with p50/p95/p99 and the worst frame; the browser's layout and style work; Chrome's CPU profile (top functions, and game functions with their callees); its allocation profile; and every shader compiled mid-race, with the frame it hit. `draw:false` measures the JavaScript alone |
@@ -79,13 +79,65 @@ point the AI uses, drifts the bends, fires items) or with **held keys**.
 | `race_audio` | Record the game's music for N seconds as a .webm, with the engine hum muted, for a soundtrack. `style` (and `bar`) plays any produced song from any bar, and the result gives the first downbeat's time in the file, so cuts land on the bar. **It analyses what it records**: loudness, peak and clipping, loudness range, gaps, the low/high balance, and how tightly the onsets sit on the beat grid. `sfxProbe` fires every sound effect over the music and reports how many dB each sits above it |
 | `race_features` | **Where the course's set pieces are**: jump pads, boost pads, item boxes, breakables and hazards, each by course position (laps, or the fraction of the way on a point-to-point), lateral offset and heading, and the course's **outline** seen from above (96 points in a unit box), for drawing it. Plan a shot, or warp to one |
 | `race_audit` | **Scenery in the wrong place.** Every piece whose actual vertices reach into the driving corridor (with how far in, and where), and pieces that overlap one another, near-identical twins and clumps of the same thing skipped. Flat decals are ignored, and boost strips and jump wedges are listed apart as the course's own surfaces |
-| `race_fx` | Hold a racing effect up on your kart for a look or a film (the slipstream's wind lines), or switch Eve's living light off and on for an A/B look |
+| `race_fx` | Hold a racing effect up on your kart for a look or a film (the slipstream's wind lines), switch Eve's living light off and on for an A/B look, or choose who is built on the flow body (`flowBody`: `false` nobody, `"all"` everybody, to audit) |
 | `scene_screenshot` / `scene_stats` / `scene_graph` / `page_logs` | Look, measure (draw calls and triangles per frame), inspect the object tree, read the console |
 
 Try asking Claude: *"Race Tex Calloway on Ophelia at hard difficulty on
 autopilot, then hold only the gas for 20 seconds. Where does each run lose
 time?"* or *"Which racer's neck snaps the most? Measure the roster with
 race_motion."*
+
+## The flow body (the avatar template)
+
+The stock racer is three parts that meet: a ball for a head, a tube stuck into
+the back of it and a ball joint for a neck. The flow body (`FLOW KIT` in
+index.html) is one swimmer:
+
+- **one skin** from the nose to the tail's tip, so there is no seam where the
+  tail leaves the head;
+- **one spine** under it. The head turns about the back of the skull and the
+  neck bends with it. The tail keeps its rest length through a swim, a turn
+  and a lash, so no skin is pulled long or folded;
+- **a sprung head**: the game's look and a kit's own nod are requests that are
+  eased and sprung, so a glance starts from rest and settles;
+- **follow-through** from what the kart does: the tail tracks round a corner,
+  streams out in a drift and trails a jump.
+
+Three racers wear it: `Proto` (the template with no costume, the one to look at
+when the body changes), `Kasi` and `Chad Brody`. Everyone else is on the stock
+body until moved.
+
+Two 8 s runs of the same seeded race on each body, measured by `race_motion`:
+
+| | neck jerk | neck snaps | gap at the join | tail length vs rest |
+|---|---|---|---|---|
+| Proto, stock body | 1648, 3120 | 80, 72 | two parts | stretches |
+| Proto, flow body | 97, 126 | 1, 0 | 0 | 0.9997 to 1.0004 |
+| Kasi, stock body | 1640, 2377 | 80, 110 | two parts | stretches |
+| Kasi, flow body | 110, 104 | 0, 0 | 0 | 0.9997 to 1.0004 |
+
+**To move a racer onto it**, add its id to `FLOW_IDS`: `{}` for the template's
+teardrop neck, `{neck:null}` if its collar was built round the old junction.
+Its kit gets the same handles as before (`head`, `tailMesh`, the neck group),
+and the head and tail keep the old UVs, so textures still fit. A kit may need
+one of these and nothing else:
+
+- it re-seats a part on a ring of the tail every frame: pin it once with
+  `flowRide(g, part, z)` (the Viking's bracer does this);
+- it paints the skin: `flowPaint(g, f)` writes vertex colours;
+- it re-sculpts the head's surface: call `flowSeal(g)` after (clay does);
+- it has a body of its own (the dragons, Tex, the bead, voxel and wire
+  racers): it is left as it is.
+
+**To check one before moving it**, `race_fx {flowBody:"all"}` builds every
+racer on the flow body and `{flowBody:false}` builds none, so the same seeded
+race can be measured both ways. `race_motion` reports the skin as drawn
+(`skin.seamGap`, `lengthMin`, `lengthMax`, `maxBendDeg`) beside the jerk and
+snaps. Fitted that way, 34 of the 48 racers take the body (the other 14 have
+bodies of their own): the neck's median jerk falls from 1171 to 98 and its
+snaps from 773 to 29 across them, with no gap and the tail within 0.04% of its
+length on every one. Rick is the one to leave: his head twirl is a gag for a
+ball on a stick, and a neck only bends so far (`FLOW.BEND`).
 
 ## Fluid copies
 
