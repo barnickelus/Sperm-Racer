@@ -450,6 +450,24 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
 });
 
+await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
+  // a tool is driving, so the page's own loop adds no time: two captures of the same setting are the same frame
+  const same = await call('race_ab', { a: { lux: { on: true } }, b: { lux: { on: true } } });
+  assert.ok(image(same)); assert.ok(json(same).changed < 0.002, 'the same setting twice is the same picture: ' + json(same).changed);
+  const ab = await call('race_ab', { a: { lux: { on: false } }, b: { lux: { on: true } }, labels: ['plain', 'LUX'] }); save(image(ab), 'ab-lux.jpg');
+  assert.ok(json(ab).changed > 0.01 && json(ab).where, 'the light pipeline changes the picture, and the tool says where: ' + JSON.stringify(json(ab)));
+  const li = await call('race_light'); save(image(li), 'light.jpg');
+  assert.ok(image(li)); assert.ok(json(li).overBright > 0 && json(li).glowMean > 0 && json(li).glowMean < 0.2, 'Nova\'s tube has light in it, and is not washed out: ' + JSON.stringify(json(li)));
+  const rv = await call('race_review', { character: 'proto' }), R = json(rv); save(image(rv), 'review-proto.jpg');
+  assert.ok(image(rv), 'the review carries its reference sheet');
+  const by = Object.fromEntries(R.checks.map(c => [c.check, c]));
+  for (const k of ['neck eases (flow body)', 'no gap at the join', 'the tail keeps its length', 'within the draw budget', 'no page errors']) assert.ok(by[k] && by[k].ok, `${k}: ${JSON.stringify(by[k])}`);
+  assert.equal(R.pass, R.failed.length === 0); assert.ok(by['parts read apart'] && by['not plastic'], 'palette and surfaces were looked at');
+  const bad = await callRaw('race_review', {}); assert.equal(bad.isError, true);
+});
+
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
   const pg = await call('scene_page');
   assert.ok(Buffer.from(image(pg).data, 'base64').length > 10000, 'a real screenshot');

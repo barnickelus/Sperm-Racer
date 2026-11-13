@@ -113,6 +113,22 @@ To check one area in a minute instead of the whole suite:
 `ONLY=lux,flow node mcp/test/e2e.mjs` runs only the checks whose names contain
 one of those words (plus the two that bring the page up).
 
+## Tools for building: compare, measure, review
+
+Three tools that turn "look at it and decide" into something that can be
+repeated and checked:
+
+| Tool | What it does |
+|---|---|
+| `race_ab` | **One frozen frame under two settings**, side by side, with a map of what changed and the numbers (share of pixels changed, mean difference, where). `a`, `b` are `race_fx` argument objects: `{lux:{on:false}}` against `{lux:{on:true}}`, `{tail:{}}` against `{tail:{happy:1}}`. |
+| `race_light` | **The light, measured**: the share of the picture that is over-bright, how much glow LUX adds and where it is hottest, with a map. Tune a course's light by the numbers. |
+| `race_review` | **The whole checklist in one call**, for a `character` (motion, the flow body's skin, a reference sheet, palette, surfaces, render cost) or a `course` (three views, HUD contrast, the light, what stands in the lane, shimmer; `deep:true` also races it to the finish and analyses its music). Every item comes back `{check, ok, value, want}`; `pass` is all of them. |
+
+While a tool is driving the game, the page's own loop draws but adds no time:
+what a tool captures is exactly the state its last step left, however long
+the call took. (Before, a tail or a spring moved on between two captures of
+"the same" frame.)
+
 ## LUX: the light pipeline
 
 The game used to draw straight from the scene to the screen: anything brighter
