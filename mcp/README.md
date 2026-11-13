@@ -87,6 +87,32 @@ autopilot, then hold only the gas for 20 seconds. Where does each run lose
 time?"* or *"Which racer's neck snaps the most? Measure the roster with
 race_motion."*
 
+## The bench: one page kept open, any tool from a shell
+
+`mcp/bench.mjs` is a small daemon that owns one MCP client and one headless
+game page, and a command that talks to it. It is for work at a terminal (or an
+agent shelling out), where every `node` run would otherwise launch a browser,
+load the game and throw it away.
+
+```
+node mcp/bench.mjs call race_setup '{"course":"Nova","character":"proto","seed":3}'
+node mcp/bench.mjs call race_start
+node mcp/bench.mjs call race_film '{"seconds":1,"frames":6}' whip    # -> [image saved: .../003-whip.jpg]
+node mcp/bench.mjs json race_motion '{"seconds":4}'                  # the reply's JSON only
+node mcp/bench.mjs reload                                            # index.html changed: a fresh page
+node mcp/bench.mjs stop
+```
+
+`call` starts the daemon if it is not running. Images in a reply are written
+to files (`BENCH_SHOTS`, default `mcp/.bench/shots`) and the reply carries
+their paths. `BENCH_PORT` runs two benches side by side. From a script,
+`import { bench } from './bench.mjs'` gives `t.call(tool, args, tag)` and
+`t.json(tool, args)`.
+
+To check one area in a minute instead of the whole suite:
+`ONLY=lux,flow node mcp/test/e2e.mjs` runs only the checks whose names contain
+one of those words (plus the two that bring the page up).
+
 ## LUX: the light pipeline
 
 The game used to draw straight from the scene to the screen: anything brighter

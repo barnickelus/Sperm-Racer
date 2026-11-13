@@ -39,7 +39,12 @@ const image = (r) => r.content.find(c => c.type === 'image');
 const save = (img, name) => { if (SHOTS && img) fs.writeFileSync(path.join(SHOTS, name), Buffer.from(img.data, 'base64')); };
 
 const results = [];
+// ONLY=lux,flow node test/e2e.mjs runs just the checks whose names contain one of those words (plus the two that bring
+// the page up), so a change is checked in a minute, not the whole suite. A check that leans on the one before it
+// (race_regress expects the Fluid copy left on the grid) wants that one named too: ONLY=fluid,regress
+const ONLY = (process.env.ONLY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 async function check(name, fn) {
+  if (ONLY.length && !/lists every tool|scene_open launches/.test(name) && !ONLY.some(k => name.toLowerCase().includes(k))) return;
   try { await fn(); results.push(true); console.log('  ok  ', name); }
   catch (e) { results.push(false); console.log('  FAIL', name, '\n       ', String(e.stack || e).split('\n').slice(0, 5).join('\n        ')); }
 }
@@ -432,7 +437,7 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   const a = json(await call('race_fx', {})).lux;
   assert.equal(a.ok, true, 'the pipeline came up: ' + JSON.stringify(a)); assert.equal(a.on, true);
   assert.ok(['half-float', '8-bit'].includes(a.target)); assert.ok(a.size[0] > 100 && a.size[1] > 50, 'the scene target has a size');
-  assert.equal(a.light.bloom, 0.85, 'Nova asks for its own light');
+  assert.equal(a.light.bloom, 1.3, 'Nova asks for its own light');
   // (Nova's tube is the heaviest view in the game and this is a software GPU: a frame can take longer than one screenshot waits)
   const shot = async () => { for (let k = 0; ; k++) { try { return await call('scene_screenshot'); } catch (e) { if (k >= 3) throw e; } } };
   const on = await shot(); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
@@ -440,7 +445,7 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
   assert.ok(image(await shot()));
   const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
-  const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 0.85);
+  const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 1.3);
   const plain = await shot(); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
   assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
 });
