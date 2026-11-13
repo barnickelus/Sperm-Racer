@@ -109,16 +109,15 @@ tail keeps its length through all of them):
 
 | state | when | the tail |
 |---|---|---|
-| steady pace | racing | the travelling wave; its beat and reach rise with speed, no two strokes quite alike |
-| speed burst | a boost | one big kick, then drawn straight into a tight, fast corkscrew |
+| steady pace | racing | Juan's swim: one broad, flat S sweeping side to side; its beat and reach rise with speed, no two strokes quite alike |
+| speed burst | a boost | one big kick with a half-second corkscrew flourish, then the same S, wider and quicker, while the boost burns |
 | happy | an overtake, a hit landed, a podium | carried high, tip curled up, wagging |
 | frustration | overtaken, after a spin, a poor finish | carried low, the swim nearly stops, slow hard slaps side to side |
 | alarm | someone bearing down | straight up and stiff, a shiver running down it |
 | knocked out | spinning | limp |
 | braking | slowing hard | flares wide and lifts |
-| in the air | a jump | streams up and corkscrews |
+| in the air | a jump | streams up behind |
 | the whip | the tail-whip | wind-up, strike, then it carries on past the strike with the tip coiled and springs back |
-| on the grid | the countdown | wound up, revving |
 
 `race_fx {tail:{happy:1}}` holds any of them on your racer to look at or film
 (`{tail:null}` hands it back to the race), and `race_fx {}` reports what the
