@@ -37233,6 +37233,19 @@ OP_ART.outlaw=`<defs>
   <path d="M30,52 l3,4 M44,56 l2,4 M170,50 l-3,4" stroke="#2a1712" stroke-width="1.6" stroke-linecap="round"/>
 </g>`;
 // Kasi's card: iridescent shield, twists, the over-ears, shúkà collar, flag beads, the 254 tag, a matatu tail
+// Proto's card: the template wearing nothing. Teal skin, a darker stripe over the crown, teal eyes, an easy grin
+OP_ART.proto=`${opTail('#52d8c4','#1c8f8c')}${opHead('#52d8c4','#27a79d')}
+    <path d="M100,34 C114,34 124,42 127,54 C118,48 109,46 100,46 C91,46 82,48 73,54 C76,42 86,34 100,34 Z" fill="#1c8f8c" opacity=".6"/>
+    <path d="M52,118 C66,140 134,140 148,118 C138,146 62,146 52,118 Z" fill="#c8f6ea" opacity=".55"/>
+    <ellipse cx="60" cy="106" rx="9" ry="5.5" fill="#ff9d86" opacity=".8"/><ellipse cx="140" cy="106" rx="9" ry="5.5" fill="#ff9d86" opacity=".8"/>
+    ${opBrows('M64,66 q14,-8 28,-3 M108,63 q14,-5 28,3')}
+    <ellipse cx="80" cy="84" rx="15" ry="17" fill="#fff" ${OP_LINE} stroke-width="3"/><ellipse cx="120" cy="84" rx="15" ry="17" fill="#fff" ${OP_LINE} stroke-width="3"/>
+    <circle cx="82" cy="86" r="9" fill="#1a8f84"/><circle cx="118" cy="86" r="9" fill="#1a8f84"/>
+    <circle cx="82" cy="86" r="4.6" fill="${OP_OUT}"/><circle cx="118" cy="86" r="4.6" fill="${OP_OUT}"/>
+    <circle cx="85" cy="82" r="2.6" fill="#fff"/><circle cx="121" cy="82" r="2.6" fill="#fff"/>
+    <path d="M76,110 q24,8 48,0 q-4,20 -24,20 q-20,0 -24,-20 Z" fill="#4a1a14" ${OP_LINE} stroke-width="3"/>
+    <path d="M80,112.5 q20,6 40,0 l-1.5,6 q-18.5,5 -37,0 Z" fill="#fbf6ea"/>
+    <path d="M90,125 q10,-5 20,0 q-10,5 -20,0 Z" fill="#c4525e"/>`;
 OP_ART.kasi=`<defs>
   <linearGradient id="ksVisor" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#21e6ff"/><stop offset=".35" stop-color="#7a4dff"/><stop offset=".65" stop-color="#ff2fa8"/><stop offset="1" stop-color="#ffd52b"/></linearGradient>
   <linearGradient id="ksTail" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1a1440"/><stop offset="1" stop-color="#2a0f4a"/></linearGradient>
@@ -59486,6 +59499,7 @@ function wiggleTail(g, phase, amp, lift, st){
   if(jt){ juanWiggle(g, jt, phase, amp, lift, st); return; }   // Juan's short bead cone (JUAN KIT)
   const LK=TAIL_SWIM.lag; amp*=TAIL_SWIM.amp;   // every other tail swims to Juan's proportions (TAIL_SWIM)
   if(g.userData.tessTail){ tessWiggle(g, phase, amp, lift, st); return; }   // the tessera template: its spine goes to the GPU (TESSERA TEMPLATE KIT)
+  if(g.userData.flow){ flowWave(g, phase, amp, lift, st); return; }   // the flow body: one skin on one spine (FLOW KIT)
   // voxel racer: re-pose the cube chain instead of displacing tube vertices. Same spine
   // maths as the smooth tail (sway grows with t², radius tapers) so it reads identically.
   // beaded racer: re-pose each ring of beads. Same spine maths as every other tail, but
@@ -59598,7 +59612,7 @@ function celShade(g){
     }
   });
   // bold outline on the head silhouette (tail is a thin smooth tube, left clean)
-  addOutline(g.userData.head,1.08);
+  if(!g.userData.flow) addOutline(g.userData.head,1.08);   // (a flow body wears one shell, nose to tip)
 }
 
 /* ============== CELL RACER MODEL ============== */
@@ -59946,6 +59960,7 @@ function clayify(g, S){
       claySculpt(o.geometry, Math.min(0.16, rad*S.sculpt));
     }
   });
+  flowSeal(g);   // (a flow body: the thumbed head eases back to the true surface at the join, where its last ring is the tail's first)
   // The base model's pupils are 4-sided cones — a stylised star pupil that only reads as
   // one because celShade pairs it with a bold outline. In clay, with no linework, the
   // cone just reads as a dark spike stuck on the eye. Swap in pressed-in round dots.
@@ -64349,7 +64364,9 @@ function dressViking(g, K){
     for(let k=0;k<10;k++){ const a=k/10*Math.PI*2; for(const y of [-0.3,0.28]) parts.push([new T.SphereGeometry(0.09,6,4), M(Math.sin(a)*1.08,y,Math.cos(a)*1.08), C(VK_BRASS_HI), BRASS_UV]); }
     parts.push(...vkGearParts(0.36,8,M(0,0,-1.1,0,Math.PI,0),BRASS_UV,C(VK_BRASS_SH),BRASS_UV));   // the lathe axis is laid along the tail, so local -z ends up on top
     const br=new T.Mesh(vkMerge(parts), P({map:TX.lth, vertexColors:true, emissive:0x140a04, shininess:60, specular:0x806a50}));
-    g.add(bodyPart(br)); g.userData.vkBracer=br; }
+    g.add(bodyPart(br)); g.userData.vkBracer=br;
+    if(g.userData.flow){ const z=-2-VK_BR/30*21, rr=flowR(z, g.userData.flow.K)[0]+0.36;   // on a flow body it is pinned to the spine once, here
+      br.position.set(0,HEAD_CY,z); br.quaternion.setFromUnitVectors(_vkU, new T.Vector3(0,0,1)); br.scale.set(rr,1,rr); flowRide(g, br); } }
 
   // --- the Goggle Drop arm: a bare arm and a cartoon hand in a gear-studded leather bracer, grown out of the side
   // of the head (it rides the neck, like Guido's pump arm) and folded away until a gesture. Built as his LEFT arm
@@ -64532,7 +64549,7 @@ function tickViking(o, r, now){
   // ---- the bracer rides its ring of the tail (the tube was wiggled earlier this frame): the ring's centre is the
   // midpoint of two opposite vertices, its axis runs to the next ring forward
   const td=ud.tailData, br=ud.vkBracer;
-  if(td && br){ const n1=td.sides+1, half=td.sides>>1, p=td.pos;
+  if(td && br && !td.flow){ const n1=td.sides+1, half=td.sides>>1, p=td.pos;
     let k0=VK_BR*n1*3, k1=(VK_BR*n1+half)*3; br.position.set((p[k0]+p[k1])/2,(p[k0+1]+p[k1+1])/2,p[k0+2]);
     k0=(VK_BR-1)*n1*3; k1=((VK_BR-1)*n1+half)*3; _vkA.set((p[k0]+p[k1])/2,(p[k0+1]+p[k1+1])/2,p[k0+2]);
     br.quaternion.setFromUnitVectors(_vkU, _vkA.sub(br.position).normalize());
@@ -68369,6 +68386,13 @@ function poseNeck(o, yaw, roll, pitch){
   n.quaternion.copy(_nkQ);
   n.position.copy(NECK_PIV).sub(_nkV.copy(NECK_PIV).applyQuaternion(_nkQ));
 }
+/* The look onto the neck: the yaw, the alarmed head-shake, tilt + hat/shoulder kicks (roll), the nod / chin-lift (pitch).
+   A flow body's neck is a spring (flowNeck) and would swallow the stock 6 Hz shake whole, so it is asked for a flinch
+   it can answer: one quick look aside and back, starting and ending at nothing, which the spring rounds off. */
+function poseLook(o, lk){
+  const ud=o.userData, sh=lk.shk>0 ? (ud.flow && !ud.fluid ? Math.sin((1-Math.min(1,lk.shk))*5.2)*0.3*Math.sin(Math.PI*Math.min(1,lk.shk)) : Math.sin(lk.t*38)*0.1*lk.shk) : 0;   // (a Fluid copy's own neck spring is tuned to the stock shake)
+  poseNeck(o, lk.nk+sh, lk.tilt+lk.rl, lk.pitch);
+}
 /* ============== ANTONIO STALLION KIT (id latin) ============== *
  * Antonio Stallion (he raced as Juan Stallion until the name went to the new sombrero Juan), redone as a stylish, easy-going racing-driver heartthrob rather than a prop-shop
  * cliche: warm bronze skin, a swept-back wavy chestnut quiff with one spit-curl falling onto his
@@ -71772,7 +71796,8 @@ function dressKasi(g, K){
   // the stock face goes; the stock head and tail are re-dressed; no ink outlines on a vinyl toy
   for(const c of g.children) if(c.isMesh && c!==head && c!==ud.tailMesh) c.visible=false;
   if(ud.glow) ud.glow.material.color.setRGB(0,0,0);   // no halo: his light is the neon
-  head.geometry.dispose(); head.geometry=new T.SphereGeometry(3.4,56,40); head.material=M.head;
+  if(!ud.flow){ head.geometry.dispose(); head.geometry=new T.SphereGeometry(3.4,56,40); }   // (a flow body's skin is fine already, and carries a sphere's UVs)
+  head.material=M.head;
   ud.tailMesh.material=M.tail; ud.ksTailMat=M.tail;
   const face=new T.Group(); face.name='kasi-face'; g.add(face);
 
@@ -71973,6 +71998,282 @@ function fluidTick(o, r, now){
   o.scale.multiply(_flV.set(w,w,sq*br)); (F.mS||(F.mS=new T.Vector3())).set(w,w,sq*br); (F.wS||(F.wS=new T.Vector3())).copy(o.scale);
   if(F.wQ && o.quaternion.equals(F.wQ)) o.quaternion.multiply(_flQ2.copy(F.mQ).invert());
   _flQ.setFromAxisAngle(_flZ, F.bank); o.quaternion.multiply(_flQ); (F.mQ||(F.mQ=new T.Quaternion())).copy(_flQ); (F.wQ||(F.wQ=new T.Quaternion())).copy(o.quaternion);
+}
+/* ============== THE FLOW BODY: the avatar template (FLOW KIT) ============== *
+ * The stock racer is three parts that meet: a ball for a head, a tube stuck into the back of it, and a neck that is a ball
+ * joint. So there is a crease where the tube leaves the ball, the head swivels over a tail root that stays put, and the
+ * tail is a sine pinned at one end. The flow body is ONE swimmer:
+ *   · ONE SKIN from the nose to the tail's tip: the head's ellipsoid (exactly the old one over the face, so faceAnchor,
+ *     headPt and seatOnFace still land on it) eased into the tail's taper by a fillet instead of a crease, and a closed
+ *     tip. The head and the tail are still two meshes (ud.head, ud.tailMesh) so a character can give each its own
+ *     material, and they share their boundary ring, vertex for vertex, normal for normal;
+ *   · ONE SPINE under it. The head is rigid (it carries the face) and turns about a pivot at the back of the skull, not its
+ *     centre; behind it the skin lies along a curve that leaves the head on the head's own axis and eases into what the
+ *     tail was asked for down the neck, so a look, a nod or a tilt BENDS the neck (as far as a neck can: FLOW.BEND).
+ *     That curve is re-walked by arc length, so every ring sits at its own distance down it: the spine keeps its length
+ *     whatever the swim, a turn or a lash asks (a wide swing gives up reach, as a rope's does), and rings stay square
+ *     to it. No skin is pulled long, sheared thin or folded;
+ *   · the SWIM is the same travelling wave on the same clock (phase, amplitude, the lash and the styles all still drive
+ *     it), with a little of it out of plane so the tail has depth from behind, and the head answering it with a few
+ *     degrees of counter-sway: the whole body carries the wave, not just the back half;
+ *   · FOLLOW-THROUGH from what the kart actually does (flowDrive): the tail lies along the path the head took, so it
+ *     tracks round a corner like a towed rope; it streams along the direction of travel when the body is slid sideways
+ *     in a drift; it trails a jump and a landing. Each is a damped spring fed through two low-pass stages, so nothing
+ *     steps and nothing kinks;
+ *   · the HEAD's pose is a request (flowNeck): the game's look and a kit's own nod are eased and sprung, so a glance
+ *     starts from rest, overshoots a hair and settles, however abruptly it was asked for.
+ * TO MOVE A RACER ONTO IT: add its id to FLOW_IDS ({} for the template's teardrop neck, {neck:null} if its collar or
+ * yoke was built round the old junction). Its kit gets the same handles as ever (head, tailMesh, the neck group,
+ * bodyPart, faceAnchor); the head keeps a sphere's UVs (a head texture painted for the old sphere fits) and the tail the
+ * old tube's (u along the length from the same origin, v round it). What a kit may have to change, and nothing else:
+ *   · it swapped the head's geometry for a finer sphere: don't, on a flow body (ud.flow is set), the skin is fine already;
+ *   · it re-seats a part on a ring of the tail every frame (ud.tailData.pos): pin it once with flowRide(g, part, z);
+ *   · it paints the skin: flowPaint(g, f) writes vertex colours from one function of where a vertex is;
+ *   · it builds a body of its own and takes the tail off (the dragons, Tex's flagellum): it is left as it is (flowKeep).
+ * TO CHECK ONE: race_fx {flowBody:'all'} builds every racer on it and {flowBody:false} none (an A/B on the same seeded
+ * race); race_motion then reports the skin as drawn: the gap at the join, the spine's length against rest, the
+ * sharpest bend between two rings, beside the neck's and the tail's jerk and snaps. */
+const FLOW={ on:true, S:20, K:1.0, NECK:[-3,-7.5], ZJ:-4.75, LB:9, OW:0.3, HEL:0.14, SWAY:0.05, SWAYPH:0.7, TRACK:1, DRIFT:0.7, NE:30, NK:110, NC:19, BEND:1.05 };
+const FLOW_PIV=new T.Vector3(0,HEAD_CY,-2.8);
+// the racers on the flow body, and how each wears it: {} is the template's own teardrop; {neck:null} keeps the old junction
+// behind the head (a fillet in the crease) for a kit whose hair, collar or yoke was built round the ellipsoid's back
+const FLOW_IDS={ proto:{}, kasi:{neck:null}, chad:{neck:null} };
+const _fwQ=new T.Quaternion(), _fwQ2=new T.Quaternion(), _fwV=new T.Vector3(), _fwY=new T.Vector3(0,1,0), _fwM=new T.Matrix4();
+function flowSmax(a,b,k){ const h=Math.max(k-Math.abs(a-b),0)/k; return Math.max(a,b)+h*h*k*0.25; }
+/* The skin's half-width and half-height at z. The front of the head is the old ellipsoid exactly. Behind it, one of two necks:
+   · the TEARDROP (P.neck=[za,zb], the template's own): from za the ellipsoid's radius and slope run into the tail's at zb on
+     one cubic, so the back of the head draws out into the tail with no ring of any kind where they meet;
+   · the FILLET (P.neck=null, P.k): the ellipsoid closes as it always did and a fillet of size k rounds the crease where the
+     tail leaves it. For a racer whose collar or yoke was built round the old junction.
+   The tail's taper is the old tube's, drawn to a point over its last unit and a half. */
+function flowTailR(z){ const t=Math.min(1,Math.max(0,(-2-z)/21)), r=1.3*(1-t)*(1-t)+0.12, q=Math.max(0,Math.min(1,(z+23.6)/1.6)); return r*(0.25+0.75*q*(2-q)); }
+function flowR(z, P){
+  const e=Math.abs(z)<HEAD_RZ?Math.sqrt(1-(z/HEAD_RZ)*(z/HEAD_RZ)):0;
+  if(z>=0) return [HEAD_RX*e, HEAD_RY*e];
+  const rt=flowTailR(z);
+  if(P.neck){ const za=P.neck[0], zb=P.neck[1];
+    if(z>=za) return [HEAD_RX*e, HEAD_RY*e];
+    if(z<=zb) return [rt, rt];
+    const L=za-zb, u=(za-z)/L, u2=u*u, u3=u2*u, h00=2*u3-3*u2+1, h10=u3-2*u2+u, h01=-2*u3+3*u2, h11=u3-u2;
+    const ea=Math.sqrt(1-(za/HEAD_RZ)*(za/HEAD_RZ)), ma=-za/(HEAD_RZ*HEAD_RZ*ea), rb=flowTailR(zb), mb=(flowTailR(zb+0.01)-flowTailR(zb-0.01))/0.02;
+    return [HEAD_RX*ea*h00-L*HEAD_RX*ma*h10+rb*h01-L*mb*h11, HEAD_RY*ea*h00-L*HEAD_RY*ma*h10+rb*h01-L*mb*h11]; }
+  const q=Math.min(1,-z/2), k=Math.max(1e-3, P.k*q*q*(3-2*q));   // (the fillet eases in behind the widest ring)
+  return [flowSmax(HEAD_RX*e, rt, k), flowSmax(HEAD_RY*e, rt, k)];
+}
+function flowBody(g, headMat, tailMat, o){
+  o=o||{}; const S=FLOW.S, S1=S+1, K={ neck:o.neck!==undefined?o.neck:FLOW.NECK, k:o.k||FLOW.K }, CY=HEAD_CY, TAU=Math.PI*2, OW=FLOW.OW, SY=HEAD_RY/HEAD_RX, SZ=HEAD_RZ/HEAD_RX;
+  const dR=z=>{ const h=0.02, a=flowR(z+h,K), b=flowR(z-h,K); return [(a[0]-b[0])/(2*h),(a[1]-b[1])/(2*h)]; };
+  // the surface normal of an elliptical section whose radii change along z, in (x, y, z): exact for the ellipsoid, too
+  const nrmAt=(z,th,out)=>{ const c=Math.cos(th), sn=Math.sin(th);
+    if(z>=0){ const e=Math.sqrt(Math.max(0,1-(z/HEAD_RZ)*(z/HEAD_RZ))); out[0]=e*c/HEAD_RX; out[1]=e*sn/HEAD_RY; out[2]=z/(HEAD_RZ*HEAD_RZ); }
+    else { const r=flowR(z,K), d=dR(z); out[0]=r[1]*c; out[1]=r[0]*sn; out[2]=-(r[0]*d[1]*sn*sn+r[1]*d[0]*c*c); }
+    const l=Math.hypot(out[0],out[1],out[2])||1; out[0]/=l; out[1]/=l; out[2]/=l; return out; };
+  // — the head: static, rigid with the neck. Rings by angle over the ellipsoid, then every quarter unit to the boundary —
+  const HZ=[]; for(let k=0;k<=10;k++) HZ.push([k===10?0:HEAD_RZ*Math.cos(k*9*Math.PI/180), k===10?1:0]);
+  HZ.push([0,2]);   // (z=0 twice: a sphere's UV seam runs along this ring; the front copy carries u=0, the rear u=1)
+  for(let k=11;k<=14;k++) HZ.push([HEAD_RZ*Math.cos(k*9*Math.PI/180),0]);
+  for(let z=-3.25;z>=FLOW.ZJ-1e-6;z-=0.25) HZ.push([z,0]);
+  const HR=HZ.length, hp=new Float32Array(HR*S*3), hn=new Float32Array(HR*S*3), ho=new Float32Array(HR*S*3), hu=new Float32Array(HR*S*2), hc=new Float32Array(HR*S*3), hi=[], nv=[0,0,0];
+  for(let r=0,p=0,q=0;r<HR;r++){ const z=HZ[r][0], seam=HZ[r][1], R=flowR(z,K);
+    for(let j=0;j<S;j++,p+=3,q+=2){ const th=j/S*TAU, x=R[0]*Math.cos(th), y=R[1]*Math.sin(th);
+      if(R[0]<1e-6){ nv[0]=0; nv[1]=0; nv[2]=1; } else nrmAt(z,th,nv);
+      // (in the head mesh's own frame: see below. A normal goes in by the frame's scale, so it comes out right)
+      hp[p]=x; hp[p+1]=y/SY; hp[p+2]=z/SZ; ho[p]=x+nv[0]*OW; ho[p+1]=(y+nv[1]*OW)/SY; ho[p+2]=(z+nv[2]*OW)/SZ;
+      { const ax=nv[0], ay=nv[1]*SY, az=nv[2]*SZ, l=Math.hypot(ax,ay,az)||1; hn[p]=ax/l; hn[p+1]=ay/l; hn[p+2]=az/l; }
+      // a sphere's UVs (three's SphereGeometry on this ellipsoid), so a head texture painted for the old sphere still fits
+      const dx=x/HEAD_RX, dy=y/HEAD_RY, dz=z/HEAD_RZ, dl=Math.hypot(dx,dy,dz)||1; let ph=Math.atan2(dz,-dx); if(ph<0) ph+=TAU;
+      let u=ph/TAU; if(seam){ const pole=Math.abs(dx)<1e-6; u=pole?(seam===1?0.25:0.75):dx<0?(seam===1?0:1):0.5; }
+      hu[q]=u; hu[q+1]=1-Math.acos(Math.max(-1,Math.min(1,dy/dl)))/Math.PI;
+      hc[p]=hc[p+1]=hc[p+2]=1; } }
+  for(let r=0;r<HR-1;r++){ if(HZ[r][1]===1) continue;   // (nothing between the two copies of the seam ring)
+    for(let j=0;j<S;j++){ const a=r*S+j, b=r*S+(j+1)%S, c=(r+1)*S+j, d=(r+1)*S+(j+1)%S; if(r>0) hi.push(a,c,b); hi.push(b,c,d); } }
+  const hgeo=new T.BufferGeometry();
+  hgeo.setAttribute('position', new T.BufferAttribute(hp,3)); hgeo.setAttribute('normal', new T.BufferAttribute(hn,3));
+  hgeo.setAttribute('uv', new T.BufferAttribute(hu,2)); hgeo.setAttribute('color', new T.BufferAttribute(hc,3)); hgeo.setIndex(hi);
+  // The head mesh sits in the stock head's frame (a 3.4 sphere at y=HEAD_CY, scaled 1 x 0.82 x 1.5), so whatever a kit did
+  // to the old head still lands: a child hung on it, an outline scaled off it, even its geometry swapped for a sphere
+  // (which gives the old ellipsoid back, in place, with the tail leaving it flush: flowKeep then drops the skin's ink)
+  const head=new T.Mesh(hgeo, headMat); head.name='head'; head.position.y=CY; head.scale.set(1,SY,SZ);
+  { const og=new T.BufferGeometry(); og.setAttribute('position', new T.BufferAttribute(ho,3)); og.setIndex(hi);
+    const ol=new T.Mesh(og, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); ol.userData.isOutline=true; head.add(ol); var headOutline=ol; }
+  // — the tail: posed every frame. One ring tucked under the head's skin (so the join can never show a hairline), the boundary
+  //   ring (the head's last, vertex for vertex), every quarter unit through the neck, every half to the tip, and a closed tip —
+  const TZ=[[FLOW.ZJ+0.25,0.94]]; for(let z=FLOW.ZJ;z>=-6+1e-6;z-=0.25) TZ.push([z,1]); for(let z=-6.5;z>=-15+1e-6;z-=0.5) TZ.push([z,1]); for(let z=-15.25;z>=-23+1e-6;z-=0.25) TZ.push([z,1]); TZ.push([-23.3,1]); TZ.push([-23.6,1]); TZ.push([-23.75,0]);
+  const n=TZ.length, F={ n, i0:1, z:new Float32Array(n), t:new Float32Array(n), w:new Float32Array(n), bx:new Float32Array(n), by:new Float32Array(n), bz:new Float32Array(n),
+    cx:new Float32Array(n), cy:new Float32Array(n), cz:new Float32Array(n), tx:new Float32Array(n), ty:new Float32Array(n), tz:new Float32Array(n), pa:new Float32Array(n*S1), pb:new Float32Array(n*S1), na:new Float32Array(n*S1), nb:new Float32Array(n*S1), nc:new Float32Array(n*S1),
+    pos:new Float32Array(n*S1*3), nrm:new Float32Array(n*S1*3), opos:new Float32Array(n*S1*3), ow:new Float32Array(n),
+    phase:0, amp:0, defer:false, sw:0, swV:0, dr:0, drV:0, vy:0, vyV:0, ampS:null, d:{ head:null, y:0, t1:0, t2:0, v1:0, v2:0 }, sa:new T.Quaternion(), sq:null };
+  const tu=new Float32Array(n*S1*2), tc=new Float32Array(n*S1*3), ti=[];
+  for(let i=0,c=0;i<n;i++){ const z=TZ[i][0], k=TZ[i][1], R=flowR(z,K), s=Math.max(0,Math.min(1,(FLOW.ZJ-z)/FLOW.LB));
+    F.z[i]=z; F.t[i]=Math.max(0,(-2-z)/21); F.w[i]=1-s*s*(3-2*s); F.ow[i]=OW*Math.max(0.3,Math.min(1,R[0]*k/0.5));   // (the ink thins with the tail: the tip is a point, not a blot. t runs a hair past 1 at the tip: the wave carries on to the very end)
+    for(let j=0;j<S1;j++,c++){ const th=j/S*TAU;
+      F.pa[c]=R[0]*k*Math.cos(th); F.pb[c]=R[1]*k*Math.sin(th);
+      if(k===0){ F.na[c]=0; F.nb[c]=0; F.nc[c]=-1; } else { nrmAt(z,th,nv); F.na[c]=nv[0]; F.nb[c]=nv[1]; F.nc[c]=nv[2]; }
+      tu[c*2]=(-2-z)/21; tu[c*2+1]=j/S; tc[c*3]=tc[c*3+1]=tc[c*3+2]=1; } }
+  for(let i=0;i<n-1;i++) for(let j=0;j<S;j++){ const a=i*S1+j, b=a+1, c=a+S1, d=c+1; ti.push(a,c,b); if(i<n-2) ti.push(b,c,d); }
+  const tgeo=new T.BufferGeometry();
+  tgeo.setAttribute('position', new T.BufferAttribute(F.pos,3)); tgeo.setAttribute('normal', new T.BufferAttribute(F.nrm,3));
+  tgeo.setAttribute('uv', new T.BufferAttribute(tu,2)); tgeo.setAttribute('color', new T.BufferAttribute(tc,3)); tgeo.setIndex(ti);
+  tgeo.boundingSphere=new T.Sphere(new T.Vector3(0,CY,-13), 19);   // (it bends: a fixed, generous bound, never recomputed)
+  const tailMesh=new T.Mesh(tgeo, tailMat); tailMesh.name='tail';
+  const toGeo=new T.BufferGeometry(); toGeo.setAttribute('position', new T.BufferAttribute(F.opos,3)); toGeo.setIndex(ti); toGeo.boundingSphere=tgeo.boundingSphere;
+  const tailOutline=new T.Mesh(toGeo, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); tailOutline.userData.isOutline=true;
+  F.geo=tgeo; F.ogeo=toGeo; F.hgeo=hgeo; F.hz=HZ; F.K=K; F.hol=headOutline; F.hp0=hp.slice(); F.hn0=hn.slice();
+  g.add(head); g.add(tailMesh); g.add(tailOutline);
+  g.userData.flow=F; g.userData.head=head; g.userData.tailMesh=tailMesh;
+  g.userData.tailData={ flow:true, geo:tgeo, outlineGeo:toGeo, rings:n-1, sides:S, y:CY };   // (what the rest of the game asks a tail for)
+  return { head, tailMesh, tailOutline, F };
+}
+// paint the skin's vertex colours from one function of where a vertex is: f(z, th, out) -> rgb, th round the body (PI/2 = the top)
+function flowPaint(g, f){
+  const F=g.userData.flow, S=FLOW.S, S1=S+1, out=[1,1,1];
+  const hc=F.hgeo.attributes.color; for(let r=0,p=0;r<F.hz.length;r++) for(let j=0;j<S;j++,p++){ f(F.hz[r][0], j/S*Math.PI*2, out); hc.setXYZ(p,out[0],out[1],out[2]); } hc.needsUpdate=true;
+  const tc=F.geo.attributes.color; for(let i=0,c=0;i<F.n;i++) for(let j=0;j<S1;j++,c++){ f(F.z[i], j/S*Math.PI*2, out); tc.setXYZ(c,out[0],out[1],out[2]); } tc.needsUpdate=true;
+}
+/* what the springs feel, from what the kart does (called once a frame, before the tail is posed) */
+function flowDrive(o, r, dt){
+  const F=o.userData.flow; if(!F) return; F.defer=true;
+  const D=F.d, spd=Math.abs(r.spd||0), head=r.head||0, y=o.position.y, sdt=Math.max(dt,1e-3);
+  if(D.head==null){ D.head=head; D.y=y; }
+  let dh=head-D.head; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; D.head=head;
+  const lp=1-Math.exp(-dt*10), rawT=Math.max(-4,Math.min(4,dh/sdt)), rawV=Math.max(-80,Math.min(80,(y-D.y)/sdt)); D.y=y;
+  D.t1+=(rawT-D.t1)*lp; D.t2+=(D.t1-D.t2)*lp; D.v1+=(rawV-D.v1)*lp; D.v2+=(D.v1-D.v2)*lp;
+  // the tail lies along the path the head took: a curve of turn rate / speed (a towed rope, cutting inside the corner)
+  const kT=D.t2/Math.max(70,spd)*FLOW.TRACK;
+  F.swV=(F.swV+(kT-F.sw)*60*dt)*Math.exp(-9*dt); F.sw+=F.swV*dt;
+  // slid sideways (a drift), the body points into the corner and the tail streams along the way it is really going
+  const dT=Math.max(-0.6,Math.min(0.6,r.slip||0))*FLOW.DRIFT;
+  F.drV=(F.drV+(dT-F.dr)*45*dt)*Math.exp(-8*dt); F.dr+=F.drV*dt;
+  // it trails a climb, a hop and a landing
+  const vT=Math.max(-3.5,Math.min(3.5,-D.v2*0.05));
+  F.vyV=(F.vyV+(vT-F.vy)*50*dt)*Math.exp(-7*dt); F.vy+=F.vyV*dt;
+}
+/* What the animation asks of the tail, in the body's own space: the swim (the wave, or a styled swim, or the lash) plus
+   what the springs add. A curve, not yet the spine: flowFlush joins it to the head and lays the skin along it. */
+function flowWave(g, phase, amp, lift, st){
+  const ud=g.userData, F=ud.flow, n=F.n, i0=F.i0, LK=TAIL_SWIM.lag, tailS=ud.tailS, lash=_WL.on, BX=F.bx, BY=F.by, BZ=F.bz;
+  F.phase=phase; F.amp=amp;
+  for(let i=0;i<n;i++){ const t=F.t[i]; let x=0, y=0, zo=0;
+    if(i>i0){ const lag=t*15*LK;
+      if(st||lash){ tailOffset(lag, t, phase, amp, st); x=_tox; y=_toy; if(lash) zo=_wlz; if(!st) y+=FLOW.HEL*Math.cos(phase-lag)*amp*t*t; }   // (the plain swim keeps its roll through a lash)
+      else { const a=phase-lag, e=amp*t*t; x=Math.sin(a)*e; y=FLOW.HEL*Math.cos(a)*e; }
+      const d=21*t; x+=F.sw*d*d*0.5+Math.sin(F.dr)*d; y+=(F.vy+(lift||0))*t*t+(tailS?tailS(t)*_TW.pg:0); }
+    BX[i]=x; BY[i]=y; BZ[i]=F.z[i]+zo; }
+  if(!F.defer) flowFlush(g);
+}
+/* The head. Whatever the game and the racer's own tick asked the neck for is a REQUEST: measured (race_motion), the look
+   snaps between targets a dozen times a second, and on a neck that bends every snap would run down the spine. So the
+   request eases into a target and a damped spring turns the head toward that: a glance eases in, overshoots a hair and
+   settles (the same two stages as the Fluid kit's neck; a Fluid copy keeps its own). Then the head answers the swim
+   with a little counter-sway, and turns about the back of the skull, not its centre. */
+function flowNeck(g, dt){
+  const ud=g.userData, F=ud.flow, nk=ud.neck; if(!nk) return;
+  if(!F.sq){ F.sq=new T.Quaternion(); F.req=nk.quaternion.clone(); F.rq=nk.quaternion.clone(); F.tq=nk.quaternion.clone(); F.nq=nk.quaternion.clone(); F.nw=new T.Vector3(); }
+  else if(nk.quaternion.equals(F.sq)) nk.quaternion.copy(F.req);   // nothing re-posed it: the request stands (not our own answer fed back)
+  else F.req.copy(nk.quaternion);
+  // a neck bends so far and no further (FLOW.BEND: past it the skin would pinch on the inside of the bend). A kit that
+  // asks for more (a head spun right round, a gag for a ball on a stick) gets the limit, with its twist kept
+  { _fwV.set(0,0,1).applyQuaternion(F.req); const a=Math.acos(Math.max(-1,Math.min(1,_fwV.z)));
+    if(a>FLOW.BEND){ _fwV.set(-_fwV.y,_fwV.x,0); const l=_fwV.length(); if(l>1e-6) _fwV.divideScalar(l); else _fwV.set(0,1,0);
+      F.req.premultiply(_fwQ.setFromAxisAngle(_fwV, FLOW.BEND-a)); } }
+  if(dt>0 && !ud.fluid){
+    { const e=1-Math.exp(-dt*FLOW.NE); F.rq.slerp(F.req, e); F.tq.slerp(F.rq, e); }   // eased twice: the target starts moving from rest, so the head does with no jolt
+    _fwQ.copy(F.tq).multiply(_fwQ2.copy(F.nq).invert()); if(_fwQ.w<0){ _fwQ.x=-_fwQ.x; _fwQ.y=-_fwQ.y; _fwQ.z=-_fwQ.z; _fwQ.w=-_fwQ.w; }
+    const sn=Math.sqrt(Math.max(0,1-_fwQ.w*_fwQ.w)), ang=2*Math.acos(Math.min(1,_fwQ.w));
+    if(sn>1e-6) F.nw.addScaledVector(_fwV.set(_fwQ.x/sn,_fwQ.y/sn,_fwQ.z/sn), ang*FLOW.NK*dt);
+    F.nw.multiplyScalar(Math.exp(-FLOW.NC*dt));
+    const wl=F.nw.length(); if(wl>1e-7){ _fwQ.setFromAxisAngle(_fwV.copy(F.nw).divideScalar(wl), wl*dt); F.nq.premultiply(_fwQ).normalize(); }
+  } else { F.nq.copy(F.req); F.tq.copy(F.req); F.rq.copy(F.req); F.nw.set(0,0,0); }
+  F.sa.setFromAxisAngle(_fwY, -FLOW.SWAY*Math.min(1,(F.amp||0)/5)*Math.sin(F.phase+FLOW.SWAYPH));
+  nk.quaternion.copy(F.nq).multiply(F.sa); F.sq.copy(nk.quaternion);
+  nk.position.copy(FLOW_PIV).sub(_fwV.copy(FLOW_PIV).applyQuaternion(nk.quaternion));
+}
+/* the skin onto the spine: rigid with the head at the join, easing to the body's spine along the neck; every ring square
+   to the spine, its up the head's at the join and the body's by the end of the neck. Normals are written with the
+   positions (each is the ring's own normal, turned with it), and the ink shell a constant width outside. */
+function flowFlush(g, dt){
+  const ud=g.userData, F=ud.flow; if(!F) return; F.defer=false;
+  flowNeck(g, dt);
+  const nk=ud.neck, n=F.n, S1=FLOW.S+1, CY=HEAD_CY;
+  let qx=0,qy=0,qz=0,qw=1, hx=0,hy=0,hz=0;
+  if(nk){ const q=nk.quaternion, p=nk.position; qx=q.x; qy=q.y; qz=q.z; qw=q.w; hx=p.x; hy=p.y; hz=p.z; }
+  const yx=2*(qx*qy-qw*qz), yy=1-2*(qx*qx+qz*qz), yz=2*(qy*qz+qw*qx);   // the head's up and forward, in the body's space
+  const zx=2*(qx*qz+qw*qy), zy=2*(qy*qz-qw*qx), zz=1-2*(qx*qx+qy*qy);
+  const CX=F.cx, CYA=F.cy, CZ=F.cz, TX=F.tx, TY=F.ty, TZ=F.tz, i0=F.i0;
+  // the curve the skin lies along: the head's own line at the join, easing into what the tail was asked for down the neck
+  for(let i=0;i<n;i++){ const w=F.w[i], z=F.z[i], bx=F.bx[i], by=CY+F.by[i], bz=F.bz[i];
+    TX[i]=bx+(hx+yx*CY+zx*z-bx)*w; TY[i]=by+(hy+yy*CY+zy*z-by)*w; TZ[i]=bz+(hz+yz*CY+zz*z-bz)*w; }
+  // ...and the spine: that curve re-walked so every ring sits at its own distance down it. The tail keeps its length
+  // whatever is asked of it (a wide swing gives up reach, as a rope's does): no skin is pulled long or folded short
+  for(let i=0;i<=i0;i++){ CX[i]=TX[i]; CYA[i]=TY[i]; CZ[i]=TZ[i]; }
+  { let k=i0, cx=TX[i0], cy=TY[i0], cz=TZ[i0];   // where the walk has got to: on the curve's piece k -> k+1
+    for(let i=i0+1;i<n;i++){ let need=F.z[i-1]-F.z[i], f=-1;
+      for(;;){
+        if(k>=n-1){ const ex=TX[n-1]-TX[n-2], ey=TY[n-1]-TY[n-2], ez=TZ[n-1]-TZ[n-2], q=need/(Math.sqrt(ex*ex+ey*ey+ez*ez)||1); cx+=ex*q; cy+=ey*q; cz+=ez*q; break; }   // (past the curve's end: straight on)
+        const ex=TX[k+1]-cx, ey=TY[k+1]-cy, ez=TZ[k+1]-cz, l=Math.sqrt(ex*ex+ey*ey+ez*ez);
+        if(l>=need && l>0){ const q=need/l; cx+=ex*q; cy+=ey*q; cz+=ez*q;
+          const px=TX[k+1]-TX[k], py=TY[k+1]-TY[k], pz=TZ[k+1]-TZ[k]; f=1-(l-need)/(Math.sqrt(px*px+py*py+pz*pz)||1); break; }
+        need-=l; cx=TX[k+1]; cy=TY[k+1]; cz=TZ[k+1]; k++; }
+      if(f<0){ CX[i]=cx; CYA[i]=cy; CZ[i]=cz; continue; }
+      // the walk measures along the curve's straight pieces; the ring is set on the smooth curve through them (Catmull-Rom),
+      // so it does not change direction with a tick each time it passes one of the curve's points
+      const a=k>0?k-1:0, d=k+2<n?k+2:n-1, f2=f*f, f3=f2*f, w0=-0.5*f3+f2-0.5*f, w1=1.5*f3-2.5*f2+1, w2=-1.5*f3+2*f2+0.5*f, w3=0.5*f3-0.5*f2;
+      CX[i]=TX[a]*w0+TX[k]*w1+TX[k+1]*w2+TX[d]*w3; CYA[i]=TY[a]*w0+TY[k]*w1+TY[k+1]*w2+TY[d]*w3; CZ[i]=TZ[a]*w0+TZ[k]*w1+TZ[k+1]*w2+TZ[d]*w3; } }
+  const P=F.pos, N=F.nrm, O=F.opos, PA=F.pa, PB=F.pb, NA=F.na, NB=F.nb, NC=F.nc, FR=F.fr; let p=0, c=0;
+  for(let i=0;i<n;i++){ const w=F.w[i]; let tx, ty, tz;
+    if(w>=1){ tx=zx; ty=zy; tz=zz; }
+    else { const a=i>0?i-1:0, b=i<n-1?i+1:n-1; tx=CX[a]-CX[b]; ty=CYA[a]-CYA[b]; tz=CZ[a]-CZ[b]; const l=1/(Math.sqrt(tx*tx+ty*ty+tz*tz)||1); tx*=l; ty*=l; tz*=l; }
+    let ux=yx*w, uy=yy*w+(1-w), uz=yz*w;
+    let rX=uy*tz-uz*ty, rY=uz*tx-ux*tz, rZ=ux*ty-uy*tx; { const l=1/(Math.sqrt(rX*rX+rY*rY+rZ*rZ)||1); rX*=l; rY*=l; rZ*=l; }
+    ux=ty*rZ-tz*rY; uy=tz*rX-tx*rZ; uz=tx*rY-ty*rX;
+    const cx=CX[i], cy=CYA[i], cz=CZ[i], OW=F.ow[i];
+    if(FR){ const k=i*9; FR[k]=rX; FR[k+1]=rY; FR[k+2]=rZ; FR[k+3]=ux; FR[k+4]=uy; FR[k+5]=uz; FR[k+6]=tx; FR[k+7]=ty; FR[k+8]=tz; }
+    for(let j=0;j<S1;j++,c++){ const a=PA[c], b=PB[c], na=NA[c], nb=NB[c], nc=NC[c];
+      const nx=rX*na+ux*nb+tx*nc, ny=rY*na+uy*nb+ty*nc, nz=rZ*na+uz*nb+tz*nc, vx=cx+rX*a+ux*b, vy=cy+rY*a+uy*b, vz=cz+rZ*a+uz*b;
+      N[p]=nx; P[p]=vx; O[p]=vx+nx*OW; p++; N[p]=ny; P[p]=vy; O[p]=vy+ny*OW; p++; N[p]=nz; P[p]=vz; O[p]=vz+nz*OW; p++; } }
+  F.geo.attributes.position.needsUpdate=true; F.geo.attributes.normal.needsUpdate=true; F.ogeo.attributes.position.needsUpdate=true;
+  if(F.riders) for(const R of F.riders){ const i=R.i, f=R.f, k=(f<0.5?i:i+1)*9, q=R.p0, e=_fwM.elements;
+    e[0]=FR[k]; e[1]=FR[k+1]; e[2]=FR[k+2]; e[4]=FR[k+3]; e[5]=FR[k+4]; e[6]=FR[k+5]; e[8]=FR[k+6]; e[9]=FR[k+7]; e[10]=FR[k+8];
+    R.o.position.set(CX[i]+(CX[i+1]-CX[i])*f+e[0]*q.x+e[4]*q.y+e[8]*q.z, CYA[i]+(CYA[i+1]-CYA[i])*f+e[1]*q.x+e[5]*q.y+e[9]*q.z, CZ[i]+(CZ[i+1]-CZ[i])*f+e[2]*q.x+e[6]*q.y+e[10]*q.z);
+    R.o.quaternion.setFromRotationMatrix(_fwM).multiply(R.q0); }
+}
+/* Pin a part to the spine, for whatever rides the tail (a bracer, a ring, a bow, a flag): `obj`, a child of the racer's
+   group placed where it sits at rest, from now on moves and turns with the skin at rest-z `z` (default: where it is).
+   It is placed with the skin, after the racer's own tick, so it never lags the tail by a frame. The skin's half-width
+   there is flowR(z, g.userData.flow.K)[0]. */
+function flowRide(g, obj, z){
+  const F=g.userData.flow; if(!F) return null;
+  if(z===undefined) z=obj.position.z; z=Math.max(F.z[F.n-1], Math.min(F.z[F.i0], z));
+  let i=F.i0; while(i<F.n-2 && F.z[i+1]>z) i++;
+  if(!F.fr){ F.fr=new Float32Array(F.n*9); F.riders=[]; }
+  const R={ o:obj, z, i, f:(F.z[i]-z)/(F.z[i]-F.z[i+1]), p0:new T.Vector3(obj.position.x, obj.position.y-HEAD_CY, obj.position.z-z), q0:obj.quaternion.clone() };
+  F.riders.push(R); return R;
+}
+
+/* ============== PROTO (id proto): the template, wearing nothing ============== *
+ * The flow body as itself: no costume to hide a join behind, so it is the racer to look at when the body changes. A face
+ * from the face kit; the skin is ONE material from nose to tail tip with its colour in the vertices (flowPaint): a paler
+ * belly, a darker stripe down the back that runs the length of the tail (from the chase camera it shows the wave
+ * travelling and the body rolling), and the tone deepening to the tip. */
+function dressProto(g, K){
+  const ud=g.userData, skin=new T.Color().setHSL(172/360,0.62,0.6), hex=skin.getHex();
+  fkFace(g, K, {skin:hex,
+    eye:{x:1.34, y:4.0, R:1.12, iris:0x135a54, irisHi:0x35b8a4, lidUp:1.04, lidRx:0.16, tilt:0.02},
+    brow:{col:0x0e3b38, x0:0.5, len:1.3, y:5.28, arch:0.12, tilt:0.04, r:0.15, taper:0.5},
+    blush:0xff9d86, blushY:3.0,
+    mouth:{rest:'grin', w:1.15, yT:2.78, yB:2.05, sag:0.15}});
+  const lin=skin.clone().convertSRGBToLinear(), belly=new T.Color().setHSL(165/360,0.55,0.8).convertSRGBToLinear(),
+    back=new T.Color().setHSL(188/360,0.7,0.36).convertSRGBToLinear(), tip=new T.Color().setHSL(205/360,0.75,0.42).convertSRGBToLinear(), c=new T.Color();
+  const sm=x=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
+  if(ud.flow) flowPaint(g, (z, th, out)=>{ const up=Math.sin(th), t=Math.max(0,(-2-z)/21);   // (on the stock body, for an A/B: the plain skin)
+    c.copy(lin).lerp(tip, 0.75*sm(t*1.15));                                 // deepening to the tip
+    c.lerp(belly, 0.7*sm((-up-0.15)/0.75)*(1-0.6*sm(t*1.5)));               // a paler belly, fading down the tail
+    c.lerp(back, 0.85*sm((up-0.62)/0.3)*sm((1.2-z)/3));                      // the stripe down the back, from behind the brow
+    out[0]=c.r; out[1]=c.g; out[2]=c.b; });
+  const m=ud.flow ? fkToon({vertexColors:true, color:new T.Color(FK_SKIN_K,FK_SKIN_K,FK_SKIN_K), emissive:lin.clone().multiplyScalar(FK_SKIN_E)}) : fkSkin(hex);
+  m.name='skin'; K.head.material=m; K.tailMesh.material=m;
+  ud.tick=tickFace;
+  return true;
 }
 const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid copies and the originals they are built from (Sid: the stiffest racer with swaying parts, by race_motion)
 
@@ -74451,8 +74752,26 @@ function dbWhipHold(r){
 // once a frame: a world unit at unit depth in pixels, for the outline's minimum width
 function dbFrameTick(){ if(typeof renderer==='undefined' || !camera) return; const hgt=renderer.domElement.height||720; DB_PX.value=hgt*0.5/Math.tan(camera.fov*Math.PI/360); }
 
-function makeCell(hue, typeId){ return rigNeck(makeCellBuild(hue, typeId)); }
+function makeCell(hue, typeId){ return rigNeck(flowKeep(makeCellBuild(hue, typeId))); }
+// a kit that took the flow tail off for a body of its own (a dragon, a flagellum) is not on the flow body: its head's ink goes too
+function flowKeep(g){ const ud=g.userData, F=ud.flow; if(!F) return g;
+  const own=!(ud.tailData && ud.tailData.flow && ud.tailMesh && ud.tailMesh.parent===g);
+  if(own) ud.flow=null;
+  if((own || ud.head.geometry!==F.hgeo) && F.hol && F.hol.parent) F.hol.parent.remove(F.hol);   // (a kit that swapped the head's geometry draws its own edge)
+  return g; }
+// A treatment that re-shapes the head's surface (clay's thumbed lumps) must leave the join alone: the head's last ring is
+// the tail's first. This eases whatever was done to the skin back to nothing over the last `fade` units before the join.
+function flowSeal(g, fade){
+  const F=g.userData.flow; if(!F || g.userData.head.geometry!==F.hgeo) return; fade=fade||1.5;
+  const S=FLOW.S, P=F.hgeo.attributes.position, N=F.hgeo.attributes.normal, p0=F.hp0, n0=F.hn0;
+  for(let r=0,i=0;r<F.hz.length;r++){ const u=Math.max(0,Math.min(1,(F.hz[r][0]-FLOW.ZJ)/fade)), w=u*u*(3-2*u);
+    for(let j=0;j<S;j++,i++){ if(w>=1) continue; const k=i*3;
+      P.setXYZ(i, p0[k]+(P.getX(i)-p0[k])*w, p0[k+1]+(P.getY(i)-p0[k+1])*w, p0[k+2]+(P.getZ(i)-p0[k+2])*w);
+      if(N) N.setXYZ(i, n0[k]+(N.getX(i)-n0[k])*w, n0[k+1]+(N.getY(i)-n0[k+1])*w, n0[k+2]+(N.getZ(i)-n0[k+2])*w); } }
+  P.needsUpdate=true; if(N) N.needsUpdate=true;
+}
 function makeCellBuild(hue, typeId){
+  const id0=typeId;
   const fluidOf=(FLUID_COPIES.find(c=>c[0]===typeId)||[])[1]; if(fluidOf) typeId=fluidOf;   // a Fluid copy: the original's build, then the motion layer (fluidify, at the end)
   if(typeId === 'wire') return makeWireCell();           // glowing-wireframe rendition
   if(typeId === 'beadBandido') return makeBandidoCell(); // the Creature Lab sombrero actor
@@ -74486,21 +74805,35 @@ function makeCellBuild(hue, typeId){
   const g=new T.Group();
   let tailTextured=false;
   const col=new T.Color(`hsl(${hue}, 80%, 60%)`);
-  const head=new T.Mesh(new T.SphereGeometry(3.4,28,20),
+  // the body: the flow body (one skin on one spine: FLOW KIT) for the racers moved onto it, the stock ball and tube for the rest
+  // (a re-treatment — clay, felt, paper, paint, woodcut, a Fluid copy — follows its base racer unless it has an entry of its own; false
+  //  keeps one on the stock body. The dragons have a body of their own. FLOW.all: every racer, to audit who is ready to move)
+  const flowE=FLOW_IDS[id0]!==undefined ? FLOW_IDS[id0] : FLOW_IDS[typeId], flowO=flowE===undefined ? (FLOW.all ? {neck:null} : null) : flowE;
+  const flowB=FLOW.on && !!flowO && !(ryu||drago||irieDragon);
+  let head, nuc, glow, tailMesh;
+  if(flowB){
+    const hm=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.35),shininess:80});
+    const tm=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.3)});
+    ({head, tailMesh}=flowBody(g, hm, tm, flowO));
+    nuc=new T.Mesh(new T.BufferGeometry(), new T.MeshBasicMaterial({color:col})); nuc.visible=false;   // (no nucleus: the skin is not see-through. An empty mesh, for the kits that tint or move one)
+  } else {
+  head=new T.Mesh(new T.SphereGeometry(3.4,28,20),
     new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.35),
       transparent:true,opacity:0.9,shininess:80}));   // smooth (no flat-shaded facets)
   head.scale.set(1,0.82,1.5); head.position.y=3.2; g.add(head);
-  const nuc=new T.Mesh(new T.SphereGeometry(1.5,12,10),
+  nuc=new T.Mesh(new T.SphereGeometry(1.5,12,10),
     new T.MeshBasicMaterial({color:col})); nuc.position.set(0,3.2,1); g.add(nuc);
+  }
 
   // soft bioluminescent halo around the head
-  const glow=glowSprite(col.getHex(),13); glow.position.set(0,3.4,0.5); g.add(glow);
+  glow=glowSprite(col.getHex(),13); glow.position.set(0,3.4,0.5); g.add(glow);
   g.userData.glow=glow;
   // boost flame (lit only during turbo) — additive sprites trailing the tail
   const fl1=glowSprite(0xffd27a,0); fl1.position.set(0,3.2,-15);
   const fl2=glowSprite(0xff7a3c,0); fl2.position.set(0,3.2,-18);
   g.add(fl1); g.add(fl2); g.userData.flame=[fl1,fl2];
 
+  if(!flowB){
   // Long SMOOTH tail — one continuous tapering tube, wiggled per-vertex (no segments)
   const TSEG=30, TSIDE=14, TLEN=21, TY=3.2;
   const tgeo=new T.BufferGeometry();
@@ -74518,7 +74851,7 @@ function makeCellBuild(hue, typeId){
   tgeo.setAttribute('uv', new T.BufferAttribute(tuv,2));
   tgeo.setIndex(tidx);
   const tmat=new T.MeshPhongMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),side:T.DoubleSide});
-  const tailMesh=new T.Mesh(tgeo, tmat); g.add(tailMesh);
+  tailMesh=new T.Mesh(tgeo, tmat); g.add(tailMesh);
   // tail outline: the head's outline (a backface shell uniformly SCALED 8% bigger) can't
   // work here — scaling this long tapering tube around its own origin would flare the
   // shell out by inches at the tip instead of a thin outline. Build a second tube with
@@ -74535,6 +74868,7 @@ function makeCellBuild(hue, typeId){
   g.userData.tailMesh = tailMesh;
   g.userData.tailData = {pos:tpos, ringZ, ringR, rings:TSEG, sides:TSIDE, y:TY, geo:tgeo,
     outlinePos:topos, outlineGeo:toGeo};
+  }
   wiggleTail(g, 0, 0);   // initialise the tail vertices
 
   // === STEREOTYPE FACIAL FEATURES + ACCESSORIES ===
@@ -74587,7 +74921,9 @@ function makeCellBuild(hue, typeId){
   g.userData.mouth=mouth;
 
   // Type-specific facial features & accessories
-  if(typeId === 'guido' && !drago){
+  if(typeId === 'proto'){
+    tailTextured = dressProto(g, {head, eyeMat, eyeL, eyeR, pupilL, pupilR, GL, GR, EYE_R, mouth, tailMesh});   // the template itself (PROTO)
+  } else if(typeId === 'guido' && !drago){
     tailTextured = dressGuido(g, {head, eyeMat, mouth, tailMesh});
   } else if(typeId === 'guido'){
     // Tony Dragone's base: the classic Guido kit (tanned skin, spiked dark hair, gold chain,
@@ -75430,6 +75766,7 @@ function makeCellBuild(hue, typeId){
     // restoring the brighter pre-clay value and the character would never sit matte.
     g.userData.baseEmissive = g.userData.head.material.emissive.clone();
   } else if(!g.userData.real) celShade(g);   // (real: Tex Calloway is shaded physically — no toon steps, no ink line)
+  if(g.userData.real && g.userData.flow) g.traverse(o=>{ if(o.userData.isOutline && (o.parent===g.userData.head || o.geometry===g.userData.tailData.outlineGeo)) o.visible=false; });   // (...so a flow body's own ink shell comes off too)
   if(fluidOf) fluidify(g, { seed:hue });
   return g;
 }
@@ -75494,6 +75831,7 @@ const SPERM_TYPES = [
   {id:'outlaw', name:'Rusty Malone', hue:16, desc:'Engraved, not drawn: a battered hat with two bullet holes in it, an X across the cheek, a cigar that never goes out and a grin that never quite reaches the eyes. Winks when he passes you. Squints when you pass him. Gets the bandage out after the third hit and races on anyway. DRAW.', stats:{skill:0.98, maxV:1.12, boostPower:1.25, spinResist:0.7}},
   {id:'kasi', name:'Baraka "Kasi" Mwangi', hue:289, desc:'Nairobi matatu artist and the fastest thing on Ngong Road. Paints his own tail, wears his shades at night and keeps the bass on round his neck. Passes you with a wink over the top of the lenses. TWENDE!', stats:{skill:1.03, accel:1.18, maxV:1.12, turn:1.08}},
   {id:'naija', name:'Oga Tunde', hue:253, desc:'Lagos big man on his way to a party: indigo agbada, gold-stitched neck, fila tipped just so, coral beads swinging. Tosses his sleeves at whoever he passes and is never, ever found at the back. NAIJA NO DEY CARRY LAST!', stats:{skill:0.99, accel:1.22, spinResist:0.6}},
+  {id:'proto', name:'Proto', hue:172, desc:'The original swimmer, redrawn: one skin from nose to tail tip, on one spine. No costume, no gimmick. Every racer here started as this.', stats:{skill:1.0, accel:1.05, turn:1.05}},
   {id:'tplToonM', name:'Sammy · Template', hue:174, desc:'BASE TEMPLATE PROPOSAL (V1, One Piece cel), male. The plain racer every character can be dressed on: one seamless cel-shaded cell, star eyes, fifteen faces acted from the race, and a tail that beats faster and wider the harder he pushes. Winks when he passes you. No costume yet.', stats:{skill:1}},
   {id:'tplToonF', name:'Sally · Template', hue:282, desc:'BASE TEMPLATE PROPOSAL (V1, One Piece cel), female. The same rig as Sammy with her own features: lashes, arched brows, rosy lips and a ponytail with a bow that swings with every turn. Star eyes, fifteen faces, a tail that answers the throttle. No costume yet.', stats:{skill:1}},
   {id:'tplBeadM', name:'Bead Template ♂', hue:187, desc:'BASE TEMPLATE PROPOSAL (V2, the Creature Lab): the male foundation every future racer would be dressed on. A sculpted creature strung in glossy glass beads, rows running round its eyes and down its tail; a face made of beads that slide along their strings to act; Juan\'s swim with every bead on its own spring.', stats:{skill:1.0}},
@@ -77603,7 +77941,7 @@ function syncObjects(dt,now){
     _oBasis.makeBasis(_oRight, _oTrueUp, _oFwd);
     o.quaternion.setFromRotationMatrix(_oBasis);
     // the head: the look (yaw), the alarmed head-shake, tilt + hat/shoulder kicks (roll) and the nod / chin-lift (pitch)
-    if(lk) poseNeck(o, lk.nk + (lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0), lk.tilt+lk.rl, lk.pitch);
+    if(lk) poseLook(o, lk);
     if(r.shadow){
       // ground shadow tracks the TRUE road surface height (r.surfY), not the character's
       // own y — which now floats HOVER_H above the road. Without this split the shadow
@@ -77663,6 +78001,7 @@ function syncObjects(dt,now){
     }
     const wlOn=!!(wl && wl.t>=0); if(wlOn) amp*=wlStage(wl);   // the lash bends the chain; the swim mostly steps aside for it
     { const F=r.obj.userData.fluid; if(F){ F.amp=F.amp==null?amp:F.amp+(amp-F.amp)*Math.min(1,dt*4); amp=F.amp; } }   // (a fluid racer's swim glides between speeds)
+    { const F=r.obj.userData.flow; if(F){ flowDrive(r.obj, r, dt); F.ampS=F.ampS==null?amp:F.ampS+(amp-F.ampS)*Math.min(1,dt*5); amp=F.ampS; } }   // (a flow body: the springs, and a swim that glides)
     wiggleTail(r.obj, tph, amp, r._tailLift, ts);
     if(wlOn){ wlTipFx(r,o,wl); _WL.on=false; _wlx=_wlz=_wla=0; }
     // boost flush on head + halo — brighten the character's OWN stored base emissive
@@ -77741,6 +78080,7 @@ function syncObjects(dt,now){
     if(r.obj.userData.tick) r.obj.userData.tick(r.obj, r, now);   // per-character per-frame hook (Sid Spitfire's mouth)
     if(r.obj.userData.sway) updateSway(r.obj, r, now);   // Winston's locks, Cleetus's jug + straw
     if(r.obj.userData.scarf) updateScarf(r.obj, r, now); // Birdie's scarf streams, swings and lifts
+    if(r.obj.userData.flow) flowFlush(r.obj, dt);        // the flow body's skin, once every tick above has had its say about the neck
     // celebration body language: happy bounce + side-to-side victory sway
     if(r.celebT>0){ r.celebT-=dt;
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
@@ -81440,11 +81780,12 @@ const SEL3D=(function(){
     o.rotation.set(0,lk?lk.tw:0,0);
     o.position.set(OX-E.px*ms, 0, OZ-E.pz*ms);
     if(lk && lk.hy>0) o.position.y+=lk.hy;
-    if(lk) poseNeck(o, lk.nk + (lk.shk>0 ? Math.sin(lk.t*38)*0.1*lk.shk : 0), lk.tilt+lk.rl, lk.pitch);
+    if(lk) poseLook(o, lk);
     // tail: the plain grid swim; a tap adds a flick
     r.phase+= dt*4;
     r.flick=Math.max(0,r.flick-dt*1.6);
     const amp=RMQ.matches ? 0.5 : 2.4*(1+1.4*r.flick);
+    if(ud.flow) ud.flow.defer=true;   // (a flow body's skin goes on after the ticks below, once the neck is final)
     wiggleTail(o, phaseOverride!=null?phaseOverride:r.phase, phaseOverride!=null?2.4:amp, 0, null);
     // mouth, eyes, pupils (the celebration is the finish-line one: grin, wink, WOO, grin)
     const mo=ud.mouth, mb=ud.mouthBase;
@@ -81472,6 +81813,7 @@ const SEL3D=(function(){
     if(ud.tick) ud.tick(o,r,now);
     if(ud.sway) updateSway(o,r,now);
     if(ud.scarf) updateScarf(o,r,now);
+    if(ud.flow) flowFlush(o, dt);
     if(r.celebT>0){ r.celebT-=dt; o.position.y+=Math.abs(Math.sin(now*7))*2.2; o.rotation.y+=Math.sin(now*4.5)*0.35; o.rotation.z+=Math.sin(now*4.5+1)*0.15; }
     if(dragon) updateDragon(o,r,now,dt);
     const gl=ud.glow; if(gl){ gl.scale.setScalar(12*(1+Math.sin(now*9)*0.06)); gl.material.opacity=0.6; }
@@ -83135,7 +83477,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     'race.recmode': ({on=true, pixelRatio=1}={})=>{
       if(on){ if(!REC.on){ REC.pr=renderer.getPixelRatio(); REC.cam=SIM.cam; } REC.on=true; SIM.busy=true; if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
         renderer.setPixelRatio(pixelRatio); resize(); }
-      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]); }
+      else if(REC.on){ REC.on=false; SIM.busy=false; renderer.setPixelRatio(REC.pr||1); resize(); SIM.cam=REC.cam||null; hold([]);
+        if(REC.camMode0!=null){ camMode=REC.camMode0; REC.camMode0=null; } }
       const c=renderer.domElement; return { on:REC.on, width:c.width, height:c.height };
     },
     'race.rec': ({k=0, n=1, fps=30, cam=null, still=false, autopilot=true, keys:extra=[], quality=0.9, straight=false, qa=false}={})=>{
@@ -83144,7 +83487,10 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const subj=cam && cam.who ? racers.find(r=>r.name===cam.who||r.id===cam.who) : me(), tick0=SIM.tick;
       if(straight && subj) SIM.tick=()=>{ if(tick0) tick0(); const nk=subj.obj && subj.obj.userData.neck; if(nk){ nk.quaternion.identity(); nk.position.set(0,0,0); } };
       if(cam && cam.mode==='chase' && k===0){ const m=me(); if(m) m._camSnap=true; CAMFX.prevHead=null; CAMFX.swing=0; CAMFX.roll=0; }   // a shot opens on the chase cam already in place, not flying in from wherever it was left
-      if(cam){ if(cam.mode==='chase') SIM.cam=null;
+      // fp: the game's own first-person lens (the View chip's "first person"), for the length of the shot
+      if(cam && cam.mode==='fp'){ if(REC.camMode0==null) REC.camMode0=camMode; camMode='fp'; if(k===0) _fpYaw=null; }
+      else if(REC.camMode0!=null){ camMode=REC.camMode0; REC.camMode0=null; }
+      if(cam){ if(cam.mode==='chase'||cam.mode==='fp') SIM.cam=null;
         else { const t=n>1?k/(n-1):0, e=cam.ease==='linear'?t:cam.ease==='in'?t*t:cam.ease==='out'?1-(1-t)*(1-t):t*t*(3-2*t), A=cam.from||{}, B=cam.to||A;
           const L=key=>{ const a=A[key], b=B[key]; return a==null?(b==null?undefined:b):b==null?a:a+(b-a)*e; };
           const who=cam.who?racers.find(r=>r.name===cam.who||r.id===cam.who):null;
@@ -83314,7 +83660,11 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         jumps:jumpPads.map(p=>spot(p.x,p.z)), boostPads:boostPads.map(p=>at(p.x,p.z)).sort((a,b)=>a-b),
         itemBoxes:items.filter(b=>b&&isFinite(b.x)).map(b=>at(b.x,b.z)).sort((a,b)=>a-b).slice(0,60),
         breakables:breakables.map(b=>spot(b.x,b.z)).sort((a,b)=>a.at-b.at).slice(0,60),
-        hazards:hazards.map(h=>({ kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard'), at:at(h.mesh.position.x,h.mesh.position.z) })) };
+        hazards:hazards.map(h=>({ kind:h.critter?'crab':h.pill?'pill':(h.kind||'hazard'), at:at(h.mesh.position.x,h.mesh.position.z) })),
+        // the course's shape seen from above, 96 points in a unit box (x right, y down = +z), for drawing it (the home deck's tiles)
+        outline:(()=>{ let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9; for(const s of SAMP){ x0=Math.min(x0,s.p.x); x1=Math.max(x1,s.p.x); z0=Math.min(z0,s.p.z); z1=Math.max(z1,s.p.z); }
+          const sc=Math.max(x1-x0,z1-z0)||1, n=96, o=[]; for(let k=0;k<=n;k++){ const s=SAMP[Math.min(SAMP.length-1,Math.round(k/n*(trackLoop?STEPS:STEPS-1)))%SAMP.length];
+            o.push([+((s.p.x-x0)/sc+(sc-(x1-x0))/sc/2).toFixed(4), +((s.p.z-z0)/sc+(sc-(z1-z0))/sc/2).toFixed(4)]); } return o; })() };
     },
 
     /* — WARP: jump the race to any point, so a late part of a course (or a late hour) can be looked at without driving
@@ -83379,9 +83729,10 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
-    'race.fx': ({slipstream, edenLive}={})=>{ if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
+    'race.fx': ({slipstream, edenLive, flowBody:fb}={})=>{ if(fb!==undefined){ FLOW.on=!!fb; FLOW.all=fb==='all'; }   // (flowBody:false builds the next racers on the stock ball-and-tube body, for an A/B)
+      if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
-      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0 }; },
+      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS) }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
@@ -83394,7 +83745,11 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       (ud.sway||(ud.fluid&&ud.fluid.sway)||[]).slice(0,8).forEach((w,i)=>add('sway'+i, w.o));   // (a fluid racer's sways live in its spring layer)
       for(const [n,obj,k] of (ud.motionProbes||[])) add(n,obj,k);
       const dt=1/60, n=Math.round(seconds/dt), q=new T.Quaternion(), inv=new T.Matrix4();
-      for(let k=0;k<n;k++){
+      const F=ud.flow, skin={ seamGap:0, lengthMin:Infinity, lengthMax:0, maxBendDeg:0, maxBendAt:0, segMax:0, segMaxAt:0 };
+      // the page's own frame loop stands aside while this steps the game (SIM.busy): a frame of its own slipped in where the
+      // loop below yields would pose the racers once more, and a body with springs in it (the flow body) moves on that
+      const wasBusy=SIM.busy; SIM.busy=true;
+      try{ for(let k=0;k<n;k++){
         if(!still && state==='race'){ hold(autopilot?autoKeys(me(),k):[]); raceStep(dt); }
         SIM.t+=dt; syncObjects(dt, SIM.t); o.updateMatrixWorld(true); inv.copy(o.matrixWorld).invert();
         for(const p of P){
@@ -83402,8 +83757,18 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
           if(p.kind==='tip'){ const g=ud.tailMesh.geometry, a=g.attributes.position; v.fromBufferAttribute(a, a.count-1); ud.tailMesh.localToWorld(v); }
           else p.obj.getWorldPosition(v);
           v.applyMatrix4(inv); p.s.push([v.x,v.y,v.z]); }
+        // a flow body's skin, measured as it is drawn: the gap at the join (the head's last ring against the tail's boundary
+        // ring, vertex for vertex), the spine's length against its rest length, and the sharpest bend between two rings
+        if(F){ const S=FLOW.S, hp=F.hgeo.attributes.position, hr=(F.hz.length-1)*S, tp=F.pos, t0=F.i0*(S+1)*3; ud.head.updateMatrixWorld(true);
+          if(ud.head.geometry===F.hgeo) for(let j=0;j<S;j++){ v.fromBufferAttribute(hp, hr+j); ud.head.localToWorld(v).applyMatrix4(inv); const g=Math.hypot(v.x-tp[t0+j*3], v.y-tp[t0+j*3+1], v.z-tp[t0+j*3+2]); if(g>skin.seamGap) skin.seamGap=g; }
+          let len=0, rest=0, px=0, py=0, pz=0;
+          for(let i=F.i0;i<F.n-1;i++){ const dx=F.cx[i+1]-F.cx[i], dy=F.cy[i+1]-F.cy[i], dz=F.cz[i+1]-F.cz[i], l=Math.hypot(dx,dy,dz)||1e-9; len+=l; rest+=F.z[i]-F.z[i+1];
+            if(i>F.i0 && i<F.n-3){ const b=Math.acos(Math.max(-1,Math.min(1,(dx*px+dy*py+dz*pz)/l)))*57.2958; if(b>skin.maxBendDeg){ skin.maxBendDeg=b; skin.maxBendAt=F.z[i]; } }
+            { const q=l/(F.z[i]-F.z[i+1]); if(q>skin.segMax){ skin.segMax=q; skin.segMaxAt=F.z[i]; } }
+            px=dx/l; py=dy/l; pz=dz/l; }
+          const q=len/rest; if(q<skin.lengthMin) skin.lengthMin=q; if(q>skin.lengthMax) skin.lengthMax=q; }
         if(k%240===239) await new Promise(res=>setTimeout(res,0));
-      }
+      } } finally { SIM.busy=wasBusy; }
       hold([]);
       const rms=a=>Math.sqrt(a.reduce((x,y)=>x+y*y,0)/Math.max(1,a.length)), med=a=>{ const b=a.slice().sort((x,y)=>x-y); return b[b.length>>1]||0; };
       // derivatives are taken as VECTORS (a rotation's as axis × angle), so a part swinging back through zero is smooth
@@ -83421,7 +83786,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         const res={ probe:p.name, unit:p.kind==='rot'?'rad':'u', travel:+vel.reduce((x,y)=>x+y*dt,0).toFixed(2), speed:+rms(vel).toFixed(2), accel:+rms(acc).toFixed(1), jerk:+rms(jerk).toFixed(0), snaps };
         if(series){ res.speedSeries=vel.map(x=>+x.toFixed(3)); res.snapFrames=jerk.map((j,i)=>Math.abs(j)>8*jm && Math.abs(j)>(p.kind==='rot'?400:2000)?i+3:-1).filter(i=>i>=0); }   // per-frame speed, and the frames the snaps fell on
         return res; });
-      return { racer:r.name, character:r.id, seconds:+(n*dt).toFixed(2), still, probes:out };
+      const res={ racer:r.name, character:r.id, seconds:+(n*dt).toFixed(2), still, body:F?'flow':'stock', probes:out };
+      if(F) res.skin={ seamGap:ud.head.geometry===F.hgeo ? +skin.seamGap.toFixed(5) : null, lengthMin:+skin.lengthMin.toFixed(4), lengthMax:+skin.lengthMax.toFixed(4), maxBendDeg:+skin.maxBendDeg.toFixed(2), maxBendAt:+skin.maxBendAt.toFixed(2), segmentMax:+skin.segMax.toFixed(3), segmentMaxAt:+skin.segMaxAt.toFixed(2) };
+      return res;
     },
 
     /* — DIFF: two images (base64 JPEG/PNG) compared in the page: the share of pixels that changed beyond a tolerance,
