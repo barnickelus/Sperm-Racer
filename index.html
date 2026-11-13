@@ -75141,7 +75141,8 @@ function dbShadowTex(){   // a 1930s shadow: one flat dark oval, a crisp edge
 // the flick lags and snaps, the head overshoots a stop), the beat carries the time (strokes, bob, blinks, the dance).
 const DB_PORTRAIT={beats:0.25, phase:0.25, bar:0.25, rate:2, bpm:120, k:0, src:'portrait'};   // a reference sheet's fresh build: the same pose every time
 const DB_IA=Math.round(DB_SN/DB_DS);                      // the spine point that stays put (the neck)
-function dbSpring(S, k, kv, target, w, z, dt){ S[kv]+=(w*w*(target-S[k])-2*z*w*S[kv])*dt; S[k]+=S[kv]*dt; }
+// (in steps of a 60th at most: a stiff spring stepped once over a slow frame diverges; at 60 fps it is one step, as before)
+function dbSpring(S, k, kv, target, w, z, dt){ const n=Math.max(1,Math.ceil(dt*60-1e-6)), h=dt/n; for(let i=0;i<n;i++){ S[kv]+=(w*w*(target-S[k])-2*z*w*S[kv])*h; S[k]+=S[kv]*h; } }
 function dbTick(o, r, now){
   const ud=o.userData, S=ud.db; if(!S) return;
   const R=r||DB_NOR, st=typeof state!=='undefined'?state:'race';
@@ -75312,8 +75313,8 @@ function dbFrame(Tt,i,X,Y,Z){
 }
 // the face: springs toward the expression's pose; the blink, the gaze and the dizzy circle on top; into the shader's uniforms
 function dbFace(S, C, now, dt, E, lk, portrait){
-  const F=S.F, V=S.FV, Tg=S.FT, n=F.length, w=26, z=0.72, h=Math.min(dt,0.05);
-  for(let i=0;i<n;i++){ V[i]+=(w*w*(Tg[i]-F[i])-2*z*w*V[i])*h; F[i]+=V[i]*h; }
+  const F=S.F, V=S.FV, Tg=S.FT, n=F.length, w=26, z=0.72, ns=Math.max(1,Math.ceil(Math.min(dt,0.1)*60-1e-6)), h=Math.min(dt,0.1)/ns;   // (stepped in 60ths: once over a 20 fps frame this spring diverged)
+  for(let q=0;q<ns;q++) for(let i=0;i<n;i++){ V[i]+=(w*w*(Tg[i]-F[i])-2*z*w*V[i])*h; F[i]+=V[i]*h; }
   const I=DBF_I, B=C.beats;
   // the blink: every few bars, on a beat
   if(!portrait){ if(B>=S.blinkAt || S.blinkAt-B>40){ if(B>=S.blinkAt && S.cur!=='take' && S.cur!=='hit') S.blink=now; S.blinkAt=Math.ceil(B)+6+Math.floor(dbRnd(S)*7); } }
