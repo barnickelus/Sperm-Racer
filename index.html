@@ -69347,16 +69347,24 @@ function juanTailMesh(tex){
 }
 // called from wiggleTail for Juan: the same spine maths every tail uses (tailOffset), scaled to a tail a
 // third the stock length, each ring turned to follow the bend so the bead stripes stay square to it
+const _jnTV=new T.Vector3();
 function juanWiggle(g, jt, phase, amp, lift, st){
   const {mesh, rings}=jt, pos=mesh.geometry.attributes.position.array, nor=mesh.geometry.attributes.normal.array, k=0.42, n=rings.length;
   const ox=jt.ox||(jt.ox=new Float32Array(n)), oy=jt.oy||(jt.oy=new Float32Array(n));
-  const oz=jt.oz||(jt.oz=new Float32Array(n));
+  const oz=jt.oz||(jt.oz=new Float32Array(n)), nk=g.userData.neck, NQ=nk?nk.quaternion:null, NP=nk?nk.position:null;
   for(let i=0;i<n;i++){ tailOffset(rings[i].ph, rings[i].t, phase, amp*k, st); ox[i]=_tox; oy[i]=_toy*k+lift*0.45*rings[i].t*rings[i].t; oz[i]=_wlz; }
   for(let i=0;i<n;i++){ const R=rings[i], a=Math.max(0,i-1), b=Math.min(n-1,i+1), dz=(rings[b].z-rings[a].z)||-1;
     const yaw=Math.atan((ox[b]-ox[a])/dz), cy=Math.cos(yaw), sy=Math.sin(yaw), tp=(rings[a].r-rings[b].r)/Math.abs(dz), nl=1/Math.sqrt(1+tp*tp);
+    // The body is his head: it turns, tips and nods on the neck (the look), and the tail hangs off the group, which does
+    // not. So a long look or a nod swung the back of the body away from a root that stayed put, and the tail's open end
+    // showed beside him. The root now goes WITH the body (the neck's own turn, whole, on the buried ring) and that
+    // eases out down the first two fifths of the cone: the tail leaves the body along the body's own line.
+    const w=NQ ? (i===0 ? 1 : 1-ldSmooth(0, 0.4, (i-1)/(n-2))) : 0;
     for(let j=0;j<=JN_TS;j++){ const an=Math.PI*1.5+j/JN_TS*Math.PI*2, ca=Math.cos(an), sa=Math.sin(an), lx=ca*R.r, ly=sa*R.r, p=(i*(JN_TS+1)+j)*3;
-      pos[p]=ox[i]+lx*cy; pos[p+1]=R.y+oy[i]+ly; pos[p+2]=R.z+oz[i]-lx*sy;
-      nor[p]=(ca*cy-tp*sy)*nl; nor[p+1]=sa*nl; nor[p+2]=(-ca*sy-tp*cy)*nl; } }   // tip direction is (-sy, 0, -cy)
+      let vx=ox[i]+lx*cy, vy=R.y+oy[i]+ly, vz=R.z+oz[i]-lx*sy, nx=(ca*cy-tp*sy)*nl, ny=sa*nl, nz=(-ca*sy-tp*cy)*nl;   // tip direction is (-sy, 0, -cy)
+      if(w>0){ _jnTV.set(vx,vy,vz).applyQuaternion(NQ).add(NP); vx+=(_jnTV.x-vx)*w; vy+=(_jnTV.y-vy)*w; vz+=(_jnTV.z-vz)*w;
+        _jnTV.set(nx,ny,nz).applyQuaternion(NQ); nx+=(_jnTV.x-nx)*w; ny+=(_jnTV.y-ny)*w; nz+=(_jnTV.z-nz)*w; }
+      pos[p]=vx; pos[p+1]=vy; pos[p+2]=vz; nor[p]=nx; nor[p+1]=ny; nor[p+2]=nz; } }
   mesh.geometry.attributes.position.needsUpdate=true; mesh.geometry.attributes.normal.needsUpdate=true;
 }
 function makeJuanCell(){
@@ -72517,7 +72525,7 @@ function fluidTick(o, r, now){
  * TO CHECK ONE: race_fx {flowBody:'all'} builds every racer on it and {flowBody:false} none (an A/B on the same seeded
  * race); race_motion then reports the skin as drawn: the gap at the join, the spine's length against rest, the
  * sharpest bend between two rings, beside the neck's and the tail's jerk and snaps. */
-const FLOW={ on:true, S:20, K:1.0, NECK:[-3,-7.5], ZJ:-4.75, LB:9, OW:0.3, HEL:0.14, SWAY:0.05, SWAYPH:0.7, TRACK:1, DRIFT:0.7, NE:30, NK:110, NC:19, BEND:1.05 };
+const FLOW={ on:true, S:20, K:1.0, NECK:[-3,-7.5], ZJ:-4.75, LB:9, OW:0.3, HEL:0.06, AMP:1.18, SWAY:0.05, SWAYPH:0.7, TRACK:1, DRIFT:0.7, NE:30, NK:110, NC:19, BEND:1.05 };
 const FLOW_PIV=new T.Vector3(0,HEAD_CY,-2.8);
 // the racers on the flow body, and how each wears it: {} is the template's own teardrop; {neck:null} keeps the old junction
 // behind the head (a fillet in the crease) for a kit whose hair, collar or yoke was built round the ellipsoid's back
@@ -72618,43 +72626,44 @@ function flowPaint(g, f){
 /* THE TAIL ACTS. The tail is most of what the chase camera sees of a racer, so on a flow body it says what the racer is
    doing and feeling. Each state is a channel (0..1, eased in fast and out slower) that flowWave turns into its own
    movement, all of them added to the one curve the skin is laid along, so they blend and the tail keeps its length:
-     steady pace   the travelling wave, as ever: its beat and reach rise with speed
-     speed burst   STIFF: a kick (one big stroke as the boost lights), then the tail draws straight and spins a tight,
-                   fast corkscrew, a propeller
+     steady pace   Juan's swim (the owner's favourite): one broad, flat S sweeping side to side, its beat and reach
+                   rising with speed. The wave is very nearly flat (FLOW.HEL) and a little wider than the stock one
+                   (FLOW.AMP), to make up the reach an inextensible tail gives away
+     speed burst   a kick (one big stroke as the boost lights) with a half-second corkscrew flourish in it, then the
+                   same S, wider and quicker, for as long as the boost burns. The corkscrew is an accent: it is nowhere
+                   else
      happy         (an overtake, a hit landed, a podium) the tail is carried HIGH with its tip curled up, and wags
      frustration   (overtaken, knocked into a spin, a poor finish) carried LOW, the swim nearly stops and the tail
                    slaps slowly side to side like an angry cat's, its tip flicking
      alarm         (someone bearing down) straight up and stiff, a fast shiver running down it
      knocked out   (spinning) LIMP: it hangs and barely moves
      braking       it flares: wider and lifted, an air brake
-     in the air    it streams up behind and corkscrews
+     in the air    it streams up behind
      the whip      the lash (whipLashStart) plays on the same curve and the feelings step back while it does; at the
                    crack the tail carries on past the strike, its tip coiled over, and springs back (the follow-through)
-     on the grid   wound up: a slow tight corkscrew, revving
    race_fx {tail:{happy:1}} holds any of them on your racer, to look at or film. */
 const FLOW_ACT={ KICK:30, RECOIL:38, WAG:3.4, SLAP:5.2, keys:['stiff','happy','angry','fear','limp','brake','air'] };
 function flowAct(F, r, dt){
-  const A=F.a||(F.a={ stiff:0, happy:0, angry:0, fear:0, limp:0, brake:0, air:0, kick:0, kickV:0, hit:0, phx:0, wag:0, th:0, sh:0, bPrev:false, sPrev:false, cPrev:false, snap:0, snapT:0, kp:0, coil:0, spd:0, side:1, lash:0, any:0 });
+  const A=F.a||(F.a={ stiff:0, happy:0, angry:0, fear:0, limp:0, brake:0, air:0, kick:0, kickV:0, hit:0, phx:0, wag:0, th:0, sh:0, bPrev:false, sPrev:false, cPrev:false, snap:0, snapT:0, kp:0, coil:0, spinT:0, spd:0, side:1, lash:0, any:0 });
   const L=r._lk, spd=Math.abs(r.spd||0), boost=r.boostT>0, spin=r.spinT>0, sdt=Math.max(dt,1e-3);
-  if(boost && !A.bPrev){ A.side=-A.side; A.kp+=A.side*FLOW_ACT.KICK; } A.bPrev=boost;   // the kick: one stroke, alternate sides
+  if(boost && !A.bPrev){ A.side=-A.side; A.kp+=A.side*FLOW_ACT.KICK; A.spinT=1; } A.bPrev=boost; A.spinT=Math.max(0,A.spinT-dt*1.5);   // the kick: one stroke, alternate sides
   if(spin && !A.sPrev) A.hit=1; A.sPrev=spin; if(!spin) A.hit=Math.max(0,A.hit-dt/2.2);          // furious for a couple of seconds after a spin
   // the whip's follow-through: at the crack the tail carries on past the strike and springs back, its tip coiled over
   { const w=r._wl, cr=!!(w && w.t>=WL_CRACK); if(cr && !A.cPrev){ A.kp+=w.side*FLOW_ACT.RECOIL; A.snapT=1; } A.cPrev=cr; A.snapT=Math.max(0,A.snapT-dt*3.2); A.snap+=(A.snapT-A.snap)*Math.min(1,18*dt); }
   const dec=(A.spd-spd)/sdt; A.spd=spd;
   let T={ stiff:boost?1:0, happy:L?Math.min(1,L.sm*1.15):0, angry:L?Math.min(1,L.gr*1.15):0, fear:L?Math.min(1,L.w):0, limp:spin?1:0, brake:(dec>55 && spd>25 && !spin)?1:0, air:r.air?1:0 };
   if(!spin) T.angry=Math.max(T.angry, A.hit);
-  if(state==='count') T.stiff=0.55;                                                             // on the grid: wound up, revving
   if(r.celebT>0 || (r.finished && r.place<=3)){ T.happy=1; T.angry=0; } else if(r.finished) T.angry=Math.max(T.angry,0.55);
   if(T.happy>T.angry) T.angry*=1-T.happy; else T.happy*=1-T.angry;                               // one feeling at a time
   if(T.limp){ T.happy=0; T.angry=0; T.fear=0; }
   const fo=FLOW.force; if(fo && r.you) for(const k of FLOW_ACT.keys) if(fo[k]!==undefined) T[k]=fo[k];
   const UP={stiff:10,happy:6,angry:8,fear:9,limp:10,brake:8,air:8}, DN={stiff:2.4,happy:2.2,angry:1.8,fear:3,limp:3,brake:4,air:4}; let any=0;
   for(const k of FLOW_ACT.keys){ A[k]+=(T[k]-A[k])*Math.min(1,(T[k]>A[k]?UP[k]:DN[k])*dt); any+=A[k]; }
-  A.coil+=(Math.min(1,A.stiff+0.55*A.air)-A.coil)*Math.min(1,2.6*dt);   // (the drill winds up and lets go slowly: its turns are the wave's phase, and a quick change would squirm)
-  { const e=1-Math.exp(-14*dt); A.kickV+=A.kp*e; A.kp-=A.kp*e; }                            // (a push over a few frames, not a jolt in one)
+  A.coil+=(A.spinT-A.coil)*Math.min(1,(A.spinT>A.coil?7:2.6)*dt);   // (the flourish: the same wave, turned round on itself for half a second)
+  { const e=1-Math.exp(-8*dt); A.kickV+=A.kp*e; A.kp-=A.kp*e; }                            // (a push over a few frames, not a jolt in one)
   A.kickV+=(-80*A.kick-10*A.kickV)*dt; A.kick+=A.kickV*dt; A.any=any+Math.abs(A.kick)+A.snap;
   const base=4+spd*0.06;
-  A.phx+=dt*base*(1.2*A.stiff+0.7*A.fear+0.5*A.air-0.5*A.limp-0.55*A.angry);   // the swim's own beat: quick when stiff, nearly stopped when sulking
+  A.phx+=dt*base*(0.75*A.stiff+0.7*A.fear+0.2*A.air-0.5*A.limp-0.55*A.angry);   // the swim's own beat: quick when stiff, nearly stopped when sulking
   A.wag+=dt*(13+3*A.happy); A.th+=dt*(5.5+2.5*A.angry); A.sh+=dt*41;
 }
 function flowDrive(o, r, dt){
@@ -72682,14 +72691,13 @@ function flowWave(g, phase, amp, lift, st){
   // the acting (flowAct): how much of the plain swim is left, how round it is, and what each feeling adds
   let ampK=1, hel=FLOW.HEL, act=0, ph=phase, lagK=1;
   if(A){ A.lash+=((lash?1:0)-A.lash)*0.3; act=A.any>0.003 ? 1-0.75*A.lash : 0; ph=phase+A.phx;
-    lagK=1+0.9*A.coil;   // (more turns down the tail: a drill, not a wave)
-    ampK=(1+0.1*Math.sin(phase*0.29)+0.06*Math.sin(phase*0.113+1))*(1-0.58*A.stiff)*(1-0.65*A.limp)*(1-0.7*A.angry)*(1-0.5*A.fear)*(1-0.25*A.happy)*(1+0.4*A.brake);
-    hel=FLOW.HEL+(0.95-FLOW.HEL)*Math.min(1, 0.9*A.stiff+0.75*A.air); }
+    ampK=(1+0.1*Math.sin(phase*0.29)+0.06*Math.sin(phase*0.113+1))*(1+0.14*A.stiff)*(1-0.5*A.coil)*(1-0.65*A.limp)*(1-0.7*A.angry)*(1-0.5*A.fear)*(1-0.25*A.happy)*(1+0.4*A.brake);
+    hel=FLOW.HEL+(0.9-FLOW.HEL)*A.coil; }
   const sm=(a,b,x)=>{ x=(x-a)/(b-a); x=x<0?0:x>1?1:x; return x*x*(3-2*x); };
   for(let i=0;i<n;i++){ const t=F.t[i]; let x=0, y=0, zo=0;
     if(i>i0){ const lag=t*15*LK;
       if(st||lash){ tailOffset(lag, t, phase, amp, st); x=_tox; y=_toy; if(lash) zo=_wlz; if(!st) y+=FLOW.HEL*Math.cos(phase-lag)*amp*t*t; }   // (the plain swim keeps its roll through a lash)
-      else { const a=ph-lag*lagK, e=amp*ampK*t*t; x=Math.sin(a)*e; y=hel*Math.cos(a)*e; }
+      else { const a=ph-lag*lagK, e=amp*FLOW.AMP*ampK*t*t; x=Math.sin(a)*e; y=hel*Math.cos(a)*e; }
       if(A && A.any>0.003){ const t2=t*t, tip=sm(0.4,1,t), hk=sm(0.7,1,t);
         x+=A.kick*9*Math.pow(t,1.3); zo+=A.snap*5*hk*hk; y+=A.snap*2.2*t2;                       // the boost's kick and the whip's recoil; the cracked tip, coiled
         x+=act*( A.happy*FLOW_ACT.WAG*Math.sin(A.wag-2.2*t)*tip                                // the wag
