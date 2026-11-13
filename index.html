@@ -72028,6 +72028,8 @@ function fluidTick(o, r, now){
  * old tube's (u along the length from the same origin, v round it). What a kit may have to change, and nothing else:
  *   · it swapped the head's geometry for a finer sphere: don't, on a flow body (ud.flow is set), the skin is fine already;
  *   · it re-seats a part on a ring of the tail every frame (ud.tailData.pos): pin it once with flowRide(g, part, z);
+ *   · what it wears on the body (bodyPart: a collar, a cuff, beads) needs nothing: those are bound to the skin for it and
+ *     bend with the neck (flowBind, from flowKeep). Mark a piece userData.flowFree to leave it standing still;
  *   · it paints the skin: flowPaint(g, f) writes vertex colours from one function of where a vertex is;
  *   · it builds a body of its own and takes the tail off (the dragons, Tex's flagellum): it is left as it is (flowKeep).
  * TO CHECK ONE: race_fx {flowBody:'all'} builds every racer on it and {flowBody:false} none (an A/B on the same seeded
@@ -72236,6 +72238,35 @@ function flowFlush(g, dt){
     e[0]=FR[k]; e[1]=FR[k+1]; e[2]=FR[k+2]; e[4]=FR[k+3]; e[5]=FR[k+4]; e[6]=FR[k+5]; e[8]=FR[k+6]; e[9]=FR[k+7]; e[10]=FR[k+8];
     R.o.position.set(CX[i]+(CX[i+1]-CX[i])*f+e[0]*q.x+e[4]*q.y+e[8]*q.z, CYA[i]+(CYA[i+1]-CYA[i])*f+e[1]*q.x+e[5]*q.y+e[9]*q.z, CZ[i]+(CZ[i+1]-CZ[i])*f+e[2]*q.x+e[6]*q.y+e[10]*q.z);
     R.o.quaternion.setFromRotationMatrix(_fwM).multiply(R.q0); }
+  if(F.bound) for(const B of F.bound){ const D=B.d, I=B.i, P=B.pos.array, N=B.nrm&&B.nrm.array, m=B.inv, t=B.mt, nv=I.length;
+    for(let v=0,q=0,o=0;v<nv;v++,q+=7,o+=3){ const i=I[v], f=D[q+6], g1=1-f, a=i*9, b=a+9, x=D[q], y=D[q+1], dz=D[q+2];
+      const rx=FR[a]*g1+FR[b]*f, ry=FR[a+1]*g1+FR[b+1]*f, rz=FR[a+2]*g1+FR[b+2]*f, ux=FR[a+3]*g1+FR[b+3]*f, uy=FR[a+4]*g1+FR[b+4]*f, uz=FR[a+5]*g1+FR[b+5]*f,
+        tx=FR[a+6]*g1+FR[b+6]*f, ty=FR[a+7]*g1+FR[b+7]*f, tz=FR[a+8]*g1+FR[b+8]*f;
+      const wx=CX[i]*g1+CX[i+1]*f+rx*x+ux*y+tx*dz, wy=CYA[i]*g1+CYA[i+1]*f+ry*x+uy*y+ty*dz, wz=CZ[i]*g1+CZ[i+1]*f+rz*x+uz*y+tz*dz;
+      P[o]=m[0]*wx+m[4]*wy+m[8]*wz+m[12]; P[o+1]=m[1]*wx+m[5]*wy+m[9]*wz+m[13]; P[o+2]=m[2]*wx+m[6]*wy+m[10]*wz+m[14];
+      if(N){ const ax=D[q+3], ay=D[q+4], az=D[q+5], bx=rx*ax+ux*ay+tx*az, by=ry*ax+uy*ay+ty*az, bz=rz*ax+uz*ay+tz*az;
+        N[o]=t[0]*bx+t[1]*by+t[2]*bz; N[o+1]=t[4]*bx+t[5]*by+t[6]*bz; N[o+2]=t[8]*bx+t[9]*by+t[10]*bz; } }
+    B.pos.needsUpdate=true; if(B.nrm) B.nrm.needsUpdate=true; }
+}
+/* Bind a worn part to the skin: a collar, a cuff, a waistband, anything wrapped round the neck or the tail. `mesh` (a child
+   of the racer's group, where it sits at rest) from now on BENDS with the body: every vertex keeps its place on the ring
+   of the spine it was built over, so the part turns with the head at the join, curves down the neck and swings with
+   the tail, and the skin never comes through it. (flowRide moves a part whole; this deforms it. A racer's bodyPart
+   pieces behind the skull are bound for it: flowKeep.) */
+function flowBind(g, mesh){
+  const F=g.userData.flow; if(!F || !mesh.isMesh || mesh.isInstancedMesh || !mesh.geometry.attributes.position) return null;
+  if(!F.fr){ F.fr=new Float32Array(F.n*9); F.riders=F.riders||[]; } if(!F.bound) F.bound=[];
+  const old=mesh.geometry, geo=old.clone(); mesh.geometry=geo; for(const c of mesh.children) if(c.geometry===old) c.geometry=geo;   // (its own copy: the ink shell hung on it shares it)
+  mesh.updateMatrix(); const M=mesh.matrix, inv=new T.Matrix4().copy(M).invert(), nm=new T.Matrix3().getNormalMatrix(M);
+  const pos=geo.attributes.position, nrm=geo.attributes.normal||null, nv=pos.count, d=new Float32Array(nv*7), idx=new Uint16Array(nv), v=new T.Vector3(), n=new T.Vector3(), i0=F.i0, ZJ=F.z[i0];
+  for(let k=0;k<nv;k++){ v.fromBufferAttribute(pos,k).applyMatrix4(M); let i=i0, f=0, dz=0;
+    if(v.z>=ZJ) dz=v.z-ZJ;                                             // ahead of the join: rigid with the head
+    else { while(i<F.n-2 && F.z[i+1]>v.z) i++; f=Math.max(0,Math.min(1,(F.z[i]-v.z)/(F.z[i]-F.z[i+1]))); if(v.z<F.z[F.n-1]) dz=v.z-F.z[F.n-1]; }
+    const q=k*7; d[q]=v.x; d[q+1]=v.y-HEAD_CY; d[q+2]=dz; d[q+6]=f; idx[k]=i;
+    if(nrm){ n.fromBufferAttribute(nrm,k).applyMatrix3(nm).normalize(); d[q+3]=n.x; d[q+4]=n.y; d[q+5]=n.z; } }
+  const mt=new T.Matrix4().copy(M).transpose().elements;   // a normal goes back in by the part's own transform, transposed
+  geo.boundingSphere=new T.Sphere(new T.Vector3(), 1e4); mesh.frustumCulled=false;
+  const B={ o:mesh, d, i:idx, pos, nrm, inv:inv.elements, mt }; F.bound.push(B); return B;
 }
 /* Pin a part to the spine, for whatever rides the tail (a bracer, a ring, a bow, a flag): `obj`, a child of the racer's
    group placed where it sits at rest, from now on moves and turns with the skin at rest-z `z` (default: where it is).
@@ -74758,6 +74789,14 @@ function flowKeep(g){ const ud=g.userData, F=ud.flow; if(!F) return g;
   const own=!(ud.tailData && ud.tailData.flow && ud.tailMesh && ud.tailMesh.parent===g);
   if(own) ud.flow=null;
   if((own || ud.head.geometry!==F.hgeo) && F.hol && F.hol.parent) F.hol.parent.remove(F.hol);   // (a kit that swapped the head's geometry draws its own edge)
+  // What a racer wears on its BODY (bodyPart: a collar, a cuff, beads, a yoke) was built round a tail root that stood
+  // still. On a flow body the skin there turns with the head and bends down the neck, so those pieces go with it:
+  // a mesh is bound to the skin and bends (flowBind), anything else (a group, a sprite) rides the spine whole (flowRide)
+  if(!own){ const box=new T.Box3(), c=new T.Vector3(), flame=ud.flame||[], rid=new Set((F.riders||[]).map(R=>R.o));
+    for(const o of [...g.children]){ if(!o.userData.bodyPart || o===ud.tailMesh || o===ud.glow || o.userData.isOutline || flame.includes(o) || rid.has(o) || o.userData.flowFree) continue;
+      o.updateMatrixWorld(true); box.setFromObject(o); if(box.isEmpty()) continue; box.getCenter(c);
+      if(c.z>-2.5) continue;                                          // (on the skull: it stays as it was)
+      if(o.isMesh && !o.isInstancedMesh && !o.children.some(k=>!k.userData.isOutline)) flowBind(g, o); else flowRide(g, o, c.z); } }
   return g; }
 // A treatment that re-shapes the head's surface (clay's thumbed lumps) must leave the join alone: the head's last ring is
 // the tail's first. This eases whatever was done to the skin back to nothing over the last `fade` units before the join.

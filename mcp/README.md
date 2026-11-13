@@ -124,6 +124,9 @@ one of these and nothing else:
 
 - it re-seats a part on a ring of the tail every frame: pin it once with
   `flowRide(g, part, z)` (the Viking's bracer does this);
+- what it wears on the body (a collar, a cuff, beads: anything marked
+  `bodyPart` behind the skull) needs nothing: those pieces are bound to the
+  skin and bend with the neck (`flowBind`);
 - it paints the skin: `flowPaint(g, f)` writes vertex colours;
 - it re-sculpts the head's surface: call `flowSeal(g)` after (clay does);
 - it has a body of its own (the dragons, Tex, the bead, voxel and wire
