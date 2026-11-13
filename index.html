@@ -80281,7 +80281,10 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       for(const [n,obj,k] of (ud.motionProbes||[])) add(n,obj,k);
       const dt=1/60, n=Math.round(seconds/dt), q=new T.Quaternion(), inv=new T.Matrix4();
       const F=ud.flow, skin={ seamGap:0, lengthMin:Infinity, lengthMax:0, maxBendDeg:0, maxBendAt:0, segMax:0, segMaxAt:0 };
-      for(let k=0;k<n;k++){
+      // the page's own frame loop stands aside while this steps the game (SIM.busy): a frame of its own slipped in where the
+      // loop below yields would pose the racers once more, and a body with springs in it (the flow body) moves on that
+      const wasBusy=SIM.busy; SIM.busy=true;
+      try{ for(let k=0;k<n;k++){
         if(!still && state==='race'){ hold(autopilot?autoKeys(me(),k):[]); raceStep(dt); }
         SIM.t+=dt; syncObjects(dt, SIM.t); o.updateMatrixWorld(true); inv.copy(o.matrixWorld).invert();
         for(const p of P){
@@ -80300,7 +80303,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
             px=dx/l; py=dy/l; pz=dz/l; }
           const q=len/rest; if(q<skin.lengthMin) skin.lengthMin=q; if(q>skin.lengthMax) skin.lengthMax=q; }
         if(k%240===239) await new Promise(res=>setTimeout(res,0));
-      }
+      } } finally { SIM.busy=wasBusy; }
       hold([]);
       const rms=a=>Math.sqrt(a.reduce((x,y)=>x+y*y,0)/Math.max(1,a.length)), med=a=>{ const b=a.slice().sort((x,y)=>x-y); return b[b.length>>1]||0; };
       // derivatives are taken as VECTORS (a rotation's as axis × angle), so a part swinging back through zero is smooth
