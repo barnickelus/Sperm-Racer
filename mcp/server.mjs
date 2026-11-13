@@ -562,6 +562,7 @@ tool('race_fx', {
   title: 'Hold an effect up',
   description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
   inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional(), edenLive: z.boolean().optional().describe('Eve: the garden\'s living light (the racers\' wake and the egg\'s call) on or off, for an A/B look'),
+    tail: z.record(z.number()).nullable().optional().describe('hold the flow body tail\'s acting on YOUR racer, to look at or film: any of stiff (speed burst), happy, angry, fear, limp, brake, air, each 0..1, e.g. {happy:1}; {} or null lets the race drive it again'),
     flowBody: z.union([z.boolean(), z.literal('all')]).optional().describe('the flow body (one skin on one spine) on or off for the racers built from the next race_start on: false builds them on the stock ball-and-tube body, for an A/B; "all" builds EVERY racer on it, to audit who is ready to move over') },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));
 
