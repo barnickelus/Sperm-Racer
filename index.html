@@ -75487,7 +75487,7 @@ function dressNeoProto(g, K){
   ud.motionProbes=[['beatClock',pr.beat,'pos'],['bob',pr.bob,'pos'],['vBob',pr.vb,'pos'],['vStroke',pr.vs,'pos'],['tipSway',pr.sw,'pos'],['tuftTip',tProbe,'pos']];   // tipSway: the swim's sideways reach at the tip, as asked of the skin this frame
   ud.neo={ t:null, rig, FU, BU, UH, HU, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
     F:new Float32Array(DB_EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(DB_EV.rest), cur:'rest', want:'rest', next:null, nextAt:0,
-    blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, lose:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
+    blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, danceV:0, lose:0, loseV:0, idl:1, idlV:0, tk:1, tkV:0, tk0:1, tk0V:0, fk:0, fkV:0, flickT:-9, spn:0, spnV:0, sp:0, spV:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
     ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null,
     ev:{place:null, cand:null, candT:0, react:0, angryT:-9, takeT:-9, fireT:-9, dizzyT:-9, item:null, slow:0, alone:0, aloneAt:0, isAlone:false, passT:-9, passK:null} };
   ud.expr={ list:DB_LIST.slice(), cur:'rest', hold:0, forced:null,
@@ -75519,7 +75519,7 @@ function neoTick(o, r, now){
     if(E.place==null){ E.place=R.place; E.cand=R.place; E.candT=now; }
     if(R.place!==E.cand){ E.cand=R.place; E.candT=now; }
     if(racing && E.cand!==E.place && now-E.candT>0.6){ if(now>E.react){ E.passK=E.cand<E.place?'pass':'passed'; E.passT=now+(E.passK==='pass'?1.3:1.7); E.react=now+3; } E.place=E.cand; }
-    if(spin && !S.pSpin){ E.takeT=now; S.tpV+=9; }
+    if(spin && !S.pSpin){ E.takeT=now; S.flickT=now; }
     if(!spin && S.pSpin){ E.angryT=now+2.4; E.dizzyT=now+1.8; }
     if(E.item && !R.item && !(R._roll>0)) E.fireT=now+1.3; E.item=R.item;
     E.slow=racing && spd<35 && spd>3 ? E.slow+dt : 0;
@@ -75543,7 +75543,7 @@ function neoTick(o, r, now){
     else { let tb=(1-C.phase)/C.rate; if(tb>0.3) tb=(1-((C.phase*2)%1))/(2*C.rate); S.next=want; S.nextAt=now+tb-0.045; } }
   if(S.next && now>=S.nextAt){ S.cur=S.next; S.next=null; S.FT.set(DB_EV[S.cur]); X.cur=S.cur;
     if(S.cur==='whistle' && lk && R.obj===o && typeof emote==='function') emote(R, lk, 'note');
-    if(S.cur==='take') S.tpV+=10; }
+    if(S.cur==='take') S.flickT=now; }
   // ---- the gears and the strokes (Dash's), and the tail's phase for the hook
   let gq=S.g0>=2?(spd>106?2:spd>32?1:0.5):S.g0>=1?(spd>122?2:spd>40?1:0.5):(spd>48?1:0.5);
   if(R.boostT>0) gq=2; if(idle || S.cur==='tired' || (fin&&S.cur==='lose')) gq=0.5; else if(fin||celeb) gq=1;
@@ -75556,10 +75556,13 @@ function neoTick(o, r, now){
   dbSpring(S,'lf','lfV',S.cur==='fire'?1:0,9,1,dt);
   const bob=Math.cos(2*Math.PI*C.phase)*(1-S.lf)+Math.cos(4*Math.PI*B)*S.lf, bd=Math.min(C.bar,4-C.bar), accent=Math.exp(-(bd*bd)/0.1);
   const dance=(fin||celeb)&&S.cur!=='lose'?1:0, lose=fin&&S.cur==='lose'?1:0;
-  S.dance+=(dance-S.dance)*Math.min(1,dt*4); S.lose+=(lose-S.lose)*Math.min(1,dt*3);
-  let sq=(idle?0.085:0.068)*bob*(1+0.6*accent)*(1-0.6*S.lose); if(spin && now-E.takeT<0.22) sq=0;
+  // (every switch here eases on a spring: the grid's bigger bounce, the take's freeze, the dance and the sway)
+  dbSpring(S,'dance','danceV',dance,6,1,dt); dbSpring(S,'lose','loseV',lose,5,1,dt); dbSpring(S,'idl','idlV',idle?1:0,7,1,dt);
+  dbSpring(S,'tk0','tk0V',spin && now-E.takeT<0.22?0:1,40,1,dt); dbSpring(S,'tk','tkV',S.tk0,32,1,dt);   // (two springs in a row: the freeze comes on hard, but without a corner)
+  const bk=(1+0.6*accent)*S.tk;
+  let sq=(0.068+0.017*S.idl)*bob*bk*(1-0.6*S.lose);
   S.bob=sq;
-  const dy=-(idle?0.24:0.12)*bob*(1+0.6*accent);
+  const dy=-(0.12+0.12*S.idl)*bob*bk;
   S.UH.uNeoSq.value.x=sq; S.UH.uNeoSq.value.y=dy;
   S.rig.scale.set(1+0.5*sq, 1-sq, 1+0.5*sq); S.rig.position.set(0, sq*HEAD_CY+dy, 0);
   // ---- the head: the expression's nod and tilt, the dance and the sway, asked of the neck (the flow body eases the request)
@@ -75569,16 +75572,18 @@ function neoTick(o, r, now){
     nk.quaternion.multiply(S.nkX.setFromEuler(S.eu)); S.nkOut.copy(nk.quaternion); }
   // ---- the body: the grid's bounce, the dance's hop and sway (syncObjects re-places the body every frame)
   if(!portrait){
-    o.position.y+=(idle?-0.28*bob:0)+(S.dance>0.01?0.45*accent*S.dance:0);
+    o.position.y+=-0.28*bob*S.idl+(S.dance>0.01?0.45*accent*S.dance:0);
     if(S.dance>0.01) o.rotateZ(0.1*db*S.dance);
     if(celeb){ o.position.y-=Math.abs(Math.sin(now*7))*2.2; o.rotation.y-=Math.sin(now*4.5)*0.35; o.rotation.z-=Math.sin(now*4.5+1)*0.15; }   // (the generic finish bounce, taken away in advance: the dance is on the beat)
   }
   // ---- the tuft: a rubber-hose spring. The bob drives it down and up (it lags), the head's turn swings it, speed streams it, a take flicks it
   { const hd=R.head||0; if(S.hdP==null) S.hdP=hd; let dh=hd-S.hdP; dh-=Math.round(dh/6.2832)*6.2832; S.hdP=hd; const yr=dt>0?ldClamp(dh/dt,-4,4):0;
-    dbSpring(S,'tp','tpV',-3.2*sq-0.25*Math.min(1,spd/140)+(spin?0.3:0),24,0.28,dt);
+    dbSpring(S,'fk','fkV',now-S.flickT<0.12?1:0,34,1,dt);   // (a take's flick is a pulse through a stiff spring, not a kick to the tuft's speed)
+    dbSpring(S,'spn','spnV',spin?1:0,10,1,dt); dbSpring(S,'sp','spV',Math.min(1,spd/140),8,1,dt);   // (a hit halves the speed at a stroke: the tuft hears it eased)
+    dbSpring(S,'tp','tpV',-3.2*sq-0.25*S.sp+0.3*S.spn+1.3*S.fk,24,0.28,dt);
     dbSpring(S,'ty','tyV',-0.09*yr+(lk?-0.2*lk.nk:0),18,0.35,dt);
-    S.tw+=dt*(6+16*Math.min(1,spd/140));
-    S.HU.uFlex.value.set(S.ty, S.tp, 0.05+0.08*Math.min(1,spd/140), S.tw); }
+    S.tw+=dt*(6+16*S.sp);
+    S.HU.uFlex.value.set(S.ty, S.tp, 0.05+0.08*S.sp, S.tw); }
   dbFace(S, C, now, dt, E, lk, portrait);
   // ---- the probes race_motion reads
   const P=S.pr, drf=100*((now-(S.t0==null?(S.t0=now):S.t0))%1000);
