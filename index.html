@@ -38289,7 +38289,7 @@ const TRACKS=[
      rings count 10 down to 1 as the lights quicken: hold your line, take the items), and LIFTOFF (the tube opens and the
      road climbs into the light: the finish is the way out). The grid song climbs a major scale by steps and never
      comes back down. */
-  {name:'Nova', nova:true, raw:true, sc:0.7, loop:false, steps:1070, key:0, tempo:176, sky:0x1b1030,
+  {name:'Nova', nova:true, raw:true, sc:0.7, loop:false, steps:1070, key:0, tempo:176, sky:0x1b1030, lux:{bloom:0.85},
    song:{ name:'T-Minus',
           mel: [0,null,2,4,    5,null,7,null,  9,null,7,9,    11,null,12,null],
           melB:[12,null,14,16, 12,null,14,16,  17,null,16,14, 19,null,null,null],
@@ -77580,6 +77580,7 @@ function wlTipFx(r,o,w){
 }
 function wlCrack(r,o,w,near){
   const rm=wlRM(), v=w.hit, sc=o.scale.x||1;
+  if(near && (r.you || (v && v.you))) luxRipple(w.tip, v?1:0.7, 1.1);   // (LUX: the crack is a shockwave in the picture)
   if(near){
     if(!_wlFx) wlFxInit();
     wlRing(r,w.lt,v?0xfff0a8:0xe8f6ff,(v?7:5)*sc*(rm?0.7:1),0.28);
@@ -79329,13 +79330,154 @@ function previewNow(){
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
   let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
 }
+/* ============== LUX: the engine's light pipeline ============== *
+ * Until now the picture went straight from the scene to the screen: anything brighter than white clipped, every glow
+ * was a painted sprite, and nothing could happen to the picture as a whole. LUX draws the scene into an off-screen
+ * target that keeps what is brighter than white (half-float where the GPU allows, multisampled so edges stay
+ * anti-aliased), and then makes the picture:
+ *   · BLOOM, from real light. What is over-bright (a lit highlight, stacked additive light, a colour pushed past 1)
+ *     spills into the picture round it: a five-level pyramid, a soft knee, added in display space. Nothing that fits
+ *     under white is touched, so every course keeps its palette exactly; it only gains its light.
+ *   · SHOCKWAVES. A ring in the picture itself, pushing it outward as it passes: luxRipple(worldPoint, strength).
+ *     The whip's crack, a boost lighting, a landing.
+ *   · the LENS: a touch of colour fringing while you boost or spin, a soft vignette, a flash (luxFlash).
+ *   · ADAPTIVE RESOLUTION: the scene target shrinks a step when frames run long and grows back when they do not, so
+ *     the pipeline pays for itself on a phone; if the device cannot hold it at the floor, LUX steps aside for good.
+ * The base picture is the same pixels as before (the target is written in the display's own encoding), so with bloom,
+ * ripples and lens at zero LUX is invisible. ?lux=0 turns it off; race_fx {lux:{...}} tunes and reports it. A course
+ * can ask for its own light with TRACKS[i].lux={bloom, thr}. */
+const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', msaa:0, scale:1,
+  // anti-aliasing: a multisampled target on a desktop; on a phone or tablet a plain one smoothed in the last pass (FXAA), at a
+  // quarter of the memory, and never more than MAXPX pixels however dense the screen
+  aa:isTouch?'fxaa':'msaa', MAXPX:isTouch?2.4e6:6e6, auto:!/[?&](mcp|debug)\b/.test(location.search),
+  bloom:0.65, thr:1.0, knee:0.25, vig:0.14, ca:0, caT:0, flash:0, rip:[], w:0, h:0, ema:16.7, slow:0, fast:0, force:null, LEVELS:5, t:0, bPrev:false, aPrev:false };
+function luxInit(){
+  if(LUX.ok!==null) return LUX.ok;
+  try{
+    const gl=renderer.getContext(), w2=renderer.capabilities.isWebGL2;
+    const hf=w2 ? !!(renderer.extensions.get('EXT_color_buffer_float')||renderer.extensions.get('EXT_color_buffer_half_float')) : !!(renderer.extensions.get('OES_texture_half_float') && renderer.extensions.get('EXT_color_buffer_half_float') && renderer.extensions.get('OES_texture_half_float_linear'));
+    const complete=rt=>{ renderer.setRenderTarget(rt); const okk=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE; renderer.setRenderTarget(null); return okk; };
+    const mk=(type,msaa)=>{ const o={format:T.RGBAFormat, type, encoding:T.sRGBEncoding, minFilter:T.LinearFilter, magFilter:T.LinearFilter, stencilBuffer:false, depthBuffer:true};
+      const rt=msaa ? new T.WebGLMultisampleRenderTarget(4,4,o) : new T.WebGLRenderTarget(4,4,o); if(msaa) rt.samples=4; rt.texture.generateMipmaps=false; return rt; };
+    // PROVE each candidate before trusting it: a known colour drawn into the target, read back through a sampler. (A
+    // framebuffer can report complete and still resolve or sample to black on some mobile GPUs; a black game is the
+    // one failure this must never have.)
+    const VS0='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
+    const tq=new T.Mesh(new T.PlaneGeometry(2,2), null), ts=new T.Scene(), tcam=new T.OrthographicCamera(-1,1,1,-1,0,1); tq.frustumCulled=false; ts.add(tq);
+    const mSolid=new T.ShaderMaterial({vertexShader:VS0, fragmentShader:'void main(){ gl_FragColor=vec4(0.25,0.5,0.75,1.0); }', depthTest:false, depthWrite:false});
+    const mCopy=new T.ShaderMaterial({vertexShader:VS0, fragmentShader:'precision highp float; varying vec2 vUv; uniform sampler2D t; void main(){ gl_FragColor=vec4(texture2D(t,vUv).rgb,1.0); }', uniforms:{t:{value:null}}, depthTest:false, depthWrite:false});
+    const probe=new T.WebGLRenderTarget(4,4,{format:T.RGBAFormat, type:T.UnsignedByteType, depthBuffer:false, stencilBuffer:false}), px=new Uint8Array(4);
+    const proves=rt=>{ if(!complete(rt)) return false; const bg=scene.background;
+      tq.material=mSolid; renderer.setRenderTarget(rt); renderer.render(ts,tcam);
+      tq.material=mCopy; mCopy.uniforms.t.value=rt.texture; renderer.setRenderTarget(probe); renderer.render(ts,tcam);
+      renderer.readRenderTargetPixels(probe,1,1,1,1,px); renderer.setRenderTarget(null);
+      return Math.abs(px[0]-64)<6 && Math.abs(px[1]-128)<6 && Math.abs(px[2]-191)<6; };
+    const wantMsaa=LUX.aa==='msaa' && w2 && !!T.WebGLMultisampleRenderTarget; let sc=null;
+    for(const [type,msaa] of [[T.HalfFloatType,wantMsaa],[T.HalfFloatType,false],[T.UnsignedByteType,wantMsaa],[T.UnsignedByteType,false]]){
+      if(type===T.HalfFloatType && !hf) continue;
+      const rt=mk(type,msaa); let good=false; try{ good=proves(rt); }catch(e){ good=false; }
+      if(good){ sc=rt; LUX.type=type===T.HalfFloatType?'half-float':'8-bit'; LUX.msaa=msaa?4:0; LUX.btype=type; break; } rt.dispose(); }
+    probe.dispose(); mSolid.dispose(); mCopy.dispose(); tq.geometry.dispose();
+    if(!sc) throw new Error('no off-screen target this GPU draws through');
+    LUX.scene=sc; LUX.hdr=LUX.btype===T.HalfFloatType;
+    LUX.mips=[]; for(let i=0;i<LUX.LEVELS;i++){ const m=new T.WebGLRenderTarget(2,2,{format:T.RGBAFormat, type:LUX.btype, minFilter:T.LinearFilter, magFilter:T.LinearFilter, depthBuffer:false, stencilBuffer:false}); m.texture.generateMipmaps=false; LUX.mips.push(m); }
+    const VS='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
+    const sm=(fs,u,o)=>new T.ShaderMaterial(Object.assign({vertexShader:VS, fragmentShader:'precision highp float; varying vec2 vUv;\n'+fs, uniforms:u, depthTest:false, depthWrite:false, toneMapped:false, fog:false}, o));
+    // down: four bilinear taps (a 4x4 box); the first one also keeps only what is over the threshold, on a soft knee
+    LUX.mDown=sm(`uniform sampler2D tSrc; uniform vec2 uPx; uniform float uThr, uKnee, uFirst;
+      void main(){ vec3 c=0.25*(texture2D(tSrc,vUv+uPx*vec2(-1.,-1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(1.,-1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(-1.,1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(1.,1.)).rgb);
+        if(uFirst>0.5){ c=min(c,vec3(12.0)); float br=max(c.r,max(c.g,c.b)), so=clamp(br-uThr+uKnee,0.0,2.0*uKnee); so=so*so/(4.0*uKnee+1e-4); float e=max(so,br-uThr); e=e/(1.0+0.7*e); c*=e/max(br,1e-4); }   // (the excess, eased: a wide over-bright sheet glows no harder than a glint)
+        gl_FragColor=vec4(c,1.0); }`, {tSrc:{value:null}, uPx:{value:new T.Vector2()}, uThr:{value:1}, uKnee:{value:0.5}, uFirst:{value:0}});
+    // up: a 3x3 tent of the smaller level, ADDED onto the level above it
+    LUX.mUp=sm(`uniform sampler2D tSrc; uniform vec2 uPx;
+      void main(){ vec3 c=texture2D(tSrc,vUv).rgb*4.0;
+        c+=(texture2D(tSrc,vUv+uPx*vec2(-1.,0.)).rgb+texture2D(tSrc,vUv+uPx*vec2(1.,0.)).rgb+texture2D(tSrc,vUv+uPx*vec2(0.,-1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(0.,1.)).rgb)*2.0;
+        c+=texture2D(tSrc,vUv+uPx*vec2(-1.,-1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(1.,-1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(-1.,1.)).rgb+texture2D(tSrc,vUv+uPx*vec2(1.,1.)).rgb;
+        gl_FragColor=vec4(c/16.0,1.0); }`, {tSrc:{value:null}, uPx:{value:new T.Vector2()}}, {blending:T.CustomBlending, blendEquation:T.AddEquation, blendSrc:T.OneFactor, blendDst:T.OneFactor, transparent:true});
+    // the picture: shockwaves bend where it is read from, the lens fringes it, the bloom is added, then the vignette and the flash
+    LUX.mOut=sm(`uniform sampler2D tScene, tBloom; uniform float uBloom, uVig, uCA, uFlash, uAspect, uT, uFxaa; uniform vec4 uRip[4]; uniform vec2 uPx;
+      float lum(vec3 c){ return dot(min(c,vec3(1.0)),vec3(0.299,0.587,0.114)); }
+      vec3 smoothed(vec2 uv){ vec3 m=texture2D(tScene,uv).rgb; if(uFxaa<0.5) return m;                 // FXAA: blend along an edge, leave the rest alone
+        float nw=lum(texture2D(tScene,uv+uPx*vec2(-1.,-1.)).rgb), ne=lum(texture2D(tScene,uv+uPx*vec2(1.,-1.)).rgb), sw=lum(texture2D(tScene,uv+uPx*vec2(-1.,1.)).rgb), se=lum(texture2D(tScene,uv+uPx*vec2(1.,1.)).rgb), lm=lum(m);
+        float lo=min(lm,min(min(nw,ne),min(sw,se))), hi=max(lm,max(max(nw,ne),max(sw,se))); if(hi-lo<max(0.0312,hi*0.125)) return m;
+        vec2 dir=vec2(-((nw+ne)-(sw+se)), (nw+sw)-(ne+se)); float red=max((nw+ne+sw+se)*0.03125,1.0/128.0), rm=1.0/(min(abs(dir.x),abs(dir.y))+red); dir=clamp(dir*rm,-8.0,8.0)*uPx;
+        vec3 a=0.5*(texture2D(tScene,uv+dir*(1.0/3.0-0.5)).rgb+texture2D(tScene,uv+dir*(2.0/3.0-0.5)).rgb), b=a*0.5+0.25*(texture2D(tScene,uv-dir*0.5).rgb+texture2D(tScene,uv+dir*0.5).rgb);
+        float lb=lum(b); return (lb<lo||lb>hi)?a:b; }
+      void main(){ vec2 uv=vUv;
+        for(int i=0;i<4;i++){ vec4 r=uRip[i]; if(r.w>0.0){ vec2 d=uv-r.xy; d.x*=uAspect; float l=length(d)+1e-5, k=(l-r.z)/0.055; uv+=(d/l)*vec2(1.0/uAspect,1.0)*exp(-k*k)*r.w*0.03; } }
+        vec3 c=smoothed(uv); if(uCA>0.001){ vec2 o=(uv-0.5)*uCA*0.014; c.r=texture2D(tScene,uv+o).r; c.b=texture2D(tScene,uv-o).b; }
+        c+=texture2D(tBloom,uv).rgb*uBloom*(1.0-0.85*clamp(c,0.0,1.0));   // (a screen: the glow shows on what is darker than it, and never flattens what is already bright)
+        vec2 q=vUv-0.5; c*=1.0-uVig*smoothstep(0.18,0.75,dot(q,q)*2.0);
+        c+=uFlash;
+        c+=(fract(sin(dot(gl_FragCoord.xy+uT,vec2(12.9898,78.233)))*43758.5453)-0.5)/255.0;   // (a grain of dither: no banding in the glow)
+        gl_FragColor=vec4(c,1.0); }`, {tScene:{value:null}, tBloom:{value:null}, uBloom:{value:0}, uVig:{value:0}, uCA:{value:0}, uFlash:{value:0}, uAspect:{value:1}, uT:{value:0}, uFxaa:{value:0}, uPx:{value:new T.Vector2()},
+        uRip:{value:[new T.Vector4(),new T.Vector4(),new T.Vector4(),new T.Vector4()]}});
+    LUX.quad=new T.Mesh(new T.PlaneGeometry(2,2), LUX.mOut); LUX.quad.frustumCulled=false; LUX.qs=new T.Scene(); LUX.qs.add(LUX.quad); LUX.qc=new T.OrthographicCamera(-1,1,1,-1,0,1);
+    LUX.ok=true;
+  }catch(e){ LUX.ok=false; LUX.why=String(e&&e.message||e); }
+  return LUX.ok;
+}
+function luxSize(w,h){
+  const k=Math.min(LUX.scale, Math.sqrt(LUX.MAXPX/Math.max(1,w*h))), sw=Math.max(8,Math.round(w*k)), sh=Math.max(8,Math.round(h*k));
+  if(sw===LUX.w && sh===LUX.h) return; LUX.w=sw; LUX.h=sh; LUX.scene.setSize(sw,sh);
+  let mw=sw, mh=sh; for(const m of LUX.mips){ mw=Math.max(2,mw>>1); mh=Math.max(2,mh>>1); m.setSize(mw,mh); }
+}
+const _luxV=new T.Vector3(), _luxS=new T.Vector2();
+/* a shockwave in the picture, from a point in the world (it stays on that point as the camera moves) */
+function luxRipple(p, strength, speed){ if(!LUX.on || LUX.ok===false || wlRM()) return; if(LUX.rip.length>=4) LUX.rip.shift(); LUX.rip.push({p:p.clone(), k:strength==null?1:strength, v:speed||0.9, r:0.02, a:1}); }
+function luxFlash(k){ LUX.flash=Math.max(LUX.flash, k); }
+/* what the game is doing, onto the lens: called once a frame with real time */
+function luxTick(dt){
+  LUX.t+=dt;
+  const me=racers.find(r=>r.you), racing=me && (state==='race'||state==='done');
+  if(racing){ const b=me.boostT>0, a=!!me.air;
+    if(b && !LUX.bPrev) luxRipple(_luxV.set(me.x,(me.y||0)+3,me.z), 0.55, 1.3);          // a boost lights
+    if(!a && LUX.aPrev) luxRipple(_luxV.set(me.x,(me.y||0)+1,me.z), 0.7, 1.0);           // a landing
+    LUX.bPrev=b; LUX.aPrev=a; LUX.caT=wlRM() ? 0 : Math.max(b?0.55:0, me.spinT>0?1:0); } else { LUX.caT=0; LUX.bPrev=false; LUX.aPrev=false; }
+  LUX.ca+=(LUX.caT-LUX.ca)*Math.min(1,(LUX.caT>LUX.ca?9:3)*dt); LUX.flash=Math.max(0,LUX.flash-dt*2.5);
+  for(const R of LUX.rip){ R.r+=R.v*dt; R.a-=dt*1.5; } while(LUX.rip.length && LUX.rip[0].a<=0) LUX.rip.shift();
+  // adaptive resolution: a step down when frames run long for a second, a step back up after five good ones
+  if(LUX.auto && LUX.ok && dt>0 && state==='race'){ LUX.ema+=(dt*1000-LUX.ema)*0.05;
+    if(LUX.ema>21){ LUX.slow+=dt; LUX.fast=0; } else if(LUX.ema<17.5){ LUX.fast+=dt; LUX.slow=0; } else { LUX.slow=0; LUX.fast=0; }
+    if(LUX.slow>1){ LUX.slow=0; if(LUX.scale>0.61) LUX.scale=Math.max(0.6,LUX.scale-0.1); else { LUX.on=false; LUX.why='this device cannot hold it'; } }   // (at the floor and still slow: stand aside)
+    if(LUX.fast>5){ LUX.fast=0; if(LUX.scale<1) LUX.scale=Math.min(1,LUX.scale+0.05); } }
+}
+/* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
+function luxRender(rect){
+  if(!LUX.on || !luxInit()){ renderer.render(scene,camera); return; }
+  const R=renderer; R.getDrawingBufferSize(_luxS); const W=rect?Math.round(rect.w*R.getPixelRatio()):_luxS.x, H=rect?Math.round(rect.h*R.getPixelRatio()):_luxS.y;
+  luxSize(W,H);
+  const tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9, knee:LUX.hdr?LUX.knee:0.12, vig:LUX.vig}, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.force);
+  const ar=R.info.autoReset; R.info.autoReset=false; R.info.reset();
+  const sci=R.getScissorTest(); if(rect) R.setScissorTest(false);
+  // the scene, into the target (its own viewport: three sets a target's viewport to the target)
+  R.setRenderTarget(LUX.scene); R.render(scene,camera);
+  // the pyramid down...
+  const q=LUX.quad; let src=LUX.scene.texture, sw=LUX.w, sh=LUX.h;
+  if(lx.bloom>0.001){ q.material=LUX.mDown; const u=LUX.mDown.uniforms; u.uThr.value=lx.thr; u.uKnee.value=lx.knee;
+    for(let i=0;i<LUX.mips.length;i++){ const m=LUX.mips[i]; u.tSrc.value=src; u.uPx.value.set(0.5/sw,0.5/sh); u.uFirst.value=i===0?1:0; R.setRenderTarget(m); R.render(LUX.qs,LUX.qc); src=m.texture; sw=m.width; sh=m.height; }
+    // ...and back up, each level added onto the one above
+    q.material=LUX.mUp; const v=LUX.mUp.uniforms, ac=R.autoClear; R.autoClear=false;
+    for(let i=LUX.mips.length-1;i>0;i--){ const s2=LUX.mips[i], d=LUX.mips[i-1]; v.tSrc.value=s2.texture; v.uPx.value.set(1/s2.width,1/s2.height); R.setRenderTarget(d); R.render(LUX.qs,LUX.qc); }
+    R.autoClear=ac; }
+  // the picture
+  q.material=LUX.mOut; const o=LUX.mOut.uniforms; o.tScene.value=LUX.scene.texture; o.tBloom.value=LUX.mips[0].texture; o.uBloom.value=lx.bloom>0.001?lx.bloom:0; o.uVig.value=lx.vig; o.uCA.value=LUX.ca; o.uFlash.value=LUX.flash;
+  o.uAspect.value=W/H; o.uT.value=(LUX.t*60)%1000; o.uFxaa.value=LUX.msaa?0:1; o.uPx.value.set(1/LUX.w,1/LUX.h);
+  for(let i=0;i<4;i++){ const rp=LUX.rip[i], u4=o.uRip.value[i]; if(!rp){ u4.set(0,0,0,0); continue; }
+    _luxV.copy(rp.p).project(camera); if(_luxV.z>1){ u4.set(0,0,0,0); continue; } u4.set(_luxV.x*0.5+0.5, _luxV.y*0.5+0.5, rp.r, Math.max(0,rp.a)*rp.k); }
+  R.setRenderTarget(null);
+  if(rect){ R.setViewport(rect.x,rect.y,rect.w,rect.h); R.setScissor(rect.x,rect.y,rect.w,rect.h); R.setScissorTest(true); }
+  R.render(LUX.qs,LUX.qc);
+  if(rect) R.setScissorTest(sci);
+  R.info.autoReset=ar;
+}
 function hzDraw(){
   const R=renderer, r=HZV.rect;
   if(camera.aspect!==r.a){ camera.aspect=r.a; camera.updateProjectionMatrix(); }
   R.setScissorTest(false); R.setViewport(0,0,_vw,_vh); R.setClearColor(HZ_BG,1); R.clear(true,true,false);
   R.setClearColor(0x1c1218,1);
   R.setViewport(r.x,r.y,r.w,r.h); R.setScissor(r.x,r.y,r.w,r.h); R.setScissorTest(true);
-  R.render(scene,camera);
+  if(LUX.on && LUX.ok!==false) luxRender(r); else R.render(scene,camera);   // (through the light pipeline, into the window)
   R.setScissorTest(false); R.setViewport(0,0,_vw,_vh);
 }
 /* One step of the race itself — every kart, collisions, places, the netcode and ghosts, the finish.
@@ -79494,7 +79636,7 @@ function frame(now){
   const dt=SIM.hold ? 0 : Math.min(0.033,(now-last)/1000); last=now;   // (SIM.hold: an MCP film is stepping the game and only wants this loop to draw)
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
     hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
-    renderer.render(scene,camera); requestAnimationFrame(frame); return;
+    luxRender(); requestAnimationFrame(frame); return;
   }
   const tsec=SIM.manual?SIM.t:now/1000;   // (manual: the clock race_drive advances — game time, not wall time)
   if(SIM.busy){ requestAnimationFrame(frame); return; }   // (race.frames is stepping the game itself: stand aside)
@@ -79684,7 +79826,7 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
   perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
   const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
-  if(draw && !held && (!menuLo || (++menuTick&1))){ if(hzWin && HZV.rect.w>1) hzDraw(); else renderer.render(scene,camera); }
+  if(draw && !held && (!menuLo || (++menuTick&1))){ luxTick(dt); if(hzWin && HZV.rect.w>1) hzDraw(); else luxRender(); }
   if(PERF.on){ perfMark('render'); const ri=renderer.info; if(draw){ PERF.calls+=ri.render.calls; PERF.tris+=ri.render.triangles; } PERF.geos=ri.memory.geometries; PERF.texs=ri.memory.textures;
     const np=renderer.info.programs?renderer.info.programs.length:0; if(PERF.progN!=null && np!==PERF.progN && PERF.compiles.length<40) PERF.compiles.push({ frame:PERF.n, programs:np-PERF.progN, ms:+(performance.now()-PERF.f0).toFixed(1), what:renderer.info.programs.slice(Math.max(0,PERF.progN)).map(p=>p.name+(PERF.keyOf?PERF.keyOf(p):'')) }); PERF.progN=np;   // a frame that compiled shaders
     const ft=performance.now()-PERF.f0; if(PERF.ft.length<20000) PERF.ft.push(ft); if(ft>PERF.worst){ PERF.worst=ft; PERF.worstAt={ frame:PERF.n, seg:Object.assign({}, PERF.seg), prev:PERF.prevSeg }; } PERF.prevSeg=Object.assign({}, PERF.seg); }
@@ -83902,7 +84044,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       for(let f=0;f<frames;f++){
         if(f>0) for(let k=0, n=Math.round(step/dt); k<n; k++){
           if(!still && state==='race'){ hold(autopilot?[...autoKeys(me(),k),...extra]:extra); raceStep(dt); }
-          SIM.t+=dt; syncObjects(dt, SIM.t); updateCamera(dt);
+          SIM.t+=dt; syncObjects(dt, SIM.t); updateCamera(dt); luxTick(dt);   // (the lens runs on the film's clock too)
           if(k%240===239) await new Promise(res=>setTimeout(res,0));
         }
         hold([]);
@@ -84322,13 +84464,19 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
-    'race.fx': ({slipstream, edenLive, flowBody:fb, tail}={})=>{ if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;   // (tail: hold the flow body's acting channels on your racer, see flowAct)
+    'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux}={})=>{ if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
+      // lux: the light pipeline. {on, scale} set it; {bloom, thr, knee, vig} override the course's light until {reset:true}; {ripple:k} throws a shockwave from your racer, {flash:k} a flash
+      if(lux){ if(lux.aa && lux.aa!==LUX.aa){ LUX.aa=lux.aa; if(LUX.scene){ LUX.scene.dispose(); LUX.mips.forEach(m=>m.dispose()); } LUX.ok=null; LUX.w=LUX.h=0; luxInit(); }
+        if(lux.on!==undefined) LUX.on=!!lux.on; if(lux.scale!==undefined) LUX.scale=Math.max(0.3,Math.min(1,+lux.scale)); if(lux.reset) LUX.force=null;
+        for(const k of ['bloom','thr','knee','vig']) if(lux[k]!==undefined) (LUX.force||(LUX.force={}))[k]=+lux[k];
+        const me=racers.find(r=>r.you); if(lux.ripple && me) luxRipple(new T.Vector3(me.x,(me.y||0)+3,me.z), +lux.ripple, 1.0); if(lux.flash) luxFlash(+lux.flash); }   // (tail: hold the flow body's acting channels on your racer, see flowAct)
       if(fb!==undefined){ FLOW.on=!!fb; FLOW.all=fb==='all'; }   // (flowBody:false builds the next racers on the stock ball-and-tube body, for an A/B)
       if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
-      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null }; },
+      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
+        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, (TRACKS[selTrack]||{}).lux, LUX.force), ripples:LUX.rip.length } }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');

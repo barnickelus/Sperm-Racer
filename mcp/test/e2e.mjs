@@ -426,6 +426,23 @@ await check('blind spots: a seeded race repeats; surfaces, aliasing, shader coun
   assert.equal(se.races.length, 1); assert.ok(se.hotspots.Ophelia, 'hotspots by course');
 });
 
+await check('LUX: the light pipeline proves its target, draws on both anti-aliasing paths, throws a shockwave, and steps aside when told', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
+  const a = json(await call('race_fx', {})).lux;
+  assert.equal(a.ok, true, 'the pipeline came up: ' + JSON.stringify(a)); assert.equal(a.on, true);
+  assert.ok(['half-float', '8-bit'].includes(a.target)); assert.ok(a.size[0] > 100 && a.size[1] > 50, 'the scene target has a size');
+  assert.equal(a.light.bloom, 0.85, 'Nova asks for its own light');
+  const on = await call('scene_screenshot'); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
+  const f = json(await call('race_fx', { lux: { aa: 'fxaa', ripple: 1 } })).lux;
+  assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
+  assert.ok(image(await call('scene_screenshot')));
+  const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
+  const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 0.85);
+  const plain = await call('scene_screenshot'); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
+  assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
+});
+
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
   const pg = await call('scene_page');
   assert.ok(Buffer.from(image(pg).data, 'base64').length > 10000, 'a real screenshot');
