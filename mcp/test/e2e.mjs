@@ -436,10 +436,12 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   const on = await call('scene_screenshot'); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
   const f = json(await call('race_fx', { lux: { aa: 'fxaa', ripple: 1 } })).lux;
   assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
-  assert.ok(image(await call('scene_screenshot')));
+  // (the switch rebuilds the targets and compiles the pass shaders: on a software GPU the next frame can take longer than one screenshot waits)
+  const shot = async () => { try { return await call('scene_screenshot'); } catch (e) { return await call('scene_screenshot'); } };
+  assert.ok(image(await shot()));
   const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
   const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 0.85);
-  const plain = await call('scene_screenshot'); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
+  const plain = await shot(); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
   assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
 });
 
