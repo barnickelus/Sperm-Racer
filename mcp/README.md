@@ -103,6 +103,27 @@ index.html) is one swimmer:
 - **follow-through** from what the kart does: the tail tracks round a corner,
   streams out in a drift and trails a jump.
 
+**The tail acts.** On a flow body the tail says what the racer is doing and
+feeling, each state its own movement on the one curve (so they blend, and the
+tail keeps its length through all of them):
+
+| state | when | the tail |
+|---|---|---|
+| steady pace | racing | the travelling wave; its beat and reach rise with speed, no two strokes quite alike |
+| speed burst | a boost | one big kick, then drawn straight into a tight, fast corkscrew |
+| happy | an overtake, a hit landed, a podium | carried high, tip curled up, wagging |
+| frustration | overtaken, after a spin, a poor finish | carried low, the swim nearly stops, slow hard slaps side to side |
+| alarm | someone bearing down | straight up and stiff, a shiver running down it |
+| knocked out | spinning | limp |
+| braking | slowing hard | flares wide and lifts |
+| in the air | a jump | streams up and corkscrews |
+| the whip | the tail-whip | wind-up, strike, then it carries on past the strike with the tip coiled and springs back |
+| on the grid | the countdown | wound up, revving |
+
+`race_fx {tail:{happy:1}}` holds any of them on your racer to look at or film
+(`{tail:null}` hands it back to the race), and `race_fx {}` reports what the
+tail is acting now (`tailAct`).
+
 Three racers wear it: `Proto` (the template with no costume, the one to look at
 when the body changes), `Kasi` and `Chad Brody`. Everyone else is on the stock
 body until moved.

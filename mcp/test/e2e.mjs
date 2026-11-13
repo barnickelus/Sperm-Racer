@@ -192,8 +192,9 @@ await check('race_pose lists and forces expressions; a character without a rig s
   assert.equal(json(await call('race_state')).standings.find(s => s.you).expression, 'wink');
   const bad = await callRaw('race_pose', { expression: 'yodel' });
   assert.equal(bad.isError, true); assert.match(bad.content[0].text, /no expression "yodel"/);
-  const other = json(await call('race_state')).standings.find(s => !s.you && s.character !== 'outlaw');
-  assert.match(json(await call('race_pose', { racer: other.name })).note || '', /no expression rig/);
+  // (a rival with no rig: the grid is drawn at random and several racers have rigs now, so pick one that reports no expression)
+  const other = json(await call('race_state')).standings.find(s => !s.you && !s.expression);
+  if (other) assert.match(json(await call('race_pose', { racer: other.name })).note || '', /no expression rig/);
 });
 
 await check('race_studio isolates the racer; race_sheet draws turnaround and expression sheets', async () => {
@@ -277,8 +278,18 @@ await check('the flow body: one skin on one spine (no gap at the join, a tail th
   // a racer whose kit rides the tail (the Viking's bracer, pinned with flowRide) and one that asks its neck for more than a neck can give (Rick)
   for (const id of ['viking', 'rick']) { const c = await run(id, 'all');
     assert.equal(c.m.body, 'flow'); assert.ok(c.m.skin.seamGap < 1e-3 && c.m.skin.lengthMax < 1.02 && c.m.skin.maxBendDeg < 40, `${id}: ${JSON.stringify(c.m.skin)}`); }
-  const fx = json(await call('race_fx', { flowBody: true }));
-  assert.equal(fx.flowBody, true); assert.ok(fx.flowIds.includes('proto'));
+  // the tail acts: each state can be held on your racer, is reported, and the skin still keeps its length in it
+  json(await call('race_fx', { flowBody: true }));
+  json(await call('race_setup', { course: 'Ophelia', character: 'proto', difficulty: 'medium', seed: 8 })); json(await call('race_start')); json(await call('race_drive', { seconds: 2 }));
+  for (const st of ['happy', 'angry', 'stiff']) {
+    json(await call('race_fx', { tail: { stiff: 0, happy: 0, angry: 0, [st]: 1 } }));
+    const m = json(await call('race_motion', { seconds: 2 })), now = json(await call('race_fx', {})).tailAct;
+    assert.ok(now[st] > 0.9, `${st} held: ${JSON.stringify(now)}`);
+    assert.ok(m.skin.seamGap < 1e-3 && m.skin.lengthMin > 0.97 && m.skin.lengthMax < 1.03, `${st}: ${JSON.stringify(m.skin)}`);
+  }
+  const film = await call('race_film', { frames: 6, seconds: 0.6, still: true, cell: 240, title: 'happy / angry / stiff: the last held' }); save(image(film), 'tail-acting.jpg'); assert.ok(image(film));
+  const fx = json(await call('race_fx', { tail: null, flowBody: true }));
+  assert.equal(fx.flowBody, true); assert.equal(fx.tail, null); assert.ok(fx.flowIds.includes('proto'));
 });
 
 await check('race_motion: the Fluid copy of Guido Tony moves without the snaps (same race, same seconds)', async () => {

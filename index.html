@@ -72615,8 +72615,50 @@ function flowPaint(g, f){
   const tc=F.geo.attributes.color; for(let i=0,c=0;i<F.n;i++) for(let j=0;j<S1;j++,c++){ f(F.z[i], j/S*Math.PI*2, out); tc.setXYZ(c,out[0],out[1],out[2]); } tc.needsUpdate=true;
 }
 /* what the springs feel, from what the kart does (called once a frame, before the tail is posed) */
+/* THE TAIL ACTS. The tail is most of what the chase camera sees of a racer, so on a flow body it says what the racer is
+   doing and feeling. Each state is a channel (0..1, eased in fast and out slower) that flowWave turns into its own
+   movement, all of them added to the one curve the skin is laid along, so they blend and the tail keeps its length:
+     steady pace   the travelling wave, as ever: its beat and reach rise with speed
+     speed burst   STIFF: a kick (one big stroke as the boost lights), then the tail draws straight and spins a tight,
+                   fast corkscrew, a propeller
+     happy         (an overtake, a hit landed, a podium) the tail is carried HIGH with its tip curled up, and wags
+     frustration   (overtaken, knocked into a spin, a poor finish) carried LOW, the swim nearly stops and the tail
+                   slaps slowly side to side like an angry cat's, its tip flicking
+     alarm         (someone bearing down) straight up and stiff, a fast shiver running down it
+     knocked out   (spinning) LIMP: it hangs and barely moves
+     braking       it flares: wider and lifted, an air brake
+     in the air    it streams up behind and corkscrews
+     the whip      the lash (whipLashStart) plays on the same curve and the feelings step back while it does; at the
+                   crack the tail carries on past the strike, its tip coiled over, and springs back (the follow-through)
+     on the grid   wound up: a slow tight corkscrew, revving
+   race_fx {tail:{happy:1}} holds any of them on your racer, to look at or film. */
+const FLOW_ACT={ KICK:30, RECOIL:38, WAG:3.4, SLAP:5.2, keys:['stiff','happy','angry','fear','limp','brake','air'] };
+function flowAct(F, r, dt){
+  const A=F.a||(F.a={ stiff:0, happy:0, angry:0, fear:0, limp:0, brake:0, air:0, kick:0, kickV:0, hit:0, phx:0, wag:0, th:0, sh:0, bPrev:false, sPrev:false, cPrev:false, snap:0, snapT:0, kp:0, coil:0, spd:0, side:1, lash:0, any:0 });
+  const L=r._lk, spd=Math.abs(r.spd||0), boost=r.boostT>0, spin=r.spinT>0, sdt=Math.max(dt,1e-3);
+  if(boost && !A.bPrev){ A.side=-A.side; A.kp+=A.side*FLOW_ACT.KICK; } A.bPrev=boost;   // the kick: one stroke, alternate sides
+  if(spin && !A.sPrev) A.hit=1; A.sPrev=spin; if(!spin) A.hit=Math.max(0,A.hit-dt/2.2);          // furious for a couple of seconds after a spin
+  // the whip's follow-through: at the crack the tail carries on past the strike and springs back, its tip coiled over
+  { const w=r._wl, cr=!!(w && w.t>=WL_CRACK); if(cr && !A.cPrev){ A.kp+=w.side*FLOW_ACT.RECOIL; A.snapT=1; } A.cPrev=cr; A.snapT=Math.max(0,A.snapT-dt*3.2); A.snap+=(A.snapT-A.snap)*Math.min(1,18*dt); }
+  const dec=(A.spd-spd)/sdt; A.spd=spd;
+  let T={ stiff:boost?1:0, happy:L?Math.min(1,L.sm*1.15):0, angry:L?Math.min(1,L.gr*1.15):0, fear:L?Math.min(1,L.w):0, limp:spin?1:0, brake:(dec>55 && spd>25 && !spin)?1:0, air:r.air?1:0 };
+  if(!spin) T.angry=Math.max(T.angry, A.hit);
+  if(state==='count') T.stiff=0.55;                                                             // on the grid: wound up, revving
+  if(r.celebT>0 || (r.finished && r.place<=3)){ T.happy=1; T.angry=0; } else if(r.finished) T.angry=Math.max(T.angry,0.55);
+  if(T.happy>T.angry) T.angry*=1-T.happy; else T.happy*=1-T.angry;                               // one feeling at a time
+  if(T.limp){ T.happy=0; T.angry=0; T.fear=0; }
+  const fo=FLOW.force; if(fo && r.you) for(const k of FLOW_ACT.keys) if(fo[k]!==undefined) T[k]=fo[k];
+  const UP={stiff:10,happy:6,angry:8,fear:9,limp:10,brake:8,air:8}, DN={stiff:2.4,happy:2.2,angry:1.8,fear:3,limp:3,brake:4,air:4}; let any=0;
+  for(const k of FLOW_ACT.keys){ A[k]+=(T[k]-A[k])*Math.min(1,(T[k]>A[k]?UP[k]:DN[k])*dt); any+=A[k]; }
+  A.coil+=(Math.min(1,A.stiff+0.55*A.air)-A.coil)*Math.min(1,2.6*dt);   // (the drill winds up and lets go slowly: its turns are the wave's phase, and a quick change would squirm)
+  { const e=1-Math.exp(-14*dt); A.kickV+=A.kp*e; A.kp-=A.kp*e; }                            // (a push over a few frames, not a jolt in one)
+  A.kickV+=(-80*A.kick-10*A.kickV)*dt; A.kick+=A.kickV*dt; A.any=any+Math.abs(A.kick)+A.snap;
+  const base=4+spd*0.06;
+  A.phx+=dt*base*(1.2*A.stiff+0.7*A.fear+0.5*A.air-0.5*A.limp-0.55*A.angry);   // the swim's own beat: quick when stiff, nearly stopped when sulking
+  A.wag+=dt*(13+3*A.happy); A.th+=dt*(5.5+2.5*A.angry); A.sh+=dt*41;
+}
 function flowDrive(o, r, dt){
-  const F=o.userData.flow; if(!F) return; F.defer=true;
+  const F=o.userData.flow; if(!F) return; F.defer=true; flowAct(F, r, dt);
   const D=F.d, spd=Math.abs(r.spd||0), head=r.head||0, y=o.position.y, sdt=Math.max(dt,1e-3);
   if(D.head==null){ D.head=head; D.y=y; }
   let dh=head-D.head; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; D.head=head;
@@ -72635,12 +72677,28 @@ function flowDrive(o, r, dt){
 /* What the animation asks of the tail, in the body's own space: the swim (the wave, or a styled swim, or the lash) plus
    what the springs add. A curve, not yet the spine: flowFlush joins it to the head and lays the skin along it. */
 function flowWave(g, phase, amp, lift, st){
-  const ud=g.userData, F=ud.flow, n=F.n, i0=F.i0, LK=TAIL_SWIM.lag, tailS=ud.tailS, lash=_WL.on, BX=F.bx, BY=F.by, BZ=F.bz;
+  const ud=g.userData, F=ud.flow, n=F.n, i0=F.i0, LK=TAIL_SWIM.lag, tailS=ud.tailS, lash=_WL.on, BX=F.bx, BY=F.by, BZ=F.bz, A=F.a;
   F.phase=phase; F.amp=amp;
+  // the acting (flowAct): how much of the plain swim is left, how round it is, and what each feeling adds
+  let ampK=1, hel=FLOW.HEL, act=0, ph=phase, lagK=1;
+  if(A){ A.lash+=((lash?1:0)-A.lash)*0.3; act=A.any>0.003 ? 1-0.75*A.lash : 0; ph=phase+A.phx;
+    lagK=1+0.9*A.coil;   // (more turns down the tail: a drill, not a wave)
+    ampK=(1+0.1*Math.sin(phase*0.29)+0.06*Math.sin(phase*0.113+1))*(1-0.58*A.stiff)*(1-0.65*A.limp)*(1-0.7*A.angry)*(1-0.5*A.fear)*(1-0.25*A.happy)*(1+0.4*A.brake);
+    hel=FLOW.HEL+(0.95-FLOW.HEL)*Math.min(1, 0.9*A.stiff+0.75*A.air); }
+  const sm=(a,b,x)=>{ x=(x-a)/(b-a); x=x<0?0:x>1?1:x; return x*x*(3-2*x); };
   for(let i=0;i<n;i++){ const t=F.t[i]; let x=0, y=0, zo=0;
     if(i>i0){ const lag=t*15*LK;
       if(st||lash){ tailOffset(lag, t, phase, amp, st); x=_tox; y=_toy; if(lash) zo=_wlz; if(!st) y+=FLOW.HEL*Math.cos(phase-lag)*amp*t*t; }   // (the plain swim keeps its roll through a lash)
-      else { const a=phase-lag, e=amp*t*t; x=Math.sin(a)*e; y=FLOW.HEL*Math.cos(a)*e; }
+      else { const a=ph-lag*lagK, e=amp*ampK*t*t; x=Math.sin(a)*e; y=hel*Math.cos(a)*e; }
+      if(A && A.any>0.003){ const t2=t*t, tip=sm(0.4,1,t), hk=sm(0.7,1,t);
+        x+=A.kick*9*Math.pow(t,1.3); zo+=A.snap*5*hk*hk; y+=A.snap*2.2*t2;                       // the boost's kick and the whip's recoil; the cracked tip, coiled
+        x+=act*( A.happy*FLOW_ACT.WAG*Math.sin(A.wag-2.2*t)*tip                                // the wag
+               + A.angry*(FLOW_ACT.SLAP*Math.pow(t,1.25)*Math.tanh(2.6*Math.sin(A.th-1.3*t)) + 1.7*Math.sin(3*A.th+1)*sm(0.78,1,t))   // the slow slap, and the tip's flick
+               + A.fear*0.8*Math.sin(A.sh-9*t)*t );                                            // the shiver
+        y+=act*( A.happy*(4.4*Math.pow(t,1.6)+3.4*t2*t2*t+0.9*Math.sin(A.wag)*Math.sin(A.wag)*t2)   // carried high, tip curled, a bounce in it
+               - A.angry*2.3*t2 + A.fear*3.4*Math.pow(t,1.4) - A.limp*3.2*t2 + A.brake*2.8*t2 + A.air*2.6*t2 );
+        zo+=act*A.happy*2.0*hk*hk;                                          // ...and the curl: the tip comes back over itself
+        if(y<-2.6*t) y=-2.6*t; }                                                               // (never through the road)
       const d=21*t; x+=F.sw*d*d*0.5+Math.sin(F.dr)*d; y+=(F.vy+(lift||0))*t*t+(tailS?tailS(t)*_TW.pg:0); }
     BX[i]=x; BY[i]=y; BZ[i]=F.z[i]+zo; }
   if(!F.defer) flowFlush(g);
@@ -72660,7 +72718,8 @@ function flowNeck(g, dt){
   { _fwV.set(0,0,1).applyQuaternion(F.req); const a=Math.acos(Math.max(-1,Math.min(1,_fwV.z)));
     if(a>FLOW.BEND){ _fwV.set(-_fwV.y,_fwV.x,0); const l=_fwV.length(); if(l>1e-6) _fwV.divideScalar(l); else _fwV.set(0,1,0);
       F.req.premultiply(_fwQ.setFromAxisAngle(_fwV, FLOW.BEND-a)); } }
-  if(dt>0 && !ud.fluid){
+  if(dt===0 && !ud.fluid){ /* a held frame (a hit-stop, a film between steps): the head stays where the spring had it */ }
+  else if(dt>0 && !ud.fluid){
     { const e=1-Math.exp(-dt*FLOW.NE); F.rq.slerp(F.req, e); F.tq.slerp(F.rq, e); }   // eased twice: the target starts moving from rest, so the head does with no jolt
     _fwQ.copy(F.tq).multiply(_fwQ2.copy(F.nq).invert()); if(_fwQ.w<0){ _fwQ.x=-_fwQ.x; _fwQ.y=-_fwQ.y; _fwQ.z=-_fwQ.z; _fwQ.w=-_fwQ.w; }
     const sn=Math.sqrt(Math.max(0,1-_fwQ.w*_fwQ.w)), ang=2*Math.acos(Math.min(1,_fwQ.w));
@@ -79424,7 +79483,7 @@ function frame(now){
   // the menus are reached by many doors (home, the cup's screens, change racer...), and they have their own record
   if(state==='menu'){ if(musicTimer) stopMusic(); songFor=null; }
   if(SEL3D.vis){ last=now; SEL3D.frame(now); diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
-  const dt=Math.min(0.033,(now-last)/1000); last=now;
+  const dt=SIM.hold ? 0 : Math.min(0.033,(now-last)/1000); last=now;   // (SIM.hold: an MCP film is stepping the game and only wants this loop to draw)
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
     hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
     renderer.render(scene,camera); requestAnimationFrame(frame); return;
@@ -83825,6 +83884,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+racer+'"');
       if(!still && state!=='race') throw new Error('the race is not running (state: '+state+'); use still:true to film a frozen grid');
       if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
+      SIM.hold=true;   // (the page's own loop draws the frames below but adds no time of its own: a body with springs in it would move on it)
       const src=renderer.domElement, aspect=src.height/src.width, ch=Math.round(cell*aspect), LAB=26, TOP=title?56:0;
       const cols=columns||Math.min(frames,4), rows=Math.ceil(frames/cols), W=cols*cell, H=TOP+rows*(ch+LAB);
       const sheet=document.createElement('canvas'); sheet.width=W; sheet.height=H; const g=sheet.getContext('2d');
@@ -83846,7 +83906,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         g.fillStyle='#2a1712'; g.font='bold 13px Helvetica, Arial, sans-serif'; g.textAlign='center';
         g.fillText('+'+(f*step).toFixed(2)+'s'+(E?' · '+E.cur:'')+(still?'':' · '+Math.round(r.spd)+' u/s'), x+cell/2, y+ch+18);
       }
-      SIM.cam=held;
+      SIM.cam=held; SIM.hold=false;
       const url=sheet.toDataURL('image/jpeg',0.88);
       return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:W, height:H, frames };
     },
@@ -84254,10 +84314,13 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
-    'race.fx': ({slipstream, edenLive, flowBody:fb}={})=>{ if(fb!==undefined){ FLOW.on=!!fb; FLOW.all=fb==='all'; }   // (flowBody:false builds the next racers on the stock ball-and-tube body, for an A/B)
+    'race.fx': ({slipstream, edenLive, flowBody:fb, tail}={})=>{ if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;   // (tail: hold the flow body's acting channels on your racer, see flowAct)
+      if(fb!==undefined){ FLOW.on=!!fb; FLOW.all=fb==='all'; }   // (flowBody:false builds the next racers on the stock ball-and-tube body, for an A/B)
       if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
-      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS) }; },
+      const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
+      if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
+      return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
