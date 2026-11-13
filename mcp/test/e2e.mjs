@@ -192,8 +192,9 @@ await check('race_pose lists and forces expressions; a character without a rig s
   assert.equal(json(await call('race_state')).standings.find(s => s.you).expression, 'wink');
   const bad = await callRaw('race_pose', { expression: 'yodel' });
   assert.equal(bad.isError, true); assert.match(bad.content[0].text, /no expression "yodel"/);
-  const other = json(await call('race_state')).standings.find(s => !s.you && s.character !== 'outlaw');
-  assert.match(json(await call('race_pose', { racer: other.name })).note || '', /no expression rig/);
+  // (a rival with no rig: the grid is drawn at random and several racers have rigs now, so pick one that reports no expression)
+  const other = json(await call('race_state')).standings.find(s => !s.you && !s.expression);
+  if (other) assert.match(json(await call('race_pose', { racer: other.name })).note || '', /no expression rig/);
 });
 
 await check('race_studio isolates the racer; race_sheet draws turnaround and expression sheets', async () => {
