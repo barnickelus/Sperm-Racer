@@ -79461,9 +79461,9 @@ function luxRender(rect){
     for(let i=LUX.mips.length-1;i>0;i--){ const s2=LUX.mips[i], d=LUX.mips[i-1]; v.tSrc.value=s2.texture; v.uPx.value.set(1/s2.width,1/s2.height); R.setRenderTarget(d); R.render(LUX.qs,LUX.qc); }
     R.autoClear=ac; }
   // the picture
-  q.material=LUX.mOut; const o=LUX.mOut.uniforms; o.tScene.value=LUX.scene.texture; o.tBloom.value=LUX.mips[0].texture; o.uBloom.value=lx.bloom>0.001?lx.bloom:0; o.uVig.value=lx.vig; o.uCA.value=LUX.ca; o.uFlash.value=LUX.flash;
+  q.material=LUX.mOut; const o=LUX.mOut.uniforms; o.tScene.value=LUX.scene.texture; o.tBloom.value=LUX.mips[0].texture; o.uBloom.value=lx.bloom>0.001?lx.bloom:0; const calm=!!SIM.calm; o.uVig.value=calm?0:lx.vig; o.uCA.value=calm?0:LUX.ca; o.uFlash.value=calm?0:LUX.flash;
   o.uAspect.value=W/H; o.uT.value=SIM.manual ? 0 : (LUX.t*60)%1000;   // (the dither's grain holds still while a tool steps the game: its sheets and goldens must be the same pixels every time) o.uFxaa.value=LUX.msaa?0:1; o.uPx.value.set(1/LUX.w,1/LUX.h);
-  for(let i=0;i<4;i++){ const rp=LUX.rip[i], u4=o.uRip.value[i]; if(!rp){ u4.set(0,0,0,0); continue; }
+  for(let i=0;i<4;i++){ const rp=calm?null:LUX.rip[i], u4=o.uRip.value[i]; if(!rp){ u4.set(0,0,0,0); continue; }
     _luxV.copy(rp.p).project(camera); if(_luxV.z>1){ u4.set(0,0,0,0); continue; } u4.set(_luxV.x*0.5+0.5, _luxV.y*0.5+0.5, rp.r, Math.max(0,rp.a)*rp.k); }
   R.setRenderTarget(null);
   if(rect){ R.setViewport(rect.x,rect.y,rect.w,rect.h); R.setScissor(rect.x,rect.y,rect.w,rect.h); R.setScissorTest(true); }
@@ -84007,6 +84007,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const restTick=()=>{ const ud=fresh.userData; if(ud.tick) for(let k=0;k<6;k++) ud.tick(fresh, R0, 50+k/60); fresh.updateMatrixWorld(true); };
       if(fresh) E=fresh.userData.expr;
       const held=SIM.cam, src=renderer.domElement, prevTick=SIM.tick;
+      SIM.calm=true;   // (a reference sheet: LUX keeps its light but no shockwave, fringe or flash left over from the race)
       SIM.tick=()=>{ if(prevTick) prevTick(); const n=r.obj.userData.neck; if(n){ n.quaternion.identity(); n.position.set(0,0,0); } };   // a portrait: head straight, no glancing at rivals
       const grab=()=>new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{   // (inside the frame, behind the page's own draw)
         const s=Math.min(src.width,src.height); res([ (src.width-s)/2, (src.height-s)/2, s ]); }))));
@@ -84021,7 +84022,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         await new Promise(res=>requestAnimationFrame(()=>{ g.drawImage(src, sx, sy, s, s, x, y, cell, cell); res(); }));
         g.fillStyle='#2a1712'; g.font='bold 15px Helvetica, Arial, sans-serif'; g.textAlign='center'; g.fillText(c.label||'', x+cell/2, y+cell+22);
       } } finally {   // whatever happens, the race gets its racer, its camera and its clock hook back
-        SIM.cam=held; SIM.tick=prevTick; if(E) E.set(null);
+        SIM.cam=held; SIM.tick=prevTick; SIM.calm=false; if(E) E.set(null);
         if(fresh){ scene.remove(fresh); disposeObject(fresh); if(liveParent && !live.parent) liveParent.add(live); r.head=head0; } }
       const url=sheet.toDataURL('image/jpeg',0.88);
       return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:W, height:H, cells:list.length };

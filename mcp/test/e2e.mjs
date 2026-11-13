@@ -172,7 +172,7 @@ await check('race_select shows Tex on the select stage', async () => {
 });
 
 await check('Rusty Malone races, and his face is driven by the race (and reported)', async () => {
-  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' }));
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard', seed: 5 }));   // (seeded: an unseeded race can be rough enough that he spends it angry and injured)
   const g = json(await call('race_start'));
   assert.equal(g.grid.find(x => x.you).character, 'outlaw');
   assert.equal(g.grid.find(x => x.you).expression, 'smirk', 'resting face on the grid');
@@ -433,11 +433,11 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   assert.equal(a.ok, true, 'the pipeline came up: ' + JSON.stringify(a)); assert.equal(a.on, true);
   assert.ok(['half-float', '8-bit'].includes(a.target)); assert.ok(a.size[0] > 100 && a.size[1] > 50, 'the scene target has a size');
   assert.equal(a.light.bloom, 0.85, 'Nova asks for its own light');
-  const on = await call('scene_screenshot'); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
+  // (Nova's tube is the heaviest view in the game and this is a software GPU: a frame can take longer than one screenshot waits)
+  const shot = async () => { for (let k = 0; ; k++) { try { return await call('scene_screenshot'); } catch (e) { if (k >= 3) throw e; } } };
+  const on = await shot(); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
   const f = json(await call('race_fx', { lux: { aa: 'fxaa', ripple: 1 } })).lux;
   assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
-  // (the switch rebuilds the targets and compiles the pass shaders: on a software GPU the next frame can take longer than one screenshot waits)
-  const shot = async () => { try { return await call('scene_screenshot'); } catch (e) { return await call('scene_screenshot'); } };
   assert.ok(image(await shot()));
   const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
   const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 0.85);
