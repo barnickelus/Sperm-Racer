@@ -69025,8 +69025,8 @@ const _jnQ=new T.Quaternion(), _jnE=new T.Euler();
  *   passed, hit, angry, boost, fire, tired, win, lose, plus smug and dizzy. Each is a target for ~25 face controls
  *   (lids, lid slant, brows, mouth open/smile/width/asymmetry/round, teeth, tongue, cheeks, blush, pupil size, eye
  *   size, gaze bias); the controls follow on critically damped springs, so a change of face is always a blend.
- * THE FACE IS BEADS: the eyes are glossy glass domes ringed in bead rows, with a bead star (or round bead) pupil and a
- *   glint bead; the lids are rows of beads strung on arcs over the dome (closing slides the rows down over the eye,
+ * THE FACE IS BEADS: the eyes are glossy glass domes ringed by a deeper row, a glossy dark pupil bead with a white glint
+ *   (eye 'star': a five-bead gold star rides on it and spins when he is dizzy; 'round': an iris ring of beads); the lids are rows of beads strung on arcs over the dome (closing slides the rows down over the eye,
  *   more rows unrolling from behind it), the brows are strung rows over the lids, the lips are beads strung on two
  *   curves whose shape is the expression (the beads slide along them as they re-shape), and opening the mouth
  *   parts the body's own bead rows (they sink away inside the opening, showing the dark of the mouth, teeth and
@@ -69041,8 +69041,10 @@ const _jnQ=new T.Quaternion(), _jnE=new T.Euler();
  *   on the spine (beads crowd on the inside of a bend and spread on the outside, as strung beads do); body beads are
  *   static instances whose shader handles the mouth opening, the cheeks and a ripple that runs through the beads on a
  *   hit, a landing or a boost. CPU per frame: the 21-node spine twice and ~300 face beads.
- * COST: ~2900 beads in 4 instanced draws (body, face, tail, plus the cores and two eye domes): about 10 draws, no
- *   textures, 6 shader programs shared by every template racer. The layout is computed once per look and cached.
+ * COST: ~2850 beads (head ~1580, tail ~980, face ~300) in 3 instanced draws; with the two wax cores, the two eye domes and
+ *   the glow and flame sprites, 10 draws. ~48k triangles near the camera; past ~70 units (a bead under ~3 px) the head and
+ *   tail beads drop to a five-triangle cap (~22k). No textures of its own; 3 shader programs of its own, shared by every
+ *   template racer. The layout is computed on the first build of each sex (~150-250 ms cold) and cached (~15 ms after).
  * MIGRATION (how an existing character moves onto it): call makeBeadTemplate with its colours and sex, hang its props
  *   on the sockets (Juan's sombrero on crown, a collar on neck, a charm on tailTip), add a LOOK_PERSONA row for its
  *   gaze personality, and if it needs a signature face add an entry to TB_EXPR (the controls are all named numbers).
@@ -69087,8 +69089,8 @@ const tbLin=hex=>{ const c=new T.Color(hex).convertSRGBToLinear(); return [c.r,c
 // the two presets the racers use; opts override any colour
 const TB_PRESET={
   m:{ body:0x1fb3c4, deep:0x147d9a, skin:0xc4f1ea, accent:0x1d3cb4, accent2:0xffc21a, white:0xf7f2e6, dark:0x191430,
-      tail:0x1d3cb4, tailTip:0xffc21a, lip:0x191430, lid:0x1fb3c4, lidEdge:0x191430, brow:0x191430, iris:0x1d3cb4, pupil:0x120e1c,
-      eyeWhite:0xfbf8ee, mouthIn:0x4a0c1c, tongue:0xf05a78, blush:0xff8aa0, glow:0x5ee8ff, eyeR:1.22, eyeX:1.42, brows:2, lash:false },
+      tail:0x1d3cb4, tailTip:0xffc21a, lip:0x0f4f6a, lid:0x1fb3c4, lidEdge:0x191430, brow:0x191430, iris:0x1d3cb4, pupil:0x120e1c,
+      eyeWhite:0xfbf8ee, mouthIn:0x4a0c1c, tongue:0xf05a78, blush:0xff8aa0, glow:0x5ee8ff, eyeR:1.22, eyeX:1.42, brows:1, lash:false },
   f:{ body:0xff4b98, deep:0xc8287a, skin:0xffd9e6, accent:0x14b8b0, accent2:0xffd23a, white:0xfff4f0, dark:0x2a0f2a,
       tail:0x7a3ce0, tailTip:0x14b8b0, lip:0xe0124c, lid:0xff4b98, lidEdge:0x24081e, brow:0x3a1424, iris:0x14b8b0, pupil:0x160a16,
       eyeWhite:0xfffaf4, mouthIn:0x52081e, tongue:0xff6a8a, blush:0xff6f9c, glow:0xff8ad0, eyeR:1.36, eyeX:1.5, brows:1, lash:true },
@@ -69268,13 +69270,13 @@ function tbColour(C,b){
   if(b.fam===1){
     if(b.nose) return C.skinDeep;
     const k=Math.floor(b.ff);
-    if(b.own<2){ if(k<=0) return C.dark; if(k===1) return C.accent2; if(k===2 && f) return C.accent; }
+    if(b.own<2 && k<=0) return C.deep;                    // one deeper row outlines each eye
     else if(k<=0) return C.skinDeep;
     return b.fb<TB_FACE ? C.skin : bodyCol();
   }
   if(b.fam===0){
     if(b.fb<TB_FACE) return C.skin;
-    if(b.fb<TB_FACE+1) return (Math.round(xa)&1) ? C.white : C.accent2;   // a beaded border of alternating dots round the face
+    if(b.fb<TB_FACE+1) return C.accent2;                  // one gold row borders the face
     return bodyCol();
   }
   if(b.fam===3) return C.tailTip;
@@ -69444,7 +69446,7 @@ function tbCoreGeo(z0,z1,nz,nth,inset,colFn){
 // mw: width; ma: one corner up (smirk); mr: round "O"; mt / mg: upper teeth / clenched lower teeth; mn: tongue; ck: cheeks
 // puffed; bl: blush; ps: pupil size; ew: eye size; gx / gy: gaze bias; mx: mouth shifted sideways
 const TB_KEYS=['luL','luR','llL','llR','ltL','ltR','byL','byR','btL','btR','mo','ms','mw','ma','mr','mt','mg','mn','ck','bl','ps','ew','gx','gy','mx'];
-const TB_REST={lu:[0.05,0.05], ll:[0.1,0.1], lt:[0,0], by:[0,0], bt:[0,0], mo:0, ms:0.38, mw:1, ma:0, mr:0, mt:0, mg:0, mn:0, ck:0.15, bl:0.06, ps:1, ew:1, gx:0, gy:0, mx:0};
+const TB_REST={lu:[0.05,0.05], ll:[0.1,0.1], lt:[0,0], by:[0,0], bt:[0,0], mo:0, ms:0.38, mw:1, ma:0, mr:0, mt:0, mg:0, mn:0, ck:0.15, bl:0.06, ps:1, ew:1, gx:0, gy:0, mx:0, mw:0.82};
 const TB_EXPR={
   rest:  {},
   pass:  {lu:[0.04,0.96], ll:[0.3,0.62], lt:[0,0.12], by:[0.5,-0.18], bt:[-0.1,0.25], mo:0.2, ms:0.75, mw:1.05, ma:0.8, mt:0.7, ck:0.75, bl:0.5, ps:1.05, gx:-0.32, gy:0.05},
@@ -69506,12 +69508,12 @@ function makeBeadTemplateBuild(opts){
   }
   // the face's beads (lids, brows, lashes, pupils, glints, lips, teeth, tongue): one batch, re-strung every frame
   const S={}, cols=[]; let nF=0; const slot=(name,n,hex)=>{ S[name]=nF; for(let i=0;i<n;i++) cols.push(hex); nF+=n; };
-  const NB=11, KU=6, KL=3, NBR=C.sex==='f'?9:10, BR=C.brows, NU=C.sex==='f'?11:11, NL=C.sex==='f'?11:12;
+  const NB=11, KU=6, KL=3, NBR=C.sex==='f'?9:9, BR=C.brows, NU=C.sex==='f'?11:11, NL=C.sex==='f'?11:12;
   for(let e=0;e<2;e++){
     for(let k=0;k<KU;k++) slot('lu'+e+'_'+k,NB,k===0?C.lidEdge:C.lid);
     for(let k=0;k<KL;k++) slot('ll'+e+'_'+k,NB,C.lid);
     for(let k=0;k<BR;k++) slot('br'+e+'_'+k,NBR,C.brow);
-    if(C.eye==='round'){ slot('pu'+e,1,C.pupil); slot('pr'+e,8,C.iris); } else slot('pu'+e,9,C.pupil);
+    slot('pu'+e,1,C.pupil); if(C.eye==='round') slot('pr'+e,8,C.iris); else slot('ps'+e,5,C.accent2);   // a glossy dark pupil; round: an iris ring, star: a little five-bead star of gold on it
     slot('gl'+e,1,0xffffff);
     if(C.lash) slot('la'+e,15,C.lidEdge);
   }
@@ -69561,7 +69563,7 @@ function makeBeadTemplateBuild(opts){
   ud.tplBead=TS; ud.head=body; ud.baseEmissive=mB.emissive.clone(); ud.eyes=eyes; ud.glow=glow; ud.flame=[fl1,fl2]; ud.tailMesh=spineLine;
   ud.sockets=sockets; ud.motionProbes=[['tailMid',sock('tailMid',g,0,TB.Y,TB.ZJ-TB.L*0.5),'pos'],['crown',sockets.crown,'pos']]; bodyPart(ud.motionProbes[0][1]);
   ud.expr={ list:TB_LIST.slice(), cur:'rest', hold:0, forced:null,
-    set(name, hold, instant){ if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.hold=hold==null?8:hold; if(instant) TS.snap=true; } };
+    set(name, hold, instant){ if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.cur=name; this.hold=hold==null?8:hold; if(instant) TS.snap=true; } };
   ud.tick=tbTick; ud.real=true;
   tbPx(body,UB); tbPx(face,UF); tbPx(tail,UT);
   tbSpine(TS, g, 0); tbFace(TS, 0);
@@ -69686,7 +69688,7 @@ function tbFace(TS, dt){
         _fT.copy(_fG).multiplyScalar(-sb).addScaledVector(Rr,cb);
         const s=lb*(0.7+0.3*cb)*vis; if(s<1e-3) hide(o+i); else tbPut(arr,o+i,P,N,_fT,s*0.97,s*1.05,s*0.9); } }
     // brows: strung arcs over the lids; raised, slanted, arched
-    { const by=c[I.byL+e], bt=c[I.btL+e], bb=C.sex==='f'?TB.P*0.8:TB.P*1.08, arch=C.sex==='f'?0.32:0.12, bmx=C.sex==='f'?1.2:1.1;
+    { const by=c[I.byL+e], bt=c[I.btL+e], bb=C.sex==='f'?TB.P*0.8:TB.P*1.2, arch=C.sex==='f'?0.32:0.12, bmx=C.sex==='f'?1.2:1.1;
       const Rb=_fR.copy(E.R).multiplyScalar(Math.cos(bt)).addScaledVector(E.U,Math.sin(bt)), Ub=_fU.copy(E.U).multiplyScalar(Math.cos(bt)).addScaledVector(E.R,-Math.sin(bt));
       const rb=rd+lb*0.42+bb*0.62+0.3*Math.max(0,by), a0=0.1-0.24*by;
       for(let k=0;k<TS.BR;k++){ const o=S['br'+e+'_'+k];
@@ -69702,13 +69704,16 @@ function tbFace(TS, dt){
       const at=(d,ang,sz,slot)=>{ N.copy(G).addScaledVector(Tr,Math.cos(ang)*d/rd).addScaledVector(Tu,Math.sin(ang)*d/rd).normalize(); P.copy(Cd).addScaledVector(N,rd+sz*0.06);
         _fT.copy(Tr).multiplyScalar(Math.cos(ang)).addScaledVector(Tu,Math.sin(ang)); tbPut(arr,slot,P,N,_fT,sz,sz,sz*0.6); };
       const o=S['pu'+e];
-      if(C.eye==='round'){ at(0,0,0.5*rd*ps,o); for(let k=0;k<8;k++) at(0.4*rd*ps,k*Math.PI/4+TS.spin,0.21*rd*ps,S['pr'+e]+k); }
-      else { at(0,0,0.36*rd*ps,o); for(let k=0;k<4;k++){ const ang=TS.spin+k*Math.PI/2; at(0.27*rd*ps,ang,0.2*rd*ps,o+1+k*2); at(0.47*rd*ps,ang,0.13*rd*ps,o+2+k*2); } }
-      // the glint stays where the light is
-      N.copy(F).addScaledVector(E.U,0.5).addScaledVector(_fX,-0.34).normalize(); P.copy(Cd).addScaledVector(N,rd+0.04); tbPut(arr,S['gl'+e],P,N,E.U,0.15*rd,0.15*rd,0.1*rd); }
+      const pr=0.5*rd*ps; at(0,0,pr,o);
+      if(C.eye==='round') for(let k=0;k<8;k++) at(0.42*rd*ps,k*Math.PI/4+TS.spin,0.2*rd*ps,S['pr'+e]+k);
+      else { const lift=pr*0.3; for(let k=0;k<5;k++){ const ang=TS.spin+Math.PI/2+k*Math.PI*0.4, d=0.2*rd*ps, sz=0.11*rd*ps;   // the star's five points ride on the pupil's dome
+          N.copy(G).addScaledVector(Tr,Math.cos(ang)*d/rd).addScaledVector(Tu,Math.sin(ang)*d/rd).normalize(); P.copy(Cd).addScaledVector(N,rd+lift);
+          _fT.copy(Tr).multiplyScalar(Math.cos(ang)).addScaledVector(Tu,Math.sin(ang)); tbPut(arr,S['ps'+e]+k,P,N,_fT,sz,sz,sz*0.7); } }
+      // the glint stays where the light is, over the pupil
+      N.copy(F).addScaledVector(E.U,0.42).addScaledVector(_fX,-0.3).normalize(); P.copy(Cd).addScaledVector(N,rd+pr*0.34); tbPut(arr,S['gl'+e],P,N,E.U,0.17*rd,0.17*rd,0.1*rd); }
   }
   // the mouth: beads strung on two curves; the body's own rows part inside the opening
-  const M=tbMouthShape(TS), lp=C.sex==='f'?TB.P*0.95:TB.P*0.88;
+  const M=tbMouthShape(TS), lp=C.sex==='f'?TB.P*0.86:TB.P*0.78;
   const string=(slot,n,yf,dy,lift,u0,u1,szf)=>{ for(let i=0;i<n;i++){ const u=u0+(u1-u0)*(n>1?i/(n-1):0.5), du=0.01;
       tbOnFace(M.x(u),yf(u)+dy,lift,P,N); _fT.set(M.x(u+du)-M.x(u-du), yf(u+du)-yf(u-du), 0);
       const s=lp*(szf?szf(u):1); tbPut(arr,slot+i,P,N,_fT,s*0.95,s*1.05,s*0.9); } };
@@ -69817,8 +69822,12 @@ function tbTick(o, r, now){
   }
   TS.sqV+=(-260*TS.sq-12*TS.sqV)*dt; TS.sq=Math.max(-0.3,Math.min(0.3,TS.sq+TS.sqV*dt));
   TS.stV=(TS.stV||0)+(-200*(TS.st2||0)-11*(TS.stV||0))*dt; TS.st2=Math.max(-0.25,Math.min(0.25,(TS.st2||0)+TS.stV*dt));
-  if(Math.abs(TS.sq)>1e-4 || Math.abs(TS.st2)>1e-4){ o.scale.x*=1-0.5*TS.sq-0.35*TS.st2; o.scale.y*=1+TS.sq-0.35*TS.st2; o.scale.z*=1-0.5*TS.sq+TS.st2; }
-  if(spd<12 && !(r && r.air)) o.position.y+=0.22*Math.sin(t*2.3)*(1-spd/12);
+  // (squash and hover are applied on top of the pose syncObjects / the select stage set this frame; a rest sheet ticks a fresh
+  //  build that nobody re-poses, so last frame's offsets are taken off first instead of piling up)
+  if(TS.pz && o.position.y===TS.pz.y && o.scale.y===TS.pz.sy){ o.position.y-=TS.pz.dy; o.scale.x/=TS.pz.kx; o.scale.y/=TS.pz.ky; o.scale.z/=TS.pz.kz; }
+  const kx=1-0.5*TS.sq-0.35*TS.st2, ky=1+TS.sq-0.35*TS.st2, kz=1-0.5*TS.sq+TS.st2, dy=(spd<12 && !(r && r.air))?0.22*Math.sin(t*2.3)*(1-spd/12):0;
+  o.scale.x*=kx; o.scale.y*=ky; o.scale.z*=kz; o.position.y+=dy;
+  TS.pz={y:o.position.y, sy:o.scale.y, dy, kx, ky, kz};
   if(TS.rip>=0){ TS.rip+=dt; if(TS.rip>2.2) TS.rip=-1; }
   TS.UB.uRp.value.w=Math.max(0,TS.rip); TS.UB.uRa.value=TS.rip>=0?TS.ripA:0;
   TS.UT.uRp.value.w=Math.max(0,TS.rip); TS.UT.uRa.value=TS.rip>=0?TS.tripA:0; TS.UTC.uRp.value.w=0;
