@@ -59845,6 +59845,7 @@ function clayify(g, S){
       claySculpt(o.geometry, Math.min(0.16, rad*S.sculpt));
     }
   });
+  flowSeal(g);   // (a flow body: the thumbed head eases back to the true surface at the join, where its last ring is the tail's first)
   // The base model's pupils are 4-sided cones — a stylised star pupil that only reads as
   // one because celShade pairs it with a bold outline. In clay, with no linework, the
   // cone just reads as a dark spike stuck on the eye. Swap in pressed-in round dots.
@@ -68274,7 +68275,7 @@ function poseNeck(o, yaw, roll, pitch){
    A flow body's neck is a spring (flowNeck) and would swallow the stock 6 Hz shake whole, so it is asked for a flinch
    it can answer: one quick look aside and back, starting and ending at nothing, which the spring rounds off. */
 function poseLook(o, lk){
-  const sh=lk.shk>0 ? (o.userData.flow ? Math.sin((1-Math.min(1,lk.shk))*5.2)*0.3*Math.sin(Math.PI*Math.min(1,lk.shk)) : Math.sin(lk.t*38)*0.1*lk.shk) : 0;
+  const ud=o.userData, sh=lk.shk>0 ? (ud.flow && !ud.fluid ? Math.sin((1-Math.min(1,lk.shk))*5.2)*0.3*Math.sin(Math.PI*Math.min(1,lk.shk)) : Math.sin(lk.t*38)*0.1*lk.shk) : 0;   // (a Fluid copy's own neck spring is tuned to the stock shake)
   poseNeck(o, lk.nk+sh, lk.tilt+lk.rl, lk.pitch);
 }
 /* ============== ANTONIO STALLION KIT (id latin) ============== *
@@ -71057,21 +71058,31 @@ function fluidTick(o, r, now){
  *     tip. The head and the tail are still two meshes (ud.head, ud.tailMesh) so a character can give each its own
  *     material, and they share their boundary ring, vertex for vertex, normal for normal;
  *   · ONE SPINE under it. The head is rigid (it carries the face) and turns about a pivot at the back of the skull, not its
- *     centre; behind it every ring of the skin sits on a spine that leaves the head along the head's own axis and eases
- *     back to the body's over the neck, so a look, a nod or a tilt BENDS the neck. Rings stay square to the spine (no
- *     shear) and the spine keeps its length: what a ring swings sideways it gives up along the axis, so the tip draws in
- *     as the beat widens, the way a real tail does;
+ *     centre; behind it the skin lies along a curve that leaves the head on the head's own axis and eases into what the
+ *     tail was asked for down the neck, so a look, a nod or a tilt BENDS the neck (as far as a neck can: FLOW.BEND).
+ *     That curve is re-walked by arc length, so every ring sits at its own distance down it: the spine keeps its length
+ *     whatever the swim, a turn or a lash asks (a wide swing gives up reach, as a rope's does), and rings stay square
+ *     to it. No skin is pulled long, sheared thin or folded;
  *   · the SWIM is the same travelling wave on the same clock (phase, amplitude, the lash and the styles all still drive
  *     it), with a little of it out of plane so the tail has depth from behind, and the head answering it with a few
  *     degrees of counter-sway: the whole body carries the wave, not just the back half;
  *   · FOLLOW-THROUGH from what the kart actually does (flowDrive): the tail lies along the path the head took, so it
  *     tracks round a corner like a towed rope; it streams along the direction of travel when the body is slid sideways
  *     in a drift; it trails a jump and a landing. Each is a damped spring fed through two low-pass stages, so nothing
- *     steps and nothing kinks.
- * To move a racer onto it: add its id to FLOW_IDS (with {neck:null} if its kit was built round the old junction). Its kit gets the same handles as ever (head, tailMesh, the neck
- * group, bodyPart, faceAnchor); a kit that swaps the head's geometry for a finer sphere should not on a flow body
- * (ud.flow is set), the skin is already fine. The head keeps a sphere's UVs (a head texture painted for the old sphere
- * fits) and the tail keeps the old tube's (u along the length from the same origin, v round it). */
+ *     steps and nothing kinks;
+ *   · the HEAD's pose is a request (flowNeck): the game's look and a kit's own nod are eased and sprung, so a glance
+ *     starts from rest, overshoots a hair and settles, however abruptly it was asked for.
+ * TO MOVE A RACER ONTO IT: add its id to FLOW_IDS ({} for the template's teardrop neck, {neck:null} if its collar or
+ * yoke was built round the old junction). Its kit gets the same handles as ever (head, tailMesh, the neck group,
+ * bodyPart, faceAnchor); the head keeps a sphere's UVs (a head texture painted for the old sphere fits) and the tail the
+ * old tube's (u along the length from the same origin, v round it). What a kit may have to change, and nothing else:
+ *   · it swapped the head's geometry for a finer sphere: don't, on a flow body (ud.flow is set), the skin is fine already;
+ *   · it re-seats a part on a ring of the tail every frame (ud.tailData.pos): pin it once with flowRide(g, part, z);
+ *   · it paints the skin: flowPaint(g, f) writes vertex colours from one function of where a vertex is;
+ *   · it builds a body of its own and takes the tail off (the dragons, Tex's flagellum): it is left as it is (flowKeep).
+ * TO CHECK ONE: race_fx {flowBody:'all'} builds every racer on it and {flowBody:false} none (an A/B on the same seeded
+ * race); race_motion then reports the skin as drawn: the gap at the join, the spine's length against rest, the
+ * sharpest bend between two rings, beside the neck's and the tail's jerk and snaps. */
 const FLOW={ on:true, S:20, K:1.0, NECK:[-3,-7.5], ZJ:-4.75, LB:9, OW:0.3, HEL:0.14, SWAY:0.05, SWAYPH:0.7, TRACK:1, DRIFT:0.7, NE:30, NK:110, NC:19, BEND:1.05 };
 const FLOW_PIV=new T.Vector3(0,HEAD_CY,-2.8);
 // the racers on the flow body, and how each wears it: {} is the template's own teardrop; {neck:null} keeps the old junction
@@ -71100,7 +71111,7 @@ function flowR(z, P){
   return [flowSmax(HEAD_RX*e, rt, k), flowSmax(HEAD_RY*e, rt, k)];
 }
 function flowBody(g, headMat, tailMat, o){
-  o=o||{}; const S=FLOW.S, S1=S+1, K={ neck:o.neck!==undefined?o.neck:FLOW.NECK, k:o.k||FLOW.K }, CY=HEAD_CY, TAU=Math.PI*2, OW=FLOW.OW;
+  o=o||{}; const S=FLOW.S, S1=S+1, K={ neck:o.neck!==undefined?o.neck:FLOW.NECK, k:o.k||FLOW.K }, CY=HEAD_CY, TAU=Math.PI*2, OW=FLOW.OW, SY=HEAD_RY/HEAD_RX, SZ=HEAD_RZ/HEAD_RX;
   const dR=z=>{ const h=0.02, a=flowR(z+h,K), b=flowR(z-h,K); return [(a[0]-b[0])/(2*h),(a[1]-b[1])/(2*h)]; };
   // the surface normal of an elliptical section whose radii change along z, in (x, y, z): exact for the ellipsoid, too
   const nrmAt=(z,th,out)=>{ const c=Math.cos(th), sn=Math.sin(th);
@@ -71116,7 +71127,9 @@ function flowBody(g, headMat, tailMat, o){
   for(let r=0,p=0,q=0;r<HR;r++){ const z=HZ[r][0], seam=HZ[r][1], R=flowR(z,K);
     for(let j=0;j<S;j++,p+=3,q+=2){ const th=j/S*TAU, x=R[0]*Math.cos(th), y=R[1]*Math.sin(th);
       if(R[0]<1e-6){ nv[0]=0; nv[1]=0; nv[2]=1; } else nrmAt(z,th,nv);
-      hp[p]=x; hp[p+1]=CY+y; hp[p+2]=z; hn[p]=nv[0]; hn[p+1]=nv[1]; hn[p+2]=nv[2]; ho[p]=x+nv[0]*OW; ho[p+1]=CY+y+nv[1]*OW; ho[p+2]=z+nv[2]*OW;
+      // (in the head mesh's own frame: see below. A normal goes in by the frame's scale, so it comes out right)
+      hp[p]=x; hp[p+1]=y/SY; hp[p+2]=z/SZ; ho[p]=x+nv[0]*OW; ho[p+1]=(y+nv[1]*OW)/SY; ho[p+2]=(z+nv[2]*OW)/SZ;
+      { const ax=nv[0], ay=nv[1]*SY, az=nv[2]*SZ, l=Math.hypot(ax,ay,az)||1; hn[p]=ax/l; hn[p+1]=ay/l; hn[p+2]=az/l; }
       // a sphere's UVs (three's SphereGeometry on this ellipsoid), so a head texture painted for the old sphere still fits
       const dx=x/HEAD_RX, dy=y/HEAD_RY, dz=z/HEAD_RZ, dl=Math.hypot(dx,dy,dz)||1; let ph=Math.atan2(dz,-dx); if(ph<0) ph+=TAU;
       let u=ph/TAU; if(seam){ const pole=Math.abs(dx)<1e-6; u=pole?(seam===1?0.25:0.75):dx<0?(seam===1?0:1):0.5; }
@@ -71127,7 +71140,10 @@ function flowBody(g, headMat, tailMat, o){
   const hgeo=new T.BufferGeometry();
   hgeo.setAttribute('position', new T.BufferAttribute(hp,3)); hgeo.setAttribute('normal', new T.BufferAttribute(hn,3));
   hgeo.setAttribute('uv', new T.BufferAttribute(hu,2)); hgeo.setAttribute('color', new T.BufferAttribute(hc,3)); hgeo.setIndex(hi);
-  const head=new T.Mesh(hgeo, headMat); head.name='head';
+  // The head mesh sits in the stock head's frame (a 3.4 sphere at y=HEAD_CY, scaled 1 x 0.82 x 1.5), so whatever a kit did
+  // to the old head still lands: a child hung on it, an outline scaled off it, even its geometry swapped for a sphere
+  // (which gives the old ellipsoid back, in place, with the tail leaving it flush: flowKeep then drops the skin's ink)
+  const head=new T.Mesh(hgeo, headMat); head.name='head'; head.position.y=CY; head.scale.set(1,SY,SZ);
   { const og=new T.BufferGeometry(); og.setAttribute('position', new T.BufferAttribute(ho,3)); og.setIndex(hi);
     const ol=new T.Mesh(og, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); ol.userData.isOutline=true; head.add(ol); var headOutline=ol; }
   // — the tail: posed every frame. One ring tucked under the head's skin (so the join can never show a hairline), the boundary
@@ -71152,7 +71168,7 @@ function flowBody(g, headMat, tailMat, o){
   const tailMesh=new T.Mesh(tgeo, tailMat); tailMesh.name='tail';
   const toGeo=new T.BufferGeometry(); toGeo.setAttribute('position', new T.BufferAttribute(F.opos,3)); toGeo.setIndex(ti); toGeo.boundingSphere=tgeo.boundingSphere;
   const tailOutline=new T.Mesh(toGeo, new T.MeshBasicMaterial({color:0x140d09, side:T.BackSide})); tailOutline.userData.isOutline=true;
-  F.geo=tgeo; F.ogeo=toGeo; F.hgeo=hgeo; F.hz=HZ; F.K=K; F.hol=headOutline;
+  F.geo=tgeo; F.ogeo=toGeo; F.hgeo=hgeo; F.hz=HZ; F.K=K; F.hol=headOutline; F.hp0=hp.slice(); F.hn0=hn.slice();
   g.add(head); g.add(tailMesh); g.add(tailOutline);
   g.userData.flow=F; g.userData.head=head; g.userData.tailMesh=tailMesh;
   g.userData.tailData={ flow:true, geo:tgeo, outlineGeo:toGeo, rings:n-1, sides:S, y:CY };   // (what the rest of the game asks a tail for)
@@ -71313,9 +71329,22 @@ const FLUID_COPIES=[['guidoFluid','guido'],['punkFluid','punk']];   // the Fluid
 
 function makeCell(hue, typeId){ return rigNeck(flowKeep(makeCellBuild(hue, typeId))); }
 // a kit that took the flow tail off for a body of its own (a dragon, a flagellum) is not on the flow body: its head's ink goes too
-function flowKeep(g){ const ud=g.userData, F=ud.flow;
-  if(F && !(ud.tailData && ud.tailData.flow && ud.tailMesh && ud.tailMesh.parent===g)){ ud.flow=null; if(F.hol && F.hol.parent) F.hol.parent.remove(F.hol); }
+function flowKeep(g){ const ud=g.userData, F=ud.flow; if(!F) return g;
+  const own=!(ud.tailData && ud.tailData.flow && ud.tailMesh && ud.tailMesh.parent===g);
+  if(own) ud.flow=null;
+  if((own || ud.head.geometry!==F.hgeo) && F.hol && F.hol.parent) F.hol.parent.remove(F.hol);   // (a kit that swapped the head's geometry draws its own edge)
   return g; }
+// A treatment that re-shapes the head's surface (clay's thumbed lumps) must leave the join alone: the head's last ring is
+// the tail's first. This eases whatever was done to the skin back to nothing over the last `fade` units before the join.
+function flowSeal(g, fade){
+  const F=g.userData.flow; if(!F || g.userData.head.geometry!==F.hgeo) return; fade=fade||1.5;
+  const S=FLOW.S, P=F.hgeo.attributes.position, N=F.hgeo.attributes.normal, p0=F.hp0, n0=F.hn0;
+  for(let r=0,i=0;r<F.hz.length;r++){ const u=Math.max(0,Math.min(1,(F.hz[r][0]-FLOW.ZJ)/fade)), w=u*u*(3-2*u);
+    for(let j=0;j<S;j++,i++){ if(w>=1) continue; const k=i*3;
+      P.setXYZ(i, p0[k]+(P.getX(i)-p0[k])*w, p0[k+1]+(P.getY(i)-p0[k+1])*w, p0[k+2]+(P.getZ(i)-p0[k+2])*w);
+      if(N) N.setXYZ(i, n0[k]+(N.getX(i)-n0[k])*w, n0[k+1]+(N.getY(i)-n0[k+1])*w, n0[k+2]+(N.getZ(i)-n0[k+2])*w); } }
+  P.needsUpdate=true; if(N) N.needsUpdate=true;
+}
 function makeCellBuild(hue, typeId){
   const id0=typeId;
   const fluidOf=(FLUID_COPIES.find(c=>c[0]===typeId)||[])[1]; if(fluidOf) typeId=fluidOf;   // a Fluid copy: the original's build, then the motion layer (fluidify, at the end)
@@ -80263,7 +80292,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         // a flow body's skin, measured as it is drawn: the gap at the join (the head's last ring against the tail's boundary
         // ring, vertex for vertex), the spine's length against its rest length, and the sharpest bend between two rings
         if(F){ const S=FLOW.S, hp=F.hgeo.attributes.position, hr=(F.hz.length-1)*S, tp=F.pos, t0=F.i0*(S+1)*3; ud.head.updateMatrixWorld(true);
-          for(let j=0;j<S;j++){ v.fromBufferAttribute(hp, hr+j); ud.head.localToWorld(v).applyMatrix4(inv); const g=Math.hypot(v.x-tp[t0+j*3], v.y-tp[t0+j*3+1], v.z-tp[t0+j*3+2]); if(g>skin.seamGap) skin.seamGap=g; }
+          if(ud.head.geometry===F.hgeo) for(let j=0;j<S;j++){ v.fromBufferAttribute(hp, hr+j); ud.head.localToWorld(v).applyMatrix4(inv); const g=Math.hypot(v.x-tp[t0+j*3], v.y-tp[t0+j*3+1], v.z-tp[t0+j*3+2]); if(g>skin.seamGap) skin.seamGap=g; }
           let len=0, rest=0, px=0, py=0, pz=0;
           for(let i=F.i0;i<F.n-1;i++){ const dx=F.cx[i+1]-F.cx[i], dy=F.cy[i+1]-F.cy[i], dz=F.cz[i+1]-F.cz[i], l=Math.hypot(dx,dy,dz)||1e-9; len+=l; rest+=F.z[i]-F.z[i+1];
             if(i>F.i0 && i<F.n-3){ const b=Math.acos(Math.max(-1,Math.min(1,(dx*px+dy*py+dz*pz)/l)))*57.2958; if(b>skin.maxBendDeg){ skin.maxBendDeg=b; skin.maxBendAt=F.z[i]; } }
@@ -80290,7 +80319,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(series){ res.speedSeries=vel.map(x=>+x.toFixed(3)); res.snapFrames=jerk.map((j,i)=>Math.abs(j)>8*jm && Math.abs(j)>(p.kind==='rot'?400:2000)?i+3:-1).filter(i=>i>=0); }   // per-frame speed, and the frames the snaps fell on
         return res; });
       const res={ racer:r.name, character:r.id, seconds:+(n*dt).toFixed(2), still, body:F?'flow':'stock', probes:out };
-      if(F) res.skin={ seamGap:+skin.seamGap.toFixed(5), lengthMin:+skin.lengthMin.toFixed(4), lengthMax:+skin.lengthMax.toFixed(4), maxBendDeg:+skin.maxBendDeg.toFixed(2), maxBendAt:+skin.maxBendAt.toFixed(2), segmentMax:+skin.segMax.toFixed(3), segmentMaxAt:+skin.segMaxAt.toFixed(2) };
+      if(F) res.skin={ seamGap:ud.head.geometry===F.hgeo ? +skin.seamGap.toFixed(5) : null, lengthMin:+skin.lengthMin.toFixed(4), lengthMax:+skin.lengthMax.toFixed(4), maxBendDeg:+skin.maxBendDeg.toFixed(2), maxBendAt:+skin.maxBendAt.toFixed(2), segmentMax:+skin.segMax.toFixed(3), segmentMaxAt:+skin.segMaxAt.toFixed(2) };
       return res;
     },
 
