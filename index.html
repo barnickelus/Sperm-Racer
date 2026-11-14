@@ -56734,6 +56734,7 @@ function disposeObject(o){
 }
 function buildTrack(idx){
   if(camera.far!==1400){ camera.far=1400; camera.updateProjectionMatrix(); }   // (Nova sees further: its star is across the map)
+  luxCourse();
   sun.target.position.set(0,0,0); sun.target.updateMatrixWorld();   // (...and aims the sun lamp at you from its star: every other course gets the lamp's aim back)
   selTrack=idx; PREVIEW.built=idx;   // (the home deck's preview knows what the scene holds: see PREVIEW)
   MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
@@ -80345,8 +80346,10 @@ function previewNow(){
  *     way off wobbles; the racer beside you does not). MIST is a layer of steam or fog lying on the ground at the
  *     player's road, thick looked along and thin looked down through, in wisps that stay put in the world and drift,
  *     and lit by whatever glows near it. A course asks for either: lux:{heat, mist, mistCol, ...} (see LUX.air).
- *   · ADAPTIVE RESOLUTION: the scene target shrinks a step when frames run long and grows back when they do not, so
- *     the pipeline pays for itself on a phone; if the device cannot hold it at the floor, LUX steps aside for good.
+ *   · PACE: when frames run long LUX first finds out whether it is the cause (it steps out for under a second and
+ *     times the game without it). If the game is as slow without it (a heavy course, a phone held to 30 frames a
+ *     second) nothing is given up. If it is the cause, the scene target shrinks a step at a time, then the air and
+ *     the smoothing go, and only then does LUX stand aside, for that course only.
  * The base picture is the same pixels as before (the target is written in the display's own encoding), so with bloom,
  * ripples and lens at zero LUX is invisible. ?lux=0 turns it off; race_fx {lux:{...}} tunes and reports it. A course
  * can ask for its own light with TRACKS[i].lux={bloom, thr}, and its own air. */
@@ -80360,6 +80363,8 @@ const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', m
   // (0..1); mistH its depth in units over the player's road; mistDen how thick it is; mistAir a plain haze on top, per unit
   // of distance; mistCol its colour; mistWisp how patchy (0 = even); mistScale the wisps' size (per unit); mistRise how
   // fast they drift and climb; mistGlow how much of the glow round a light the mist picks up.
+  // pace (see luxPace): base = a frame's time without the pipeline, measured (null until it has been); lite = the air and the smoothing given up
+  base:null, baseAt:0, pt:0, trial:null, trials:0, skip:0, lite:false, offBy:null, wall:0,
   depth:false, gy:0, air:{ heat:0, heatNear:60, heatFar:380, heatEl:0.14, mist:0, mistH:9, mistDen:0.006, mistAir:0, mistCol:0xdfe8ee, mistWisp:0.6, mistScale:0.035, mistRise:0.5, mistGlow:0.5 } };
 const LUX_KEYS=['bloom','thr','knee','vig'].concat(Object.keys(LUX.air));
 function luxInit(){
@@ -80489,15 +80494,41 @@ function luxTick(dt){
   // the mist lies on the road the player is on (not on a racer in the air), and follows a climb gently
   if(me && !me.air){ const g=me.surfY!==undefined ? me.surfY : (me.y||0); LUX.gy+=(g-LUX.gy)*(dt>0 ? Math.min(1,2*dt) : 1); }
   for(const R of LUX.rip){ R.r+=R.v*dt; R.a-=dt*1.5; } while(LUX.rip.length && LUX.rip[0].a<=0) LUX.rip.shift();
-  // adaptive resolution: a step down when frames run long for a second, a step back up after five good ones
-  if(LUX.auto && LUX.ok && dt>0 && state==='race'){ LUX.ema+=(dt*1000-LUX.ema)*0.05;
-    if(LUX.ema>21){ LUX.slow+=dt; LUX.fast=0; } else if(LUX.ema<17.5){ LUX.fast+=dt; LUX.slow=0; } else { LUX.slow=0; LUX.fast=0; }
-    if(LUX.slow>1){ LUX.slow=0; if(LUX.scale>0.61) LUX.scale=Math.max(0.6,LUX.scale-0.1); else { LUX.on=false; LUX.why='this device cannot hold it'; } }   // (at the floor and still slow: stand aside)
-    if(LUX.fast>5){ LUX.fast=0; if(LUX.scale<1) LUX.scale=Math.min(1,LUX.scale+0.05); } }
+  // pace, on the wall clock (the game's own step is capped, and a capped step cannot tell 30 frames a second from 10)
+  { const nw=performance.now(), ms=Math.min(100,nw-(LUX.wall||nw)); LUX.wall=nw;
+    if(LUX.auto && LUX.ok && LUX.on && dt>0 && ms>0 && state==='race') luxPace(ms); else if(LUX.trial) LUX.trial=null; }
 }
+/* PACE. One frame's wall time in, and what the pipeline gives up for it out. The old rule read "frames are long, so
+   shrink, and at the floor stand aside for good", which blamed the pipeline for every slow frame: a heavy course, or a
+   phone held to 30 frames a second, switched the light off five seconds into a race and left it off. Now a slow second
+   first asks whose fault it is: a TRIAL draws without the pipeline for 0.7 s and takes the frame time as the base. Slow
+   then means slower than that base by a quarter. Only a pipeline that is really the cost is cut back: the target a step
+   at a time to half; then, only if frames are still nearly half as long again as the base, the air and the smoothing
+   (lite); then, after a second trial agrees, aside for this course. */
+function luxPace(ms){
+  const s=ms/1000, tr=LUX.trial; LUX.pt+=s;
+  if(tr){ tr.t+=s; if(tr.t>0.2){ tr.n++; tr.sum+=ms; }
+    if(tr.t>=0.7){ LUX.base=tr.n ? tr.sum/tr.n : LUX.ema; LUX.baseAt=LUX.pt; LUX.trial=null; LUX.trials++; LUX.slow=0; LUX.fast=0; LUX.skip=0.3; }
+    return; }
+  if(LUX.skip>0){ LUX.skip-=s; return; }   // (the first frames back are the targets being filled again, not the pace)
+  LUX.ema+=(ms-LUX.ema)*0.05;
+  const base=LUX.base, slowAt=base!=null ? Math.max(21,base*1.25) : 21, fastAt=base!=null ? Math.max(17.5,base*1.08) : 17.5;
+  if(LUX.ema>slowAt){ LUX.slow+=s; LUX.fast=0; } else if(LUX.ema<fastAt){ LUX.fast+=s; LUX.slow=0; } else { LUX.slow=0; LUX.fast=0; }
+  if(LUX.slow>1){ LUX.slow=0;
+    const stale=LUX.pt-LUX.baseAt;   // (a base is one stretch of road: before anything more is given up on its word, it is taken again)
+    if(base==null) LUX.trial={t:0,n:0,sum:0};
+    else if(LUX.scale>0.51){ if(stale>30) LUX.trial={t:0,n:0,sum:0}; else LUX.scale=Math.max(0.5,LUX.scale-0.1); }
+    else if(LUX.ema<=Math.max(26,base*1.45)){ /* at half size and within reach of the base: the look is worth more than the last few frames */ }
+    else if(stale>6) LUX.trial={t:0,n:0,sum:0};
+    else if(!LUX.lite) LUX.lite=true;
+    else { LUX.on=false; LUX.offBy='auto'; LUX.why='this device cannot hold it on this course'; } }
+  if(LUX.fast>5){ LUX.fast=0; if(LUX.scale<1) LUX.scale=Math.min(1,LUX.scale+0.05); }
+}
+/* a new course: what was given up for the last one is asked again (the target's size, learned from the device, is kept) */
+function luxCourse(){ if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
 /* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
 function luxRender(rect){
-  if(!LUX.on || !luxInit()){ renderer.render(scene,camera); return; }
+  if(!LUX.on || LUX.trial || !luxInit()){ renderer.render(scene,camera); return; }   // (off, or timing the game without it)
   const R=renderer; R.getDrawingBufferSize(_luxS); const W=rect?Math.round(rect.w*R.getPixelRatio()):_luxS.x, H=rect?Math.round(rect.h*R.getPixelRatio()):_luxS.y;
   luxSize(W,H);
   const tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9, knee:LUX.hdr?LUX.knee:0.12, vig:LUX.vig}, LUX.air, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.force);
@@ -80516,9 +80547,9 @@ function luxRender(rect){
   // the picture
   q.material=LUX.mOut; const o=LUX.mOut.uniforms; o.tScene.value=LUX.scene.texture; o.tBloom.value=LUX.mips[0].texture; o.uBloom.value=lx.bloom>0.001?lx.bloom:0; const calm=!!SIM.calm; o.uVig.value=calm?0:lx.vig; o.uCA.value=calm?0:LUX.ca; o.uFlash.value=calm?0:LUX.flash;
   // (the dither's grain holds still while a tool steps the game: its sheets and goldens must be the same pixels every time)
-  o.uAspect.value=W/H; o.uT.value=SIM.manual ? 0 : (LUX.t*60)%1000; o.uFxaa.value=LUX.msaa?0:1; o.uPx.value.set(1/LUX.w,1/LUX.h);
+  o.uAspect.value=W/H; o.uT.value=SIM.manual ? 0 : (LUX.t*60)%1000; o.uFxaa.value=LUX.msaa||LUX.lite?0:1; o.uPx.value.set(1/LUX.w,1/LUX.h);
   // the air: off for a reference sheet; a player who asked for less motion keeps the mist, standing still, and loses the wobble
-  { const still=wlRM(), heat=calm||still ? 0 : lx.heat, mist=calm ? 0 : lx.mist;
+  { const still=wlRM(), heat=calm||still||LUX.lite ? 0 : lx.heat, mist=calm||LUX.lite ? 0 : lx.mist;
     o.uHeat.value.set(heat, lx.heatNear, lx.heatFar, lx.heatEl); o.uMist.value.set(mist, Math.max(0.5,lx.mistH), lx.mistDen, lx.mistAir); o.uMist2.value.set(lx.mistWisp, lx.mistScale, lx.mistRise, lx.mistGlow);
     if(heat>0.001 || mist>0.001){ const e=camera.matrixWorld.elements, ty=Math.tan(camera.fov*Math.PI/360)/(camera.zoom||1), mc=lx.mistCol;
       o.uCamR.value.set(e[0],e[1],e[2]); o.uCamU.value.set(e[4],e[5],e[6]); o.uCamF.value.set(-e[8],-e[9],-e[10]); o.uCamP.value.set(e[12],e[13],e[14]);
@@ -85588,11 +85619,20 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
           note:'overBright: share of the picture brighter than the threshold (what blooms). glowArea: share where the glow adds more than 4% of white. Map: the picture in grey, glow in yellow, over-bright with no glow in pink.' };
       } finally { SIM.hold=wasHold; }
     },
-    'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux}={})=>{ if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
+    'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux}={})=>{ let paced; if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
       // lux: the light pipeline. {on, scale} set it; {bloom, thr, knee, vig} override the course's light until {reset:true}; {ripple:k} throws a shockwave from your racer, {flash:k} a flash
       if(lux){ if(lux.aa && lux.aa!==LUX.aa){ LUX.aa=lux.aa; if(LUX.scene){ if(LUX.scene.depthTexture) LUX.scene.depthTexture.dispose(); LUX.scene.dispose(); LUX.mips.forEach(m=>m.dispose()); } LUX.ok=null; LUX.w=LUX.h=0; luxInit(); }
         if(lux.on!==undefined) LUX.on=!!lux.on; if(lux.scale!==undefined) LUX.scale=Math.max(0.3,Math.min(1,+lux.scale)); if(lux.reset) LUX.force=null;
         for(const k of LUX_KEYS) if(lux[k]!==undefined) (LUX.force||(LUX.force={}))[k]=+lux[k];
+        if(lux.auto!==undefined) LUX.auto=!!lux.auto;
+        // pace:{on, off, seconds}: run luxPace on made-up frame times (ms with the pipeline at full size, ms without it; its cost
+        // falls with the target's size and again when lite) and say what it would give up; nothing is kept
+        if(lux.pace){ const keep={}; for(const k of ['on','scale','lite','base','baseAt','pt','trial','trials','skip','offBy','why','ema','slow','fast']) keep[k]=LUX[k];
+          Object.assign(LUX,{on:true, scale:1, trials:0, pt:0, baseAt:0}); luxCourse();
+          const on=+lux.pace.on||16.7, off=+lux.pace.off||16.7; let t=0, offAt=null; const end=(+lux.pace.seconds||40)*1000;
+          while(t<end && LUX.on){ const ms=LUX.trial ? off : off+Math.max(0,on-off)*(0.35+0.65*LUX.scale*LUX.scale)*(LUX.lite?0.7:1); luxPace(Math.min(100,ms)); t+=ms; if(!LUX.on) offAt=+(t/1000).toFixed(1); }
+          paced={ on:LUX.on, scale:+LUX.scale.toFixed(2), lite:LUX.lite, base:LUX.base==null?null:+LUX.base.toFixed(1), trials:LUX.trials, asideAt:offAt };
+          Object.assign(LUX,keep); }
         const me=racers.find(r=>r.you); if(lux.ripple && me) luxRipple(new T.Vector3(me.x,(me.y||0)+3,me.z), +lux.ripple, 1.0); if(lux.flash) luxFlash(+lux.flash); }   // (tail: hold the flow body's acting channels on your racer, see flowAct)
       if(fb!==undefined){ FLOW.on=!!fb; FLOW.all=fb==='all'; }   // (flowBody:false builds the next racers on the stock ball-and-tube body, for an A/B)
       if(slipstream!==undefined){ DRAFT_FX.force=slipstream==null?null:Math.max(0,Math.min(1,+slipstream)); if(DRAFT_FX.force!=null) draftFxEnsure(); }
@@ -85600,7 +85640,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
       return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
-        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.force), ripples:LUX.rip.length } }; },
+        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.force), ripples:LUX.rip.length } }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');

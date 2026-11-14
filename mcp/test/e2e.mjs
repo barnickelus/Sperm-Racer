@@ -480,6 +480,23 @@ await check('the air: a course gets heat and mist from the depth of the picture,
   assert.equal(image(s0).data === image(s1).data, true, 'the sheet is the same pixels whatever the air');
 });
 
+await check('LUX keeps its light on a slow frame it did not cause, and gives up only what it costs', async () => {
+  json(await call('race_setup', { course: 'Marina', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 0.5 }));
+  const pace = async (on, off) => json(await call('race_fx', { lux: { pace: { on, off, seconds: 120 } } })).lux;
+  // a phone held to 30 frames a second, the pipeline costing nothing it can see: one trial, and everything is kept
+  const cap = (await pace(33.3, 33.3)).paced; assert.deepEqual([cap.on, cap.scale, cap.lite, cap.trials], [true, 1, false, 1], JSON.stringify(cap));
+  // a slow course on which the pipeline adds a fifth: kept whole
+  const heavy = (await pace(60, 50)).paced; assert.deepEqual([heavy.on, heavy.scale, heavy.lite], [true, 1, false], JSON.stringify(heavy));
+  // a fast device: never asked
+  const fast = (await pace(16.7, 16.7)).paced; assert.deepEqual([fast.on, fast.scale, fast.trials], [true, 1, 0], JSON.stringify(fast));
+  // the pipeline really costs frames: the target shrinks, and the air stays
+  const some = (await pace(30, 16.7)).paced; assert.equal(some.on, true); assert.ok(some.scale < 1, 'the target shrank'); assert.equal(some.lite, false, 'the air is kept: ' + JSON.stringify(some));
+  // it costs far too much: aside, after asking twice
+  const lots = (await pace(70, 16.7)).paced; assert.equal(lots.on, false); assert.ok(lots.trials >= 2, 'a second trial agreed first'); assert.ok(lots.asideAt > 5, JSON.stringify(lots));
+  // and a made-up run leaves the page as it was
+  const live = await pace(70, 16.7); assert.equal(live.on, true); assert.equal(live.scale, 1); assert.equal(live.pace.lite, false);
+});
+
 await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
   json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
   json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
