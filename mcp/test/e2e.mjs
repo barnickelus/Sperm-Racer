@@ -53,8 +53,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
-    'race_realtime', 'race_record', 'race_regress', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_ab', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_light', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_review', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
