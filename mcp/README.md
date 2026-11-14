@@ -157,10 +157,30 @@ plain target smoothed in the last pass (FXAA) and capped at 2.4 million
 pixels, about a quarter of the memory of the desktop's multisampled one.
 
 `?lux=0` turns it off. A course asks for its own light with
-`TRACKS[i].lux={bloom, thr}` (Nova does). From the tools:
+`TRACKS[i].lux={bloom, thr}` (Nova does; Stacey pushes both further, for her
+white lines and her neon night). From the tools:
 `race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, ripple, flash, reset}}`
 sets it, and every `race_fx` reply reports what the GPU gave it and the light
-in force. `race_film` runs the lens on the film's clock, so a strip shows a
+in force.
+
+### The air: heat and mist
+
+The scene target keeps its depth as a texture (24 bits, proved at start-up
+like the colour), so the last pass knows how far away each pixel is and where
+in the world it lies. Two things use it, both off unless a course asks:
+
+| key | what it does |
+| --- | --- |
+| `heat` | bends the picture in climbing bands where the view runs far and near level (1 = a hot road). `heatNear`, `heatFar`: the distance over which it comes in. `heatEl`: how far above the horizon it reaches. Nothing nearer than `heatNear` moves, and a far pixel never borrows from a near one. |
+| `mist` | the most opaque a layer of steam or fog lying on the player's road can get (0..1). `mistH` its depth in units, `mistDen` its thickness, `mistAir` a plain distance haze on top, `mistCol` its colour, `mistWisp` how patchy, `mistScale` the wisps' size, `mistRise` how fast they drift and climb, `mistGlow` how much nearby glow it picks up. |
+
+Marina (steam on an indoor pool), Lily (dusk mist on the pond) and Rosalie
+(a hot afternoon on the boards) set them in `TRACKS[i].lux`. Try values with
+`race_fx {lux:{heat:1.4, mist:0.5, ...}}` and compare with `race_ab`;
+`{lux:{reset:true}}` goes back to the course's own. The reply's `lux.depth`
+says whether the GPU gave a depth texture; without one the air assumes flat
+ground at the player's road. A player who asked for reduced motion keeps the
+mist, standing still, and gets no heat. Reference sheets have neither. `race_film` runs the lens on the film's clock, so a strip shows a
 shockwave travel.
 
 ## The flow body (the avatar template)
