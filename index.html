@@ -80237,10 +80237,11 @@ function frame(now){
   // the menus are reached by many doors (home, the cup's screens, change racer...), and they have their own record
   if(state==='menu'){ if(musicTimer) stopMusic(); songFor=null; }
   if(SEL3D.vis){ last=now; SEL3D.frame(now); diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
-  const dt=(SIM.hold||SIM.manual) ? 0 : Math.min(0.033,(now-last)/1000); last=now;   // (a tool is driving: this loop draws, and adds no time of its own. What a tool captures is exactly the state its last step left, however long the call took)   // (SIM.hold: an MCP film is stepping the game and only wants this loop to draw)
+  const dtWall=Math.min(0.033,(now-last)/1000), dt=(SIM.hold||SIM.manual) ? 0 : dtWall; last=now;   // (a tool is driving: this loop draws, and adds no time of its own. What a tool captures is exactly the state its last step left, however long the call took)
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
-    hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
-    luxRender(); requestAnimationFrame(frame); return;
+    hitStopT-=dtWall;   // camera punch/confetti/shake kick in on the next real frame. (It runs out on the wall clock: on the held
+    // clock of a tool-driven race it never ended, and every capture after a whip landed was the same stale frame.)
+    if(!(SIM.hold||SIM.manual)){ luxRender(); requestAnimationFrame(frame); return; }   // (and a tool's view is never frozen: it wants the state it left)
   }
   const tsec=SIM.manual?SIM.t:now/1000;   // (manual: the clock race_drive advances — game time, not wall time)
   if(SIM.busy){ requestAnimationFrame(frame); return; }   // (race.frames is stepping the game itself: stand aside)
@@ -84606,7 +84607,10 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       // the live racer carries its race into the picture: its bank, a glance, the swing of its hair, the phase of its tail)
       if(rest){ const ty=SPERM_TYPES.find(t=>t.id===r.id); if(!ty) throw new Error('no character "'+r.id+'"');
         if(!SIM.manual){ SIM.manual=true; SIM.t=performance.now()/1000; }
-        fresh=makeCell(ty.hue, ty.id); fresh.position.copy(live.position); fresh.traverse(o=>{ o.layers.enable(1); o.frustumCulled=false; });
+        // (built on a random stream of its own, the same one every time: a seeded race leaves its stream wherever the race got to,
+        //  and a build that draws from it would differ from one sheet to the next)
+        { const keepR=Math.random; Math.random=seededRandom(0x5eed); try{ fresh=makeCell(ty.hue, ty.id); } finally { Math.random=keepR; } }
+        fresh.position.copy(live.position); fresh.traverse(o=>{ o.layers.enable(1); o.frustumCulled=false; });
         { const ud=fresh.userData; if(ud.flame) for(const f of ud.flame) f.scale.setScalar(0); if(ud.glow){ ud.glow.scale.setScalar(12); ud.glow.material.opacity=0.6; } }   // flames out and the glow at rest, as syncObjects leaves a racer standing still
         scene.add(fresh); if(liveParent) liveParent.remove(live); r.head=0;   // (out of the scene, not hidden: the frame loop shows a racer again every frame)
         R0=Object.assign({}, r, { obj:fresh, spd:0, boostT:0, air:false, hop:0, spinT:0, celebT:0, slip:0, head:0, flick:0 }); }
