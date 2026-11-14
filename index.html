@@ -75656,7 +75656,7 @@ function neoTick(o, r, now){
  *   GOLD    a Cuban link round the neck, low under the chin and high on the nape, moving with the skin's squash; a
  *           coral cornicello off its lowest link, swinging on the tuft's springs.
  *   PUMP    his right arm: a rubber hose that is not there until he needs it. It comes out fist first and pumps on the
- *           beat (the fist is at the top on each beat, as the head squashes): through a win, after a pass, through the
+ *           beat (the fist is at the top on each beat, as the head squashes; on every other beat of a fast song): through a win, after a pass, through the
  *           laugh, and one bar in four while he waits on the grid or the select stage.
  * Cost over Neo Proto: five draws (shades, chain, cornicello, toothpick, arm), all in one small shader. */
 const TONY_EXPR={
@@ -75824,7 +75824,7 @@ function tonyDress(g, K, X){
   const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0} };
   const arm=new T.Mesh(tonyArmGeo(tan), tonyPropMat({TONY_BEND:''}, AU)); arm.name='tony-arm'; arm.frustumCulled=false; arm.visible=false; rig.add(arm);
   const fist=new T.Object3D(); rig.add(fist); ud.motionProbes.push(['fist',fist,'pos'],['shades',shades,'pos']);
-  S.tony={ shades, pend, pick, arm, AU, fist, sh:0, shV:0, shHold:-9, pm:0, pmV:0 };
+  S.tony={ shades, pend, pick, arm, AU, fist, sh:0, shV:0, sh0:0, sh0V:0, shHold:-9, pm:0, pmV:0, pm0:0, pm0V:0, pg:1 };
   tonyTick(g, DB_NOR, 0, 0, S, DB_PORTRAIT, { portrait:true, accent:0 });   // (posed before its first frame)
 }
 const _tonyA=new T.Vector3(), _tonyB=new T.Vector3();
@@ -75835,8 +75835,9 @@ function tonyTick(o, R, now, dt, S, C, q){
   if((R.boostT||0)>0 && !q.portrait) Tn.shHold=now+0.45;
   const shT=S.cur==='shades' ? 1 : q.spin||q.portrait ? 0 : (now<Tn.shHold || (S.dance>0.5 && S.cur==='win' && (bar>>1)%2===0) || (q.idle && bar%8>=6)) ? 1 : 0;
   const pump=S.cur==='pump' ? 1 : !q.portrait && (((q.fin||q.celeb) && S.cur!=='lose') || S.cur==='pass' || S.cur==='fire' || (q.idle && bar%4===3)) ? 1 : 0;
-  if(q.portrait){ Tn.sh=shT; Tn.shV=0; Tn.pm=pump; Tn.pmV=0; }   // (a reference sheet's fresh build: the pose itself, no spring to wait for)
-  else { dbSpring(Tn,'sh','shV',shT,15,0.55,dt); dbSpring(Tn,'pm','pmV',pump,9,0.85,dt); }
+  if(q.portrait){ Tn.sh=Tn.sh0=shT; Tn.shV=Tn.sh0V=0; Tn.pm=Tn.pm0=pump; Tn.pmV=Tn.pm0V=0; }   // (a reference sheet's fresh build: the pose itself, no spring to wait for)
+  else { dbSpring(Tn,'sh0','sh0V',shT,24,1,dt); dbSpring(Tn,'sh','shV',Tn.sh0,15,0.55,dt);     // (two springs in a row: each switch starts without a corner; the second lands the shades with a bounce)
+    dbSpring(Tn,'pm0','pm0V',pump,16,1,dt); dbSpring(Tn,'pm','pmV',Tn.pm0,9,0.85,dt); }
   tonyShadesPose(Tn.shades, Tn.sh);
   { const f=1-0.3*ldClamp(Tn.sh,0,1), ea=S.FU.uEA.value; for(let i=0;i<2;i++){ ea[i*4+2]*=f; ea[i*4+3]*=f; } }   // (the eyes draw in behind the lenses)
   // ---- the toothpick: on the high corner of the mouth, wherever the mouth takes it; it rolls with the bob
@@ -75846,7 +75847,9 @@ function tonyTick(o, R, now, dt, S, C, q){
   Tn.pend.rotation.set(-0.5*S.tp, 0, 2.2*S.ty+0.1*Math.cos(Math.PI*B));
   // ---- the pump: the arm comes out fist first, and the fist is at the top on every beat
   const pm=ldClamp(Tn.pm,0,1), A=TONY_ARM, U=Tn.AU; Tn.arm.visible=pm>0.02;
-  const h=q.portrait ? 1 : Math.pow(0.5+0.5*Math.cos(2*Math.PI*C.phase),1.4)*(0.82+0.18*(q.accent||0)), L=(a,b,i)=>A.a0[i]+(a[i]+(b[i]-a[i])*h-A.a0[i])*pm;
+  if(pm<0.03) Tn.pg=C.rate>2.4 ? 0.5 : 1;   // (a fast song is pumped at half time, on beats 1 and 3; the gear is only picked while the arm is away)
+  const pp=2*Math.PI*(B+(C.k||0))*Tn.pg, hw=0.5+0.5*Math.cos(pp-0.44*Math.sin(pp));   // (up a little faster than down)
+  const h=q.portrait ? 1 : hw*hw*(3-2*hw)*(0.82+0.18*(q.accent||0)), L=(a,b,i)=>A.a0[i]+(a[i]+(b[i]-a[i])*h-A.a0[i])*pm;
   U.uA1.value.set(L(A.dn1,A.up1,0), L(A.dn1,A.up1,1), L(A.dn1,A.up1,2)); U.uA2.value.set(L(A.dn2,A.up2,0), L(A.dn2,A.up2,1), L(A.dn2,A.up2,2)); U.uAr.value=A.r*Math.min(1,pm*1.6);
   _tonyA.copy(U.uA1.value).sub(U.uA0.value); _tonyB.copy(U.uA2.value).sub(U.uA1.value); _tonyA.cross(_tonyB);
   if(_tonyA.lengthSq()>1e-6) U.uAn.value.copy(_tonyA.normalize());
