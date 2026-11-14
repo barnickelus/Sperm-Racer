@@ -75658,7 +75658,11 @@ function neoTick(o, r, now){
  *   PUMP    his right arm: a rubber hose that is not there until he needs it. It comes out fist first and pumps on the
  *           beat (the fist is at the top on each beat, as the head squashes; on every other beat of a fast song): through a win, after a pass, through the
  *           laugh, and one bar in four while he waits on the grid or the select stage.
- * Cost over Neo Proto: five draws (shades, chain, cornicello, toothpick, arm), all in one small shader. */
+ *   LIGHT   the engine's light pipeline (LUX blooms whatever is brighter than white): the links glint past white on every
+ *           beat, the lenses' streaks flash as the shades land, and a four-point star goes *ting* on the veneers when
+ *           a pass's grin or a win's arrives. Without LUX these clip to plain white and he is otherwise the same.
+ * Cost over Neo Proto: five draws (shades, chain, cornicello, toothpick, arm), all in one small shader, and the star
+ * for the half second it is lit. */
 const TONY_EXPR={
   rest:   {lidL:0.66,lidR:0.84,slant:0.06,lidD:-1.05,lidDC:0.25,brL:0.1,brR:0.42,brT:-0.04,brA:0.6,mW:1.28,mO:0.2,mC:0.74,mT:1,mS:0.6,chk:0.55,ht:0.05},
   pass:   {lidL:-1.0,lidR:0.92,slant:0.05,lidD:-0.95,lidDC:0.5,brL:-0.06,brR:0.6,brT:-0.1,brA:0.72,mW:1.42,mO:0.42,mC:0.95,mT:1,mS:0.7,chk:1,ht:0.14},
@@ -75742,7 +75746,7 @@ void main(){
 }`;
 const tonyV3=hex=>{ const c=dbLin(hex); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
 const TONY_PROP_FS=DB_GLSL_L+`
-uniform vec3 uInk;
+uniform vec3 uInk; uniform float uGl;
 varying vec3 vNv, vV, vC; varying vec2 vU;
 #include <fog_pars_fragment>
 void main(){
@@ -75753,14 +75757,21 @@ void main(){
   { vec2 q=vec2((abs(vU.x)-0.45)*4.0, (vU.y-0.5)*1.9*(1.0-0.5*pow(abs(vU.x),2.2))), e=abs(q)-vec2(1.5,0.66)+0.34;
     float dl=length(max(e,0.0))+min(max(e.x,e.y),0.0)-0.34, lw=fwidth(dl)*0.75+1e-4, t=vU.y;
     vec3 g=mix(${tonyV3('#3a1d34')},${tonyV3('#ff9a3a')},smoothstep(0.1,0.42,t)); g=mix(g,${tonyV3('#d2356f')},smoothstep(0.42,0.66,t)); g=mix(g,${tonyV3('#221a48')},smoothstep(0.66,0.95,t));
-    float s=abs((abs(vU.x)-0.36)*1.8+(vU.y-0.56)), fs=fwidth(s)*0.75+1e-4; g=mix(g,vec3(1.0),0.92*(1.0-smoothstep(0.075-fs,0.075+fs,s)));
+    float s=abs((abs(vU.x)-0.36)*1.8+(vU.y-0.56)), fs=fwidth(s)*0.75+1e-4; g=mix(g,vec3(1.0+uGl),0.92*(1.0-smoothstep(0.075-fs,0.075+fs,s)));   // (the streak flashes past white as the shades land)
     if(gl_FrontFacing) c=mix(c,g,1.0-smoothstep(-lw,lw,dl)); c=mix(c,uInk,1.0-smoothstep(0.06-lw,0.06+lw,abs(dl))); }
+#endif
+#ifdef TONY_GLINT
+  { float hs=dot(n,normalize(DB_L+normalize(vV))), hw=fwidth(hs)*0.7+1e-4; c+=vC*uGl*smoothstep(0.95-hw,0.95+hw,hs); }   // a hard highlight on every link, past white
 #endif
   gl_FragColor=vec4(mix(uInk,c,smoothstep(0.3-rf,0.3+rf,rim)),1.0);
   #include <fog_fragment>
   gl_FragColor=linearToOutputTexel(gl_FragColor);
 }`;
-function tonyPropMat(defs, U){ return dbShader(TONY_PROP_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)} }, U), { vertexColors:true, defines:defs||{} }); }
+function tonyPropMat(defs, U){ return dbShader(TONY_PROP_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, U), { vertexColors:true, defines:defs||{} }); }
+// the *ting*: a four-point star, added to the picture brighter than white (so LUX makes it a point of light)
+function tonyTingMat(){ return new T.ShaderMaterial({ uniforms:{ uK:{value:0} }, transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
+  vertexShader:'varying vec2 vQ; void main(){ vQ=position.xy*2.0; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+  fragmentShader:'uniform float uK; varying vec2 vQ; void main(){ float d=pow(abs(vQ.x),0.6)+pow(abs(vQ.y),0.6), a=(1.0-smoothstep(0.5,1.0,d))*uK; if(a<0.004) discard; gl_FragColor=vec4(vec3(1.0,0.96,0.82)*a*2.6,1.0); }' }); }
 const _tonyGeo={};
 const tonyKeep=(k, make)=>{ if(!_tonyGeo[k]){ const g=make(); if(!g.boundingSphere){ g.computeBoundingSphere(); g.boundingSphere.radius+=1; } g.dispose=()=>{}; _tonyGeo[k]=g; } return _tonyGeo[k]; };
 // the shades, as worn: a visor a little off the head across the eyes, wrapped to the temples (u across, v up)
@@ -75818,13 +75829,14 @@ function tonyDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, FK=ud.flow ? ud.flow.K : { neck:FLOW.NECK, k:FLOW.K }, tan=dbLin('#e26d26');
   if(ud.glow) ud.glow.material.color.multiplyScalar(0.8);   // (a softer halo: the tan, the white and the gold carry him)
   const shades=new T.Mesh(tonyShadesGeo(), tonyPropMat({TONY_LENS:''})); shades.material.side=T.DoubleSide; shades.name='tony-shades'; rig.add(shades); tonyShadesPose(shades, 0);
-  const chain=new T.Mesh(tonyChainGeo(FK), tonyPropMat({TONY_SQ:''}, { uNeoSq:X.UH.uNeoSq })); chain.name='tony-chain'; g.add(chain);
+  const chain=new T.Mesh(tonyChainGeo(FK), tonyPropMat({TONY_SQ:'', TONY_GLINT:''}, { uNeoSq:X.UH.uNeoSq })); chain.name='tony-chain'; g.add(chain);
   const pend=new T.Group(); pend.position.copy(tonyChainLow(FK)); pend.add(new T.Mesh(tonyHornGeo(), tonyPropMat())); pend.name='tony-horn'; rig.add(pend);
   const pick=new T.Group(); pick.add(new T.Mesh(tonyPickGeo(), tonyPropMat())); pick.name='tony-pick'; rig.add(pick);
   const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0} };
   const arm=new T.Mesh(tonyArmGeo(tan), tonyPropMat({TONY_BEND:''}, AU)); arm.name='tony-arm'; arm.frustumCulled=false; arm.visible=false; rig.add(arm);
+  const ting=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); ting.name='tony-ting'; ting.visible=false; ting.renderOrder=2; rig.add(ting);
   const fist=new T.Object3D(); rig.add(fist); ud.motionProbes.push(['fist',fist,'pos'],['shades',shades,'pos']);
-  S.tony={ shades, pend, pick, arm, AU, fist, sh:0, shV:0, sh0:0, sh0V:0, shHold:-9, pm:0, pmV:0, pm0:0, pm0V:0, pg:1 };
+  S.tony={ shades, pend, pick, arm, AU, fist, chain, ting, tingS:-9, landT:1e9, pSh:0, pCur:'rest', sh:0, shV:0, sh0:0, sh0V:0, shHold:-9, pm:0, pmV:0, pm0:0, pm0V:0, pg:1 };
   tonyTick(g, DB_NOR, 0, 0, S, DB_PORTRAIT, { portrait:true, accent:0 });   // (posed before its first frame)
 }
 const _tonyA=new T.Vector3(), _tonyB=new T.Vector3();
@@ -75839,6 +75851,14 @@ function tonyTick(o, R, now, dt, S, C, q){
   else { dbSpring(Tn,'sh0','sh0V',shT,24,1,dt); dbSpring(Tn,'sh','shV',Tn.sh0,15,0.55,dt);     // (two springs in a row: each switch starts without a corner; the second lands the shades with a bounce)
     dbSpring(Tn,'pm0','pm0V',pump,16,1,dt); dbSpring(Tn,'pm','pmV',Tn.pm0,9,0.85,dt); }
   tonyShadesPose(Tn.shades, Tn.sh);
+  // ---- the light (LUX blooms what is brighter than white): the links glint on every beat, the lenses flash as the shades land,
+  //      and the veneers go *ting* as a pass's grin or a win's arrives. None of it in a reference sheet
+  if(shT && !Tn.pSh) Tn.landT=now+0.2; Tn.pSh=shT;
+  if(S.cur!==Tn.pCur){ if((S.cur==='pass'||S.cur==='win') && !q.portrait) Tn.tingS=now+0.12; Tn.pCur=S.cur; }
+  Tn.chain.material.uniforms.uGl.value=q.portrait ? 0 : 0.7+2.3*Math.exp(-5*C.phase);
+  Tn.shades.material.uniforms.uGl.value=q.portrait || now<Tn.landT ? 0 : 3*Math.exp(-6*(now-Tn.landT));
+  { const t=(now-Tn.tingS)/0.5, on=!q.portrait && t>0 && t<1, e=on?Math.pow(Math.sin(Math.PI*t),0.8):0, W=F[I.mW]; Tn.ting.visible=on;
+    if(on){ const x=0.45*W*k, y=HEAD_CY+(DB_MOUTH.y+F[I.mC]*0.3+F[I.mS]*0.15+0.1)*k; Tn.ting.position.set(x, y, headSurfZ(x,y)+0.4); Tn.ting.scale.setScalar(2.6*e); Tn.ting.rotation.z=1.2*t; Tn.ting.material.uniforms.uK.value=e; } }
   { const f=1-0.3*ldClamp(Tn.sh,0,1), ea=S.FU.uEA.value; for(let i=0;i<2;i++){ ea[i*4+2]*=f; ea[i*4+3]*=f; } }   // (the eyes draw in behind the lenses)
   // ---- the toothpick: on the high corner of the mouth, wherever the mouth takes it; it rolls with the bob
   { const W=F[I.mW]*(1-0.25*ldClamp(F[I.mR],0,1)), x=(W-0.04)*k, y=HEAD_CY+(DB_MOUTH.y+F[I.mC]*0.5+F[I.mS]*0.34)*k;
