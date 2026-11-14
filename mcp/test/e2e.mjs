@@ -238,9 +238,12 @@ await check('scene_profile breaks the cost down per racer and over the whole ros
 
 await check('race_palette measures how far apart a racer\'s parts are on screen (Rusty: hat and hair)', async () => {
   // a fresh race, so this is Ophelia's afternoon: later laps run into golden hour and dusk, whose warm light pulls colours together
-  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard', seed: 5 })); json(await call('race_start')); json(await call('race_drive', { seconds: 3 }));   // (seeded: who else is on the grid decides what stands between him and the camera)
-  // from the front quarter: from behind, his own smoke trail hides most of him (race_palette counts only what is seen)
-  const p = json(await call('race_palette', { cam: { azimuth: 35, elevation: 15, distance: 22, height: 3.5 } }));
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard', seed: 5 })); json(await call('race_start')); json(await call('race_drive', { seconds: 3 }));
+  // alone, in the course's own light: race_palette counts only what is seen, and three seconds in a rival is as likely as not to be
+  // standing between him and the camera (which one is the race's business, and changes whenever the race does)
+  json(await call('race_studio', { lighting: 'course' }));
+  let p; try { p = json(await call('race_palette', { cam: { azimuth: 35, elevation: 15, distance: 22, height: 3.5 } })); }
+  finally { json(await call('race_studio', { on: false })); }
   assert.equal(p.racer, 'Rusty Malone');
   const parts = Object.fromEntries(p.parts.map(x => [x.part, x]));
   assert.ok(parts.hat && parts.hair, 'hat and hair both on screen: ' + p.parts.map(x => x.part).join(', '));
