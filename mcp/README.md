@@ -157,7 +157,7 @@ plain target smoothed in the last pass (FXAA) and capped at 2.4 million
 pixels, about a quarter of the memory of the desktop's multisampled one.
 
 `?lux=0` turns it off. A course asks for its own light with
-`TRACKS[i].lux={bloom, thr}` (Nova does). From the tools:
+`TRACKS[i].lux={bloom, thr}` (Nova does; Stacey pushes both further, for her white lines and her neon night). From the tools:
 `race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, ripple, flash, reset}}`
 sets it, and every `race_fx` reply reports what the GPU gave it and the light
 in force. `race_film` runs the lens on the film's clock, so a strip shows a
