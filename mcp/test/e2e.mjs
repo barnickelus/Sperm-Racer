@@ -449,10 +449,35 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   const f = json(await call('race_fx', { lux: { aa: 'fxaa', ripple: 1 } })).lux;
   assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
   assert.ok(image(await shot()));
+  assert.equal(json(await call('race_fx', {})).lux.smoothing, true, 'on the plain target the last pass smooths the edges (FXAA is on, not only chosen)');
   const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
   const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 1.0);
   const plain = await shot(); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
   assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
+});
+
+await check('the air: a course gets heat and mist from the depth of the picture, a tool can tune them, and a reference sheet has none', async () => {
+  json(await call('race_setup', { course: 'Rosalie', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.1 })); json(await call('race_drive', { seconds: 1 }));
+  const r = json(await call('race_fx', { lux: { reset: true } })).lux;
+  assert.equal(typeof r.depth, 'boolean', 'the pipeline says whether it reads depth'); assert.ok(r.light.heat > 1, 'Rosalie is hot: ' + r.light.heat); assert.ok(r.light.mist > 0);
+  // heat alone, against none: the far picture moves, the near road and the racer do not (the change is a band, not the frame)
+  const none = { lux: { reset: true, heat: 0, mist: 0 } };
+  const h = json(await call('race_ab', { a: none, b: { lux: { reset: true, mist: 0 } }, keep: 'a' }));
+  assert.ok(h.changed > 0.004, `heat bends some of the picture (${h.changed})`); assert.ok(h.changed < 0.6, `and not all of it (${h.changed})`);
+  // mist alone: it lays a colour over the distance
+  const m = json(await call('race_ab', { a: none, b: { lux: { reset: true, heat: 0, mist: 0.9, mistDen: 0.01 } }, keep: 'a' }));
+  assert.ok(m.changed > 0.1, `mist covers the distance (${m.changed})`);
+  json(await call('race_fx', { lux: { reset: true } }));
+  json(await call('race_setup', { course: 'Marina', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+  const p = json(await call('race_fx', {})).lux.light; assert.ok(p.mist > 0.3 && p.mistH > 0, 'Marina steams: ' + JSON.stringify(p));
+  // a reference sheet is the racer, not the weather: the same sheet with the air forced thick
+  await call('race_sheet', { rest: true, cell: 200 });   // (the first sheet after a race differs from the rest by a few pixels of its own; the comparison is between the second and the third)
+  const s0 = await call('race_sheet', { rest: true, cell: 200 });
+  json(await call('race_fx', { lux: { mist: 1, mistDen: 0.05, heat: 3 } }));
+  const s1 = await call('race_sheet', { rest: true, cell: 200 });
+  json(await call('race_fx', { lux: { reset: true } }));
+  assert.equal(image(s0).data === image(s1).data, true, 'the sheet is the same pixels whatever the air');
 });
 
 await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
