@@ -87,6 +87,66 @@ autopilot, then hold only the gas for 20 seconds. Where does each run lose
 time?"* or *"Which racer's neck snaps the most? Measure the roster with
 race_motion."*
 
+## The bench: one page kept open, any tool from a shell
+
+`mcp/bench.mjs` is a small daemon that owns one MCP client and one headless
+game page, and a command that talks to it. It is for work at a terminal (or an
+agent shelling out), where every `node` run would otherwise launch a browser,
+load the game and throw it away.
+
+```
+node mcp/bench.mjs call race_setup '{"course":"Nova","character":"proto","seed":3}'
+node mcp/bench.mjs call race_start
+node mcp/bench.mjs call race_film '{"seconds":1,"frames":6}' whip    # -> [image saved: .../003-whip.jpg]
+node mcp/bench.mjs json race_motion '{"seconds":4}'                  # the reply's JSON only
+node mcp/bench.mjs reload                                            # index.html changed: a fresh page
+node mcp/bench.mjs stop
+```
+
+`call` starts the daemon if it is not running. Images in a reply are written
+to files (`BENCH_SHOTS`, default `mcp/.bench/shots`) and the reply carries
+their paths. `BENCH_PORT` runs two benches side by side. From a script,
+`import { bench } from './bench.mjs'` gives `t.call(tool, args, tag)` and
+`t.json(tool, args)`.
+
+To check one area in a minute instead of the whole suite:
+`ONLY=lux,flow node mcp/test/e2e.mjs` runs only the checks whose names contain
+one of those words (plus the two that bring the page up).
+
+## LUX: the light pipeline
+
+The game used to draw straight from the scene to the screen: anything brighter
+than white clipped, every glow was a painted sprite, and nothing could happen
+to the picture as a whole. `LUX` (index.html) draws the scene into an
+off-screen target that keeps what is brighter than white, then makes the
+picture from it:
+
+- **Bloom from real light.** Over-bright pixels (a lit highlight, stacked
+  additive light, a colour pushed past 1) spill into the picture round them: a
+  five-level pyramid on a soft knee. What fits under white is not touched, so
+  every course keeps its palette and only gains its light.
+- **Shockwaves.** `luxRipple(worldPoint, strength)` sends a ring through the
+  picture itself. The whip's crack, a boost lighting and a landing throw one.
+- **The lens.** Colour fringing while you boost or spin, a soft vignette,
+  `luxFlash(k)`.
+- **Adaptive resolution.** The scene target drops a step when frames run long
+  and climbs back when they do not; if a device cannot hold it at the floor,
+  LUX turns itself off and the game draws as it always did.
+
+It is built to fail safe. Each candidate target (half-float or 8-bit,
+multisampled or not) is proved at start-up by drawing a known colour through
+it and reading it back; a target that reports complete but does not draw is
+skipped, and if none passes the old renderer is used. Phones and tablets use a
+plain target smoothed in the last pass (FXAA) and capped at 2.4 million
+pixels, about a quarter of the memory of the desktop's multisampled one.
+
+`?lux=0` turns it off. A course asks for its own light with
+`TRACKS[i].lux={bloom, thr}` (Nova does). From the tools:
+`race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, ripple, flash, reset}}`
+sets it, and every `race_fx` reply reports what the GPU gave it and the light
+in force. `race_film` runs the lens on the film's clock, so a strip shows a
+shockwave travel.
+
 ## The flow body (the avatar template)
 
 The stock racer is three parts that meet: a ball for a head, a tube stuck into
