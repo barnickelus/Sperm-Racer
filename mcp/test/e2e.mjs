@@ -53,8 +53,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
-    'race_realtime', 'race_record', 'race_regress', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_ab', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_light', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_review', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
@@ -448,6 +448,24 @@ await check('LUX: the light pipeline proves its target, draws on both anti-alias
   const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 1.3);
   const plain = await shot(); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
   assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
+});
+
+await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
+  // a tool is driving, so the page's own loop adds no time: two captures of the same setting are the same frame
+  const same = await call('race_ab', { a: { lux: { on: true } }, b: { lux: { on: true } } });
+  assert.ok(image(same)); assert.ok(json(same).changed < 0.002, 'the same setting twice is the same picture: ' + json(same).changed);
+  const ab = await call('race_ab', { a: { lux: { on: false } }, b: { lux: { on: true } }, labels: ['plain', 'LUX'] }); save(image(ab), 'ab-lux.jpg');
+  assert.ok(json(ab).changed > 0.01 && json(ab).where, 'the light pipeline changes the picture, and the tool says where: ' + JSON.stringify(json(ab)));
+  const li = await call('race_light'); save(image(li), 'light.jpg');
+  assert.ok(image(li)); assert.ok(json(li).overBright > 0 && json(li).glowMean > 0 && json(li).glowMean < 0.2, 'Nova\'s tube has light in it, and is not washed out: ' + JSON.stringify(json(li)));
+  const rv = await call('race_review', { character: 'proto' }), R = json(rv); save(image(rv), 'review-proto.jpg');
+  assert.ok(image(rv), 'the review carries its reference sheet');
+  const by = Object.fromEntries(R.checks.map(c => [c.check, c]));
+  for (const k of ['neck eases (flow body)', 'no gap at the join', 'the tail keeps its length', 'within the draw budget', 'no page errors']) assert.ok(by[k] && by[k].ok, `${k}: ${JSON.stringify(by[k])}`);
+  assert.equal(R.pass, R.failed.length === 0); assert.ok(by['parts read apart'] && by['not plastic'], 'palette and surfaces were looked at');
+  const bad = await callRaw('race_review', {}); assert.equal(bad.isError, true);
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {

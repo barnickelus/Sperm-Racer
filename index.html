@@ -79898,7 +79898,7 @@ function frame(now){
   // the menus are reached by many doors (home, the cup's screens, change racer...), and they have their own record
   if(state==='menu'){ if(musicTimer) stopMusic(); songFor=null; }
   if(SEL3D.vis){ last=now; SEL3D.frame(now); diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
-  const dt=SIM.hold ? 0 : Math.min(0.033,(now-last)/1000); last=now;   // (SIM.hold: an MCP film is stepping the game and only wants this loop to draw)
+  const dt=(SIM.hold||SIM.manual) ? 0 : Math.min(0.033,(now-last)/1000); last=now;   // (a tool is driving: this loop draws, and adds no time of its own. What a tool captures is exactly the state its last step left, however long the call took)   // (SIM.hold: an MCP film is stepping the game and only wants this loop to draw)
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
     hitStopT-=dt;   // camera punch/confetti/shake kick in on the next real frame
     luxRender(); requestAnimationFrame(frame); return;
@@ -84136,7 +84136,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
   const held=new Set();
   const hold=ks=>{ for(const k of held) keys.delete(k); held.clear(); for(const k of ks){ const q=String(k).toLowerCase(); keys.add(q); held.add(q); } };
 
-  connectBridge({ name:'sperm-racer', renderer, scene, camera, commands:{
+  const MCPC={}, bridgeCmd=n=>MCPC[n];   // (one command may call another: race.ab draws under two race.fx settings)
+  connectBridge({ name:'sperm-racer', renderer, scene, camera, commands:Object.assign(MCPC,{
     'race.options': ()=>({
       courses: TRACKS.map((t,i)=>({ index:i, name:t.name, laps:t.laps||LAPS, maze:!!t.maze })),
       characters: SPERM_TYPES.map(t=>({ id:t.id, name:t.name, desc:t.desc, locked:isLocked(t), hidden:!!t.hidden })),
@@ -84730,6 +84731,60 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
     },
 
     /* — FX: hold a racing effect up on your kart, for a look at it (or a film): slipstream 0..1, or null to hand it back — */
+    /* A/B: the SAME frame drawn under two settings, side by side, with what changed between them counted and mapped.
+       a, b: race_fx argument objects ({lux:{on:false}}, {tail:{happy:1}}, {slipstream:1}...). The game's clock is held
+       while both are drawn, so the only difference is the setting. It ends on `b` unless keep:'a'. */
+    'race.ab': async ({a={}, b={}, labels=['A','B'], cell=480, keep='b'}={})=>{
+      if(!racers.length) throw new Error('no racers on the course yet — race_start first');
+      const fx=x=>bridgeCmd('race.fx')(x), src=renderer.domElement, ar=src.height/src.width, W=Math.round(cell), H=Math.round(cell*ar);
+      const wasHold=SIM.hold; SIM.hold=true;
+      const grab=async set=>{ fx(set); const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d');
+        await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(res))));
+        await new Promise(res=>requestAnimationFrame(()=>{ g.drawImage(src,0,0,src.width,src.height,0,0,W,H); res(); })); return g; };
+      let ga, gb; try{ ga=await grab(a); gb=await grab(b); if(keep==='a') fx(a); } finally { SIM.hold=wasHold; }
+      const da=ga.getImageData(0,0,W,H).data, db=gb.getImageData(0,0,W,H).data, heat=document.createElement('canvas'); heat.width=W; heat.height=H; const gh=heat.getContext('2d'), hd=gh.createImageData(W,H);
+      let n=0, sum=0, x0=W, y0=H, x1=-1, y1=-1, brighter=0;
+      for(let i=0,p=0;i<W*H;i++,p+=4){ const d=Math.max(Math.abs(da[p]-db[p]),Math.abs(da[p+1]-db[p+1]),Math.abs(da[p+2]-db[p+2])); sum+=d;
+        brighter+=(db[p]+db[p+1]+db[p+2])-(da[p]+da[p+1]+da[p+2]);
+        if(d>12){ n++; const x=i%W, y=(i/W)|0; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+        const k=Math.min(1,d/90); hd.data[p]=30+225*k; hd.data[p+1]=24+120*k*k; hd.data[p+2]=40*(1-k); hd.data[p+3]=255; }
+      gh.putImageData(hd,0,0);
+      const LAB=26, out=document.createElement('canvas'); out.width=W*3; out.height=H+LAB; const g=out.getContext('2d'); g.fillStyle='#efe3c8'; g.fillRect(0,0,out.width,out.height);
+      g.drawImage(ga.canvas,0,LAB); g.drawImage(gb.canvas,W,LAB); g.drawImage(heat,W*2,LAB);
+      g.fillStyle='#2a1712'; g.font='bold 14px Helvetica, Arial, sans-serif'; g.textAlign='center'; [labels[0]||'A', labels[1]||'B', 'what changed'].forEach((t,i)=>g.fillText(t, W*i+W/2, 18));
+      const url=out.toDataURL('image/jpeg',0.9);
+      return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:out.width, height:out.height,
+        changed:+(n/(W*H)).toFixed(4), meanDelta:+(sum/(W*H)).toFixed(2), brighter:+(brighter/(3*W*H)).toFixed(2),
+        where:n ? { x:[+(x0/W).toFixed(2), +(x1/W).toFixed(2)], y:[+(y0/H).toFixed(2), +(y1/H).toFixed(2)] } : null };
+    },
+    /* The light, measured: how much of the picture is over-bright (what LUX blooms from), how much glow that puts on the
+       picture and where it is hottest, with a map of it. To tune a course's light by numbers, not by eye. */
+    'race.light': async ({cell=360}={})=>{
+      if(!LUX.on || !luxInit()) throw new Error('LUX is off ('+(LUX.why||'race_fx {lux:{on:true}}')+')');
+      const wasHold=SIM.hold; SIM.hold=true;
+      try{ await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+        const W=96, H=Math.max(8,Math.round(96*LUX.h/LUX.w)), tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9}, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.force);
+        if(!LUX.probe || LUX.probe.width!==W || LUX.probe.height!==H){ if(LUX.probe) LUX.probe.dispose(); LUX.probe=new T.WebGLRenderTarget(W,H,{format:T.RGBAFormat, type:T.UnsignedByteType, depthBuffer:false, stencilBuffer:false}); }
+        if(!LUX.mProbe) LUX.mProbe=new T.ShaderMaterial({depthTest:false, depthWrite:false, uniforms:{tScene:{value:null}, tBloom:{value:null}, uBloom:{value:0}, uThr:{value:1}},
+          vertexShader:'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }',
+          fragmentShader:`precision highp float; varying vec2 vUv; uniform sampler2D tScene, tBloom; uniform float uBloom, uThr;
+            void main(){ vec3 c=texture2D(tScene,vUv).rgb, gl=texture2D(tBloom,vUv).rgb*uBloom; gl=gl/(1.0+gl); gl*=1.0-0.85*clamp(c,0.0,1.0);
+              gl_FragColor=vec4(dot(gl,vec3(0.299,0.587,0.114)), step(uThr, max(c.r,max(c.g,c.b))), dot(min(c,vec3(1.0)),vec3(0.299,0.587,0.114)), 1.0); }`});
+        const u=LUX.mProbe.uniforms; u.tScene.value=LUX.scene.texture; u.tBloom.value=LUX.mips[0].texture; u.uBloom.value=lx.bloom; u.uThr.value=lx.thr;
+        const px=new Uint8Array(W*H*4), keepM=LUX.quad.material; LUX.quad.material=LUX.mProbe;
+        renderer.setRenderTarget(LUX.probe); renderer.render(LUX.qs,LUX.qc); renderer.readRenderTargetPixels(LUX.probe,0,0,W,H,px); renderer.setRenderTarget(null); LUX.quad.material=keepM;
+        let glow=0, over=0, lum=0, lit=0, peak=0, pi=0;
+        for(let i=0,p=0;i<W*H;i++,p+=4){ const gv=px[p]/255; glow+=gv; over+=px[p+1]>127?1:0; lum+=px[p+2]/255; if(gv>0.04) lit++; if(gv>peak){ peak=gv; pi=i; } }
+        const c=document.createElement('canvas'); c.width=W; c.height=H; const g=c.getContext('2d'), im=g.createImageData(W,H);
+        for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const p=((H-1-y)*W+x)*4, q=(y*W+x)*4, k=Math.min(1,px[p]/255*3), l=px[p+2]*0.35;   // (the target is bottom-up)
+          im.data[q]=l+(255-l)*k; im.data[q+1]=l+(190-l)*k*k; im.data[q+2]=l*(1-k); im.data[q+3]=255; if(px[p+1]>127 && k<0.2){ im.data[q]=255; im.data[q+1]=60; im.data[q+2]=200; } }
+        g.putImageData(im,0,0); const out=document.createElement('canvas'), sc=Math.max(1,Math.round(cell/W)); out.width=W*sc; out.height=H*sc; const go=out.getContext('2d'); go.imageSmoothingEnabled=false; go.drawImage(c,0,0,out.width,out.height);
+        const url=out.toDataURL('image/jpeg',0.9);
+        return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:out.width, height:out.height, course:tk.name, light:lx, target:LUX.type,
+          overBright:+(over/(W*H)).toFixed(4), glowArea:+(lit/(W*H)).toFixed(4), glowMean:+(glow/(W*H)).toFixed(4), glowPeak:+peak.toFixed(3), hottest:{ x:+((pi%W+0.5)/W).toFixed(2), y:+(1-(((pi/W)|0)+0.5)/H).toFixed(2) }, pictureLuma:+(lum/(W*H)).toFixed(3),
+          note:'overBright: share of the picture brighter than the threshold (what blooms). glowArea: share where the glow adds more than 4% of white. Map: the picture in grey, glow in yellow, over-bright with no glow in pink.' };
+      } finally { SIM.hold=wasHold; }
+    },
     'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux}={})=>{ if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
       // lux: the light pipeline. {on, scale} set it; {bloom, thr, knee, vig} override the course's light until {reset:true}; {ripple:k} throws a shockwave from your racer, {flash:k} a flash
       if(lux){ if(lux.aa && lux.aa!==LUX.aa){ LUX.aa=lux.aa; if(LUX.scene){ LUX.scene.dispose(); LUX.mips.forEach(m=>m.dispose()); } LUX.ok=null; LUX.w=LUX.h=0; luxInit(); }
@@ -84983,7 +85038,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       SIM.cam={ who:racer??null, azimuth, elevation, distance, height, fov, along };
       return { mode:'photo', racer:(racers.find(r=>racer?r.name===racer:r.you)||{}).name, azimuth, elevation, distance, height, fov, along };
     },
-  }});
+  })});
 }).catch(e=>console.error('MCP bridge failed to load:', e));
 })();
 </script>
