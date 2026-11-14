@@ -38490,6 +38490,18 @@ function novaDress(){
     const pg=new T.BufferGeometry(); pg.setAttribute('position', new T.BufferAttribute(pos,3)); pg.boundingSphere=new T.Sphere(e.p.clone(), 4000);
     const pts=new T.Points(pg, new T.PointsMaterial({color:0xffe9b0, size:3.2, sizeAttenuation:true, transparent:true, opacity:0.9, blending:T.AdditiveBlending, depthWrite:false, fog:false})); pts.frustumCulled=false; G.add(pts);
     P.motes={pts, pos, seed, i0, n:M}; }
+  // The shared edge dressing laps the kerb by half a unit here and there (race_audit: 204 pieces touching the road). On
+  // Nova every piece of it is stood clear: moved straight out from the road until it is two units off the edge (the blobs are lumpy: a little more than their nominal radius).
+  { const m4=new T.Matrix4(), pos=new T.Vector3(), q=new T.Quaternion(), sc=new T.Vector3(); let moved=0;
+    trackGroup.traverse(o=>{ if(!o.isInstancedMesh || !o.geometry || o.geometry.type!=='SphereGeometry') return; for(let a=o; a; a=a.parent) if(a===G) return;
+      const r0=o.geometry.parameters.radius||1; let ch=false;
+      for(let k=0;k<o.count;k++){ o.getMatrixAt(k,m4); m4.decompose(pos,q,sc); const rad=r0*Math.max(sc.x,sc.z);
+        let bi=0, bd=Infinity; for(let i=0;i<N;i+=3){ const d=(SAMP[i].p.x-pos.x)*(SAMP[i].p.x-pos.x)+(SAMP[i].p.z-pos.z)*(SAMP[i].p.z-pos.z); if(d<bd){ bd=d; bi=i; } }
+        for(let i=Math.max(0,bi-3);i<=Math.min(N-1,bi+3);i++){ const d=(SAMP[i].p.x-pos.x)*(SAMP[i].p.x-pos.x)+(SAMP[i].p.z-pos.z)*(SAMP[i].p.z-pos.z); if(d<bd){ bd=d; bi=i; } }
+        const sp=SAMP[bi], lat=(pos.x-sp.p.x)*sp.n.x+(pos.z-sp.p.z)*sp.n.z, gap=Math.abs(lat)-rad-HW;
+        if(gap<2.2 && Math.abs(lat)>HW*0.6 && Math.abs(pos.y-sp.p.y)<rad+6){ const d=(2.2-gap)*(lat<0?-1:1); pos.x+=sp.n.x*d; pos.z+=sp.n.z*d; m4.compose(pos,q,sc); o.setMatrixAt(k,m4); ch=true; moved++; } }
+      if(ch) o.instanceMatrix.needsUpdate=true; });
+    P.cleared=moved; }
   return P;
 }
 function novaTick(P, t){
@@ -70665,7 +70677,7 @@ const fkNrm=p=>new T.Vector3(p.x/(HEAD_RX*HEAD_RX),(p.y-HEAD_CY)/(HEAD_RY*HEAD_R
  * take the skin (the dress function may re-dress the tail). */
 function fkFace(g, K, o){
   const {head, eyeMat, eyeL, eyeR, pupilL, pupilR, mouth, tailMesh}=K, C=vkLin, M=fkM4, TX=faceKitTextures();
-  const skinM=fkSkin(o.skin);
+  const skinM=fkSkin(o.skin); skinM.name='skin';   // (named, so the eyelids count as skin with the body they are part of: race_palette reads parts by name)
   head.material=skinM;                                 // opaque: the hue-coloured nucleus no longer shows through, so it is not drawn
   for(const c of g.children) if(c.isMesh && c!==head && c.material.isMeshBasicMaterial && c.geometry.type==='SphereGeometry' && c.geometry.parameters.radius===1.5) c.visible=false;
   tailMesh.material=fkSkin(o.skin,{side:T.DoubleSide});
