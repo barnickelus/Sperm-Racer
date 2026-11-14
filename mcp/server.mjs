@@ -558,10 +558,95 @@ tool('race_framing', {
   annotations: { readOnlyHint: true },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.framing'), 'race.framing', a))));
 
+tool('race_ab', {
+  title: 'A/B: one frame under two settings',
+  description: 'Draw the SAME frame under two race_fx settings and return them side by side with a map of what changed and the numbers (share of pixels changed, mean difference, whether B is brighter, where the change is). The game clock is held, so the setting is the only difference. a, b: race_fx argument objects, e.g. a:{lux:{on:false}} b:{lux:{on:true}}, or a:{tail:{}} b:{tail:{happy:1}}. Ends on b (keep:"a" to end on a). For a switch that only applies when a racer is built (flowBody), use two races and race_regress instead.',
+  inputSchema: { page: pageArg, a: z.record(z.any()).default({}), b: z.record(z.any()).default({}), labels: z.array(z.string()).max(2).optional(), cell: z.number().int().min(160).max(960).default(480), keep: z.enum(['a', 'b']).default('b'), maxWidth: maxWidthArg },
+}, async ({ page, maxWidth, ...a }) => {
+  const p = pick(page, 'race.ab'); const s = await call(p, 'race.ab', a, 120000); const { data, mimeType, ...num } = s;
+  return ok({ type: 'image', data: await fit(p, data, maxWidth), mimeType: 'image/jpeg' }, text(num));
+});
+
+tool('race_light', {
+  title: 'Measure the light (LUX)',
+  description: 'How much of the current picture is over-bright (what the light pipeline blooms from), how much glow that adds and where it is hottest, with a map: the picture in grey, glow in yellow, over-bright with no glow in pink. Tune a course\'s light (TRACKS[i].lux, or race_fx {lux:{bloom,thr}} to try values) until glowArea and glowMean say what you want, instead of judging a screenshot by eye.',
+  inputSchema: { page: pageArg, cell: z.number().int().min(96).max(960).default(360), maxWidth: maxWidthArg },
+  annotations: { readOnlyHint: true },
+}, async ({ page, maxWidth, ...a }) => {
+  const p = pick(page, 'race.light'); const s = await call(p, 'race.light', a, 60000); const { data, mimeType, ...num } = s;
+  return ok({ type: 'image', data: await fit(p, data, maxWidth), mimeType: 'image/jpeg' }, text(num));
+});
+
+/* race_review: the whole checklist for one character or one course, in one call. It is the list of things that have
+   each been forgotten at least once: page errors, draw budget, motion, the skin, palette, surfaces; and for a course
+   what sits on the road, HUD contrast, shimmer, the light, and whether the pack can finish it. */
+tool('race_review', {
+  title: 'Review a character or a course against the checklist',
+  description: 'One call that runs the standing checklist and returns a verdict per item with the evidence. character: a seeded race on Victoria, then motion (neck jerk and snaps; on a flow body the skin: gap at the join, spine length, sharpest bend), a rest-pose reference sheet, palette (closest pair of parts), surfaces (share reading as plastic / untextured), render cost against the roster budget, page errors. course: three views down the route (screenshots), what stands on the road, HUD contrast failures, shimmer, the light (LUX glow), page errors; deep:true also races it to the finish on autopilot (time, place) and analyses 8 s of its music. Each check is {check, ok, value, want}; `pass` is all of them. Budgets are the roster\'s own (override with `budget`). Leaves the race it set up on the page.',
+  inputSchema: { page: pageArg, character: z.string().optional(), course: z.string().optional(), seed: z.number().int().default(5), deep: z.boolean().default(false),
+    budget: z.object({ draws: z.number().optional(), neckSnaps: z.number().optional(), plastic: z.number().optional(), dE: z.number().optional(), onRoad: z.number().optional(), glowMean: z.number().optional(), alias: z.number().optional() }).default({}),
+    maxWidth: maxWidthArg },
+}, async ({ page, character, course, seed, deep, budget, maxWidth }) => {
+  if (!character === !course) throw new Error('give exactly one of character or course');
+  const p = pick(page, 'race.setup'), B = { draws: 64, neckSnaps: 2, plastic: 0.5, dE: 10, onRoad: 0, glowMean: 0.12, alias: 0.2, ...budget };
+  const checks = [], add = (check, ok2, value, want) => checks.push({ check, ok: !!ok2, value, want }), images = [], details = {};
+  const soft = async (name, fn) => { try { return await fn(); } catch (e) { add(name, false, String(e.message || e).slice(0, 200), 'to run'); return null; } };
+  await call(p, 'page.logs', { clear: true }).catch(() => 0);
+  if (character) {
+    await call(p, 'race.studio', { on: false }).catch(() => 0);
+    await call(p, 'race.setup', { course: 'Victoria', character, difficulty: 'medium', seed }); await call(p, 'race.start', {}, 120000); await call(p, 'race.drive', { seconds: 2 }, 120000);
+    const m = await soft('motion', () => call(p, 'race.motion', { seconds: 4 }, 120000));
+    if (m) { const P = Object.fromEntries(m.probes.map(q => [q.probe, q])); details.motion = { body: m.body, neck: P.neck && { jerk: P.neck.jerk, snaps: P.neck.snaps }, tailTip: P.tailTip && { jerk: P.tailTip.jerk, snaps: P.tailTip.snaps }, skin: m.skin };
+      if (m.body === 'flow') { add('neck eases (flow body)', P.neck && P.neck.snaps <= B.neckSnaps, P.neck && P.neck.snaps, `<= ${B.neckSnaps} snaps`);
+        add('no gap at the join', m.skin.seamGap === null || m.skin.seamGap < 1e-3, m.skin.seamGap, '< 0.001'); add('the tail keeps its length', m.skin.lengthMin > 0.97 && m.skin.lengthMax < 1.03, [m.skin.lengthMin, m.skin.lengthMax], '0.97..1.03 of rest'); add('no kink in the spine', m.skin.maxBendDeg < 45, m.skin.maxBendDeg, '< 45 deg between rings'); } }
+    const prof = await soft('render cost', () => call(p, 'race.profile', {}, 180000)); const me = prof && prof.racers.find(r => r.character === character);
+    if (me) { details.cost = me; add('within the draw budget', me.draws <= B.draws, me.draws, `<= ${B.draws} draws`); }
+    await call(p, 'race.studio', { on: true, lighting: 'studio', background: '#d9d4c6' });
+    const sheet = await soft('reference sheet', () => call(p, 'race.sheet', { rest: true, cell: 260 }, 300000)); if (sheet) images.push({ type: 'image', data: await fit(p, sheet.data, maxWidth), mimeType: 'image/jpeg' });
+    const pal = await soft('palette', () => call(p, 'race.palette', { cam: { azimuth: 35, elevation: 12, distance: 22, height: 3.5 } }, 120000));
+    if (pal) { const c = pal.closestPairs && pal.closestPairs[0]; details.palette = { parts: pal.parts && pal.parts.length, closest: c }; add('parts read apart', !c || c.dE >= B.dE, c && { a: c.a, b: c.b, dE: c.dE }, `closest pair dE >= ${B.dE}`); }
+    const surf = await soft('surfaces', () => call(p, 'race.surface', { scope: 'racer', cam: { azimuth: 30, elevation: 8, distance: 20, height: 3.5 }, top: 6 }, 120000));
+    if (surf) { details.surface = surf.totals; add('not plastic', (surf.totals.plastic || 0) <= B.plastic, surf.totals.plastic, `<= ${B.plastic} of what is seen`); }
+    await call(p, 'race.studio', { on: false }).catch(() => 0);
+  } else {
+    await call(p, 'race.studio', { on: false }).catch(() => 0);
+    await call(p, 'race.setup', { course, character: 'proto', difficulty: 'medium', seed }); const st = await call(p, 'race.start', {}, 180000); details.course = st.course;
+    details.views = [];
+    for (const at of [0.1, 0.5, 0.85]) {
+      await call(p, 'race.warp', { to: at, you: 'back', spread: 24 }, 60000); await call(p, 'race.drive', { seconds: 0.6 }, 60000);
+      const sh = await soft(`view at ${at}`, () => shot(p, { maxWidth: Math.min(maxWidth ?? 900, 900), format: 'jpeg' })); if (sh) images.push(...sh.filter(c => c.type === 'image'));
+      const hud = await soft('HUD contrast', () => call(p, 'race.hud', {}, 60000)), bad = hud ? hud.elements.filter(e => !e.ok).map(e => ({ el: e.el, text: e.text, worst: e.worst, need: e.need })) : null;
+      const li = await call(p, 'race.light', {}, 60000).catch(() => null);
+      details.views.push({ at, hudFails: bad, light: li && { overBright: li.overBright, glowArea: li.glowArea, glowMean: li.glowMean } });
+      if (bad) add(`HUD readable at ${at}`, bad.length === 0, bad.length ? bad : 0, 'no element under its contrast need');
+      if (li) add(`light not washed out at ${at}`, li.glowMean <= B.glowMean, li.glowMean, `glow mean <= ${B.glowMean}`);
+    }
+    // (edge dressing that laps the kerb by a hand's width is the look; a piece well into the lane is an obstacle nobody placed)
+    const au = await soft('road audit', () => call(p, 'race.audit', { top: 600 }, 180000));
+    if (au) { const deep2 = (au.onRoad || []).filter(o => (o.intoRoad || 0) > 2.5);
+      details.onRoad = { touchingTheEdge: au.onRoadCount, wellIntoTheLane: deep2.length, worst: deep2.sort((x, y) => y.intoRoad - x.intoRoad).slice(0, 5) };
+      add('nothing stands in the lane', deep2.length <= B.onRoad, deep2.length, `<= ${B.onRoad} pieces more than 2.5 into the road`); }
+    const al = await soft('shimmer', () => call(p, 'race.alias', { factor: 2, top: 4 }, 180000));
+    if (al) { details.alias = { mean: al.meanAlias, hotShare: al.hotShare }; add('no shimmer', (al.hotShare || 0) <= B.alias, al.hotShare, `hot share <= ${B.alias}`); }
+    if (deep) {
+      await call(p, 'race.setup', { course, character: 'proto', difficulty: 'medium', seed }); await call(p, 'race.start', {}, 180000);
+      const fin = await soft('race to the finish', () => call(p, 'race.drive', { untilFinish: true, seconds: 400 }, 600000));
+      if (fin) { details.finish = { ended: fin.ended, raceTime: fin.raceTime, place: fin.you && fin.you.place }; add('the race can be finished', fin.ended === 'finished', fin.ended, 'finished'); }
+      const mu = await soft('music', () => call(p, 'race.audio', { seconds: 8 }, 120000));
+      if (mu && mu.analysis) { const A2 = mu.analysis; details.music = { style: mu.style, loudnessDbfs: A2.loudnessDbfs, clipped: A2.clippedSamples, bpm: A2.beat && A2.beat.bpm, gaps: A2.gaps }; add('music plays and does not clip', A2.loudnessDbfs > -50 && !A2.clippedSamples, { loudnessDbfs: A2.loudnessDbfs, clipped: A2.clippedSamples }, 'audible, 0 clipped'); }
+    }
+  }
+  const logs = await call(p, 'page.logs', { level: 'error' }).catch(() => ({ entries: [] })), errs = (logs.entries || []).map(e => String(e.text).slice(0, 300));
+  add('no page errors', errs.length === 0, errs.length ? errs.slice(0, 3) : 0, '0');
+  const failed = checks.filter(c => !c.ok);
+  return ok(text({ subject: character ? { character } : { course }, seed, pass: failed.length === 0, failed: failed.map(c => c.check), checks, details }), ...images);
+});
+
 tool('race_fx', {
   title: 'Hold an effect up',
   description: 'Hold a racing effect up on your kart so it can be looked at or filmed: slipstream (0..1, the wind lines of a rival\'s tow). null hands it back to the race.',
   inputSchema: { page: pageArg, slipstream: z.number().min(0).max(1).nullable().optional(), edenLive: z.boolean().optional().describe('Eve: the garden\'s living light (the racers\' wake and the egg\'s call) on or off, for an A/B look'),
+    lux: z.record(z.any()).optional().describe('the light pipeline (LUX): {on:false} draws straight to the screen as before, {scale:0.7} sets the scene target\'s resolution, {bloom, thr, knee, vig} override the course\'s light ({reset:true} hands it back), {ripple:1} throws a shockwave from your racer, {flash:0.3} a flash. The reply\'s `lux` says what the GPU gave it (half-float or 8-bit, MSAA) and the light in force'),
     tail: z.record(z.number()).nullable().optional().describe('hold the flow body tail\'s acting on YOUR racer, to look at or film: any of stiff (speed burst), happy, angry, fear, limp, brake, air, each 0..1, e.g. {happy:1}; {} or null lets the race drive it again'),
     flowBody: z.union([z.boolean(), z.literal('all')]).optional().describe('the flow body (one skin on one spine) on or off for the racers built from the next race_start on: false builds them on the stock ball-and-tube body, for an A/B; "all" builds EVERY racer on it, to audit who is ready to move over') },
 }, async ({ page, ...a }) => ok(text(await call(pick(page, 'race.fx'), 'race.fx', a))));

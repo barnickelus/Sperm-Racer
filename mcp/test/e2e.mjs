@@ -39,7 +39,12 @@ const image = (r) => r.content.find(c => c.type === 'image');
 const save = (img, name) => { if (SHOTS && img) fs.writeFileSync(path.join(SHOTS, name), Buffer.from(img.data, 'base64')); };
 
 const results = [];
+// ONLY=lux,flow node test/e2e.mjs runs just the checks whose names contain one of those words (plus the two that bring
+// the page up), so a change is checked in a minute, not the whole suite. A check that leans on the one before it
+// (race_regress expects the Fluid copy left on the grid) wants that one named too: ONLY=fluid,regress
+const ONLY = (process.env.ONLY || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 async function check(name, fn) {
+  if (ONLY.length && !/lists every tool|scene_open launches/.test(name) && !ONLY.some(k => name.toLowerCase().includes(k))) return;
   try { await fn(); results.push(true); console.log('  ok  ', name); }
   catch (e) { results.push(false); console.log('  FAIL', name, '\n       ', String(e.stack || e).split('\n').slice(0, 5).join('\n        ')); }
 }
@@ -48,8 +53,8 @@ let port;
 
 await check('lists every tool', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
-    'race_realtime', 'race_record', 'race_regress', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
+  assert.deepEqual(tools.map(t => t.name).sort(), ['page_logs', 'race_ab', 'race_alias', 'race_audio', 'race_audit', 'race_camera', 'race_drive', 'race_features', 'race_film', 'race_framing', 'race_fx', 'race_hud', 'race_light', 'race_motion', 'race_options', 'race_palette', 'race_perf', 'race_pose',
+    'race_realtime', 'race_record', 'race_regress', 'race_review', 'race_season', 'race_select', 'race_setup', 'race_sheet', 'race_soak', 'race_start', 'race_state', 'race_studio', 'race_surface', 'race_warp', 'scene_close', 'scene_graph', 'scene_open', 'scene_page',
     'scene_pages', 'scene_profile', 'scene_screenshot', 'scene_stats'].sort());
 });
 
@@ -172,7 +177,7 @@ await check('race_select shows Tex on the select stage', async () => {
 });
 
 await check('Rusty Malone races, and his face is driven by the race (and reported)', async () => {
-  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard' }));
+  json(await call('race_setup', { course: 'Ophelia', character: 'outlaw', difficulty: 'hard', seed: 5 }));   // (seeded: an unseeded race can be rough enough that he spends it angry and injured)
   const g = json(await call('race_start'));
   assert.equal(g.grid.find(x => x.you).character, 'outlaw');
   assert.equal(g.grid.find(x => x.you).expression, 'smirk', 'resting face on the grid');
@@ -424,6 +429,43 @@ await check('blind spots: a seeded race repeats; surfaces, aliasing, shader coun
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const se = json(await call('race_season', { characters: ['kasi'], courses: ['Ophelia'], maxSeconds: 12 }));
   assert.equal(se.races.length, 1); assert.ok(se.hotspots.Ophelia, 'hotspots by course');
+});
+
+await check('LUX: the light pipeline proves its target, draws on both anti-aliasing paths, throws a shockwave, and steps aside when told', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
+  const a = json(await call('race_fx', {})).lux;
+  assert.equal(a.ok, true, 'the pipeline came up: ' + JSON.stringify(a)); assert.equal(a.on, true);
+  assert.ok(['half-float', '8-bit'].includes(a.target)); assert.ok(a.size[0] > 100 && a.size[1] > 50, 'the scene target has a size');
+  assert.equal(a.light.bloom, 1.3, 'Nova asks for its own light');
+  // (Nova's tube is the heaviest view in the game and this is a software GPU: a frame can take longer than one screenshot waits)
+  const shot = async () => { for (let k = 0; ; k++) { try { return await call('scene_screenshot'); } catch (e) { if (k >= 3) throw e; } } };
+  const on = await shot(); save(image(on), 'lux-on.jpg'); assert.ok(image(on));
+  const f = json(await call('race_fx', { lux: { aa: 'fxaa', ripple: 1 } })).lux;
+  assert.equal(f.ok, true); assert.equal(f.aa, 'fxaa'); assert.equal(f.msaa, 0); assert.ok(f.ripples >= 1, 'a shockwave is in the picture');
+  assert.ok(image(await shot()));
+  const tuned = json(await call('race_fx', { lux: { bloom: 0.2, thr: 1.2 } })).lux.light; assert.equal(tuned.bloom, 0.2); assert.equal(tuned.thr, 1.2);
+  const off = json(await call('race_fx', { lux: { on: false, reset: true } })).lux; assert.equal(off.on, false); assert.equal(off.light.bloom, 1.3);
+  const plain = await shot(); save(image(plain), 'lux-off.jpg'); assert.ok(image(plain));
+  assert.equal(json(await call('race_fx', { lux: { on: true, aa: 'msaa' } })).lux.on, true);
+});
+
+await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
+  json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
+  // a tool is driving, so the page's own loop adds no time: two captures of the same setting are the same frame
+  const same = await call('race_ab', { a: { lux: { on: true } }, b: { lux: { on: true } } });
+  assert.ok(image(same)); assert.ok(json(same).changed < 0.002, 'the same setting twice is the same picture: ' + json(same).changed);
+  const ab = await call('race_ab', { a: { lux: { on: false } }, b: { lux: { on: true } }, labels: ['plain', 'LUX'] }); save(image(ab), 'ab-lux.jpg');
+  assert.ok(json(ab).changed > 0.01 && json(ab).where, 'the light pipeline changes the picture, and the tool says where: ' + JSON.stringify(json(ab)));
+  const li = await call('race_light'); save(image(li), 'light.jpg');
+  assert.ok(image(li)); assert.ok(json(li).overBright > 0 && json(li).glowMean > 0 && json(li).glowMean < 0.2, 'Nova\'s tube has light in it, and is not washed out: ' + JSON.stringify(json(li)));
+  const rv = await call('race_review', { character: 'proto' }), R = json(rv); save(image(rv), 'review-proto.jpg');
+  assert.ok(image(rv), 'the review carries its reference sheet');
+  const by = Object.fromEntries(R.checks.map(c => [c.check, c]));
+  for (const k of ['neck eases (flow body)', 'no gap at the join', 'the tail keeps its length', 'within the draw budget', 'no page errors']) assert.ok(by[k] && by[k].ok, `${k}: ${JSON.stringify(by[k])}`);
+  assert.equal(R.pass, R.failed.length === 0); assert.ok(by['parts read apart'] && by['not plastic'], 'palette and surfaces were looked at');
+  const bad = await callRaw('race_review', {}); assert.equal(bad.isError, true);
 });
 
 await check('scene_page shows the whole page; race_state carries the music clock', async () => {
