@@ -504,9 +504,11 @@ await check('LUX keeps its light on a slow frame it did not cause, and gives up 
 await check('the build tools: race_ab compares one frozen frame under two settings, race_light measures the glow, race_review runs the checklist', async () => {
   json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start'));
   json(await call('race_warp', { to: 0.66, you: 'back', spread: 20 })); json(await call('race_drive', { seconds: 0.7 }));
-  // a tool is driving, so the page's own loop adds no time: two captures of the same setting are the same frame
+  // a tool is driving, so the page's own loop adds no time: two captures of the same setting are the same frame. (All but a
+  // flicker in a nearby rival's hair, which steps once a drawn frame and not on the clock: a fifth of a percent of the picture,
+  // depending on who the seed put ahead. A race that moved on would change a tenth of it or more.)
   const same = await call('race_ab', { a: { lux: { on: true } }, b: { lux: { on: true } } });
-  assert.ok(image(same)); assert.ok(json(same).changed < 0.002, 'the same setting twice is the same picture: ' + json(same).changed);
+  assert.ok(image(same)); assert.ok(json(same).changed < 0.005, 'the same setting twice is the same picture: ' + json(same).changed);
   const ab = await call('race_ab', { a: { lux: { on: false } }, b: { lux: { on: true } }, labels: ['plain', 'LUX'] }); save(image(ab), 'ab-lux.jpg');
   assert.ok(json(ab).changed > 0.01 && json(ab).where, 'the light pipeline changes the picture, and the tool says where: ' + JSON.stringify(json(ab)));
   const li = await call('race_light'); save(image(li), 'light.jpg');
