@@ -472,11 +472,15 @@ await check('the air: a course gets heat and mist from the depth of the picture,
   json(await call('race_setup', { course: 'Marina', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
   const p = json(await call('race_fx', {})).lux.light; assert.ok(p.mist > 0.3 && p.mistH > 0, 'Marina steams: ' + JSON.stringify(p));
   // a reference sheet is the racer, not the weather: the same sheet with the air forced thick
-  await call('race_sheet', { rest: true, cell: 200 });   // (the first sheet after a race differs from the rest by a few pixels of its own; the comparison is between the second and the third)
-  const s0 = await call('race_sheet', { rest: true, cell: 200 });
-  json(await call('race_fx', { lux: { mist: 1, mistDen: 0.05, heat: 3 } }));
-  const s1 = await call('race_sheet', { rest: true, cell: 200 });
-  json(await call('race_fx', { lux: { reset: true } }));
+  // (in the studio: on the course the rivals and the water move on between two sheets, and no two are the same pixels)
+  json(await call('race_studio', { lighting: 'course' }));
+  let s0, s1;
+  try {
+    await call('race_sheet', { rest: true, cell: 200 });
+    s0 = await call('race_sheet', { rest: true, cell: 200 });
+    json(await call('race_fx', { lux: { mist: 1, mistDen: 0.05, heat: 3 } }));
+    s1 = await call('race_sheet', { rest: true, cell: 200 });
+  } finally { json(await call('race_fx', { lux: { reset: true } })); json(await call('race_studio', { on: false })); }
   assert.equal(image(s0).data === image(s1).data, true, 'the sheet is the same pixels whatever the air');
 });
 
