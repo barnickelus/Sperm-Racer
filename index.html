@@ -67133,18 +67133,12 @@ function gjArm(k, W, P){
   gjBone(k.fore, _gjE, _gjO, P);
   gjBone(k.fist, W, _gjO, P);
 }
-function tickGuido(o, r, now){
-  const ud=o.userData, k=ud.gjKit; if(!k) return;
-  const mo=ud.mouth;
-  if(mo){ _gjV.set(k.cl.x*mo.scale.x, k.cl.y*mo.scale.y, k.cl.z*mo.scale.z).applyEuler(mo.rotation);
-    k.pick.position.copy(mo.position).add(_gjV);
-    k.pick.rotation.z=-1.05+0.12*Math.sin(now*3.1)+(r.drift===1?0.25:0); }
-  const dt=Math.min(0.1, Math.max(0, now-(ud._gjT||now))); ud._gjT=now;
+/* The punches, as times on syncObjects' clock (fp.pk), from the only trigger there is: the drops of his own record. When
+   the scheduler loads a bar (it runs ahead of the speakers) the punches that fall in it and in the two bars after it go
+   in, mapped from the audio clock onto ours and pushed back by the output latency, so each one lands on the kick you
+   hear. (Guido Tony's and Tony the Guido's arms are both posed from this list.) */
+function gjSchedule(ud, r, now){
   const fp=ud._fp||(ud._fp={pk:[], e:0, ev:0, bar:-1, sec:null, b0:0});
-  // --- the only trigger: the drops of his own record. When the scheduler loads a bar (it runs
-  // ahead of the speakers) the punches that fall in it and in the two bars after it go in, mapped
-  // from the audio clock onto ours and pushed back by the output latency, so each one lands on
-  // the kick you hear.
   const h=(r.you && musicOn && actx && state==='race' && curStyle && curStyle.engine==='goldChain') ? producedStations.goldChain : null;
   if(h && h.running && h.ctx===actx){
     const b=h.bar, sec=h.sectionId;
@@ -67158,8 +67152,18 @@ function tickGuido(o, r, now){
       if(nx && seq && b-fp.b0===nx[0]) for(const x of GJ_DROPS[nx[1]]) if(x<4) gjQueue(fp, h.barT+off+(x+4)*q);
       fp.bar=b; fp.sec=sec; }
   } else { if(fp.bar!==-1) fp.pk=fp.pk.filter(p=>p<=now); fp.bar=-1; fp.sec=null; }   // the music stopped: no more pumps
-  // --- the pose
   while(fp.pk.length && fp.pk[0]<now-GJ_LMAX) fp.pk.shift();
+  return fp;
+}
+function tickGuido(o, r, now){
+  const ud=o.userData, k=ud.gjKit; if(!k) return;
+  const mo=ud.mouth;
+  if(mo){ _gjV.set(k.cl.x*mo.scale.x, k.cl.y*mo.scale.y, k.cl.z*mo.scale.z).applyEuler(mo.rotation);
+    k.pick.position.copy(mo.position).add(_gjV);
+    k.pick.rotation.z=-1.05+0.12*Math.sin(now*3.1)+(r.drift===1?0.25:0); }
+  const dt=Math.min(0.1, Math.max(0, now-(ud._gjT||now))); ud._gjT=now;
+  const fp=gjSchedule(ud, r, now);
+  // --- the pose
   let P=null, Q=null; for(const p of fp.pk){ if(p>now){ P=p; break; } Q=p; }
   const s=Q!=null ? now-Q : 9, gap=(P!=null && Q!=null) ? P-Q : 1, low=gap>GJ_LOW && gap<GJ_LMAX, W=low ? GJ_RISE : Math.min(0.26, gap*0.55), PD=0.075;
   let hh=0.6, wind=0;
@@ -75394,7 +75398,7 @@ function dbFace(S, C, now, dt, E, lk, portrait){
   const bt=(now-S.blink)/0.16, bk=bt>=0&&bt<1?Math.sin(Math.PI*bt):0;
   const chk=F[I.chk], lidD=Math.max(F[I.lidD],-1.2+0.6*chk), lidDC=F[I.lidDC]+0.45*chk;
   // the gaze: socialLook's eyes, the expression's bias; after a spin the pupils circle, one turn a beat
-  let gx=F[I.gx]+(lk?ldClamp(lk.eyeO*1.6,-0.8,0.8):0), gy=F[I.gy];
+  let gx=F[I.gx]+(lk?ldClamp(lk.eyeO*1.6,-0.8,0.8)*(S.gzK==null?1:S.gzK):0), gy=F[I.gy];
   const dz=E && now<(E.dizzyT||0) && !portrait ? Math.min(1,(E.dizzyT-now)/0.5) : 0;
   const ea=S.FU.uEA.value, eb=S.FU.uEB.value, ld=S.FU.uLd.value, es=F[I.eyeS];
   for(let k=0;k<2;k++){ const sx=k?1:-1, rx=DB_EYE.rx*es, ry=DB_EYE.ry*es;
@@ -75486,9 +75490,11 @@ function neoBrowGeometry(){
 // Full over the face, fading to nothing by the join (z -4.75), so the ring the tail shares never moves
 const NEO_GLSL_SQ=`
 uniform vec4 uNeoSq;
+uniform vec3 uNeoRd;
 vec3 neoSq(vec3 p){
   float zb=p.z*uNeoSq.w, w=smoothstep(-4.75,-1.5,zb), s=uNeoSq.x*w;
-  return vec3(p.x*(1.0+0.5*s), p.y*(1.0-s)+uNeoSq.y*w/uNeoSq.z, p.z*(1.0+0.5*s));
+  vec3 r=mix(vec3(1.0),uNeoRd,smoothstep(-4.75,-3.0,zb));   // the look back: the head rounds into a ball the face can travel round
+  return vec3(p.x*(1.0+0.5*s)*r.x, p.y*(1.0-s)*r.y+uNeoSq.y*w/uNeoSq.z, p.z*(1.0+0.5*s)*r.z);
 }`;
 // the skin: Proto's vertex colours under Sammy's cel light (the same snippets as the V1 template's hair: TPL_GLSL_BAND, TPL_GLSL_CEL)
 // (fx: a kit's own paint over the vertex colours, {key, vpars, vmain, fpars, fmain}: GLSL laid in before the cel light)
@@ -75514,6 +75520,16 @@ function neoInkMat(U, col){
   m.customProgramCacheKey=()=>'neo-ink-1';
   return m;
 }
+// two faces for a look back over the shoulder: wary (someone is coming up fast) and check (a cool look at the road behind)
+const NEO_LOOKS={ wary:{lidL:1.15,lidR:1.15,pup:0.6,eyeS:1.08,brL:0.5,brR:0.5,brT:-0.5,brA:0.35,mW:0.78,mO:0.26,mC:-0.5,mR:0.15,mT:0.7,chk:0,gy:-0.1},
+  check:{lidL:0.78,lidR:0.96,brL:0.08,brR:0.5,brT:-0.05,brA:0.45,mW:0.98,mO:0,mC:0.6,mS:0.4,chk:0.4} };
+NEO_LOOKS.back=NEO_LOOKS.check;   // a pose (race_pose, a sheet): the look back over the shoulder itself, wearing the check's face
+const NEO_LIST=DB_LIST.concat(['wary','check','back']);
+function neoEV(over, list, brA){   // a kit's expressions as arrays: Downbeat's, the look-back pair, then the kit's own over them
+  const out={}; for(const k of list){ const src=Object.assign({}, DB_EXPR[k], NEO_LOOKS[k], over&&over[k]); if(brA && !(over&&over[k])) src.brA=(src.brA!=null?src.brA:DB_EXPR_BASE.brA)+brA;
+    const a=new Float32Array(DBF.length); DBF.forEach((f,i)=>a[i]=(src[f]!=null?src[f]:DB_EXPR_BASE[f])); out[k]=a; }
+  return out; }
+const NEO_EV=neoEV(null, NEO_LIST);
 function dressNeoProto(g, K){ return dressNeo(g, K, NEO); }
 /* THE NEO KIT. dressNeo builds a racer on this template from a profile P (NEO is Neo Proto's own; a kit copies it and
    changes what it needs): skin [h,s,l], ink, tuftCol; paint(g, lin) the skin's vertex colours and skinFx its fragment
@@ -75537,7 +75553,7 @@ function dressNeo(g, K, P){
     c.copy(lin).lerp(tip, 0.75*sm(t*1.15)); c.lerp(belly, 0.7*sm((-up-0.15)/0.75)*(1-0.6*sm(t*1.5))); c.lerp(back, 0.85*sm((up-0.62)/0.3)*sm((1.2-z)/3));
     out[0]=c.r; out[1]=c.g; out[2]=c.b; });
   const em=new T.Color(TPL_EM,TPL_EM,TPL_EM), cel=Object.assign({ uGloss:{ value:new T.Vector4(0.2, 0.42, 0, 0) }, uCel:{ value:new T.Vector4(0.24, -0.42, 0.1, 1.18) } }, P.skinU||null);
-  const UH=Object.assign({ uNeoSq:{ value:new T.Vector4(0, 0, HEAD_RY/HEAD_RX, HEAD_RZ/HEAD_RX) } }, cel), UT=Object.assign({ uNeoSq:{ value:new T.Vector4(0, 0, 1, 1) } }, cel);
+  const UH=Object.assign({ uNeoSq:{ value:new T.Vector4(0, 0, HEAD_RY/HEAD_RX, HEAD_RZ/HEAD_RX) }, uNeoRd:{ value:new T.Vector3(1,1,1) } }, cel), UT=Object.assign({ uNeoSq:{ value:new T.Vector4(0, 0, 1, 1) }, uNeoRd:{ value:new T.Vector3(1,1,1) } }, cel);
   const hm=neoSkinMat(UH, em, P.skinFx), tm=neoSkinMat(UT, em, P.skinFx); tm.side=T.DoubleSide;
   K.head.material=hm; K.tailMesh.material=tm;
   // the ink: Downbeat's warm near-black; the head's shell squashes with the head
@@ -75571,13 +75587,13 @@ function dressNeo(g, K, P){
   const pr={ beat:new T.Object3D(), bob:new T.Object3D(), vb:new T.Object3D(), vs:new T.Object3D(), sw:new T.Object3D() };
   for(const k in pr) g.add(bodyPart(pr[k]));
   ud.motionProbes=[['beatClock',pr.beat,'pos'],['bob',pr.bob,'pos'],['vBob',pr.vb,'pos'],['vStroke',pr.vs,'pos'],['tipSway',pr.sw,'pos'],['tuftTip',tProbe,'pos']];   // tipSway: the swim's sideways reach at the tip, as asked of the skin this frame
-  const EV=P.ev||DB_EV;
+  const EV=P.ev||NEO_EV;
   ud.neo={ t:null, rig, FU, BU, UH, HU, P, EV, brTh:P.browTh||0, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
     F:new Float32Array(EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(EV.rest), cur:'rest', want:'rest', next:null, nextAt:0,
     blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, danceV:0, lose:0, loseV:0, idl:1, idlV:0, tk:1, tkV:0, tk0:1, tk0V:0, fk:0, fkV:0, flickT:-9, spn:0, spnV:0, sp:0, spV:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
-    ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null,
+    ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null, phi:0, phiP:0, tst:0, tstV:0, rd:0, gzK:1, rigB:null,
     ev:{place:null, cand:null, candT:0, react:0, angryT:-9, takeT:-9, fireT:-9, dizzyT:-9, item:null, slow:0, alone:0, aloneAt:0, isAlone:false, passT:-9, passK:null} };
-  ud.expr={ list:(P.list||DB_LIST).slice(), cur:'rest', hold:0, forced:null,
+  ud.expr={ list:(P.list||NEO_LIST).slice(), cur:'rest', hold:0, forced:null,
     set(name, hold, instant){ const S=ud.neo; if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.hold=hold==null?8:hold;
       if(instant){ S.F.set(S.EV[name]); S.FT.set(S.EV[name]); S.FV.fill(0); S.cur=name; S.want=name; S.next=null; this.cur=name; } } };
   ud.tick=neoTick; ud.tailHook=neoTailHook; ud.whipHold=dbWhipHold; ud.beatOf=beatOf;
@@ -75608,7 +75624,11 @@ function neoTick(o, r, now){
     if(R.place!==E.cand){ E.cand=R.place; E.candT=now; }
     if(racing && E.cand!==E.place && now-E.candT>0.6){ if(now>E.react){ E.passK=E.cand<E.place?'pass':'passed'; E.passT=now+(E.passK==='pass'?1.3:1.7); E.react=now+3; } E.place=E.cand; }
     if(spin && !S.pSpin){ E.takeT=now; S.flickT=now; }
-    if(!spin && S.pSpin){ E.angryT=now+2.4; E.dizzyT=now+1.8; }
+    if(!spin && S.pSpin){ E.angryT=now+2.4; E.dizzyT=now+1.8; E.glareAt=now+0.9; }
+    if(E.glareAt && now>=E.glareAt){ E.glareAt=0;   // once his head is clear: a glare back at whoever is nearest behind
+      if(lk && !lk.g && racing){ const hd=R.head+(R.slip||0), fx=Math.sin(hd), fz=Math.cos(hd); let bq=null, bd=60, bl=0;
+        for(const q of racers){ if(q===R) continue; const dx=q.x-R.x, dz=q.z-R.z, lon=dx*fx+dz*fz, d=Math.hypot(dx,dz); if(lon<-2 && d<bd){ bd=d; bq=q; bl=dx*fz-dz*fx; } }
+        if(bq) lk.g={k:'glare', t:0, dur:1.3, side:bl>=0?1:-1, ang:0, q:bq, ov:true}; } }
     if(E.item && !R.item && !(R._roll>0)) E.fireT=now+1.3; E.item=R.item;
     E.slow=racing && spd<35 && spd>3 ? E.slow+dt : 0;
     if(racing && now-E.aloneAt>0.25){ E.aloneAt=now; let near=1e9; for(const q of racers){ if(q===R) continue; const d=Math.hypot(q.x-R.x,q.z-R.z); if(d<near) near=d; }
@@ -75625,9 +75645,13 @@ function neoTick(o, r, now){
   else if(now<E.passT) want=E.passK;
   else if(E.slow>1.5) want='tired';
   else if(E.alone>2.5 || (idle && Math.floor((B+C.k)/16)%2===1)) want='whistle';
+  // a look back over the shoulder has its own face: alarm at someone coming up fast, a glare at whoever just hit him, else a cool check of the road behind
+  { const G=lk && lk.g; if(G && G.ov && Math.abs(lk.yaw)>1.1 && !portrait){
+      if(G.k==='peek' && lk.w>0.3){ if(want==='rest'||want==='whistle'||want==='tired'||want==='boost') want='wary'; }
+      else if(want==='rest'||want==='whistle') want=G.k==='glare' ? 'angry' : 'check'; } }
   const X=ud.expr; if(X.forced){ want=X.forced; if(X.hold>0){ X.hold-=dt; if(X.hold<=0) X.forced=null; } }
   if(want!==S.want){ S.want=want;
-    if(DB_NOW_EXPR[want] || portrait || C.rate<=0){ S.next=want; S.nextAt=now; }
+    if(DB_NOW_EXPR[want] || want==='wary' || portrait || C.rate<=0){ S.next=want; S.nextAt=now; }
     else { let tb=(1-C.phase)/C.rate; if(tb>0.3) tb=(1-((C.phase*2)%1))/(2*C.rate); S.next=want; S.nextAt=now+tb-0.045; } }
   if(S.next && now>=S.nextAt){ S.cur=S.next; S.next=null; S.FT.set(S.EV[S.cur]); X.cur=S.cur;
     if(S.cur==='whistle' && lk && R.obj===o && typeof emote==='function') emote(R, lk, 'note');
@@ -75650,13 +75674,25 @@ function neoTick(o, r, now){
   const bk=(1+0.6*accent)*S.tk;
   let sq=(0.068+0.017*S.idl)*bob*bk*(1-0.6*S.lose);
   S.bob=sq;
-  const dy=-(0.12+0.12*S.idl)*bob*bk;
-  S.UH.uNeoSq.value.x=sq; S.UH.uNeoSq.value.y=dy;
-  S.rig.scale.set(1+0.5*sq, 1-sq, 1+0.5*sq); S.rig.position.set(0, sq*HEAD_CY+dy, 0);
+  let dy=-(0.12+0.12*S.idl)*bob*bk;
+  /* ---- THE LOOK BACK. The look (socialLook) can ask the head for far more than a neck has: a glance back over the
+     shoulder is two radians and more. The neck gives what a neck can (eased into the flow body's limit), and the rest is
+     done the way a 1930s head does it: the head rounds into a ball and stretches up off the neck, and the FACE travels
+     round it (the face, the brows, the hair and whatever sits in it), so the body keeps its line and the face comes
+     right round to the chase camera. The quicker the turn, the more the stretch; it settles as the turn does. */
+  const posed=S.cur==='back', still=posed && (portrait || !lk);   // (a sheet's fresh build has no neck to ask: the pose is the face's travel alone)
+  const Yw=posed ? 2.75 : lk && !portrait && ud.flow ? ldClamp(lk.yaw,-3,3) : 0, NKM=FLOW.BEND*0.98, nkY=still ? 0 : NKM*Math.tanh(Yw/NKM), phi=ldClamp(still ? 1.72 : Yw-nkY,-1.72,1.72);
+  const rd=1-Math.exp(-(phi*phi)/0.12), pv=dt>0 ? (phi-S.phiP)/dt : 0; S.phiP=phi; S.phi=phi; S.rd=rd;
+  dbSpring(S,'tst','tstV',Math.min(1,Math.abs(pv)/7),22,0.6,dt);
+  const stt=0.13*ldClamp(S.tst,-0.3,1.3), vk=1/Math.sqrt(1+stt), rx=(1+0.147*rd)*vk, ry=(1+0.14*rd)*(1+stt), rz=(1-0.235*rd)*vk;
+  dy+=0.3*rd+0.45*stt; S.gzK=1-0.75*rd;   // (the eyes were aimed for a head that stopped at the neck's limit)
+  S.UH.uNeoSq.value.x=sq; S.UH.uNeoSq.value.y=dy; S.UH.uNeoRd.value.set(rx, ry, rz);
+  { const sx=(1+0.5*sq)*rx, sy=(1-sq)*ry, sz=(1+0.5*sq)*rz; S.rig.scale.set(sx, sy, sz); S.rig.rotation.y=phi; S.rig.position.set(0, HEAD_CY*(1-sy)+dy, 0);
+    if(S.rigB){ S.rigB.scale.set(sx, sy, sz); S.rigB.position.copy(S.rig.position); } }
   // ---- the head: the expression's nod and tilt, the dance and the sway, asked of the neck (the flow body eases the request)
   const nk=ud.neck, db=Math.cos(Math.PI*B), dh2=Math.cos(Math.PI*B/2);
   if(nk){ if(nk.quaternion.equals(S.nkOut)) nk.quaternion.copy(S.nkIn); S.nkIn.copy(nk.quaternion);
-    S.eu.set(S.F[DBF_I.hp]+0.03*bob, 0.1*db*S.dance, S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose, 'YXZ');
+    S.eu.set(S.F[DBF_I.hp]+0.03*bob-0.08*rd, 0.1*db*S.dance+(Yw && lk ? nkY-lk.nk : 0), S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose, 'YXZ');   // (the neck is asked for its own share of a look back, eased into its limit, not for all it can bear)
     nk.quaternion.multiply(S.nkX.setFromEuler(S.eu)); S.nkOut.copy(nk.quaternion); }
   // ---- the body: the grid's bounce, the dance's hop and sway (syncObjects re-places the body every frame)
   if(!portrait){
@@ -75696,11 +75732,13 @@ function neoTick(o, r, now){
  *   SHADES  white wraparounds with sunset lenses, parked on the crown against the blowout. They drop over his eyes
  *           when he boosts and for half the bars of a win (a spring: they land with a bounce), and the eyes draw in
  *           behind the lenses as they come.
- *   GOLD    a Cuban link round the neck, low under the chin and high on the nape, moving with the skin's squash; a
- *           coral cornicello off its lowest link, swinging on the tuft's springs.
- *   PUMP    his right arm: a rubber hose that is not there until he needs it. It comes out fist first and pumps on the
- *           beat (the fist is at the top on each beat, as the head squashes; on every other beat of a fast song): through a win, after a pass, through the
- *           laugh, and one bar in four while he waits on the grid or the select stage.
+ *   GOLD    two chains round the neck: over the nape and down the sides on the skin, then off it at the jaw to hang
+ *           free under the chin. A Cuban link with a coral cornicello off its lowest link, and inside it a longer, finer
+ *           chain with a T medallion. What hangs swings on the tuft's springs.
+ *   PUMP    his right arm: a rubber hose that is not there until he needs it. Guido Tony's pump: a wind-up, a punch that
+ *           peaks exactly on the beat, a snap and a springy settle. To the drops of his own record, as Guido Tony's is
+ *           (the same schedule, on the audio's clock); and on the beat through a win, after a pass, through the laugh,
+ *           and one bar in four while he waits on the grid or the select stage.
  *   LIGHT   the engine's light pipeline (LUX blooms whatever is brighter than white): the links glint past white on every
  *           beat, the lenses' streaks flash as the shades land, and a four-point star goes *ting* on the veneers when
  *           a pass's grin or a win's arrives. Without LUX these clip to plain white and he is otherwise the same.
@@ -75716,17 +75754,23 @@ const TONY_EXPR={
   shades: {lidL:0.62,lidR:0.62,lidD:-1.0,brL:0.34,brR:0.34,brT:-0.05,brA:0.75,mW:1.42,mO:0.3,mC:0.85,mT:1,mS:0.45,chk:0.7},
   pump:   {lidL:0.62,lidR:0.62,lidD:-0.6,lidDC:0.9,brL:0.5,brR:0.5,brT:-0.15,brA:0.9,mW:1.6,mO:0.95,mC:1.15,mT:1,mTg:0.5,mS:0.25,chk:1,hp:-0.12},
 };
-const TONY_LIST=DB_LIST.concat(['shades','pump']);
-const TONY_EV={};
-for(const k of TONY_LIST){ const src=Object.assign({}, DB_EXPR[k], TONY_EXPR[k]); if(!TONY_EXPR[k]) src.brA=(src.brA!=null?src.brA:DB_EXPR_BASE.brA)+0.3;   // (every brow carried high: plucked to an arch)
-  const a=new Float32Array(DBF.length); DBF.forEach((f,i)=>a[i]=(src[f]!=null?src[f]:DB_EXPR_BASE[f])); TONY_EV[k]=a; }
+const TONY_LIST=NEO_LIST.concat(['shades','pump']);
+Object.assign(TONY_EXPR, { back:null, check:{lidL:0.6,lidR:0.82,slant:0.06,lidD:-1.0,lidDC:0.35,brL:0.1,brR:0.56,brT:-0.05,brA:0.7,mW:1.32,mO:0.24,mC:0.82,mT:1,mS:0.65,chk:0.7},   // a look back at the crowd: the smirk, a brow up
+  wary:Object.assign({}, NEO_LOOKS.wary, {brA:0.65}) });
+TONY_EXPR.back=TONY_EXPR.check;
+const TONY_EV=neoEV(TONY_EXPR, TONY_LIST, 0.3);   // (every brow he does not set himself is carried high: plucked to an arch)
 // the paint over the tan, in the skin's fragment shader: z along the body at rest, sd/up round it
 const TONY_SKIN_FX={ key:'tony-1',
   vpars:'attribute vec3 aZT; varying vec3 vZT;', vmain:' vZT=aZT;',
-  fpars:'varying vec3 vZT; uniform vec3 uTonyHair, uTonyInk;',
+  fpars:'varying vec3 vZT; uniform vec3 uTonyHair, uTonyInk; uniform float uTonyTurn; uniform vec4 uNeoSq;',
   fmain:`{ float z=vZT.x, l=max(length(vZT.yz),1e-4), sd=vZT.y/l, up=vZT.z/l, ang=atan(up,sd), az=fwidth(z)*0.75+0.004;
     // the fade: a crisp hairline in front (it recedes at the temples), the dark thinning down the sides to bare skin
-    float hl=1.2-1.5*(1.0-up), fd=smoothstep(0.02,0.78,up)*(1.0-smoothstep(hl-az,hl+az,z))*smoothstep(-4.5,-3.4,z);
+    float fz=z, fup=up;
+    if(uNeoSq.z<0.99 && abs(uTonyTurn)>0.001){   // (on the head, a look back: the hair's roots go round with the face, about the head's upright axis)
+      float e=sqrt(max(1.0-z*z/${(HEAD_RZ*HEAD_RZ).toFixed(3)},0.04)), ct=cos(uTonyTurn), sn=sin(uTonyTurn);
+      vec3 d=vec3(e*sd, e*up, z/${HEAD_RZ.toFixed(3)}), r=vec3(d.x*ct-d.z*sn, d.y, d.x*sn+d.z*ct);
+      fz=r.z*${HEAD_RZ.toFixed(3)}; fup=clamp(r.y/sqrt(max(1.0-r.z*r.z,0.04)),-1.0,1.0); }
+    float hl=1.2-1.5*(1.0-fup), fd=smoothstep(0.02,0.78,fup)*(1.0-smoothstep(hl-az,hl+az,fz))*smoothstep(-4.5,-3.4,z);
     diffuseColor.rgb=mix(diffuseColor.rgb,uTonyHair*diffuse,0.92*fd);
     // the tank: behind the neckline (scooped lower in front), ahead of the hem
     float dT=max(z+2.9+1.3*up, -8.4-z);
@@ -75769,20 +75813,29 @@ function tonyHairPaint(geo){   // the frosted tips: the last third of every spik
 const TONY_PROP_VS=`
 varying vec3 vNv, vV, vC; varying vec2 vU;
 #ifdef TONY_BEND
-attribute float aT; uniform vec3 uA0, uA1, uA2, uAn; uniform float uAr;
+attribute float aT; uniform vec3 uA0, uA1, uA2, uAn; uniform float uAr, uAq;
 #endif
 #ifdef TONY_SQ
-uniform vec4 uNeoSq;
+uniform vec4 uNeoSq; uniform vec3 uNeoRd;
+#endif
+#ifdef TONY_HANG
+attribute float aH, aHA; attribute vec3 aAlt; uniform vec3 uSw; uniform float uWind;
 #endif
 #include <fog_pars_vertex>
 void main(){
   vec3 p=position, n=normal;
 #ifdef TONY_BEND
   { float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
-    p=c+(n1*position.x+tg*position.y+n2*position.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
+    vec3 q=position; if(t>0.99){ q.xz*=1.0+0.22*uAq; q.y*=1.0-0.3*uAq; }   // (the fist squashes as the punch snaps)
+    p=c+(n1*q.x+tg*q.y+n2*q.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
+#endif
+#ifdef TONY_HANG
+  p=mix(p,aAlt,uWind);                                         // wound in round the neck as he looks back
+  p+=vec3(uSw.x, abs(uSw.x)*0.14, uSw.z)*mix(aH,aHA,uWind);   // the hanging part swings: the lower the link, the further
 #endif
 #ifdef TONY_SQ
-  { float w=smoothstep(-4.75,-1.5,p.z), s=uNeoSq.x*w; p=vec3(p.x*(1.0+0.5*s), (p.y-${HEAD_CY.toFixed(3)})*(1.0-s)+uNeoSq.y*w+${HEAD_CY.toFixed(3)}, p.z*(1.0+0.5*s)); }
+  { float w=smoothstep(-4.75,-1.5,p.z), s=uNeoSq.x*w; vec3 r=mix(vec3(1.0),uNeoRd,smoothstep(-4.75,-3.0,p.z));
+    p=vec3(p.x*(1.0+0.5*s)*r.x, (p.y-${HEAD_CY.toFixed(3)})*(1.0-s)*r.y+uNeoSq.y*w+${HEAD_CY.toFixed(3)}, p.z*(1.0+0.5*s)*r.z); }
 #endif
   vC=color; vU=uv; vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
@@ -75804,7 +75857,7 @@ void main(){
     if(gl_FrontFacing) c=mix(c,g,1.0-smoothstep(-lw,lw,dl)); c=mix(c,uInk,1.0-smoothstep(0.06-lw,0.06+lw,abs(dl))); }
 #endif
 #ifdef TONY_GLINT
-  { float hs=dot(n,normalize(DB_L+normalize(vV))), hw=fwidth(hs)*0.7+1e-4; c+=vC*uGl*smoothstep(0.95-hw,0.95+hw,hs); }   // a hard highlight on every link, past white
+  { float hs=dot(n,normalize(DB_L+normalize(vV))), hw=fwidth(hs)*0.7+1e-4; c+=vC*uGl*smoothstep(0.975-hw,0.975+hw,hs); }   // a hard highlight on every link, past white
 #endif
   gl_FragColor=vec4(mix(uInk,c,smoothstep(0.3-rf,0.3+rf,rim)),1.0);
   #include <fog_fragment>
@@ -75837,18 +75890,38 @@ function tonyShadesPose(o, s){
   _tonyV.copy(TONY_SH.up).lerp(TONY_SH.c0, s); _tonyV.y+=0.3*k; _tonyV.z+=0.5*k;   // (out round the brow on the way)
   o.position.copy(_tonyV).sub(_tonyW.copy(TONY_SH.c0).applyQuaternion(o.quaternion));
 }
-// the Cuban link: a loop on the skin, low under the chin and high on the nape; fat flat links, every other one turned
+/* The gold: two loops round the neck. Each lies on the skin over the nape and down the sides, leaves it at the jaw and
+   hangs free under the chin (a parabola, forward of the head so it clears it), where it can swing. The Cuban link: fat
+   flat links, every other one turned, with the cornicello off its lowest link; inside it a longer, finer chain with the
+   medallion. zb/zf: where the loop sits at the nape and how far forward it runs; upH: where it leaves the skin (the sine
+   of the angle round the body); low: the height of its lowest link; fwd: how far forward of the jaw that link hangs. */
+const TONY_CHAINS=[{ zb:-3.7, zf:2.9, upH:-0.5, low:0.02, fwd:1.0, n:40, sc:[0.26,0.34,0.14], seg:[7,4], alt:{ zb:-4.25, zf:-2.7, upH:-0.6, low:0.3, fwd:0.45 } },
+  { zb:-3.25, zf:2.9, upH:-0.28, low:-0.62, fwd:1.75, n:54, sc:[0.16,0.25,0.1], seg:[6,4], alt:{ zb:-3.95, zf:-2.3, upH:-0.5, low:-0.05, fwd:0.8 } }];
+// (alt: the same loop wound in round the neck. When he looks back the face travels round the head, across where the chains
+//  lie at rest; the turn winds them in behind it, and they fall back as he faces front)
+function tonyChainPath(K, c){   // points round one loop: [position, the way its links face, how far below the jaw it hangs]
+  const V=T.Vector3, on=th=>{ const up=Math.sin(th), z=c.zb+(c.zf-c.zb)*(1-up)/2, R=flowR(z,K), co=Math.cos(th), n=new V(R[1]*co, R[0]*up, 0).normalize(); return [new V(R[0]*co, HEAD_CY+R[1]*up, z).addScaledVector(n,0.12), n, 0]; };
+  const tH=Math.asin(c.upH), a=on(tH)[0], drop=a.y-c.low, P=[], nf=new V(0,-0.35,1).normalize();
+  for(let i=0;i<=300;i++) P.push(on(tH+(Math.PI-2*tH)*i/300));                       // on the skin: up one side, over the nape, down the other
+  for(let i=1;i<100;i++){ const sx=-1+2*i/100, k=1-sx*sx; P.push([new V(sx*a.x, a.y-drop*k, a.z+c.fwd*k), nf, drop*k]); }   // hanging, back to where it started
+  P.push(P[0]); return { P, low:new V(0, c.low, a.z+c.fwd), drop };
+}
 function tonyChainGeo(K){ return tonyKeep('chain', ()=>{
-  const ZB=-3.7, ZF=2.9, gold=dbLin('#ffc935'), V=T.Vector3;
-  const at=th=>{ const up=Math.sin(th), z=ZB+(ZF-ZB)*(1-up)/2, R=flowR(z,K), c=Math.cos(th), n=new V(R[1]*c, R[0]*up, 0).normalize(); return [new V(R[0]*c, HEAD_CY+R[1]*up, z).addScaledVector(n,0.12), n]; };
-  const M=480, P=[], L=[0]; for(let i=0;i<=M;i++){ P.push(at(i/M*Math.PI*2)); if(i) L.push(L[i-1]+P[i][0].distanceTo(P[i-1][0])); }
-  const N=38, items=[], link=new T.SphereGeometry(1,8,5), mx=new T.Matrix4(), q=new T.Quaternion(), tw=new T.Quaternion();
-  for(let k=0,i=0;k<N;k++){ const s=L[M]*k/N; while(L[i+1]<s) i++; const p=P[i][0], n=P[i][1], t=P[Math.min(M,i+2)][0].clone().sub(P[Math.max(0,i-2)][0]).normalize();
+  const V=T.Vector3, gold=dbLin('#ffc935'), items=[], alts=[], hang=[], hangA=[], mx=new T.Matrix4(), q=new T.Quaternion(), tw=new T.Quaternion();
+  const place=(P, i, k, c)=>{ const M=P.length-1, pt=P[i][0], n=P[i][1], t=P[Math.min(M,i+2)][0].clone().sub(P[Math.max(0,i-2)][0]).normalize();
     const x=new V().crossVectors(t,n).normalize(), z=new V().crossVectors(x,t).normalize();
     q.setFromRotationMatrix(mx.makeBasis(x,t,z)).multiply(tw.setFromAxisAngle(new V(0,1,0), k%2?0.55:-0.55));
-    items.push([link, new T.Matrix4().compose(p.clone().addScaledVector(n,0.06), q, new V(0.26,0.34,0.14)), gold]); }
-  return kingMerge(items); }); }
-const tonyChainLow=K=>{ const R=flowR(2.9,K); return new T.Vector3(0, HEAD_CY-R[1]-0.14, 2.9); };   // its lowest link
+    return new T.Matrix4().compose(pt.clone().addScaledVector(z,0.05), q, new V(...c.sc)); };
+  for(const c of TONY_CHAINS){ const P=tonyChainPath(K, c).P, PA=tonyChainPath(K, Object.assign({}, c, c.alt)).P, M=P.length-1, L=[0]; for(let i=1;i<=M;i++) L.push(L[i-1]+P[i][0].distanceTo(P[i-1][0]));
+    const link=new T.SphereGeometry(1,c.seg[0],c.seg[1]), nv=link.attributes.position.count;
+    for(let k=0,i=0;k<c.n;k++){ const d=L[M]*k/c.n; while(L[i+1]<d) i++;
+      items.push([link, place(P,i,k,c), gold]); alts.push([link, place(PA,i,k,c), gold]); for(let v=0;v<nv;v++){ hang.push(P[i][2]); hangA.push(PA[i][2]); } } }
+  const g=kingMerge(items); g.setAttribute('aAlt', kingMerge(alts).attributes.position); g.setAttribute('aH', new T.Float32BufferAttribute(hang,1)); g.setAttribute('aHA', new T.Float32BufferAttribute(hangA,1)); return g; }); }
+function tonyMedalGeo(){ return tonyKeep('medal', ()=>{   // a gold disc with a raised rim and a T, on a bail
+  const M=(x,y,z)=>new T.Matrix4().makeTranslation(x,y,z), gold=dbLin('#ffc935'), deep=dbLin('#b9770e');
+  const disc=new T.CylinderGeometry(0.62,0.62,0.14,20); disc.rotateX(Math.PI/2);
+  return kingMerge([[disc,M(0,-0.78,0),gold],[new T.TorusGeometry(0.5,0.06,6,20),M(0,-0.78,0.08),deep],[new T.BoxGeometry(0.56,0.13,0.08),M(0,-0.6,0.1),deep],[new T.BoxGeometry(0.14,0.46,0.08),M(0,-0.86,0.1),deep],
+    [new T.TorusGeometry(0.15,0.05,6,10),M(0,-0.08,0),gold]]); }); }
 function tonyHornGeo(){ return tonyKeep('horn', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), hc=new T.CatmullRomCurve3([V(0,-0.34,0.05),V(0.02,-0.8,0.14),V(0.18,-1.3,0.16),V(0.48,-1.68,0.06),V(0.78,-1.82,-0.04)]);
   const horn=taperTube(hc,14,7,u=>0.3*Math.pow(1-u,0.85)+0.02); horn.computeVertexNormals();
@@ -75867,38 +75940,44 @@ function tonyArmGeo(tan){ return tonyKeep('arm', ()=>{
   add(ball, M(0.2,1.25,1.82, 1.3,0.56,0.56), tan, 1);                                                // the thumb, wrapped across
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 // the pump: [shoulder], the elbow and the fist at the bottom of a pump and at the top of it (in the rig, his right side)
-const TONY_ARM={ a0:[-2.9,HEAD_CY-0.35,-1.2], dn1:[-5.2,HEAD_CY-1.7,0.3], dn2:[-4.9,HEAD_CY+1.2,1.6], up1:[-5.3,HEAD_CY+1.9,-0.8], up2:[-3.75,HEAD_CY+5.7,0.5], r:0.5 };
+const TONY_ARM={ a0:[-2.9,HEAD_CY-0.35,-1.2], r:0.5,
+  // [pump height, the fist, the elbow's pull] from the shoulder: lowered at his side, cocked (the fist by his ear, the elbow down), held, the apex
+  // straight up past the blowout. Past the apex the line carries on: a rubber hose stretches into the snap
+  k:[[-1,[-1.7,-2.3,0.5],[-2.3,-0.9,0.1]], [-0.35,[-1.5,1.5,1.0],[-2.7,-1.3,0.4]], [0.6,[-1.2,4.3,0.7],[-2.6,1.4,-0.2]], [1,[-0.85,6.1,1.0],[-2.2,2.8,-0.5]]] };
 function tonyDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, FK=ud.flow ? ud.flow.K : { neck:FLOW.NECK, k:FLOW.K }, tan=dbLin('#e26d26');
   if(ud.glow) ud.glow.material.color.multiplyScalar(0.8);   // (a softer halo: the tan, the white and the gold carry him)
   const shades=new T.Mesh(tonyShadesGeo(), tonyPropMat({TONY_LENS:''})); shades.material.side=T.DoubleSide; shades.name='tony-shades'; rig.add(shades); tonyShadesPose(shades, 0);
-  const chain=new T.Mesh(tonyChainGeo(FK), tonyPropMat({TONY_SQ:'', TONY_GLINT:''}, { uNeoSq:X.UH.uNeoSq })); chain.name='tony-chain'; g.add(chain);
-  const pend=new T.Group(); pend.position.copy(tonyChainLow(FK)); pend.add(new T.Mesh(tonyHornGeo(), tonyPropMat())); pend.name='tony-horn'; rig.add(pend);
+  const rigB=new T.Group(); rigB.name='tony-body-rig'; g.add(rigB); S.rigB=rigB;   // (squashes with the head, does not turn with the face: the pendants, the arm)
+  const SW={ value:new T.Vector3() }, chain=new T.Mesh(tonyChainGeo(FK), tonyPropMat({TONY_SQ:'', TONY_GLINT:'', TONY_HANG:''}, { uNeoSq:X.UH.uNeoSq, uNeoRd:X.UH.uNeoRd, uSw:SW, uWind:{ value:0 } })); chain.name='tony-chain'; chain.frustumCulled=false; g.add(chain);
+  const lows=TONY_CHAINS.map(c=>{ const a=tonyChainPath(FK, c), b=tonyChainPath(FK, Object.assign({}, c, c.alt)); return { low:a.low, drop:a.drop, lowA:b.low, dropA:b.drop }; });
+  const pend=new T.Group(); pend.add(new T.Mesh(tonyHornGeo(), tonyPropMat())); pend.name='tony-horn'; rigB.add(pend);
+  const medal=new T.Group(); medal.add(new T.Mesh(tonyMedalGeo(), tonyPropMat())); medal.name='tony-medal'; rigB.add(medal);
   const pick=new T.Group(); pick.add(new T.Mesh(tonyPickGeo(), tonyPropMat())); pick.name='tony-pick'; rig.add(pick);
-  const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0} };
-  const arm=new T.Mesh(tonyArmGeo(tan), tonyPropMat({TONY_BEND:''}, AU)); arm.name='tony-arm'; arm.frustumCulled=false; arm.visible=false; rig.add(arm);
+  const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0}, uAq:{value:0} };
+  const arm=new T.Mesh(tonyArmGeo(tan), tonyPropMat({TONY_BEND:''}, AU)); arm.name='tony-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
   const ting=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); ting.name='tony-ting'; ting.visible=false; ting.renderOrder=2; rig.add(ting);
-  const fist=new T.Object3D(); rig.add(fist); ud.motionProbes.push(['fist',fist,'pos'],['shades',shades,'pos']);
-  S.tony={ shades, pend, pick, arm, AU, fist, chain, ting, tingS:-9, landT:1e9, pSh:0, pCur:'rest', sh:0, shV:0, sh0:0, sh0V:0, shHold:-9, pm:0, pmV:0, pm0:0, pm0V:0, pg:1 };
+  const pop=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); pop.name='tony-pop'; pop.visible=false; pop.renderOrder=2; rigB.add(pop);   // the bracelet's glint at the top of a punch
+  const fist=new T.Object3D(); rigB.add(fist); ud.motionProbes.push(['fist',fist,'pos'],['shades',shades,'pos'],['medal',medal,'pos']);
+  S.tony={ turnU:X.cel.uTonyTurn, shades, pend, medal, lows, SW, pick, arm, AU, fist, chain, ting, pop, tingS:-9, landT:1e9, pSh:0, pCur:'rest', aS:1e9, aE:-1e9, act:false, g2:1, lastQ:null, sh:0, shV:0, sh0:0, sh0V:0, shHold:-9 };
   tonyTick(g, DB_NOR, 0, 0, S, DB_PORTRAIT, { portrait:true, accent:0 });   // (posed before its first frame)
 }
 const _tonyA=new T.Vector3(), _tonyB=new T.Vector3();
 function tonyTick(o, R, now, dt, S, C, q){
   const Tn=S.tony; if(!Tn) return;
   const B=C.beats, I=DBF_I, F=S.F, k=NEO.k, bar=Math.floor((B+(C.k||0))/4);
+  Tn.turnU.value=S.phi||0;
   // ---- the shades: down for a boost (and a moment after), and for every other pair of bars of a win; a hit knocks them back up
   if((R.boostT||0)>0 && !q.portrait) Tn.shHold=now+0.45;
   const shT=S.cur==='shades' ? 1 : q.spin||q.portrait ? 0 : (now<Tn.shHold || (S.dance>0.5 && S.cur==='win' && (bar>>1)%2===0) || (q.idle && bar%8>=6)) ? 1 : 0;
-  const pump=S.cur==='pump' ? 1 : !q.portrait && (((q.fin||q.celeb) && S.cur!=='lose') || S.cur==='pass' || S.cur==='fire' || (q.idle && bar%4===3)) ? 1 : 0;
-  if(q.portrait){ Tn.sh=Tn.sh0=shT; Tn.shV=Tn.sh0V=0; Tn.pm=Tn.pm0=pump; Tn.pmV=Tn.pm0V=0; }   // (a reference sheet's fresh build: the pose itself, no spring to wait for)
-  else { dbSpring(Tn,'sh0','sh0V',shT,24,1,dt); dbSpring(Tn,'sh','shV',Tn.sh0,15,0.55,dt);     // (two springs in a row: each switch starts without a corner; the second lands the shades with a bounce)
-    dbSpring(Tn,'pm0','pm0V',pump,16,1,dt); dbSpring(Tn,'pm','pmV',Tn.pm0,9,0.85,dt); }
+  if(q.portrait){ Tn.sh=Tn.sh0=shT; Tn.shV=Tn.sh0V=0; }   // (a reference sheet's fresh build: the pose itself, no spring to wait for)
+  else { dbSpring(Tn,'sh0','sh0V',shT,24,1,dt); dbSpring(Tn,'sh','shV',Tn.sh0,15,0.55,dt); }     // (two springs in a row: each switch starts without a corner; the second lands the shades with a bounce)
   tonyShadesPose(Tn.shades, Tn.sh);
   // ---- the light (LUX blooms what is brighter than white): the links glint on every beat, the lenses flash as the shades land,
   //      and the veneers go *ting* as a pass's grin or a win's arrives. None of it in a reference sheet
   if(shT && !Tn.pSh) Tn.landT=now+0.2; Tn.pSh=shT;
   if(S.cur!==Tn.pCur){ if((S.cur==='pass'||S.cur==='win') && !q.portrait) Tn.tingS=now+0.12; Tn.pCur=S.cur; }
-  Tn.chain.material.uniforms.uGl.value=q.portrait ? 0 : 0.7+2.3*Math.exp(-5*C.phase);
+  Tn.chain.material.uniforms.uGl.value=q.portrait ? 0 : 0.5+1.3*Math.exp(-5*C.phase);
   Tn.shades.material.uniforms.uGl.value=q.portrait || now<Tn.landT ? 0 : 3*Math.exp(-6*(now-Tn.landT));
   { const t=(now-Tn.tingS)/0.5, on=!q.portrait && t>0 && t<1, e=on?Math.pow(Math.sin(Math.PI*t),0.8):0, W=F[I.mW]; Tn.ting.visible=on;
     if(on){ const x=0.45*W*k, y=HEAD_CY+(DB_MOUTH.y+F[I.mC]*0.3+F[I.mS]*0.15+0.1)*k; Tn.ting.position.set(x, y, headSurfZ(x,y)+0.4); Tn.ting.scale.setScalar(2.6*e); Tn.ting.rotation.z=1.2*t; Tn.ting.material.uniforms.uK.value=e; } }
@@ -75907,22 +75986,51 @@ function tonyTick(o, R, now, dt, S, C, q){
   { const W=F[I.mW]*(1-0.25*ldClamp(F[I.mR],0,1)), x=(W-0.04)*k, y=HEAD_CY+(DB_MOUTH.y+F[I.mC]*0.5+F[I.mS]*0.34)*k;
     Tn.pick.position.set(x, y, headSurfZ(x,y)-0.05); Tn.pick.rotation.set(1.0+0.5*S.tp, 0, -0.95-0.35*S.tp+0.1*Math.cos(Math.PI*B)); }
   // ---- the cornicello swings on the tuft's springs (the head's turn and the bob, a beat behind)
-  Tn.pend.rotation.set(-0.5*S.tp, 0, 2.2*S.ty+0.1*Math.cos(Math.PI*B));
-  // ---- the pump: the arm comes out fist first, and the fist is at the top on every beat
-  const pm=ldClamp(Tn.pm,0,1), A=TONY_ARM, U=Tn.AU; Tn.arm.visible=pm>0.02;
-  if(pm<0.03) Tn.pg=C.rate>2.4 ? 0.5 : 1;   // (a fast song is pumped at half time, on beats 1 and 3; the gear is only picked while the arm is away)
-  const pp=2*Math.PI*(B+(C.k||0))*Tn.pg, hw=0.5+0.5*Math.cos(pp-0.44*Math.sin(pp));   // (up a little faster than down)
-  const h=q.portrait ? 1 : hw*hw*(3-2*hw)*(0.82+0.18*(q.accent||0)), L=(a,b,i)=>A.a0[i]+(a[i]+(b[i]-a[i])*h-A.a0[i])*pm;
-  U.uA1.value.set(L(A.dn1,A.up1,0), L(A.dn1,A.up1,1), L(A.dn1,A.up1,2)); U.uA2.value.set(L(A.dn2,A.up2,0), L(A.dn2,A.up2,1), L(A.dn2,A.up2,2)); U.uAr.value=A.r*Math.min(1,pm*1.6);
+  { const a=2.2*S.ty+0.1*Math.cos(Math.PI*B), sx=0.8*Math.sin(a), sz=0.3*S.tp, w=S.rd||0; Tn.SW.value.set(sx, 0, sz); Tn.chain.material.uniforms.uWind.value=w;
+    const at=(o, L, dy)=>{ const d=L.drop+(L.dropA-L.drop)*w; o.position.copy(L.low).lerp(L.lowA, w); o.position.x+=sx*d; o.position.y+=Math.abs(sx)*0.14*d+dy; o.position.z+=sz*d; };
+    at(Tn.pend, Tn.lows[0], -0.1); Tn.pend.rotation.set(-0.5*S.tp, 0, a); at(Tn.medal, Tn.lows[1], -0.06); Tn.medal.rotation.set(-0.4*S.tp, 0, 0.8*a); }
+  /* ---- the pump: Guido Tony's, on a rubber hose. It is a list of punch times and every pose is a function of them, so each
+     punch peaks exactly on its beat: hold, wind down and cock back (the fist by his ear), a sharp punch straight up, a snap
+     past the top (the hose stretches, the fist squashes, the bracelet glints) and a springy settle. The times come from
+       · the drops of his own record, as Guido Tony's do (gjSchedule: the audio clock mapped onto ours, output latency
+         included), for the player's Tony with the music on;
+       · the beat clock, while he has something to pump about: a win, a pass, the laugh, one bar in four of waiting.
+         Every beat, or every other beat of a fast song. */
+  const fp=gjSchedule(o.userData, R, now), A=TONY_ARM, U=Tn.AU;
+  let P=null, Q=null; for(const t of fp.pk){ if(t>now){ P=t; break; } Q=t; }
+  const act=!q.portrait && C.rate>0.2 && (((q.fin||q.celeb) && S.cur!=='lose') || S.cur==='pass' || S.cur==='fire' || (q.idle && Math.floor((B+(C.k||0)+0.5)/4)%4===3));
+  if(act!==Tn.act){ Tn.act=act; if(act){ Tn.aS=now; Tn.aE=Infinity; } else Tn.aE=now; }
+  if(fp.e<0.03) Tn.g2=C.rate>2.4 ? 2 : 1;   // (the gear is only picked while the arm is away)
+  if(C.rate>0.2 && !q.portrait){ const x=B+(C.k||0), nq=Math.floor(x/Tn.g2)*Tn.g2, tq=now-(x-nq)/C.rate, tp=now+(nq+Tn.g2-x)/C.rate;
+    if(tq>=Tn.aS+0.12 && tq<=Tn.aE+0.02 && (Q==null || tq>Q)) Q=tq;
+    if(act && tp>=Tn.aS+0.12 && (P==null || tp<P)) P=tp; }
+  const sQ=Q!=null ? now-Q : 9, gap=(P!=null && Q!=null) ? P-Q : 1, low=gap>GJ_LOW && gap<GJ_LMAX, W=low ? GJ_RISE : Math.min(0.26, gap*0.55), PD=0.075;
+  let hh=0.6, wind=0;
+  if(P!=null && now>=P-W){ const h0=low ? GJ_REST : Q!=null ? gjSettle(P-W-Q) : 0.6;
+    if(now<P-PD){ const t=(now-(P-W))/(W-PD); wind=t*t*(3-2*t); hh=h0+(-0.35-h0)*wind; }      // wind down (or up out of the lowered arm), cock back
+    else { const t=(now-(P-PD))/PD; wind=1; hh=-0.35+1.35*t*t; }                                // the punch, accelerating into the top
+  } else if(Q!=null){ hh=gjSettle(sQ); if(low){ const t=ldClamp((sQ-0.5)/0.4,0,1); hh+=(GJ_REST-hh)*t*t*(3-2*t); } }   // hold the top, then lower the arm
+  const want=(P!=null && P-now<W+0.3) || sQ<0.5 || low;
+  if(q.portrait){ fp.e=S.cur==='pump' ? 1 : 0; fp.ev=0; hh=1; }
+  else for(let n=Math.max(1,Math.ceil(dt/0.016)), i=0;i<n;i++){ const st=dt/n; fp.ev+=((want?1:0)-fp.e)*260*st-fp.ev*(want?20:30)*st; fp.e=Math.max(0,fp.e+fp.ev*st); }   // out of the shoulder with a springy pop, folded back in after the last settle
+  const e=Math.min(1.15,fp.e), e1=Math.min(1,e); Tn.arm.visible=e>0.02;
+  { const K=A.k; let i=0; while(i<K.length-2 && hh>=K[i+1][0]) i++; const t=Math.max(0,(hh-K[i][0])/(K[i+1][0]-K[i][0]));   // (t past 1 above the apex: the stretch)
+    for(let c=0;c<3;c++){ _tonyA.setComponent(c, (K[i][1][c]+(K[i+1][1][c]-K[i][1][c])*t)*e1); _tonyB.setComponent(c, (K[i][2][c]+(K[i+1][2][c]-K[i][2][c])*Math.min(1,t))*e1); }
+    U.uA2.value.copy(U.uA0.value).add(_tonyA); U.uA1.value.copy(U.uA0.value).add(_tonyB); U.uAr.value=A.r*(0.25+0.75*e); }
+  U.uAq.value=(Q!=null && sQ<0.09 && wind===0) ? Math.sin(Math.PI*sQ/0.09) : 0;
   _tonyA.copy(U.uA1.value).sub(U.uA0.value); _tonyB.copy(U.uA2.value).sub(U.uA1.value); _tonyA.cross(_tonyB);
   if(_tonyA.lengthSq()>1e-6) U.uAn.value.copy(_tonyA.normalize());
   Tn.fist.position.copy(U.uA2.value);
+  { const on=Tn.arm.visible && Q!=null && sQ<0.3 && !q.portrait, gs=on?Math.sin(Math.PI*sQ/0.3):0; Tn.pop.visible=on;   // the bracelet glints at the top (LUX makes it a point of light)
+    if(on){ Tn.pop.position.copy(U.uA2.value).lerp(U.uA1.value,0.22); Tn.pop.position.z+=0.9; Tn.pop.scale.setScalar(2.4*gs); Tn.pop.rotation.z=sQ*5; Tn.pop.material.uniforms.uK.value=gs; } }
+  if(Q!==Tn.lastQ){ if(Q!=null && sQ<0.1 && R.you && !q.portrait && (Tn.lastQ==null || Q-Tn.lastQ>1.2) && typeof luxRipple==='function') luxRipple(Tn.fist.getWorldPosition(_tonyB), 0.4, 1.2);   // the first punch of a run goes through the picture
+    Tn.lastQ=Q; }
 }
 const TONY=Object.assign({}, NEO, { skin:[23,0.8,0.55], tuftCol:'#24130b', browL:0.7, browTh:0.125, flexK:0.4, ev:TONY_EV, list:TONY_LIST,
   face:{ sknS:'#9c4418', wht:'#ffffff', whtS:'#e9dfe2', mth:'#3a1016' },
   paint:tonyPaint, skinFx:TONY_SKIN_FX, hair:tonyHair, hairPaint:tonyHairPaint, dress:tonyDress, tick:tonyTick });
 function dressTonyGuido(g, K){
-  TONY.skinU={ uTonyHair:{ value:dbLin('#24130b') }, uTonyInk:{ value:dbLin('#1a0f0a') } };
+  TONY.skinU={ uTonyHair:{ value:dbLin('#24130b') }, uTonyInk:{ value:dbLin('#1a0f0a') }, uTonyTurn:{ value:0 } };
   return dressNeo(g, K, TONY);
 }
 
@@ -78501,8 +78609,8 @@ const LOOK_PERSONA={
   tplTessF: {react:10, zeta:0.82, turn:1.05, chin:0.14, lid:1.0, smug:1.2, smirk:0.06, wink:0.7, tilt:0.2, cur:1.25, wary:1.0, blink:3.2, nod:0.03, nodF:2.4, ov:2.1, ovH:0.8, idle:5},
   tplBeatM: {react:10, zeta:0.72, turn:1.1, lid:1, smug:1.3, smirk:0.08, wink:0.5, tilt:0.22, cur:1.3, wary:1.1, blink:3.6, nod:0, ov:2.1, ovH:0.75, idle:5.5},   // DOWNBEAT (Dash): a quick, springy look, a cheeky one back over the shoulder every few seconds (the rig nods on the beat itself)
   tplBeatF: {react:10, zeta:0.72, turn:1.1, lid:1, smug:1.3, smirk:0.08, wink:0.6, tilt:0.26, cur:1.35, wary:1.1, blink:3.6, nod:0, ov:2.1, ovH:0.75, idle:5.5},   // DOWNBEAT (Dot): the same rig and the same timing
-  neoProto: {react:10, zeta:0.72, turn:1.1, lid:1, smug:1.3, smirk:0.08, wink:0.55, tilt:0.24, cur:1.3, wary:1.1, blink:3.6, nod:0, ov:2.1, ovH:0.75, idle:5.5},
-  tonyGuido:{react:11, zeta:0.72, turn:1.1, lid:1, smug:1.6, smirk:0.08, wink:0.55, tilt:0.24, grump:1.3, cur:1.2, wary:1.1, blink:3.6, nod:0, ov:2.3, ovH:0.85, idle:4.2},   // TONY THE GUIDO: Neo Proto's springy look with Guido Tony's swagger (the chin-up check of the crowd behind)   // NEO PROTO: Dash's springy look and his cheeky glance back (the rig nods on the beat itself)
+  neoProto: {react:10, zeta:0.72, turn:1.1, lid:1, smug:1.3, smirk:0.08, wink:0.55, tilt:0.24, cur:1.3, wary:1.1, blink:3.6, nod:0, ov:2.75, ovH:0.9, idle:5.5},
+  tonyGuido:{react:11, zeta:0.72, turn:1.1, lid:1, smug:1.6, smirk:0.08, wink:0.55, tilt:0.24, grump:1.3, cur:1.2, wary:1.1, blink:3.6, nod:0, ov:2.8, ovH:1.0, idle:4.2},   // TONY THE GUIDO: Neo Proto's springy look with Guido Tony's swagger (the chin-up check of the crowd behind)   // NEO PROTO: Dash's springy look and his cheeky glance back (the rig nods on the beat itself)
 };
 const _lpC={};
 function lookPersona(id){
