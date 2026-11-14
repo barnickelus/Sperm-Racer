@@ -156,6 +156,19 @@ skipped, and if none passes the old renderer is used. Phones and tablets use a
 plain target smoothed in the last pass (FXAA) and capped at 2.4 million
 pixels, about a quarter of the memory of the desktop's multisampled one.
 
+It also watches its own pace, and is careful about what it blames itself for.
+When frames run long it steps out for under a second and times the game
+without it. If the game is as slow without it (a heavy course, or a phone held
+to 30 frames a second) nothing is given up. If the pipeline is the cost, the
+scene target shrinks a step at a time to half; only if frames are still far
+longer than without it do the air and the smoothing go; and only after a
+second timing agrees does it stand aside, for that course only. Every
+`race_fx` reply carries `lux.pace` (the frame time, the base without the
+pipeline, whether it is running lite). `race_fx {lux:{pace:{on, off}}}` runs
+the rule on made-up frame times (ms with the pipeline, ms without) and
+reports what it would give up, without changing the page; `{lux:{auto:true}}`
+switches the rule on under the tools, where it is off by default.
+
 `?lux=0` turns it off. A course asks for its own light with
 `TRACKS[i].lux={bloom, thr}` (Nova does; Stacey pushes both further, for her
 white lines and her neon night). From the tools:
