@@ -87346,7 +87346,7 @@ function luxTick(dt){
     if(LUX.wp<0.002 && want===0) LUX.wp=0; LUX.wpT+=d*(0.5+LUX.wp); }
   // the course's air through the race (TRACKS[i].air: see luxState), then the air's light on the racers
   { const tk=TRACKS[selTrack]||{};
-    if(tk.air){ const X=LUX.liveX||(LUX.liveX={}); tk.air(luxState(dt, me, racing), X); LUX.live=X; }
+    luxAirNow(dt, me, racing);
     luxLit(Object.assign(_luxLx, LUX.air, tk.lux, LUX.live, LUX.force), me); }
   // pace, on the wall clock (the game's own step is capped, and a capped step cannot tell 30 frames a second from 10)
   { const nw=performance.now(), ms=Math.min(100,nw-(LUX.wall||nw)); LUX.wall=nw;
@@ -87408,6 +87408,8 @@ function luxState(dt, me, racing){
    point light leaves its post and rides at the player's side, low and toward the camera, in the air's colour: the mist's
    and the deep air's, as the ambient light has tinted them, or litCol. It reaches litR, so it falls on the player, the
    pack round them and a pool of road, and not on the land. It goes back where it stood when the course stops asking. */
+// (the course's air hook, run: every drawn frame, and when a tool asks what light is in force between two of them)
+function luxAirNow(dt, me, racing){ const tk=TRACKS[selTrack]||{}; if(!tk.air) return; const X=LUX.liveX||(LUX.liveX={}); tk.air(luxState(dt, me, racing), X); LUX.live=X; }
 function luxAirCol(lx, c){   // the air's own colour, as a light: the mist's and the deep air's, as the ambient light has tinted them, at full strength
   const wm=lx.mist*(0.5+0.5*lx.mistGlow), wa=lx.aer; _luxA.setHex(lx.mistCol).multiplyScalar(wm); _luxB.setHex(lx.aerCol).multiplyScalar(wa); c.copy(_luxA).add(_luxB);
   if(wm+wa<1e-3) c.copy(sun.color); const ak=Math.max(0,Math.min(1,lx.amb)); if(ak>0){ _luxA.copy(hemi.color); const mx=Math.max(_luxA.r,_luxA.g,_luxA.b,1e-3); c.r*=1-ak+ak*_luxA.r/mx; c.g*=1-ak+ak*_luxA.g/mx; c.b*=1-ak+ak*_luxA.b/mx; }
@@ -92591,6 +92593,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
+      { const m0=racers.find(r=>r.you); luxAirNow(0, m0, !!m0 && (state==='race'||state==='done')); }   // (a tool steps the game without drawing every step: the air as it stands now, not as of the last frame drawn)
       return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
         lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length, warp:+LUX.wp.toFixed(3) } }; },
 
