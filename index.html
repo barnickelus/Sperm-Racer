@@ -38848,15 +38848,26 @@ function novaTick(P, t){
 }
 /* ============== LUCY KIT: the Jersey shore at dusk, as a 1930s cartoon ============== *
  * The boardwalks of Atlantic City and the Jersey shore, drawn the way the Neo Proto racers are: as a 1930s cartoon.
- * Three rules hold everything here.
+ * Five rules hold everything here.
  *   · FLAT COLOUR, ONE SHADOW. Every solid is a flat fill split by one hard-edged shadow off a low sun (BW_L), the
  *     shadow pushed cool and purple the way the period's colour prints laid it (bwCel). Nothing is shaded smooth.
- *   · INK. Every solid wears a warm near-black line, the racers' own #141016: an inverted hull, a little wider with
- *     distance (bwPatch, hull).
+ *   · INK. Every solid wears a warm near-black line, the racers' own #141016, and the line is DRAWN, not ruled (bwPatch,
+ *     THE LINE): heavy on the side turned from the light and underneath, fine where the light falls; heavier on what is
+ *     near; swelling and thinning from corner to corner as a pen's does. And it states distance the way a draughtsman
+ *     does (BW RANGE): whole near, broken into dashes further off (the lit side lets go first: a lost edge), dots far
+ *     away, then gone into the haze, paler and bluer as it goes. Lines drawn ON surfaces (the boards' joints) keep the
+ *     same range; the sky's own lines (the clouds, the moon, the sun's ring) are the palest and most broken of all.
  *   · THE BEAT. The whole place dances on the game's beat clock (beatOf), as everything in those cartoons does: booths,
  *     rides, umbrellas and the elephant squash on the downbeat and spring back, lamp posts and hotels lean on alternate
  *     beats, the marquee bulbs chase in eighths, the high strikers ring on the bar, the funhouse laughs. A player who
  *     asked for reduced motion gets it standing still.
+ *   · LIGHT THAT DOES SOMETHING (after Nova). The low sun throws long purple shadows across the boards and the sand (the
+ *     rail's bars, the lamp posts, the bunting as a dotted line, the wheel's rings, Lucy's head across the boardwalk),
+ *     and when night comes every lamp, shop front and ride lays a warm pool on the ground, grained at its edge
+ *     (bwLightMap, bwGround: one map, drawn once).
+ *   · AIR THAT CHANGES (LUX.live, from bwTick). Dusk: the boards are still hot and the far distance swims under a thin
+ *     peach glare. Night: the heat is gone, a sea mist lies low and takes the colour of the bulbs it stands in, the glow
+ *     comes up, the sea carries the moon's road in glints, and fireworks go up off the pier head on the beat.
  * A lap, in order:
  *   the BOARDWALK (the start): herringbone boards between the game booths and arcades under their marquee bulbs, the
  *     hotels behind, lamp posts, benches and rolling chairs along the sea rail, bunting over the road;
@@ -38900,17 +38911,22 @@ const BW_GLSL=`
     return mix(sh, li, lit); }
   // a line of ink of half-width w (units) round v=0, anti-aliased
   float bwLine(float v, float w){ float a=fwidth(v)*0.8+1e-4; return 1.0-smoothstep(w-a, w+a, abs(v)); }
+  // a line drawn on a surface, AT RANGE (s: units along it): whole near, broken into dashes further off, gone far away.
+  // The breaks are fixed in the world and keep their size on screen by octaves of distance (BW RANGE, below)
+  float bwRange(float s){ float d=distance(vSW,cameraPosition), oct=exp2(floor(log2(max(d,8.0))));
+    return mix(1.0, step(fract(s/oct*20.0),0.6), smoothstep(150.0,330.0,d))*(1.0-smoothstep(480.0,900.0,d)); }
 `;
 /* One patch for every surface in the kit (a MeshBasicMaterial underneath, so three's fog and output encoding hold).
    o.dance: the instance squashes on uBeat.x by aDance.x and leans on uBeat.y by aDance.y (aDance.z its side, +-1);
-   o.hull: the ink shell (welded normals, pushed out in view space, wider with distance); o.cel:false for unlit things;
+   o.hull: the ink shell (welded normals, pushed out in view space: see THE LINE below); o.cel:false for unlit things;
    o.frag: GLSL laid in at the colour (vSW the world point, vSN its normal, vUv where the material has a map). */
 function bwPatch(mat, o){
   o=o||{}; mat.extensions={ derivatives:true };
-  const U=Object.assign({ uInk:{value:o.ink||0.0026}, uInkMax:{value:o.inkMax||1.9}, uInkMin:{value:o.inkMin||0.07}, uDanceH:{value:o.danceH||1}, uCelOn:{value:o.cel===false?0:1} }, o.uniforms||{});
+  const U=Object.assign({ uInk:{value:o.ink||0.0026}, uInkMax:{value:o.inkMax||4.5}, uInkMin:{value:o.inkMin||0.07}, uInkW:{value:o.inkW||1}, uDanceH:{value:o.danceH||1}, uCelOn:{value:o.cel===false?0:1} }, o.uniforms||{});
   mat.onBeforeCompile=sh=>{
     sh.uniforms.uT=BW_U.uT; sh.uniforms.uBeat=BW_U.uBeat; sh.uniforms.uNight=BW_U.uNight; Object.assign(sh.uniforms,U);
-    const decl='uniform float uT, uInk, uInkMax, uInkMin, uNight, uDanceH; uniform vec4 uBeat; varying vec3 vSN; varying vec3 vSW;\nattribute vec3 aDance; attribute vec4 aAtt;\n'+(o.vdecl||'');
+    const decl='uniform float uT, uInk, uInkMax, uInkMin, uInkW, uNight, uDanceH; uniform vec4 uBeat; varying vec3 vSN; varying vec3 vSW; varying vec3 vInk;\nattribute vec3 aDance; attribute vec4 aAtt;\n'
+      +`const vec3 BW_LV=vec3(${BW_L.x.toFixed(4)},${BW_L.y.toFixed(4)},${BW_L.z.toFixed(4)});\n`+(o.vdecl||'');
     // (an instance squashes about its own base by aDance.x and leans by aDance.y on its side aDance.z; a part of something
     //  bigger squashes and leans about that thing's base, aAtt. Every instanced batch carries both, zero where unused)
     const body=`vec3 bp=transformed; vec3 hn=normal;
@@ -38927,13 +38943,31 @@ function bwPatch(mat, o){
       vec4 hw=modelMatrix*hp;
       vSN=normalize(mat3(modelMatrix)*hn); vSW=hw.xyz;
       vec4 mvPosition=viewMatrix*hw;
-      ${o.hull?'{ vec3 vn=normalize((viewMatrix*vec4(vSN,0.0)).xyz); float dd=-mvPosition.z; mvPosition.xyz+=vn*clamp(dd*uInk,uInkMin,uInkMax); }':''}
+      ${o.hull?`{ vec3 vn=normalize((viewMatrix*vec4(vSN,0.0)).xyz); float dd=-mvPosition.z;
+        // THE LINE. Its weight is drawn, not ruled: heavy on the side turned from the light and underneath, fine where the
+        // light falls; heavier on what is near; and it swells and thins from corner to corner as a pen's does (the swell is
+        // fixed to the shape: it does not boil)
+        float sd=smoothstep(-0.6,0.7,-dot(vSN,BW_LV)), wob=fract(sin(dot(floor(position*5.3+0.5),vec3(12.9898,78.233,37.719)))*43758.5453);
+        float w=mix(0.5,1.5,sd)*(1.0+0.6*(1.0-smoothstep(30.0,240.0,dd))+0.3*smoothstep(240.0,700.0,dd)-0.4*smoothstep(900.0,1700.0,dd))*(0.7+0.6*wob)*uInkW;   // (a dashed line is drawn a little bolder, or its pieces are lost; a dotted one finer again)
+        mvPosition.xyz+=vn*clamp(dd*uInk,uInkMin,uInkMax)*w; vInk=vec3(dd,sd,wob); }`:'vInk=vec3(0.0);'}
       gl_Position=projectionMatrix*mvPosition;`;
     sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\n'+decl).replace('#include <project_vertex>',body);
     if(o.uvVtx) sh.vertexShader=sh.vertexShader.replace('#include <uv_vertex>', o.uvVtx);
-    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uT, uNight, uCelOn; uniform vec4 uBeat; varying vec3 vSN; varying vec3 vSW;\n'+BW_GLSL+(o.fdecl||''));
+    if(o.ground!=null) sh.uniforms.tLm=BW_U.tLm;   // (o.ground: this surface takes the light on the ground, bwGround; 0 a deck, 1 the sand; its frag may set bwPlane, -1 for none)
+    sh.fragmentShader=sh.fragmentShader.replace('#include <common>','#include <common>\nuniform float uT, uNight, uCelOn; uniform vec4 uBeat; varying vec3 vSN; varying vec3 vSW; varying vec3 vInk;\n'+BW_GLSL
+      +(o.ground!=null ? BW_GROUND_DECL+'float bwPlane='+o.ground.toFixed(1)+';\n' : '')+(o.fdecl||''));
+    // BW RANGE: the line at a distance, as a draughtsman states distance. Whole near; broken into dashes further off (the
+    // side the light is on lets go first: a lost edge); dots far away; then into the haze. Paler and bluer as it goes. The
+    // breaks are fixed in the world, so they do not crawl as the camera moves, and they keep their size on screen by octaves
+    // of distance (2 to 4% of the picture's height for a dash, about 1% for a dot).
+    if(o.hull) sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+      { float d=vInk.x, oct=exp2(floor(log2(max(d,8.0)))), s=dot(vSW,vec3(0.72,1.0,0.87))/oct;
+        float kd=smoothstep(240.0,480.0,d), kt=smoothstep(850.0,1300.0,d);
+        float on=kt>0.5 ? step(fract(s*52.0),0.38) : step(fract(s*20.0),mix(1.0,0.6,kd));
+        if(on<0.5 || kd*(1.0-vInk.y)>0.42+0.5*vInk.z || bwH(floor(gl_FragCoord.xy))<smoothstep(1700.0,2700.0,d)) discard;
+        diffuseColor.rgb=mix(diffuseColor.rgb, mix(${bwG3(0x7a6a9c)}, ${bwG3(0x2a346e)}, uNight), 0.75*smoothstep(160.0,1300.0,d)); }`);
     if(!o.hull) sh.fragmentShader=sh.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n'+(o.frag||'')
-      +'if(uCelOn>0.5) diffuseColor.rgb=bwCel(diffuseColor.rgb, normalize(vSN));'+(o.post||''));
+      +'if(uCelOn>0.5) diffuseColor.rgb=bwCel(diffuseColor.rgb, normalize(vSN));'+(o.ground!=null?'if(bwPlane>-0.5) diffuseColor.rgb=bwGround(diffuseColor.rgb, bwPlane);':'')+(o.post||''));
   };
   // one program per distinct shader text: every ink shell shares one, every plain fill another; a fill with its own
   // GLSL is keyed by its call site (and its per-material numbers are uniforms, so look-alikes share: see BW_STRIPE)
@@ -38989,7 +39023,7 @@ function bwBatch(geo, list, o){
   const dance=!!o.dance, par=o.parent||BW_GRP||trackGroup;
   const fm=bwPatch(new T.MeshBasicMaterial({color:0xffffff, map:o.map||null, side:o.side||T.FrontSide, alphaTest:o.alphaTest||0, fog:o.fog!==false}), Object.assign({}, o, {hull:false}));
   const hm=o.ink===false ? null : bwPatch(new T.MeshBasicMaterial({color:bwLin(o.inkCol||BW.INK), side:T.BackSide, fog:o.fog!==false}),
-    {hull:true, danceH:o.danceH, ink:o.ink, inkMax:o.inkMax, inkMin:o.inkMin});
+    {hull:true, danceH:o.danceH, ink:o.ink, inkMax:o.inkMax, inkMin:o.inkMin, inkW:o.inkW});
   let first=null; const d=new T.Object3D(), c=new T.Color(), all=[];
   groups.forEach((L,gi)=>{
     const g=gi?geo.clone():geo, n=L.length, m=new T.InstancedMesh(g, fm, n);
@@ -39017,7 +39051,7 @@ const bwAt=(o,x,y,z)=>{ o.position.set(x,y,z); return o; };
 function bwSolid(geo, col, o){
   o=o||{};
   const m=new T.Mesh(geo, bwPatch(new T.MeshBasicMaterial({color:bwLin(col), map:o.map||null, side:o.side||T.FrontSide, alphaTest:o.alphaTest||0, transparent:!!o.transparent, vertexColors:!!geo.attributes.color}), o));
-  if(o.ink!==false){ const h=new T.Mesh(hanaHullGeo(geo), bwPatch(new T.MeshBasicMaterial({color:bwLin(BW.INK), side:T.BackSide}), {hull:true, ink:o.ink, inkMax:o.inkMax}));
+  if(o.ink!==false){ const h=new T.Mesh(hanaHullGeo(geo), bwPatch(new T.MeshBasicMaterial({color:bwLin(BW.INK), side:T.BackSide}), {hull:true, ink:o.ink, inkMax:o.inkMax, inkW:o.inkW}));
     h.name='ink'; m.add(h); }
   m.name=o.name||'bw-solid'; return m;
 }
@@ -39037,7 +39071,7 @@ function bwSky(){
     vec3 S=normalize(vec3(-0.9, 0.075-0.13*uNight, -0.38)); float a=acos(clamp(dot(d,S),-1.0,1.0)), R=0.075;
     float disc=1.0-smoothstep(R-0.002,R+0.002,a), core=1.0-smoothstep(R*0.62-0.002,R*0.62+0.002,a), ring=bwLine(a-R,0.0035);
     c=mix(c, mix(${bwG3(0xf06a2a)}*1.25, ${bwG3(0xffc070)}*1.35, core)*(1.0-0.5*uNight), disc*step(0.0,h));
-    c=mix(c, BW_INK, ring*step(0.0,h)*0.85);
+    c=mix(c, mix(${bwG3(0x8a5a6a)}, ${bwG3(0x4a3a6a)}, uNight), ring*step(0.0,h)*0.8*step(fract(atan(d.y-S.y, dot(d.xz,vec2(-S.z,S.x)))*6.366),0.62));   // (its ring broken: the furthest line there is)
     // stars, coming out with the night
     if(h>0.06){ vec2 sp=vec2(atan(d.z,d.x)*95.0, h*170.0); vec2 ci=floor(sp), cf=fract(sp)-0.5; float r=bwH(ci);
       if(r>0.962){ float tw=0.6+0.4*sin(uT*3.0+r*40.0), st=1.0-smoothstep(0.06,0.18,length(cf));
@@ -39050,18 +39084,21 @@ function bwSky(){
 function bwCloudTex(){ return bwTex('cloud',512,256,(g,W,H)=>{
   const P=[[150,150,62],[230,112,78],[320,124,70],[395,156,54],[100,176,40],[268,170,60],[350,178,46],[200,176,52]];
   g.clearRect(0,0,W,H);
-  g.fillStyle=bwCss(BW.INK); for(const [x,y,r] of P){ g.beginPath(); g.arc(x,y,r+9,0,7); g.fill(); }
+  // (as far off as anything in the picture: its line is the palest and the most broken, dashes of a dusty violet)
+  g.strokeStyle='#8676a8'; g.lineWidth=7; g.lineCap='round'; g.setLineDash([20,15]);
+  P.forEach(([x,y,r],i)=>{ g.lineDashOffset=i*9; g.beginPath(); g.arc(x,y,r+4,0,7); g.stroke(); }); g.setLineDash([]);
   g.fillStyle='#fbefd8'; for(const [x,y,r] of P){ g.beginPath(); g.arc(x,y,r,0,7); g.fill(); }
   g.save(); g.beginPath(); for(const [x,y,r] of P){ g.moveTo(x+r,y); g.arc(x,y,r,0,7); } g.clip();
   g.fillStyle='#f0b8b0'; g.fillRect(0,168,W,H); g.fillStyle='#fffaf0'; for(const [x,y,r] of P){ g.beginPath(); g.arc(x-r*0.3,y-r*0.35,r*0.28,0,7); g.fill(); }
-  g.restore(); g.fillStyle=bwCss(BW.INK); g.fillRect(60,214,380,9);
+  g.restore(); g.strokeStyle='#8676a8'; g.lineWidth=6; g.setLineDash([2,14]); g.beginPath(); g.moveTo(70,222); g.lineTo(430,222); g.stroke(); g.setLineDash([]);   // its flat base, dotted
 }, {clamp:true}); }
 // the moon: a crescent with a sleepy face, rising over the sea
 function bwMoonTex(){ return bwTex('moon',256,256,(g,W,H)=>{
-  g.clearRect(0,0,W,H); g.fillStyle=bwCss(BW.INK); g.beginPath(); g.arc(128,128,108,0,7); g.fill();
-  g.fillStyle='#fbe9a8'; g.beginPath(); g.arc(128,128,100,0,7); g.fill();
+  g.clearRect(0,0,W,H); g.fillStyle='#fbe9a8'; g.beginPath(); g.arc(128,128,100,0,7); g.fill();
+  g.strokeStyle='#8676a8'; g.lineWidth=7; g.lineCap='round'; g.setLineDash([16,13]); g.beginPath(); g.arc(128,128,103,0,7); g.stroke(); g.setLineDash([]);
   g.globalCompositeOperation='destination-out'; g.beginPath(); g.arc(178,104,92,0,7); g.fill(); g.globalCompositeOperation='source-over';
-  g.lineWidth=7; g.strokeStyle=bwCss(BW.INK); g.lineCap='round';
+  g.setLineDash([16,13]); g.beginPath(); g.arc(178,104,95,1.9,4.05); g.stroke(); g.setLineDash([]);
+  g.lineWidth=7; g.strokeStyle='#5c4e80'; g.lineCap='round';
   g.beginPath(); g.arc(70,96,16,0.2,Math.PI-0.2); g.stroke();                        // a closed eye
   g.beginPath(); g.arc(84,150,26,0.3,Math.PI*0.75); g.stroke();                      // the smile
   g.fillStyle='#f4a0a0'; g.beginPath(); g.arc(58,128,10,0,7); g.fill();              // a cheek
@@ -39084,13 +39121,21 @@ function bwSea(){
     vec2 cs=p/48.0, ci=floor(cs), f=fract(cs)-0.5; float r=bwH(ci);
     f+=(vec2(bwH(ci+3.1),bwH(ci+7.7))-0.5)*0.45; f.y+=0.07*sin(uT*2.2+r*6.28);
     float arc=abs(length(f*vec2(1.0,2.6)+vec2(0.0,0.22))-0.26);
-    float mk=(1.0-smoothstep(0.022,0.05,arc))*step(-0.04,f.y)*step(r,0.5)*(1.0-smoothstep(500.0,1500.0,D));
+    float mk=(1.0-smoothstep(0.022,0.05,arc))*step(-0.04,f.y)*step(r,0.5)*(1.0-smoothstep(700.0,1900.0,D));
+    mk*=mix(1.0, step(fract((p.x+p.y*0.7)/exp2(floor(log2(max(D,8.0))))*26.0),0.5), smoothstep(300.0,650.0,D));   // (the far waves are drawn in dots: the sea's own line, at range)
     c=mix(c, mix(${bwG3(0xeaf4ea)}, ${bwG3(0x9ab4d8)}, uNight), mk*0.85);
     // the surf: foam lines running in to the sand, scalloped, and a lip of foam at the edge
     float sc=2.6*abs(sin(p.x*0.085)), sh=239.0+3.0*sin(p.x*0.021+uT*1.1);
     float foam=bwLine(p.y-sh-sc*0.4, 2.0);
     for(int i=0;i<3;i++){ float z=sh+4.0+mod(uT*7.0+float(i)*13.0, 39.0); foam=max(foam, bwLine(p.y-z-sc, 0.9)*(1.0-smoothstep(sh+8.0, sh+42.0, z))); }
     c=mix(c, mix(${bwG3(0xfbf3e2)}, ${bwG3(0xb8c4e0)}, uNight), foam*step(sh-3.0,p.y));
+    // the sun's road on the water, and the moon's once it is up: glints, each a cell that winks (bright past white: they glow)
+    { vec3 Rf=reflect(normalize(vSW-cameraPosition), vec3(0.0,1.0,0.0));
+      float gs=pow(max(dot(Rf, normalize(vec3(-0.9,0.09,-0.38))),0.0), 70.0)*(1.0-uNight)*(1.0-uNight);
+      float gm=pow(max(dot(Rf, normalize(vec3(0.814,0.07+0.16*uNight,0.581))),0.0), 110.0)*smoothstep(0.3,0.8,uNight);
+      vec2 gc=floor(p/6.0); float tw=step(0.5, fract(bwH(gc)*7.0+uT*(0.5+bwH(gc+3.0))))*step(0.45,bwH(gc+9.0));
+      vec2 gf=fract(p/6.0)-0.5; tw*=1.0-smoothstep(0.1,0.42,length(gf*vec2(0.5,1.0)));
+      c+=(vec3(2.4,1.6,0.8)*gs+vec3(1.3,1.5,2.1)*gm)*tw; }
     diffuseColor.rgb=c; }`}));
   m.position.set(0,0.3,2000); m.renderOrder=-5; m.frustumCulled=false; m.name='bw-sea'; return m;
 }
@@ -39101,15 +39146,14 @@ function bwSand(){
   const g=new T.PlaneGeometry(2700,330,90,44); g.rotateX(-Math.PI/2); g.translate(-100,0,150);
   const p=g.attributes.position; for(let i=0;i<p.count;i++) p.setY(i, bwSandY(p.getZ(i)));
   g.computeVertexNormals();
-  return Object.assign(new T.Mesh(g, bwPatch(new T.MeshBasicMaterial({color:0xffffff}), {key:'sand', frag:`{
+  return Object.assign(new T.Mesh(g, bwPatch(new T.MeshBasicMaterial({color:0xffffff}), {key:'sand', ground:1, frag:`{
     vec2 p=vSW.xz; vec3 c=${bwG3(BW.SAND)};
     c=mix(c, ${bwG3(BW.SANDD)}, smoothstep(205.0,232.0,p.y));                                  // the wet sand
-    float rp=sin(p.y*0.42+sin(p.x*0.06)*2.2+bwN(p*0.05)*3.0); c=mix(c, ${bwG3(0xc49a64)}, smoothstep(0.93,0.99,rp)*0.55*step(p.y,215.0));
+    float rp=sin(p.y*0.42+sin(p.x*0.06)*2.2+bwN(p*0.05)*3.0); c=mix(c, ${bwG3(0xc49a64)}, smoothstep(0.93,0.99,rp)*0.55*step(p.y,215.0)*bwRange(p.x));
     c*=0.94+0.06*step(0.86,bwH(floor(p*1.6)));                                                    // grain
     float sh=0.0;
     if(p.y<56.0 && p.x>-860.0 && p.x<705.0) sh=1.0;                                                 // under the boardwalk
     if(p.x>418.0 && p.x<650.0 && p.y>50.0) sh=1.0; if(p.x>320.0 && p.x<650.0 && p.y>328.0) sh=1.0; // under the pier
-    if(p.x>-288.0 && p.x<-112.0 && p.y>154.0 && p.y<246.0) sh=max(sh, 0.6+0.4*step(0.5,fract(p.x/3.4)));   // the bandstand's slats
     c=mix(c, c*vec3(0.5,0.47,0.66), sh*0.9);
     diffuseColor.rgb=c; }`})), {name:'bw-sand'});
 }
@@ -39128,20 +39172,20 @@ function bwTownGround(){
      each side, and the bandstand's slats lying across it in shadow — */
 function bwRoadMat(lapK){
   const W=bwG3(BW.WOOD), W2=bwG3(BW.WOOD2), WL=bwG3(0xd9a46a), WD=bwG3(BW.WOODD), PW=bwG3(0xbf9a72), PW2=bwG3(0xa98660);
-  return bwPatch(new T.MeshBasicMaterial({map:BW_WHITE, side:T.DoubleSide}), {key:'road', uniforms:{uLapK:{value:lapK}}, fdecl:'uniform float uLapK;\n', frag:`{
+  return bwPatch(new T.MeshBasicMaterial({map:BW_WHITE, side:T.DoubleSide}), {key:'road', ground:0, uniforms:{uLapK:{value:lapK}}, fdecl:'uniform float uLapK;\n', frag:`{
     float u=vUv.y/40.0, ac=(vUv.x-0.5)*44.0, al=vUv.y*uLapK, a=abs(ac); vec3 c; float ink=0.0;
     float sec=(u<0.282||u>0.9695) ? 0.0 : (u<0.305) ? 1.0 : (u<0.445) ? 2.0 : (u>=0.546 && u<0.599) ? 4.0 : (u<0.683) ? 1.0 : (u<0.905) ? 3.0 : 1.0;
     if(sec<0.5){                                                                                  // herringbone
       float q=(al+a)*0.7071, r=(al-a)*0.7071, Wd=2.2, L=11.0, row=floor(r/Wd), jo=row*3.7, col=floor((q+jo)/L), t=bwH(vec2(row,col));
       c=mix(${W}, ${W2}, step(0.5,t)); c=mix(c, ${WL}, step(0.84,t)); c*=0.95+0.05*sin(q*2.1+t*30.0);
-      ink=max(bwLine((fract(r/Wd+0.5)-0.5)*Wd, 0.1), bwLine((fract((q+jo)/L+0.5)-0.5)*L, 0.1)); ink=max(ink, bwLine(ac,0.1));
+      ink=max(bwLine((fract(r/Wd+0.5)-0.5)*Wd, 0.1), bwLine((fract((q+jo)/L+0.5)-0.5)*L, 0.1))*bwRange(al+a*0.6); ink=max(ink, bwLine(ac,0.1));
     } else if(sec<1.5 || sec>4.5){                                                                // planks across
       float Wd=2.5, row=floor(al/Wd), L=15.0, jo=row*5.3, col=floor((ac+30.0+jo)/L), t=bwH(vec2(row,col));
       c=mix(${PW}, ${PW2}, step(0.55,t)); c*=0.95+0.05*sin(ac*1.7+t*20.0);
-      ink=max(bwLine((fract(al/Wd+0.5)-0.5)*Wd, 0.1), bwLine((fract((ac+30.0+jo)/L+0.5)-0.5)*L, 0.1));
+      ink=max(bwLine((fract(al/Wd+0.5)-0.5)*Wd, 0.1), bwLine((fract((ac+30.0+jo)/L+0.5)-0.5)*L, 0.1))*bwRange(ac+al*0.6);
     } else if(sec<2.5){                                                                           // the coaster
       float Wd=3.0, row=floor(al/Wd), t=bwH(vec2(row,7.0)); c=mix(${PW}, ${PW2}, step(0.5,t))*0.92;
-      ink=bwLine((fract(al/Wd+0.5)-0.5)*Wd, 0.22);
+      ink=bwLine((fract(al/Wd+0.5)-0.5)*Wd, 0.22)*bwRange(ac);
       float rl=step(8.4,a)*step(a,10.4); c=mix(c, ${bwG3(BW.RED)}, rl); ink=max(ink, bwLine(a-8.4,0.12)); ink=max(ink, bwLine(a-10.4,0.12));
       if(u>0.308 && u<0.356){ float ch=step(a,1.7); c=mix(c, ${bwG3(0x3a3440)}, ch); c=mix(c, ${bwG3(0xb8b0c8)}, ch*step(fract((al-uT*16.0)/2.6),0.32)); ink=max(ink, bwLine(a-1.7,0.1)); }
     } else if(sec<3.5){                                                                           // the beach
@@ -39150,24 +39194,24 @@ function bwRoadMat(lapK){
       c*=0.94+0.06*step(0.85,bwH(floor(vec2(al,ac)*1.5)));
       float rope=step(19.6,a)*step(a,21.0)*step(fract(al/7.0),0.72); c=mix(c, ${bwG3(0xd23c2c)}, rope);
       ink=max(ink, bwLine(a-19.6,0.09)*step(fract(al/7.0),0.72)); ink=max(ink, bwLine(a-21.0,0.09)*step(fract(al/7.0),0.72));
-      if(u>0.7525 && u<0.791){ float k=smoothstep(0.7525,0.757,u)*(1.0-smoothstep(0.787,0.791,u)); c*=mix(1.0, mix(0.58,1.0,step(0.5,fract(al/3.4))), k); c=mix(c, c*vec3(0.85,0.85,1.08), k); }
     } else {                                                                                      // the funhouse floor
       vec2 g=floor(vec2(al,ac+30.0)/5.5); c=mix(${bwG3(BW.RED)}, ${bwG3(BW.CREAM)}, mod(g.x+g.y,2.0))*0.82;
       ink=max(bwLine((fract(al/5.5+0.5)-0.5)*5.5,0.08), bwLine((fract((ac+30.0)/5.5+0.5)-0.5)*5.5,0.08));
     }
     if(sec!=3.0){ ink=max(ink, step(21.3,a)); }                                                     // the edge of the strip
     c=mix(c, BW_INK, ink*0.85);
+    bwPlane=sec==3.0 ? 1.0 : sec==4.0 ? -1.0 : 0.0;                                                 // (the sand's light on the beach; none indoors)
     diffuseColor.rgb=c; }`});
 }
 // plank decks laid along z, for the boardwalk's aprons and the pier (world-space planks, beams on the sides)
 function bwDeckMat(along){
-  return bwPatch(new T.MeshBasicMaterial({color:0xffffff}), {key:'deck', uniforms:{uAlongX:{value:along==='x'?1:0}}, fdecl:'uniform float uAlongX;\n', frag:`{
+  return bwPatch(new T.MeshBasicMaterial({color:0xffffff}), {key:'deck', ground:0, uniforms:{uAlongX:{value:along==='x'?1:0}}, fdecl:'uniform float uAlongX;\n', frag:`{
     vec2 pq=uAlongX>0.5 ? vec2(vSW.z, vSW.x) : vec2(vSW.x, vSW.z);
     vec3 N=normalize(vSN); vec3 c;
     if(N.y>0.5){ float v=pq.x/2.4, row=floor(v), t=bwH(vec2(row,floor((pq.y+row*6.1)/16.0)));
       c=mix(${bwG3(0xc6a078)}, ${bwG3(0xb08a62)}, step(0.5,t)); c*=0.95+0.05*sin(pq.y*1.3+t*20.0);
-      c=mix(c, BW_INK, max(bwLine((fract(v+0.5)-0.5)*2.4,0.1), bwLine((fract((pq.y+row*6.1)/16.0+0.5)-0.5)*16.0,0.1))*0.8);
-    } else { c=${bwG3(BW.WOODD)}; c=mix(c, BW_INK, bwLine((fract(vSW.y/1.6+0.5)-0.5)*1.6, 0.08)*0.6); }
+      c=mix(c, BW_INK, max(bwLine((fract(v+0.5)-0.5)*2.4,0.1), bwLine((fract((pq.y+row*6.1)/16.0+0.5)-0.5)*16.0,0.1))*0.8*bwRange(pq.y+pq.x*0.6));
+    } else { bwPlane=-1.0; c=${bwG3(BW.WOODD)}; c=mix(c, BW_INK, bwLine((fract(vSW.y/1.6+0.5)-0.5)*1.6, 0.08)*0.6); }
     diffuseColor.rgb=c; }`});
 }
 function bwBox(x0,x1,y0,y1,z0,z1,mat){
@@ -39243,7 +39287,7 @@ function bwBulbs(list){
   if(!list.length) return null;
   return bwParts(new T.IcosahedronGeometry(0.7,0), list, { key:'bulb', chunk:1400, cel:false, ink:false,
     vdecl:'attribute float aBulb; varying float vBulb;\n', vtx:'vBulb=aBulb;', fdecl:'varying float vBulb;\n', attr:{aBulb:v=>v.b||0},
-    frag:'{ float on=step(mod(vBulb-uBeat.z,3.0),0.999); diffuseColor.rgb*=mix(0.45+0.2*uNight, 2.3+1.3*uNight, on); }' });
+    frag:'{ float on=step(mod(vBulb-uBeat.z,3.0),0.999); diffuseColor.rgb*=mix(0.5+0.15*uNight, 1.45+2.3*uNight, on); }' });   // (lit at dusk, and burning once it is dark)
 }
 // a shop's lettered panel, from the atlas (aCell: which word)
 function bwSigns(list){
@@ -39292,6 +39336,7 @@ function bwShops(L, x0, x1, zf, face, R){
       if(type==='wheel') L.wheels.push({x:cx, y:by+3, z:bz, face, at});
       if(type==='SHOOTING GALLERY') L.ducks.push({x0:cx-w/2+4, x1:cx+w/2-4, y:by+2, z:bz, face});
       if(type==='PRIZES'||type==='WIN A PRIZE!'||type==='GAMES') for(let i=0;i<4;i++) L.bear.push({x:cx-w/2+5+i*(w-10)/3, y:ay-4.6, z:zf+face*1.6, s:1, c:[BW.PINK,BW.MINT,BW.MUST,BW.LILAC][(i+k)%4], ry:face>0?0:Math.PI, at}); }
+    L.spill.push({x:cx, z:zf, w, f:face});
     x+=w+1;
   }
   return out;
@@ -39437,8 +39482,9 @@ function bwFunhouse(P){
       c=mix(c, BW_INK, bwLine((fract(hz/4.0+0.5)-0.5)*4.0,0.08)*0.5); c=mix(c, ${bwG3(BW.RED)}, step(vSW.y,${(BW_LAY.Y+6).toFixed(1)})); c=mix(c, ${bwG3(BW.MUST)}, step(${(BW_LAY.Y+60).toFixed(1)},vSW.y)); }
     else if(N.y>0.5) c=${bwG3(BW.RED)};
     diffuseColor.rgb=c*(inner?0.78:1.0); }`});
-  bwBoxes([[X-50,X-35,Y,Y+66,Z0,Z1],[X+35,X+50,Y,Y+66,Z0,Z1],[X-52,X+52,Y+66,Y+72,Z0-4,Z1+2]], wallM);
-  { const gab=bwSolid(bwGeo('gable'), BW.TEAL, bwStripe(14,0)); gab.scale.set(104,22,264); gab.position.set(X,Y+72,(Z0+Z1)/2); BW_GRP.add(gab); }
+  // (the roof and its gable stop short of the face: their ink line came through its brow)
+  bwBoxes([[X-50,X-35,Y,Y+66,Z0,Z1],[X+35,X+50,Y,Y+66,Z0,Z1],[X-52,X+52,Y+66,Y+72,Z0-4,Z1-1]], wallM);
+  { const gab=bwSolid(bwGeo('gable'), BW.TEAL, bwStripe(14,0)); gab.scale.set(104,22,254); gab.position.set(X,Y+72,(Z0+Z1)/2-5); BW_GRP.add(gab); }
   // the face, its pupils and its teeth
   const fw=150, fh=118, face=new T.Mesh(new T.PlaneGeometry(fw,fh), bwPatch(new T.MeshBasicMaterial({map:bwFaceTex(), transparent:false, alphaTest:0.5, side:T.DoubleSide}), {key:'face', cel:false}));
   face.material.side=T.FrontSide; face.position.set(X, Y+fh/2, Z1+2.2); BW_GRP.add(face);
@@ -39509,44 +39555,167 @@ function bwBandstand(L, x0, x1, zc){
   // the railing round its edge
   for(const dz of [-47,47]) bwRail([[x0+2,Y+D/2,zc+dz],[gx,Y+D/2,zc+dz],[x1-2,Y+D/2,zc+dz]], L.post, L.rail, {h:4});
 }
-/* — LUCY: a six-storey elephant standing on the sand (after the one at Margate), with a howdah on her back. She is the
-   course's mascot: pie-cut eyes, a smile, and on the beat she flaps her ears and swings her trunk — */
-function bwEyeTex(){ return bwTex('eye',128,128,(g,W,H)=>{ g.clearRect(0,0,W,H); g.fillStyle=bwCss(BW.INK); g.beginPath(); g.ellipse(64,64,44,58,0,0,7); g.fill();
-  g.fillStyle='#fdfbf4'; g.beginPath(); g.ellipse(64,64,38,52,0,0,7); g.fill(); g.fillStyle=bwCss(BW.INK); g.beginPath(); g.moveTo(70,72); g.ellipse(70,72,24,34,0,-1.1,-1.1+Math.PI*2-0.75); g.closePath(); g.fill(); }, {clamp:true}); }
+/* — LUCY: a six-storey elephant standing on the sand (after the one at Margate), a howdah on her back and her name on
+   her saddle cloth. She is the course's mascot, and drawn with its heaviest line: pillar legs with a knee and a spread
+   foot, pie-cut eyes with lashes, tusks, and a trunk in one piece that hangs forward and curls. On the beat she flaps her
+   ears, swings her trunk and switches her tail — */
+function bwEyeTex(){ return bwTex('eye',128,160,(g,W,H)=>{ g.clearRect(0,0,W,H); const ink=bwCss(BW.INK);
+  // three lashes, flicked up and out
+  g.strokeStyle=ink; g.lineWidth=7; g.lineCap='round'; for(const [x0,y0,x1,y1] of [[86,36,104,10],[98,48,122,30],[70,30,78,6]]){ g.beginPath(); g.moveTo(x0,y0); g.lineTo(x1,y1); g.stroke(); }
+  g.fillStyle=ink; g.beginPath(); g.ellipse(60,92,46,60,0,0,7); g.fill();
+  g.fillStyle='#fdfbf4'; g.beginPath(); g.ellipse(60,92,39,53,0,0,7); g.fill();
+  g.fillStyle=ink; g.beginPath(); g.moveTo(66,102); g.ellipse(66,102,25,36,0,-1.1,-1.1+Math.PI*2-0.75); g.closePath(); g.fill();   // the pupil, pie-cut
+}, {clamp:true}); }
+// the trunk: one tube on a curve, posed every frame (bwTrunkPose). Its rings' normals are their radii, so the ink shell is
+// the same geometry pushed out; wrinkles are lines across it, drawn in the shader
+const BW_TRUNK={ N:15, M:12, LEN:40, R0:5.4, R1:2.1 };
+function bwTrunkGeo(){
+  const {N,M}=BW_TRUNK, nv=(N+1)*M+1, g=new T.BufferGeometry(), uv=new Float32Array(nv*2), idx=[];
+  for(let i=0;i<=N;i++) for(let j=0;j<M;j++){ uv[(i*M+j)*2]=j/M; uv[(i*M+j)*2+1]=i/N; }
+  for(let i=0;i<N;i++) for(let j=0;j<M;j++){ const a=i*M+j, b=i*M+(j+1)%M, c=a+M, d=b+M; idx.push(a,b,c, b,d,c); }
+  const tip=(N+1)*M; uv[tip*2]=0.5; uv[tip*2+1]=1; for(let j=0;j<M;j++) idx.push(N*M+j, N*M+(j+1)%M, tip);
+  g.setAttribute('position', new T.BufferAttribute(new Float32Array(nv*3),3)); g.setAttribute('normal', new T.BufferAttribute(new Float32Array(nv*3),3));
+  g.setAttribute('uv', new T.BufferAttribute(uv,2)); g.setIndex(idx); g.boundingSphere=new T.Sphere(new T.Vector3(0,-18,12), 60);
+  return g;
+}
+// (sw: how far the beat swings it forward; sd: to the side) It hangs from the face, forward and down, and curls up at its tip
+function bwTrunkPose(g, sw, sd){
+  const {N,M,LEN,R0,R1}=BW_TRUNK, P=g.attributes.position.array, Nn=g.attributes.normal.array, ds=LEN/N; let x=0, y=0, z=0;
+  for(let i=0;i<=N;i++){ const s=i/N, pit=0.95-1.45*s+2.9*s*s*s+sw*s*(0.6+0.8*s), yaw=sd*s*s*1.2;
+    const dy=-Math.cos(pit), dz=Math.sin(pit), dx=Math.sin(yaw), r=(R0+(R1-R0)*s)*(i===N?1.12:1);
+    // the ring's frame: across (x, turned by the yaw), and the normal to the curve in its own plane
+    const bx=Math.cos(yaw), bz0=-Math.sin(yaw)*dz, nx=0, ny=dz, nz=-dy;
+    for(let j=0;j<M;j++){ const a=j/M*Math.PI*2, c=Math.cos(a), sn=Math.sin(a), k=(i*M+j)*3;
+      const ox=c*bx+sn*nx, oy=sn*ny, oz=c*bz0+sn*nz;
+      P[k]=x+ox*r; P[k+1]=y+oy*r; P[k+2]=z+oz*r; Nn[k]=ox; Nn[k+1]=oy; Nn[k+2]=oz; }
+    if(i===N){ const k=(N+1)*M*3; P[k]=x+dx*1.4; P[k+1]=y+dy*1.4; P[k+2]=z+dz*1.4; Nn[k]=dx; Nn[k+1]=dy; Nn[k+2]=dz; }
+    x+=dx*ds; y+=dy*ds; z+=dz*ds; }
+  g.attributes.position.needsUpdate=true; g.attributes.normal.needsUpdate=true;
+}
 function bwLucy(P, x, z){
-  const G=new T.Group(), Y=bwSandY(z), GR=BW.GREY; G.position.set(x,Y,z); G.rotation.y=0.5; BW_GRP.add(G);   // (she looks out to sea, as the one at Margate does, turned a little toward the racers coming along the sand)
+  const G=new T.Group(), Y=bwSandY(z), GR=BW.GREY, W=2.1; G.position.set(x,Y,z); G.rotation.y=0.5; BW_GRP.add(G);   // (she looks out to sea, as the one at Margate does, turned a little toward the racers coming along the sand)
   const B=new T.Group(); G.add(B);   // the body bounces as one
-  const bod=[{g:new T.SphereGeometry(1,24,16), m:bwM(0,42,0,18,17,30), c:GR}];
-  for(const [lx,lz] of [[-9,-16],[9,-16],[-9,15],[9,15]]){ bod.push({g:new T.CylinderGeometry(6.2,7.2,30,14), m:bwM(lx,15,lz,1), c:GR}); bod.push({g:new T.CylinderGeometry(7.6,7.6,2.4,14), m:bwM(lx,1.2,lz,1), c:0xf3e3c0}); }
-  bod.push({g:new T.BoxGeometry(18,6,22), m:bwM(0,61,-2,1), c:BW.RED});
-  for(const [px,pz] of [[-8,-10],[8,-10],[-8,8],[8,8]]) bod.push({g:new T.CylinderGeometry(0.7,0.7,11,8), m:bwM(px,69,pz-1,1), c:BW.GOLD});
-  bod.push({g:new T.ConeGeometry(2.6,6,3), m:bwM(1.8,85,-1,1,1,1,0,0,-Math.PI/2), c:BW.RED}); bod.push({g:new T.CylinderGeometry(0.4,0.4,8,6), m:bwM(0,83,-1,1), c:BW.INK});
-  B.add(bwSolid(bwMerge(bod), 0xffffff));
-  const head=new T.Group(); head.position.set(0,52,30); B.add(head);
-  head.add(bwSolid(bwMerge([{g:new T.SphereGeometry(1,22,16), m:bwM(0,0,0,14,14,13), c:GR},
-    {g:new T.ConeGeometry(1.5,10,10), m:bwM(-6,-8,9,1,1,1,1.2,0,-0.25), c:BW.CREAM}, {g:new T.ConeGeometry(1.5,10,10), m:bwM(6,-8,9,1,1,1,1.2,0,0.25), c:BW.CREAM}]), 0xffffff));
-  P.ears=[]; for(const s of [-1,1]){ const e=new T.Group(); e.position.set(s*11,3,-2); head.add(e);
-    const ear=bwSolid(new T.SphereGeometry(1,18,12), GR); ear.scale.set(2.2,13,11); ear.position.set(s*3,-2,-3); e.add(ear);
-    const inn=bwSolid(new T.SphereGeometry(1,16,10), BW.PINK, {ink:false}); inn.scale.set(1.2,10,8.4); inn.position.set(s*3.9,-2,-2.6); e.add(inn); P.ears.push({g:e, s}); }
-  // her eyes and her cheeks: one mesh each (two quads)
-  const quads=(w,h,list)=>bwMerge(list.map(([x,y,z,ry])=>({g:new T.PlaneGeometry(w,h), m:bwM(x,y,z,1,1,1,0,ry,0)})));
-  head.add(new T.Mesh(quads(6.2,7.6,[[-6.4,4.6,11.9,-0.42],[6.4,4.6,11.9,0.42]]), new T.MeshBasicMaterial({map:bwEyeTex(), transparent:true, depthWrite:false})));
-  head.add(new T.Mesh(quads(4.8,4.8,[[-9.4,-2.4,9.6,-0.7],[9.4,-2.4,9.6,0.7]]), new T.MeshBasicMaterial({map:bwTex('cheek',64,64,(g)=>{ g.clearRect(0,0,64,64); g.fillStyle='#f19b8e'; g.beginPath(); g.arc(32,32,30,0,7); g.fill(); }, {clamp:true}), transparent:true, opacity:0.9, depthWrite:false})));
-  // the trunk: six segments, each hung from the last, swinging on the beat
-  P.trunk=[]; let par=head, len=[9,8,7,6], rad=[5,4.1,3.2,2.4];
-  for(let i=0;i<4;i++){ const g=new T.Group(); g.position.set(0, i?-len[i-1]:-3, i?0:12); par.add(g);
-    const s=bwSolid(new T.CylinderGeometry(rad[i]*0.92,rad[i],len[i]+0.6,12), GR); s.position.y=-len[i]/2; g.add(s); P.trunk.push(g); par=g; }
-  P.trunk[0].rotation.x=-0.3;
-  const tail=new T.Group(); tail.position.set(0,46,-29); B.add(tail); const tl=bwSolid(new T.CylinderGeometry(0.6,1.0,12,8), GR); tl.position.y=-6; tail.add(tl); P.tail=tail;
-  // the howdah's canopy (the howdah, its poles and its flag are in the body)
-  const roof=bwSolid(new T.SphereGeometry(13,20,10,0,Math.PI*2,0,Math.PI/2), BW.MUST, bwStripe(12,0,BW.RED)); roof.scale.set(1,0.62,1.1); roof.position.set(0,74.5,-1); B.add(roof);
-  // her name on a banner on her side, facing the beach road
-  const sg=new T.Mesh(new T.PlaneGeometry(26,6.5), bwPatch(new T.MeshBasicMaterial({map:bwSignTex(), transparent:true, alphaTest:0.4, side:T.DoubleSide}), {key:'lucysign', cel:false,
-    vdecl:'uniform float uCell;\n', uvVtx:BW_CELLUV, uniforms:{uCell:{value:13}}}));
-  sg.position.set(18.6,40,0); sg.rotation.y=Math.PI/2; B.add(sg); const sg2=sg.clone(); sg2.position.x=-18.6; sg2.rotation.y=-Math.PI/2; B.add(sg2);
+  // her body, four pillar legs (a knee, a spread foot, three toenails each), her tail's root: one drawing
+  const leg=()=>new T.LatheGeometry([[0,0],[7.7,0],[8.3,1.3],[7.3,3.6],[6.3,8],[6.0,14],[6.7,19.5],[7.0,26],[7.6,35]].map(([r,yy])=>new T.Vector2(r,yy)),14);
+  const bod=[{g:new T.SphereGeometry(1,24,16), m:bwM(0,43,0,18.5,17,30), c:GR}];
+  for(const [lx,lz] of [[-10,-17],[10,-17],[-10,15],[10,15]]){ bod.push({g:leg(), m:bwM(lx,0,lz,1), c:GR});
+    for(const a of [-0.75,0,0.75]) bod.push({g:new T.SphereGeometry(1.9,8,5,0,Math.PI*2,0,Math.PI/2), m:bwM(lx+Math.sin(a)*7.5,0.2,lz+Math.cos(a)*7.5,1,1.3,0.75,0,a,0), c:0xf6ecd2}); }
+  B.add(bwSolid(bwMerge(bod), 0xffffff, {inkW:W}));
+  // the saddle cloth over her back, lying on the body's own curve: red, hemmed in gold, her name on each flank
+  { const cloth=(a0,a1,sc)=>{ const g=new T.PlaneGeometry(1,1,14,6), p=g.attributes.position;
+      for(let i=0;i<p.count;i++){ const u=p.getX(i)+0.5, v=p.getY(i), a=a0+(a1-a0)*u, zz=-v*30, kk=Math.sqrt(Math.max(0,1-(zz/30)*(zz/30)))*sc; p.setXYZ(i, 18.5*kk*Math.sin(a), 43+17*kk*Math.cos(a), zz); }
+      g.computeVertexNormals(); return g; };
+    const cl=bwSolid(bwMerge([{g:cloth(-1.35,1.35,1.05), c:BW.RED}, {g:cloth(-1.62,-1.35,1.065), c:BW.GOLD}, {g:cloth(1.35,1.62,1.065), c:BW.GOLD}]), 0xffffff, {side:T.DoubleSide, inkW:1.4});
+    B.add(cl);
+    for(const sd of [-1,1]){ const sg=new T.Mesh(new T.PlaneGeometry(22,5.5), bwPatch(new T.MeshBasicMaterial({map:bwSignTex(), transparent:true, alphaTest:0.4}), {key:'lucysign', cel:false, vdecl:'uniform float uCell;\n', uvVtx:BW_CELLUV, uniforms:{uCell:{value:13}}}));
+      sg.position.set(sd*19.9,45,0); sg.rotation.set(0,sd*Math.PI/2,0); sg.rotateX(-0.12); B.add(sg); } }
+  // the howdah: a platform, four gold posts, a striped canopy, a flag
+  { const hp=[{g:new T.BoxGeometry(17,3,21), m:bwM(0,62,-1,1), c:BW.WOOD}, {g:new T.BoxGeometry(18.4,1.2,22.4), m:bwM(0,60.2,-1,1), c:BW.GOLD}];
+    for(const [px,pz] of [[-7.6,-10],[7.6,-10],[-7.6,8],[7.6,8]]) hp.push({g:new T.CylinderGeometry(0.75,0.75,11.5,8), m:bwM(px,69,pz,1), c:BW.GOLD});
+    hp.push({g:new T.CylinderGeometry(0.4,0.4,9,6), m:bwM(0,86,-1,1), c:BW.INK}, {g:new T.ConeGeometry(2.8,6.5,3), m:bwM(2.4,88.5,-1,1,1,0.3,0,0,-Math.PI/2), c:BW.RED});
+    B.add(bwSolid(bwMerge(hp), 0xffffff, {inkW:1.3}));
+    const roof=bwSolid(new T.SphereGeometry(13.5,20,10,0,Math.PI*2,0,Math.PI/2), BW.MUST, Object.assign(bwStripe(12,0,BW.RED), {inkW:1.4})); roof.scale.set(1,0.62,1.12); roof.position.set(0,74.6,-1); B.add(roof); }
+  // her head: a dome, two tusks; ears that flap; pie-cut eyes with lashes; cheeks; the trunk
+  const head=new T.Group(); head.position.set(0,50,29); B.add(head);
+  head.add(bwSolid(bwMerge([{g:new T.SphereGeometry(1,22,16), m:bwM(0,0,0,15,14.5,14), c:GR},
+    {g:new T.ConeGeometry(1.7,12,10), m:bwM(-6.6,-8.5,10.5,1,1,1,1.25,0,-0.3), c:BW.CREAM}, {g:new T.ConeGeometry(1.7,12,10), m:bwM(6.6,-8.5,10.5,1,1,1,1.25,0,0.3), c:BW.CREAM}]), 0xffffff, {inkW:W}));
+  P.ears=[]; for(const sd of [-1,1]){ const e=new T.Group(); e.position.set(sd*12.5,3.5,-2); head.add(e);
+    e.add(bwSolid(bwMerge([{g:new T.SphereGeometry(1,18,12), m:bwM(sd*4.5,-1.5,-4,2.3,15.5,13), c:GR}, {g:new T.SphereGeometry(1,14,10), m:bwM(sd*4.9,-1.5,-2.2,1.5,12,10), c:BW.PINK}]), 0xffffff, {inkW:W})); P.ears.push({g:e, s:sd}); }
+  const quads=(w,h,list)=>bwMerge(list.map(([qx,qy,qz,ry])=>({g:new T.PlaneGeometry(w,h), m:bwM(qx,qy,qz,1,1,1,0,ry,0)})));
+  head.add(new T.Mesh(quads(8.2,10.2,[[-6.9,3.6,12.7,-0.5],[6.9,3.6,12.7,0.5]]), new T.MeshBasicMaterial({map:bwEyeTex(), transparent:true, depthWrite:false})));
+  head.add(new T.Mesh(quads(5.2,5.2,[[-10.6,-2.6,9.9,-0.8],[10.6,-2.6,9.9,0.8]]), new T.MeshBasicMaterial({map:bwTex('cheek',64,64,(g)=>{ g.clearRect(0,0,64,64); g.fillStyle='#f19b8e'; g.beginPath(); g.arc(32,32,30,0,7); g.fill(); }, {clamp:true}), transparent:true, opacity:0.9, depthWrite:false})));
+  { const tg=bwTrunkGeo(); bwTrunkPose(tg,0,0);
+    const fill=new T.Mesh(tg, bwPatch(new T.MeshBasicMaterial({map:BW_WHITE, color:bwLin(GR)}), {key:'trunk', frag:'{ float wr=bwLine(fract(vUv.y*13.0+0.5)-0.5, 0.045)*smoothstep(0.04,0.12,vUv.y); diffuseColor.rgb=mix(diffuseColor.rgb, diffuseColor.rgb*0.55, wr*0.85); }'}));
+    const ink=new T.Mesh(tg, bwPatch(new T.MeshBasicMaterial({color:bwLin(BW.INK), side:T.BackSide}), {hull:true, inkW:W}));
+    fill.position.set(0,-2.5,11.5); ink.position.copy(fill.position); fill.frustumCulled=ink.frustumCulled=false; head.add(fill); head.add(ink); P.trunk=tg; }
+  const tail=new T.Group(); tail.position.set(0,47,-29.5); B.add(tail);
+  tail.add(bwSolid(bwMerge([{g:new T.CylinderGeometry(0.6,1.0,13,8), m:bwM(0,-6.5,0,1), c:GR}, {g:new T.SphereGeometry(1.5,8,6), m:bwM(0,-13.6,0,1,1.5,1), c:0x5c5478}]), 0xffffff)); P.tail=tail;
   P.lucy={G, B, head};
 }
 
+/* — THE LIGHT ON THE GROUND (after Nova's: a light, and what it does to the ground it falls on). One map of the whole
+   course, drawn once (nothing in it moves):
+     red    the shadows the low sun throws on the DECKS (the boardwalk and the pier): the sea rail's bars and its posts
+            ruled across the boards, the lamp posts' long strokes, the bunting's flags as a dotted line, the start
+            banner, the pier's arch, the wheel's rings, the funhouse, and Lucy's head and howdah lying across the
+            boardwalk just past the line;
+     green  the same sun on the SAND: every umbrella, the bandstand's slats, the lifeguard, the castles, Lucy;
+     blue   the pools the lamps, the shop fronts and the rides lay down when night comes.
+   The decks, the road and the sand read it (bwGround): shadows by day, long and purple as the cel shadow is, fading as
+   the sun goes; pools by night, warm, their edges broken into grain. — */
+const BW_LM={ X0:-1010, X1:730, Z0:-60, Z1:1100, W:2048, H:1024, YD:11.6, YS:2.9 };   // (the course itself, at about a unit a texel: the boards beyond its ends go without)
+BW_U.tLm={value:null};
+const BW_GROUND_DECL='uniform sampler2D tLm;\n'+`
+  vec3 bwGround(vec3 c, float plane){
+    vec4 m=texture2D(tLm, (vSW.xz-vec2(${BW_LM.X0.toFixed(1)},${BW_LM.Z0.toFixed(1)}))*vec2(${(1/(BW_LM.X1-BW_LM.X0)).toFixed(7)},${(1/(BW_LM.Z1-BW_LM.Z0)).toFixed(7)}));
+    float day=(1.0-uNight)*(1.0-uNight), sh=smoothstep(0.05,0.4, plane<0.5 ? m.r : m.g)*day;   // (a low threshold: a thin shadow seen along the boards is mostly averaged away, and must still read)
+    c=mix(c, c*vec3(0.56,0.5,0.74), sh*0.9);
+    float pool=m.b*smoothstep(0.2,0.85,uNight), n=bwH(floor(gl_FragCoord.xy));
+    float gr=mix(step(n, pool*3.2), 0.82+0.36*n, smoothstep(0.03,0.36,pool));        // (the light is sprayed on: at its edge it is a scatter of lit points)
+    return c*mix(1.0,0.6,uNight)*(1.0+pool*gr*vec3(2.3,1.65,0.75)); }   // (the night ground is dark; a pool brings it back to day, warm)
+`;
+function bwHull2(P){   // the convex hull of 2D points (monotone chain)
+  P=P.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]); const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]), lo=[], up=[];
+  for(const p of P){ while(lo.length>=2 && cr(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop(); lo.push(p); }
+  for(let i=P.length-1;i>=0;i--){ const p=P[i]; while(up.length>=2 && cr(up[up.length-2],up[up.length-1],p)<=0) up.pop(); up.push(p); }
+  lo.pop(); up.pop(); return lo.concat(up);
+}
+function bwLightMap(L, X){
+  const M=BW_LM, cv=document.createElement('canvas'); cv.width=M.W; cv.height=M.H; const g=cv.getContext('2d');
+  g.fillStyle='#000'; g.fillRect(0,0,M.W,M.H); g.globalCompositeOperation='lighter'; g.lineCap='round'; g.lineJoin='round';
+  const kx=-BW_L.x/BW_L.y, kz=-BW_L.z/BW_L.y, sx=M.W/(M.X1-M.X0), sz=M.H/(M.Z1-M.Z0), PX=x=>(x-M.X0)*sx, PZ=z=>(z-M.Z0)*sz;
+  const land=(p,py)=>{ const h=Math.max(0,p[1]-py); return [PX(p[0]+h*kx), PZ(p[2]+h*kz)]; };
+  // what stands over the sand throws on the sand, and (what of it is above the decks) on the decks; what stands on a deck, on the decks
+  const overSand=(x,z)=>z>56 && !(x>320 && x<650);
+  const each=(x,z,fn)=>{ g.strokeStyle=g.fillStyle='#ff0000'; fn(M.YD); if(overSand(x,z)){ g.strokeStyle=g.fillStyle='#00ff00'; fn(M.YS); } };
+  const seg=(a,b,w)=>each(a[0],a[2],py=>{ if(Math.max(a[1],b[1])<=py+0.3) return; const A=land(a,py), B=land(b,py); g.lineWidth=Math.max(2.4,w*sx*1.4); g.beginPath(); g.moveTo(A[0],A[1]); g.lineTo(B[0],B[1]); g.stroke(); });   // (drawn bolder than it is: a cartoon's shadow is a stroke)
+  const disc=(p,r)=>each(p[0],p[2],py=>{ if(p[1]<=py+0.3) return; const A=land(p,py); g.beginPath(); g.ellipse(A[0],A[1],Math.max(1,r*sx),Math.max(1,r*sz),0,0,7); g.fill(); });
+  const hull=(pts)=>each(pts[0][0],pts[0][2],py=>{ if(Math.max(...pts.map(p=>p[1]))<=py+0.3) return; const H=bwHull2(pts.map(p=>land(p,py))); g.beginPath(); H.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])); g.closePath(); g.fill(); });
+  const line=(pts,w)=>each(pts[0][0],pts[0][2],py=>{ g.lineWidth=Math.max(1.5,w*sx); g.beginPath(); pts.forEach((p,i)=>{ const A=land(p,py); i?g.lineTo(A[0],A[1]):g.moveTo(A[0],A[1]); }); g.stroke(); });
+  const circ=(x,y,z,r,n)=>{ const o=[]; for(let i=0;i<(n||14);i++){ const a=i/(n||14)*Math.PI*2; o.push([x+Math.cos(a)*r,y,z+Math.sin(a)*r]); } return o; };
+  const v=new T.Vector3();
+  // — the sun's shadows —
+  for(const r of [...L.rail, ...L.white, ...L.brace, ...L.stick]){ v.set(0,1,0).applyQuaternion(r.q).multiplyScalar(r.sy/2); seg([r.x-v.x,r.y-v.y,r.z-v.z],[r.x+v.x,r.y+v.y,r.z+v.z], r.s); }
+  for(const r of L.post) seg([r.x,r.y,r.z],[r.x,r.y+r.sy,r.z], r.s);
+  for(const r of L.pile) if(r.sy>20) seg([r.x,r.y,r.z],[r.x,r.y+r.sy,r.z], r.s);
+  for(const r of L.lamp){ const dx=Math.sin(r.ry)*4.8, dz=Math.cos(r.ry)*4.8; seg([r.x,r.y,r.z],[r.x,r.y+20.6,r.z],1.5); seg([r.x,r.y+20.6,r.z],[r.x+dx,r.y+20.2,r.z+dz],1.0); disc([r.x+dx,r.y+17.9,r.z+dz],2.1); }
+  for(const r of [...L.htow, ...L.upole, ...L.castle, ...L.knob]) if(r.z>-34) seg([r.x,r.y,r.z],[r.x,r.y+r.sy,r.z], r.s);
+  for(const r of L.body) if(r.z>-30){ const hx=r.s/2, hz=(r.sz!=null?r.sz:r.s)/2, P=[]; for(const a of [-1,1]) for(const b of [-1,1]) for(const y of [r.y, r.y+r.sy]) P.push([r.x+a*hx,y,r.z+b*hz]); hull(P); }
+  for(const r of L.ucan) hull(circ(r.x,r.y,r.z,r.s/2).concat([[r.x,r.y+r.sy,r.z]]));
+  for(const r of [...L.bench, ...L.chair]) disc([r.x,r.y+3.2,r.z],3.4);
+  for(const r of L.flag) if(r.y>20) disc([r.x,r.y-0.8,r.z],1.5);                       // the bunting: a dotted line across the boards
+  for(const r of L.deck) for(let x=r.x-r.s/2;x<r.x+r.s/2-1;x+=7){ const z0=r.z-r.sz/2, z1=r.z+r.sz/2, P=[]; for(const xx of [x,x+4.4]) for(const zz of [z0,z1]) for(const y of [r.y,r.y+r.sy]) P.push([xx,y,zz]); hull(P); }   // the bandstand's deck, in slats
+  for(const c of X.casters||[]) c({seg, disc, hull, line, circ});
+  // — the lamps' pools, the shop fronts' spill, the rides' glow —
+  const pool=(x,z,r,k)=>{ const gr=g.createRadialGradient(PX(x),PZ(z),0,PX(x),PZ(z),r*sx); gr.addColorStop(0,`rgba(0,0,${Math.round(255*k)},1)`); gr.addColorStop(0.45,`rgba(0,0,${Math.round(150*k)},1)`); gr.addColorStop(1,'rgba(0,0,0,1)');
+    g.fillStyle=gr; g.beginPath(); g.ellipse(PX(x),PZ(z),r*sx,r*sz,0,0,7); g.fill(); };
+  for(const r of L.lamp) pool(r.x+Math.sin(r.ry)*4.8, r.z+Math.cos(r.ry)*4.8, 27, 0.95);
+  for(const r of L.spill){ const z0=PZ(r.z), z1=PZ(r.z+r.f*20), gr=g.createLinearGradient(0,z0,0,z1); gr.addColorStop(0,'rgba(0,0,170,1)'); gr.addColorStop(1,'rgba(0,0,0,1)');
+    g.fillStyle=gr; g.fillRect(PX(r.x-r.w/2), Math.min(z0,z1), r.w*sx, Math.abs(z1-z0)); }
+  for(const [x,z,r,k] of X.pools||[]) pool(x,z,r,k);
+  const t=new T.CanvasTexture(cv); t.flipY=false; t.wrapS=t.wrapT=T.ClampToEdgeWrapping; t.minFilter=T.LinearMipmapLinearFilter; t.anisotropy=Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+/* — fireworks: five bursts of a hundred and twenty sparks (an inner ring and an outer shell), one draw. A spark is thrown fast and held by the air, falls, winks and
+   goes out; its colour is bright past white, so the light pipeline makes it glow — */
+function bwFireworks(P){
+  const NB=5, NP=120, n=NB*NP, dir=new Float32Array(n*3), bi=new Float32Array(n), rnd=new Float32Array(n), R=bwRnd(0xF14E);
+  for(let i=0;i<n;i++){ const u=R()*2-1, a=R()*6.2832, q=Math.sqrt(1-u*u), kk=(i%NP)<34 ? 0.42+0.1*R() : 0.86+0.14*R(); dir[i*3]=Math.cos(a)*q*kk; dir[i*3+1]=u*kk; dir[i*3+2]=Math.sin(a)*q*kk; bi[i]=Math.floor(i/NP); rnd[i]=R(); }
+  const g=new T.BufferGeometry(); g.setAttribute('position',new T.BufferAttribute(dir,3)); g.setAttribute('aB',new T.BufferAttribute(bi,1)); g.setAttribute('aR',new T.BufferAttribute(rnd,1));
+  const U={ uB:{value:[0,1,2,3,4].map(()=>new T.Vector4(0,-999,0,-99))}, uC:{value:[0,1,2,3,4].map(()=>new T.Vector3(1,1,1))}, uNow:{value:0}, uH:{value:600} };
+  const m=new T.ShaderMaterial({ uniforms:U, transparent:true, depthWrite:false, blending:T.AdditiveBlending, fog:false,
+    vertexShader:`attribute float aB, aR; uniform vec4 uB[5]; uniform vec3 uC[5]; uniform float uNow, uH; varying vec3 vC;
+      void main(){ vec4 B=uB[0]; vec3 C=uC[0];
+        if(aB>3.5){ B=uB[4]; C=uC[4]; } else if(aB>2.5){ B=uB[3]; C=uC[3]; } else if(aB>1.5){ B=uB[2]; C=uC[2]; } else if(aB>0.5){ B=uB[1]; C=uC[1]; }
+        float age=uNow-B.w, life=1.9+0.5*aR;
+        if(age<0.0 || age>life){ gl_Position=vec4(2.0,2.0,2.0,1.0); gl_PointSize=1.0; vC=vec3(0.0); return; }
+        vec3 p=B.xyz+position*130.0*(1.0-exp(-age*2.6))+vec3(0.0,-15.0*age*age,0.0);
+        vec4 mv=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mv;
+        float f=1.0-age/life; gl_PointSize=max(2.0, uH*(9.0+5.0*aR)*sqrt(f)/-mv.z*(0.55+0.45*step(0.5,fract(aR*7.0+age*6.0))));
+        vC=mix(C, vec3(1.0), 0.6*exp(-age*5.0))*(2.8*f+0.3); }`,
+    fragmentShader:'precision highp float; varying vec3 vC; void main(){ vec2 q=gl_PointCoord-0.5; float d=dot(q,q); if(d>0.25) discard; gl_FragColor=vec4(vC*(1.0-d*3.2), 1.0); }' });
+  const pts=new T.Points(g,m); pts.frustumCulled=false; pts.renderOrder=6; pts.name='bw-fireworks'; BW_GRP.add(pts); P.fw={pts, U, NB};
+}
 /* — the whole course, laid over the shared road — */
 function bwDress(){
   const G=new T.Group(); G.name='lucy'; BW_GRP=G;
@@ -39566,7 +39735,7 @@ function bwDress(){
     return true; };
   const L={ body:[], trim:[], gable:[], dome:[], knob:[], dark:[], awn:[], sign:[], bulb:[], balloon:[], bottle:[], wheels:[], ducks:[], bear:[],
     hotel:[], onion:[], htow:[], spire:[], upole:[], ucan:[], towel:[], ball:[], castle:[], flag:[], stick:[], deck:[], pile:[], post:[], rail:[],
-    lamp:[], bench:[], chair:[], white:[], brace:[] };
+    lamp:[], bench:[], chair:[], white:[], brace:[], spill:[], festoon:[] };
   // — the sky, the sea, the sand, the town —
   P.sky=bwSky(); G.add(P.sky); bwSkyProps(P); G.add(bwSea()); G.add(bwSand()); G.add(bwTownGround());
   // — the decks: the boardwalk (and on past the course both ways), the pier, the ramps, the coaster —
@@ -39584,7 +39753,7 @@ function bwDress(){
   const railAlong=(a,b,lat,o)=>{ if(a<0) return; const pts=[]; for(let i=a;i<=b;i+=2){ const s=SAMP[(i+N)%N]; pts.push([s.p.x+s.n.x*lat, s.p.y-0.35, s.p.z+s.n.z*lat]); } bwRail(pts, L.post, L.rail, o); };
   for(const [a,b] of [coast,rampC,rampD]){ railAlong(a,b,-30.5,{h:5}); railAlong(a,b,30.5,{h:5}); }
   for(const [a,b] of [rampC,rampD]) for(let i=a;i<=b && a>=0;i+=4){ const s=SAMP[i]; for(const lat of [-26,26]){ const x=s.p.x+s.n.x*lat, z=s.p.z+s.n.z*lat, g=Math.max(-2,bwSandY(z));
-    L.pile.push({x, y:g, z, s:2.2, sy:s.p.y-2.4-g, c:BW.WOODD}); } }
+    if(s.p.y-2.4-g>1.5) L.pile.push({x, y:g, z, s:2.2, sy:s.p.y-2.4-g, c:BW.WOODD}); } }   // (no leg where the ramp has come down to the sand: a leg of less than no height is a cylinder turned inside out)
   // the pilings and their braces, under the boardwalk and the pier
   for(let x=-1496;x<=1496;x+=16){ if(x>-985 && x<-850) continue; for(const z of [50]) L.pile.push({x, y:bwSandY(z)-0.5, z, s:2.2, sy:Y-2-bwSandY(z), c:BW.WOODD}); }
   for(let z=60;z<=1066;z+=24) for(const x of [326,400,485,570,644]){ if(z<330 && x<424) continue; const g=z<235?bwSandY(z)-0.5:-3; L.pile.push({x, y:g, z, s:2.4, sy:Y-1.9-g, c:BW.WOODD}); }
@@ -39600,7 +39769,7 @@ function bwDress(){
   bwHotels(L);
   // lamp posts along the sea rail and round the pier, bunting across the boards
   const lamp=(x,z,ry)=>L.lamp.push({x, y:Y-0.4, z, s:1, ry, c:[BW.TEALD,BW.NAVY][L.lamp.length%2], d:[0.04,1.0,L.lamp.length%2?1:-1]});
-  for(let x=-1470;x<=1490;x+=64){ if(x>-990 && x<-850) continue; lamp(x,50.5,Math.PI); }
+  for(let x=-1470;x<=1490;x+=64){ if((x>-990 && x<-850) || (x>416 && x<652)) continue; lamp(x,50.5,Math.PI); }   // (none across the ramp's mouth, nor the pier's: one stood in the road where the boards turn onto the pier)
   for(let z=360;z<=880;z+=64){ if(z>510 && z<840) continue; lamp(328,z,Math.PI/2); }   // (none inside the funhouse)
   for(let z=80;z<=880;z+=64){ if(z>220 && z<790) continue; lamp(642,z,-Math.PI/2); }
   for(let a=160;a>=20;a-=28){ const r=a*Math.PI/180; lamp(485+Math.cos(r)*154, 900+Math.sin(r)*154, Math.atan2(-Math.cos(r),-Math.sin(r))); }
@@ -39610,6 +39779,12 @@ function bwDress(){
       if(prev) L.stick.push(bwStick(prev,p,0.22,BW.INK)); prev=p; } };
   for(const x of [-600,-420,-240,-60,120,300]){ bunt([x,Y+36,-40],[x,Y+36,52.5],7); L.htow.push({x, y:Y-0.4, z:52.5, s:1.1, sy:37, c:BW.WHITE, at:[Y,0,0.6,1]}); L.htow.push({x, y:Y-0.4, z:-40, s:1.1, sy:37, c:BW.WHITE, at:[Y,0,0.6,1]}); }
   for(const z of [480,420]){ bunt([318,Y+36,z],[402,Y+36,z],6); }
+  // festoons of bulbs across the pier's island, lamp to lamp (the pier's own light, once it is dark), and their pools
+  for(let z=360;z<=880;z+=64){ if(z>510 && z<840) continue; const a=[330,Y+19,z], b=[640,Y+19,z+((z/64)%2?40:-40)], n=54; let prev=null;
+    for(let i=0;i<=n;i++){ const f=i/n, q=[a[0]+(b[0]-a[0])*f, a[1]-9*(1-(2*f-1)*(2*f-1))*(0.6+0.4*Math.abs(Math.sin(f*Math.PI*3))), a[2]+(b[2]-a[2])*f];
+      if(i%2===0) L.bulb.push({x:q[0], y:q[1], z:q[2], s:1.15, c:[0xfff0c4,0xff8a6a,0xfff0c4,0x8fe0d0][(i/2)%4], b:i/2, at:[0,0,0,1]});
+      if(prev) L.stick.push(bwStick(prev,q,0.2,BW.INK)); prev=q; }
+    L.festoon.push([ (a[0]+b[0])/2, (a[2]+b[2])/2 ]); }
   // the start banner over the boards
   { const x=-700; for(const z of [-40,56]) L.htow.push({x, y:Y-0.4, z, s:2.4, sy:44, c:BW.RED, at:[Y,0.3,0.6,1]});
     const bm=new T.MeshBasicMaterial({map:bwBannerTex()}); for(const s of [-1,1]){ const b=new T.Mesh(new T.PlaneGeometry(96,24), bm); b.position.set(x+s*0.3,Y+40,8); b.rotation.y=-s*Math.PI/2; G.add(b); }
@@ -39624,7 +39799,7 @@ function bwDress(){
   { const tx=485, tz=690; L.htow.push({x:tx,y:Y-0.4,z:tz,s:44,sy:14,c:BW.CREAM,at:[Y,0.5,0,1]}); L.ucan.push({x:tx,y:Y+13.6,z:tz,s:50,sy:20,c:BW.RED,d:[0.06,0.2,1]}); L.knob.push({x:tx,y:Y+33,z:tz,s:1.4,sy:8,c:BW.GOLD,at:[0,0,0,1]});
     L.sign.push({x:tx-23, y:Y+9, z:tz, s:30, sy:7.5, sz:1, ry:-Math.PI/2, cell:BW_W['GAMES'], at:[Y,0,0,1]}); }
   // — the rides, the funhouse, the high diver —
-  bwCarousel(P, 485, 240); bwSwinger(P, 485, 470); bwWheel(P, 485, 870); bwDiver(P, 485, 1160); bwFunhouse(P);
+  bwCarousel(P, 485, 240); bwSwinger(P, 485, 470); bwWheel(P, 485, 870); bwDiver(P, 485, 1160); bwFunhouse(P); bwFireworks(P);
   // — the beach: the bandstand, the lifeguard, Lucy, umbrellas and the rest —
   const PAV=[-288,-112]; bwBandstand(L, PAV[0], PAV[1], BW_LAY.BZ);
   bwLifeguard(L, -120, 100); bwLucy(P, -610, 100);
@@ -39647,15 +39822,31 @@ function bwDress(){
   { const dl=[]; for(const d of L.ducks) for(let i=0;i<6;i++) dl.push({x:d.x0, y:d.y, z:d.z+d.face*0.3, s:1.6, sy:1.4, sz:0.4, c:BW.MUST, k:i, g:d});
     if(dl.length){ const b=bwBatch(bwMerge([{g:new T.SphereGeometry(1,10,8), m:bwM(0,0,0,1.2,0.8,0.5)}, {g:new T.SphereGeometry(0.62,10,8), m:bwM(0.9,0.85,0,1,1,0.6)}, {g:new T.ConeGeometry(0.3,0.8,6), m:bwM(1.7,0.8,0,1,1,1,0,0,-Math.PI/2)}]), dl, {key:'duck', noCull:true});
       P.ducks={m:b.m, list:dl}; } }
+  // — the light on the ground: the sun's shadows and the lamps' pools, drawn once from everything laid above —
+  { const y=Y-0.4, lu={x:-610, z:100, ry:0.5}, cy=Math.cos(lu.ry), sy2=Math.sin(lu.ry), LW=(lx,ly,lz)=>[lu.x+lx*cy+lz*sy2, bwSandY(lu.z)+ly, lu.z-lx*sy2+lz*cy];
+    if(BW_U.tLm.value) BW_U.tLm.value.dispose();
+    BW_U.tLm.value=bwLightMap(L, { casters:[
+      d=>{ for(const [lx,lz] of [[-10,-17],[10,-17],[-10,15],[10,15]]) d.seg(LW(lx,0,lz),LW(lx,35,lz),14);                // Lucy
+        d.seg(LW(0,43,-20),LW(0,43,20),35); d.disc(LW(0,50,29),15); d.disc(LW(-17,51.5,24),12); d.disc(LW(17,51.5,24),12); d.seg(LW(0,47,41),LW(0,33,60),8); d.seg(LW(0,33,60),LW(0,38,68),5);
+        d.seg(LW(0,62,-1),LW(0,76,-1),22); d.disc(LW(0,79,-1),14.5); },
+      d=>{ d.hull(d.circ(485,y+28,240,37).concat([[485,y+43,240]])); d.seg([485,y,240],[485,y+28,240],12);              // the carousel
+        d.seg([485,y,470],[485,y+40,470],8); d.hull(d.circ(485,y+40,470,23).concat([[485,y+49,470]])); d.line(d.circ(485,y+27,470,31,24).concat([[516,y+27,470]]),3);   // the swings
+        for(const zz of [-4.2,4.2]) for(const R of [88,88*0.46]){ const pts=[]; for(let i=0;i<=48;i++){ const a=i/48*Math.PI*2; pts.push([485+Math.cos(a)*R, 113.6+Math.sin(a)*R, 870+zz]); } d.line(pts, R>50?3:2); }   // the wheel's rings
+        for(const ax of [-1,1]) for(const az of [-1,1]) d.seg([485+ax*64,y,870+az*11.2],[485+ax*3,113.6,870+az*5.6],2.6);
+        { const X0=BW_LAY.RX, B=[]; for(const a of [-52,52]) for(const z of [536,802]) for(const yy of [y,y+72]) B.push([X0+a,yy,z]); B.push([X0,y+94,536],[X0,y+94,802]); d.hull(B);   // the funhouse, and its face
+          const F=[]; for(let i=0;i<20;i++){ const a=i/20*Math.PI*2; F.push([X0+Math.cos(a)*74, y+59+Math.sin(a)*58, 803]); } d.hull(F); }
+        d.hull([[-700,y+28,-40],[-700,y+52,-40],[-700,y+28,56],[-700,y+52,56]]);                                          // the start banner
+        d.seg([452,y,520],[452,y+38,520],2.2); } ],
+      pools:L.festoon.flatMap(([fx,fz])=>[[fx-90,fz,46,0.5],[fx+10,fz,46,0.5],[fx+100,fz,46,0.5]]).concat([[485,240,58,0.85],[485,470,42,0.7],[485,870,62,0.5],[485,690,40,0.6],[360,818,50,0.85],[360,528,36,0.6],[602,118,44,0.7],[-700,8,48,0.75],[-200,200,70,0.6],[-610,100,60,0.5],[452,520,20,0.6]]) }); }
   // — flush the batches —
   const part=(geo,list,o)=>list.length?bwParts(geo,list,o):null;
   part(bwGeo('box'), L.body.concat(L.trim, L.post, L.deck), {key:'part', chunk:1200}); part(bwGeo('gable'), L.gable, {key:'part'}); part(bwGeo('dome'), L.dome, {key:'part'});
   part(bwGeo('box'), L.dark, {key:'part', ink:false}); part(bwGeo('box'), L.awn, bwStripe(9,0));
   part(bwGeo('sphlo'), L.balloon, {key:'part', ink:false}); part(bwGeo('cyl6'), L.bottle, {key:'part', ink:false}); part(bwBearGeo(), L.bear, {key:'part', ink:false});
-  bwParts(bwGeo('box'), L.hotel, {key:'hotel', mat:undefined, frag:bwHotelMatFrag()}); part(bwGeo('onion'), L.onion, {key:'part'}); part(bwGeo('cyl'), L.htow.concat(L.knob, L.upole), {key:'part', chunk:1200}); part(bwGeo('cone'), L.spire, {key:'part'});
+  bwParts(bwGeo('box'), L.hotel, {key:'hotel', frag:bwHotelMatFrag(), inkW:1.6});   // (big, plain shapes a long way off: a firmer line holds them) part(bwGeo('onion'), L.onion, {key:'part'}); part(bwGeo('cyl'), L.htow.concat(L.knob, L.upole), {key:'part', chunk:1200}); part(bwGeo('cone'), L.spire, {key:'part'});
   if(L.sign.length) bwSigns(L.sign); bwBulbs(L.bulb);
   bwBatch(bwLampGeo(), L.lamp, {key:'lamp', dance:true, danceH:22});
-  bwBatch(new T.IcosahedronGeometry(1.8,1).translate(0,17.9,4.8), L.lamp, {key:'globe', dance:true, danceH:22, cel:false, ink:false}).all.forEach(m=>{ for(let i=0;i<m.count;i++) m.setColorAt(i, new T.Color(1.9,1.75,1.3)); m.instanceColor.needsUpdate=true; });
+  bwBatch(new T.IcosahedronGeometry(1.8,1).translate(0,17.9,4.8), L.lamp, {key:'globe', dance:true, danceH:22, cel:false, ink:false, frag:'diffuseColor.rgb=mix(vec3(0.9,0.86,0.74), vec3(2.5,2.1,1.35), smoothstep(0.08,0.4,uNight));'});   // (glass by day; lit as the night comes)
   bwBatch(bwBenchGeo(), L.bench, {key:'bench'}); bwBatch(bwChairGeo(), L.chair, {key:'chair2', dance:true, danceH:6});
   bwBatch(bwGeo('boxc'), L.white.concat(L.brace, L.rail), {key:'white', ink:0.0018, inkMax:1.0, chunk:1200});
   bwBatch(bwGeo('cyl6'), L.pile, {key:'pile', ink:0.0018, inkMax:1.2, chunk:1200}); bwBatch(bwGeo('boxc'), L.stick, {key:'stick', ink:false});
@@ -39677,7 +39868,7 @@ function bwDress(){
     P.gulls={m:bwBatch(geo, gl, {key:'gull', noCull:true}).m, list:gl}; }
   // — the light and the air: low gold sun, a peach haze that the hotels and the far pier fade into —
   camera.far=3200; camera.updateProjectionMatrix();
-  if(scene.fog){ scene.fog.color.setHex(BW.SKY).convertSRGBToLinear(); scene.fog.near=420; scene.fog.far=3000; }
+  if(scene.fog){ scene.fog.color.setHex(BW.SKY).convertSRGBToLinear(); scene.fog.near=260; scene.fog.far=2700; }
   if(scene.background && scene.background.isColor) scene.background.setHex(BW.SKY);
   hemi.color.setHex(0xb8dcd8); hemi.groundColor.setHex(0xd09a70); hemi.intensity=0.7; rim.color.setHex(0xff9a7a); rim.intensity=0.3;
   sun.color.setHex(0xffd8a8); sun.intensity=1.0; sun.position.copy(BW_L).multiplyScalar(400);
@@ -39707,7 +39898,22 @@ function bwTick(P, t, dt){
       if(SIM.warped) P.u=u; else if(u>P.u) P.u+=Math.min((u-P.u)*(1-Math.exp(-d/0.9)), d*0.03); }
     const k=Math.max(0,Math.min(1,(P.u-0.12)/0.8)), n=k*k*(3-2*k); P.night=n; BW_U.uNight.value=n;
     hemi.intensity=0.7-0.25*n; sun.intensity=1.0-0.42*n; sun.color.setRGB(1.0,0.85-0.12*n,0.66+0.2*n);
-    if(scene.fog) scene.fog.color.setRGB(0.81-0.55*n, 0.48-0.32*n, 0.29+0.0*n); }
+    if(scene.fog) scene.fog.color.setRGB(0.81-0.55*n, 0.48-0.32*n, 0.29+0.0*n);
+    // THE AIR, through the race (LUX.live): at dusk the boards are still hot (the far end of the boardwalk swims, under a thin
+    // peach glare); as the sun goes the heat goes with it and a sea mist comes in low over the sand and under the pier, lit
+    // by the bulbs it stands in; and the lights take over (the glow comes up and reaches lower)
+    { const X=P.lx||(P.lx={}), h=Math.max(0,1-n*2.4), mix3=(a,b)=>Math.round(a+(b-a)*n);
+      X.bloom=1.05+0.5*n; X.thr=0.98-0.2*n; X.heat=0.72*h; X.heatNear=110; X.heatFar=460;   // (only the far distance swims: what you are driving at stays put)
+      X.mist=0.18+0.34*n; X.mistH=7+3*n; X.mistDen=0.0022+0.0026*n; X.mistWisp=0.45+0.4*n; X.mistGlow=0.5+0.9*n; X.mistRise=0.45;
+      X.mistCol=(mix3(0xf0,0x6a)<<16)|(mix3(0xc4,0x80)<<8)|mix3(0xa0,0xc4); LUX.live=X; }
+    // FIREWORKS over the sea, off the pier head, once it is dark (and whenever you finish): a burst every two beats, each
+    // one a function of the beat it went up on (so a film or a replay sees the same show)
+    if(P.fw){ const U=P.fw.U, show=!still && (n>0.5 || (me && me.finished)), rate=Math.max(0.5,B.rate||2.6), k0=Math.floor(beats/2);
+      U.uNow.value=t; U.uH.value=(LUX.on && LUX.ok && LUX.h) || renderer.domElement.height;
+      for(let j=0;j<P.fw.NB;j++){ const kb=k0-j, slot=((kb%P.fw.NB)+P.fw.NB)%P.fw.NB, hh=q=>{ const v=Math.sin(kb*127.1+q*311.7)*43758.5453; return v-Math.floor(v); };
+        if(!show || kb<0){ U.uB.value[slot].w=-99; continue; }
+        U.uB.value[slot].set(300+(hh(1)-0.5)*1100, 230+hh(2)*170, 640+hh(3)*620, t-(beats-kb*2)/rate);
+        const c=[[1.0,0.35,0.3],[1.0,0.8,0.3],[0.4,0.9,1.0],[1.0,0.5,0.9],[0.6,1.0,0.5]][Math.floor(hh(4)*5)%5]; U.uC.value[slot].set(c[0],c[1],c[2]); } } }
   if(P.sky){ P.sky.position.copy(camera.position); }
   if(P.moon){ const a=0.62; P.moon.position.set(camera.position.x+Math.cos(a)*2500, 140+P.night*420, camera.position.z+Math.sin(a)*2500); }
   if(P.clouds) for(const c of P.clouds){ c.sp.position.y=c.y+(still?0:6*Math.sin(beats*Math.PI+c.k)); c.sp.material.color.setRGB(1-0.55*P.night, 1-0.5*P.night, 1-0.25*P.night); }
@@ -39729,9 +39935,9 @@ function bwTick(P, t, dt){
     p.m.position.x=p.x+dx*3.2; p.m.position.y=p.y+dy*3.4; } }
   // the elephant
   if(P.lucy){ const s=still?0:1; P.lucy.B.scale.y=1-sq*0.45; P.lucy.B.scale.x=P.lucy.B.scale.z=1+sq*0.22;
-    P.trunk.forEach((g,i)=>{ g.rotation.x=(i?0.16:-0.3)+s*0.22*Math.sin(beats*Math.PI*0.5-i*0.5); g.rotation.z=s*0.12*Math.sin(beats*Math.PI*0.25-i*0.4); });
-    for(const e of P.ears) e.g.rotation.y=e.s*(0.15+s*0.35*Math.max(0,Math.sin(beats*Math.PI)));
-    P.tail.rotation.z=s*0.5*Math.sin(beats*Math.PI); P.lucy.head.rotation.x=s*0.06*Math.sin(beats*Math.PI); }
+    bwTrunkPose(P.trunk, s*0.16*Math.sin(beats*Math.PI*0.5), s*0.22*Math.sin(beats*Math.PI*0.25));
+    for(const e of P.ears) e.g.rotation.y=e.s*(0.12+s*0.4*Math.max(0,Math.sin(beats*Math.PI)));
+    P.tail.rotation.z=s*0.5*Math.sin(beats*Math.PI); P.lucy.head.rotation.x=s*0.05*Math.sin(beats*Math.PI); }
   // the games
   if(P.strikers) for(const S of P.strikers){ const c=((bar+S.ph)%4+4)%4, f=c<1 ? Math.sin(Math.min(1,c*1.6)*Math.PI*0.5) : Math.max(0,1-(c-1)*0.9);
     S.puck.position.y=3+f*32.2; const ding=c<1 && c>0.55 ? 1 : 0; S.bell.material.color.copy(bwLin(BW.GOLD)).multiplyScalar(1+ding*1.6); }
@@ -57889,6 +58095,7 @@ function disposeObject(o){
 function buildTrack(idx){
   if(camera.far!==1400){ camera.far=1400; camera.updateProjectionMatrix(); }   // (Nova sees further: its star is across the map)
   luxCourse();
+  if(BW_U.tLm.value && !TRACKS[idx].jersey){ BW_U.tLm.value.dispose(); BW_U.tLm.value=null; }   // (Lucy's map of the light on her ground: 11 MB, let go when she is)
   sun.target.position.set(0,0,0); sun.target.updateMatrixWorld();   // (...and aims the sun lamp at you from its star: every other course gets the lamp's aim back)
   selTrack=idx; PREVIEW.built=idx;   // (the home deck's preview knows what the scene holds: see PREVIEW)
   MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
@@ -60029,8 +60236,10 @@ function buildTrack(idx){
             : tc ? tcFlat('ramp',{mat:{color:tcLin(0xe6f7ff)}})              // Stacey: a white wedge
             : sho ? new T.MeshBasicMaterial({color:shLin(SH.REDD)})          // Rosalie: a ramp in the red block
             : vic ? new T.MeshBasicMaterial({color:vicLin(vicInk(best)[1])})   // Victoria: the set's ink
+            : TRACKS[idx].jersey ? bwPatch(new T.MeshBasicMaterial({map:BW_WHITE, color:bwLin(BW.RED)}), bwStripe(7,0))   // Lucy: a red and cream striped ramp, inked
             : new T.MeshPhongMaterial({color:0x1c5a48,emissive:0x0c3a2c,flatShading:true}));
       wedge.position.set(0,1.4,3); wedge.rotation.x=-0.42; grp.add(wedge);
+      if(TRACKS[idx].jersey) wedge.add(new T.Mesh(hanaHullGeo(wedge.geometry), bwPatch(new T.MeshBasicMaterial({color:bwLin(BW.INK), side:T.BackSide}), {hull:true})));
       const mark=new T.Mesh(new T.PlaneGeometry(HW*1.2,11),
         new T.MeshBasicMaterial({map:TEX_JUMP,transparent:true,blending:T.AdditiveBlending,depthWrite:false}));
       // The up-arrow lies ON the wedge's sloped top face (centre (0,3.45,2.08) in ramp space,
@@ -83523,7 +83732,8 @@ function previewNow(){
  *     the smoothing go, and only then does LUX stand aside, for that course only.
  * The base picture is the same pixels as before (the target is written in the display's own encoding), so with bloom,
  * ripples and lens at zero LUX is invisible. ?lux=0 turns it off; race_fx {lux:{...}} tunes and reports it. A course
- * can ask for its own light with TRACKS[i].lux={bloom, thr}, and its own air. */
+ * can ask for its own light with TRACKS[i].lux={bloom, thr}, and its own air; and can change them as the race goes, from
+ * its own tick (LUX.live: the same keys, set each frame; cleared when another course is built). */
 const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', msaa:0, scale:1,
   // anti-aliasing: a multisampled target on a desktop; on a phone or tablet a plain one smoothed in the last pass (FXAA), at a
   // quarter of the memory, and never more than MAXPX pixels however dense the screen
@@ -83696,13 +83906,13 @@ function luxPace(ms){
   if(LUX.fast>5){ LUX.fast=0; if(LUX.scale<1) LUX.scale=Math.min(1,LUX.scale+0.05); }
 }
 /* a new course: what was given up for the last one is asked again (the target's size, learned from the device, is kept) */
-function luxCourse(){ if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
+function luxCourse(){ LUX.live=null; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
 /* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
 function luxRender(rect){
   if(!LUX.on || LUX.trial || !luxInit()){ renderer.render(scene,camera); return; }   // (off, or timing the game without it)
   const R=renderer; R.getDrawingBufferSize(_luxS); const W=rect?Math.round(rect.w*R.getPixelRatio()):_luxS.x, H=rect?Math.round(rect.h*R.getPixelRatio()):_luxS.y;
   luxSize(W,H);
-  const tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9, knee:LUX.hdr?LUX.knee:0.12, vig:LUX.vig}, LUX.air, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.force);
+  const tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9, knee:LUX.hdr?LUX.knee:0.12, vig:LUX.vig}, LUX.air, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.live, LUX.force);   // (LUX.live: what a course's own tick asks for this frame, Lucy's dusk turning to night)
   const ar=R.info.autoReset; R.info.autoReset=false; R.info.reset();
   const sci=R.getScissorTest(); if(rect) R.setScissorTest(false);
   // the scene, into the target (its own viewport: three sets a target's viewport to the target)
@@ -88777,7 +88987,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       if(!LUX.on || !luxInit()) throw new Error('LUX is off ('+(LUX.why||'race_fx {lux:{on:true}}')+')');
       const wasHold=SIM.hold; SIM.hold=true;
       try{ await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
-        const W=96, H=Math.max(8,Math.round(96*LUX.h/LUX.w)), tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9}, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.force);
+        const W=96, H=Math.max(8,Math.round(96*LUX.h/LUX.w)), tk=TRACKS[selTrack]||{}, lx=Object.assign({bloom:LUX.bloom, thr:LUX.hdr?LUX.thr:0.9}, LUX.hdr?null:{bloom:LUX.bloom*0.5}, tk.lux, LUX.live, LUX.force);
         if(!LUX.probe || LUX.probe.width!==W || LUX.probe.height!==H){ if(LUX.probe) LUX.probe.dispose(); LUX.probe=new T.WebGLRenderTarget(W,H,{format:T.RGBAFormat, type:T.UnsignedByteType, depthBuffer:false, stencilBuffer:false}); }
         if(!LUX.mProbe) LUX.mProbe=new T.ShaderMaterial({depthTest:false, depthWrite:false, uniforms:{tScene:{value:null}, tBloom:{value:null}, uBloom:{value:0}, uThr:{value:1}},
           vertexShader:'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }',
@@ -88820,7 +89030,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
       return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
-        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.force), ripples:LUX.rip.length } }; },
+        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length } }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
