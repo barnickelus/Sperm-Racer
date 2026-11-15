@@ -188,7 +188,11 @@ in the world it lies. Two things use it, both off unless a course asks:
 | `mist` | the most opaque a layer of steam or fog lying on the player's road can get (0..1). `mistH` its depth in units, `mistDen` its thickness, `mistAir` a plain distance haze on top, `mistCol` its colour, `mistWisp` how patchy, `mistScale` the wisps' size, `mistRise` how fast they drift and climb, `mistGlow` how much nearby glow it picks up. |
 
 Marina (steam on an indoor pool), Lily (dusk mist on the pond) and Rosalie
-(a hot afternoon on the boards) set them in `TRACKS[i].lux`. Try values with
+(a hot afternoon on the boards) set them in `TRACKS[i].lux`. A course can also
+change any of these keys as the race goes: its own tick sets `LUX.live` each
+frame (Lucy does: heat off the boards at dusk, a sea mist and a harder glow by
+night). `LUX.live` sits between the course's settings and a tool's, and is
+cleared when another course is built. Try values with
 `race_fx {lux:{heat:1.4, mist:0.5, ...}}` and compare with `race_ab`;
 `{lux:{reset:true}}` goes back to the course's own. The reply's `lux.depth`
 says whether the GPU gave a depth texture; without one the air assumes flat
