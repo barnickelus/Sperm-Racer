@@ -77852,8 +77852,32 @@ function dbFrameTick(){ if(typeof renderer==='undefined' || !camera) return; con
  * Cost: head + tail skin, their two inks, the face, the brows, the tuft and its ink, the halo and two boost flames. */
 const NEO={ k:0.8, skin:[172,0.62,0.6], ink:'#141016', tuftCol:'#185058' };
 // Downbeat's face with its star cut made a five-point star (the game's star pupil; Dash's own wedge is untouched)
+/* The face's light is the head's. Downbeat's face is lit from DB_L, a fixed key in view space that its body is lit from too. A Neo
+   head is lit by the cel skin (TPL_GLSL_CEL): the scene's own sun, a different direction and a different threshold. So where
+   the two disagreed, on the far eye of a three-quarter view, the lids and the whites took their shadow colours while the skin
+   round them stayed lit, and a grey patch sat in the eye like a hole. The face now asks the scene for its sun (its material
+   has lights) and takes the head's threshold (uCel, shared with the skin), so a lid is in shadow exactly where its skin is. */
 const NEO_FACE_FS=DB_FACE_FS.replace('else { vec2 sc=pc+pr*vec2(0.26,0.3), v=q-sc; float a=atan(v.y,v.x), rs=pr.y*0.5*(0.3+0.7*pow(abs(cos(2.0*a)),5.0));',
-  'else { vec2 sc=pc+pr*vec2(0.27,0.33), v=q-sc; float a=atan(v.y,v.x), m=mod(a-1.5708+0.6283,1.2566)-0.6283, rs=pr.y*0.38*(0.42+0.58*pow(max(cos(m*2.5),0.0),2.2));');
+  'else { vec2 sc=pc+pr*vec2(0.27,0.33), v=q-sc; float a=atan(v.y,v.x), m=mod(a-1.5708+0.6283,1.2566)-0.6283, rs=pr.y*0.38*(0.42+0.58*pow(max(cos(m*2.5),0.0),2.2));')
+  .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>
+uniform vec4 uCel;
+#if NUM_DIR_LIGHTS > 0
+struct DirectionalLight { vec3 direction; vec3 color; };
+uniform DirectionalLight directionalLights[ NUM_DIR_LIGHTS ];
+#endif`)
+  .replace('float lit=smoothstep(-fw*4.0,fw*4.0,dot(normalize(vNv),DB_L)-0.06);', `float lit;
+  { vec3 Lk=normalize(vec3(-0.35, 0.55, 0.75));
+    #if NUM_DIR_LIGHTS > 0
+    Lk=normalize(directionalLights[ 0 ].direction + vec3(0.0, 0.25, 0.7));
+    #endif
+    float nl=dot(normalize(vNv), Lk), aa=fwidth(nl)*0.9+0.003; lit=smoothstep(uCel.x-aa, uCel.x+aa, nl); }   // (TPL_GLSL_CEL's own test)`);
+// the face's material: Downbeat's shader with the scene's lights in it (for the sun, above) and the head's cel threshold
+function neoFaceMat(fs, FU, cel){
+  FU.uCel=cel.uCel;
+  const m=dbShader(DB_FACE_VS, fs, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4, lights:true});
+  Object.assign(m.uniforms, T.UniformsUtils.merge([T.UniformsLib.lights]), FU);   // (three fills the lights in; the face's own stay shared by reference)
+  return m;
+}
 let _neoFaceGeo=null, _neoBrowGeo=null;
 const neoR=(x,y,z)=>1/Math.sqrt(x*x/(HEAD_RX*HEAD_RX)+y*y/(HEAD_RY*HEAD_RY)+z*z/(HEAD_RZ*HEAD_RZ));   // the flow head's radius along a unit direction
 // the face: a patch on the front of the flow head (azimuth x elevation round the forward axis), face units = the head's
@@ -77967,7 +77991,7 @@ function dressNeo(g, K, P){
     uWht:{value:dbLin('#fdfbf4')}, uWhtS:{value:dbLin('#d6e4e6')}, uInk:{value:ink}, uMth:{value:dbLin('#3c1218')}, uTng:{value:dbLin('#e0584a')}, uAcc:{value:dbLin('#e2412f')} };
   if(P.face) for(const k in P.face){ const n='u'+k[0].toUpperCase()+k.slice(1); (FU[n]||(FU[n]={value:null})).value=dbLin(P.face[k]); }
   if(P.faceU) Object.assign(FU, P.faceU());
-  const face=new T.Mesh(neoFaceGeometry(), dbShader(DB_FACE_VS, P.faceFS||NEO_FACE_FS, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4}));
+  const face=new T.Mesh(neoFaceGeometry(), neoFaceMat(P.faceFS||NEO_FACE_FS, FU, cel));
   face.name='neo-face'; face.renderOrder=1; rig.add(face);
   const BU={ uBr:{value:new Float32Array(8)}, uBrL:{value:P.browL||0.64}, uInk:{value:ink} };
   const brows=new T.Mesh(neoBrowGeometry(), dbShader(DB_BROW_VS, DB_BROW_FS, BU, {transparent:true, depthWrite:false, side:T.DoubleSide}));
@@ -84221,7 +84245,12 @@ function lockHint(t){ let n='Circuit Cup'; try{ const m=CUP_META[(t&&t.reward||1
 function grantUnlock(t){ try{ const a=unlockedIds(); if(a.indexOf(t.id)<0){ a.push(t.id); localStorage.setItem('sr_unlocks',JSON.stringify(a)); } }catch(_){} }
 // the select grid's order: the finished characters first, then the style variants, the locked ones last
 const SEL_VARIANTS=new Set(['guidoFluid','punkFluid','voxel','kingVox','wire','dough','mosaic','bead','beadSalty','beadJuan','paint','felt','paper','ukiyo','ryuKenji','dragoTony','rastaDragon','beadBosun','beadBandido']);
-function selOrdered(){ const rank=t=>SEL_VARIANTS.has(t.id)?(isLocked(t)?2+(t.reward||0)/10:1):0; return SPERM_TYPES.map((t,i)=>[t,i]).sort((a,b)=>rank(a[0])-rank(b[0])||a[1]-b[1]).map(x=>x[0]); }
+// the menus' order (the select grid, its 3D roster, the home's racer strip, the racer numbers): the Neo racers first, in the order
+// they were made (the four built before the registry, then every kit that registers in NEO_KITS); then the base racers, the
+// variants and the locked ones; and Neo Proto, the template they were all drawn from, at the back
+const NEO_FRONT=new Set(['tonyGuido','kingJr','chadJr','rastaJr']);
+function selRank(t){ if(t.id==='neoProto') return 9; if(NEO_FRONT.has(t.id) || NEO_KITS[t.id]) return -1; return SEL_VARIANTS.has(t.id)?(isLocked(t)?2+(t.reward||0)/10:1):0; }
+function selOrdered(){ return SPERM_TYPES.map((t,i)=>[t,i]).sort((a,b)=>selRank(a[0])-selRank(b[0])||a[1]-b[1]).map(x=>x[0]); }
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Circuit Cup state (the cup module, after endRace): the live run's lineup, scores and eggs
 let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null, gpEggs=null;
