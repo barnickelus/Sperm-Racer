@@ -79785,9 +79785,11 @@ NEO_HEAVY.vikingJr=2;
  *   SKIN    warm brown. Painted in the skin and turned with the face: his blue-black hair combed straight back (a glossy
  *           sheen in comb lines) and neat sideburns. On the body: the royal-blue raw-silk kurta from a high bandhgala
  *           collar down the neck to the hem, gold buttis on it and a gold zari band at the collar and the hem.
- *   QUIFF   a tall blue-black pompadour: one lofted sheet combed up off the crown into a wave that rolls over at the front,
- *           with a 1930s cel's shine (a streak along the wave, a bar across the roll) and comb lines; and one forelock curl
- *           (the kit's tuft) hanging off the roll. In the face's rig, on its own springs (it dips a beat behind the squash,
+ *   QUIFF   a tall blue-black pompadour: one lofted sheet combed up off the crown into a wave that rolls over at the front.
+ *           Face-on and from behind it is a rounded wave, wider at the base, covering the top of the head and breaking a
+ *           little to the side the forelock falls. Five inked comb lines, just off the navy, fan from the crown over the
+ *           wave; one patent-leather highlight, a crescent along the roll hooking back down the wave. One forelock curl
+ *           (the kit's tuft) hangs off the roll. In the face's rig, on its own springs (it dips a beat behind the squash,
  *           streams back with speed, whips round a look back). A hit flattens it into a mop over his eyes.
  *   AVIATORS gold teardrop frames, green-to-amber lenses, pushed up on the front of the roll, their temple arms folded back
  *           into the hair (hinged: straight again when they come down).
@@ -79866,7 +79868,7 @@ const RVJ_SKIN_FX={ key:'rvj-1',
       float hl=0.92-0.22*smoothstep(0.3,0.8,aa)-0.35*smoothstep(0.8,1.35,aa)-0.25*smoothstep(1.6,2.4,aa)-0.1*smoothstep(2.4,3.0,aa);   // high on the brow, in at the temples, down past the ears, low at the nape
       float dS=max(max(abs(aa-1.38+0.22*(0.62-el))-0.1*smoothstep(0.02,0.5,el), 0.04-el), el-0.66);                 // the sideburns: a tapered point, leaning toward the face
       float dB=min(hl-el, dS), aw=fwidth(dB)*0.75+0.003;
-      if(dB<aw){ float q=az*9.0, cl=abs(fract(q)-0.5), cw=fwidth(q)*0.75+1e-3, fade=1.0-smoothstep(0.2,0.45,fwidth(q));   // the comb lines, straight back
+      if(dB<aw){ float q=az*3.0, cl=abs(fract(q)-0.5), cw=fwidth(q)*0.75+1e-3, fade=1.0-smoothstep(0.2,0.45,fwidth(q));   // the comb lines, straight back (few, low in contrast)
         vec3 hc=mix(uRvHair, uRvSheen, 0.4*(1.0-smoothstep(0.045-cw,0.045+cw,cl))*fade*smoothstep(0.1,0.7,el));
         float hw=1.0-smoothstep(-aw,aw,dB); diffuseColor.rgb=mix(diffuseColor.rgb, hc*diffuse, hw); totalEmissiveRadiance=mix(totalEmissiveRadiance, emissive*hc, hw); } }
     // the kurta: royal-blue raw silk from the bandhgala collar down the neck to the hem; gold buttis, and the zari at both ends
@@ -79895,22 +79897,29 @@ const RVJ_QC=[[-3.0,5.2],[-1.5,6.0],[0.1,6.68],[1.55,7.35],[2.8,7.88],[3.85,7.9]
 const RVJ_QM=[[-3.0,5.2],[-1.3,6.25],[0.5,6.7],[2.1,6.5],[3.35,5.95],[4.3,5.2],[4.85,4.55],[5.15,4.05],[5.3,3.7],[5.38,3.45]];
 const rvjSkY=(x,z)=>HEAD_CY+HEAD_RY*Math.sqrt(Math.max(0.02,1-(x/HEAD_RX)**2-(z/HEAD_RZ)**2));
 function rvjOut(p, m){ const x=p[0]/HEAD_RX, y=(p[1]-HEAD_CY)/HEAD_RY, z=p[2]/HEAD_RZ, r=Math.sqrt(x*x+y*y+z*z); if(m>0 && r<m && r>1e-3){ const s=m/r; return [p[0]*s, HEAD_CY+(p[1]-HEAD_CY)*s, p[2]*s]; } return p; }
-// a row across the sheet is a dome: its middle on the profile, its edges let down along the profile's inward normal, onto the
-// skull where the skull is in reach (the back and the crest) and by hc(v) where it is not (the roll: its ends round off)
+// a row across the sheet is a mound: its crown on the profile, its edges let straight down onto the skull at the back and
+// onto the brow line in front (rvjFloor), so the quiff is a rounded wave face-on and from behind, wider at the base, and
+// the roll ends in one clean edge over the brow. Past the crest the wave breaks a little to the forelock's side (+x): its
+// crown moves over and rises on that side.
+const rvjFloor=z=>5.0+0.9*ldClamp((z-1.5)/1.7,0,1)+0.45*ldClamp((z-3.6)/0.8,0,1);   // (the lowest the quiff's edges come: the temples at the back, the brow line in front)
 function rvjSheet(prof, wf, hc, mess, NU, NV){
   const C=new T.CatmullRomCurve3(prof.map(([z,y])=>new T.Vector3(0,y,z)), false, 'centripetal'), c=new T.Vector3(), t=new T.Vector3(), pos=[];
-  for(let j=0;j<=NV;j++){ const v=j/NV; C.getPointAt(v, c); C.getTangentAt(v, t); const w=wf(v), ny=t.z, nz=-t.y, H=hc(v);
-    for(let i=0;i<=NU;i++){ const u=i/NU, s=2*u-1, f=Math.pow(Math.max(0,1-s*s),0.75), x=s*w*(mess?1+0.06*Math.sin(u*31+v*7):1);
-      const zc=c.z>0 ? c.z*(0.9+0.1*f) : c.z, hs=Math.max(0,(c.y-rvjSkY(x,zc))/Math.max(0.35,ny)), d=(1-f)*Math.min(hs,H)+(f<0.05?0.12:0);
-      const rid=0.05*Math.cos(s*Math.PI*3.5)*f*Math.sin(Math.PI*Math.min(1,v*1.4))*(1-ldClamp((v-0.5)/0.15,0,1));   // (a ripple across it: the comb's ridges)
-      let y=c.y-ny*(d-rid), z=zc-nz*(d-rid);
+  for(let j=0;j<=NV;j++){ const v=j/NV; C.getPointAt(v, c); C.getTangentAt(v, t); const ny=t.z, nz=-t.y, H=hc(v);
+    const yl=rvjFloor(c.z)+0.05, sk=HEAD_RX*Math.sqrt(Math.max(0,1-(c.z/HEAD_RZ)**2-((yl-HEAD_CY)/HEAD_RY)**2)), w=mess ? wf(v) : Math.min(wf(v), Math.max(sk*1.02, 2.35*ldClamp((c.z-1.2)/1.2,0,1)));
+    const Dy=mess ? -ny : -1, Dz=mess ? -nz : 0;   // (D: where the edges go: straight down, so every row is a mound or an arch and the roll's edges all land on the brow line; the mop's wrap round)
+    const a=mess?0:0.27*ldClamp((v-0.3)/0.35,0,1), xo=mess?0:0.32*ldClamp((v-0.3)/0.4,0,1);
+    for(let i=0;i<=NU;i++){ const u=i/NU, s=2*u-1, s2=s>=a ? (s-a)/(1-a) : (s-a)/(1+a), f=Math.max(0,1-s2*s2), x=s*w*(mess?1+0.06*Math.sin(u*31+v*7):1)+xo;
+      const zc=c.z>0 ? c.z*(0.84+0.16*f) : c.z, ye=Math.max(rvjSkY(x,zc), mess ? -9 : rvjFloor(zc)), hs=Math.max(0,(c.y-ye)/Math.max(0.35,-Dy)), k=ldClamp((-Dy-0.1)/0.3,0,1);
+      const d=(1-f)*(Math.min(H,0.8)*(1-k)+Math.min(hs,H)*k)+(f<0.05?0.12:0);
+      const rid=0.04*Math.cos(s*Math.PI*2.5)*f*Math.sin(Math.PI*Math.min(1,v*1.4))*(1-ldClamp((v-0.5)/0.15,0,1));   // (a ripple across it: the comb's ridges)
+      let y=c.y+Dy*(d-rid), z=zc+Dz*(d-rid);
       if(mess){ y+=0.14*Math.sin(u*23+v*13)*f*v; z+=0.12*Math.sin(u*17)*v; }
       const q=rvjOut([x,y,z], v>0.08 && f>0.3 ? 1.04 : 1.0); pos.push(q[0],q[1],q[2]); } }
   const idx=[]; for(let j=0;j<NV;j++) for(let i=0;i<NU;i++){ const a=j*(NU+1)+i, b=a+1, cc=a+NU+1, d=cc+1; idx.push(a,cc,b, b,cc,d); }
   const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals(); return g; }
 function rvjQuiffGeo(){ return tonyKeep('rvjQuiff', ()=>{
-  const NU=30, NV=64, wf=v=>1.75+0.4*Math.sin(Math.PI*0.5*Math.min(1,v/0.6))-0.3*Math.max(0,(v-0.7)/0.3);
-  const g=rvjSheet(RVJ_QC, wf, v=>9-7.95*ldClamp((v-0.5)/0.17,0,1), false, NU, NV), gm=rvjSheet(RVJ_QM, v=>wf(v)*(1+0.35*v), v=>9-7.7*ldClamp((v-0.3)/0.2,0,1), true, NU, NV), uv=[], aw=[];
+  const NU=30, NV=64, wf=v=>2.6-0.25*Math.max(0,(v-0.7)/0.3);
+  const g=rvjSheet(RVJ_QC, wf, v=>9-8.2*ldClamp((v-0.8)/0.06,0,1), false, NU, NV), gm=rvjSheet(RVJ_QM, v=>wf(v)*(1+0.35*v), v=>9-7.7*ldClamp((v-0.3)/0.2,0,1), true, NU, NV), uv=[], aw=[];
   for(let j=0;j<=NV;j++) for(let i=0;i<=NU;i++){ uv.push(i/NU, j/NV); aw.push(j/NV); }
   g.setAttribute('uv',new T.Float32BufferAttribute(uv,2)); g.setAttribute('aW',new T.Float32BufferAttribute(aw,1));
   g.setAttribute('aMess',gm.attributes.position); g.setAttribute('aMessN',gm.attributes.normal);
@@ -79941,14 +79950,16 @@ void main(){
   vec3 n=normalize(vNv), v=normalize(vV); if(!gl_FrontFacing) n=-n;
   float d=dot(n,DB_L)-0.06, fw=fwidth(d)*0.7+1e-4, lit=smoothstep(-fw,fw,d);
   vec3 c=mix(uShd,uLit,lit);
-  float q=vU.x*7.0, cl=abs(fract(q)-0.5), cw=fwidth(q)*0.75+1e-3, fade=1.0-smoothstep(0.25,0.5,fwidth(q));   // the comb lines along the wave, on the lit side
-  c=mix(c, uCmb, 0.85*lit*(1.0-smoothstep(0.05-cw,0.05+cw,cl))*fade*smoothstep(0.08,0.2,vU.y)*(1.0-smoothstep(0.82,0.95,vU.y)));
-  // the shine, drawn as a 1930s cel would have it: one long streak back along the wave and a bar across the front of the
-  // roll, wherever they face the light (past white as it gleams), and a hard glint off the rest
-  float h=dot(n,normalize(DB_L+v)), hw=fwidth(h)*0.7+1e-4;
-  float s1=abs(vU.x-0.37-0.04*sin(vU.y*7.0))-0.05*sin(3.1416*clamp((vU.y-0.1)/0.52,0.0,1.0))+0.004;
-  float s2=abs(vU.y-0.695)-0.024*sin(3.1416*clamp((vU.x-0.2)/0.6,0.0,1.0))+0.002, sm=min(s1,s2), sw=fwidth(sm)*0.75+1e-4;
-  c=mix(c, uShn*(1.0+uGl), max((1.0-smoothstep(-sw,sw,sm))*smoothstep(0.55,0.75,h)*lit, smoothstep(0.985-hw,0.985+hw,h)*smoothstep(0.15,0.3,vU.y)));
+  // the comb lines, as an inked cartoon combs hair: five, a blue just off the navy, fanning out from the crown, sweeping up
+  // the wave and over the roll to the brow, bowed a little to the side the wave breaks to
+  float yv=vU.y, spr=mix(0.42,1.0,smoothstep(0.0,0.62,yv)), xs=(vU.x-0.5)/spr+0.07*sin(3.1416*min(yv/0.8,1.0))-0.9*pow(max(yv-0.5,0.0),2.0)*(1.0+(vU.x-0.5)), q=xs*5.0+0.5;
+  float cl=abs(fract(q)-0.5), cw=fwidth(q)*0.75+1e-3, lw=0.075*smoothstep(0.02,0.3,yv), fade=1.0-smoothstep(0.3,0.5,fwidth(q));
+  c=mix(c, uCmb*mix(0.7,1.0,lit), (1.0-smoothstep(lw-cw,lw+cw,cl))*fade*(1.0-smoothstep(0.44,0.5,abs(xs)))*smoothstep(0.04,0.14,yv)*(1.0-smoothstep(0.68,0.74,yv)));
+  // the shine: one strong curved highlight, the patent-leather sheen of a 1930s cel, a crescent along the top of the roll
+  // that hooks back down the wave toward the crown (past white as it gleams)
+  float uc=(vU.x-0.56)/0.34, sA=abs(yv-0.745-0.03*uc*uc)-0.026*max(0.0,1.0-uc*uc)+0.003;
+  float sB=abs(vU.x-0.3-0.06*(0.74-yv))-0.028*sin(3.1416*clamp((yv-0.12)/0.64,0.0,1.0))+0.003, sm=min(sA,sB), sw=fwidth(sm)*0.75+1e-4;
+  c=mix(c, uShn*(1.0+uGl), (1.0-smoothstep(-sw,sw,sm))*(0.45+0.55*lit));
   float rim=abs(dot(n,v)), rf=fwidth(rim)+1e-4;
   gl_FragColor=vec4(mix(uInk,c,smoothstep(0.22-rf,0.22+rf,rim)),1.0);
   #include <fog_fragment>
@@ -79992,7 +80003,7 @@ const RVJ_PROP_FS=TONY_PROP_FS.replace('#ifdef TONY_LENS', `#ifdef RVJ_LENS
 #endif
 #ifdef TONY_LENS`);
 // the aviators' two places in the face's rig: parked on the front of the quiff's roll (a point of it, tipped back with it) and down over the eyes
-const RVJ_AVP={ park:new T.Vector3(0, 7.85, 4.62), parkW:0.71, parkRx:-0.92, down:new T.Vector3(0, HEAD_CY+0.86, 5.25), downRx:0.1 };
+const RVJ_AVP={ park:new T.Vector3(0.18, 7.85, 4.62), parkW:0.71, parkRx:-0.92, down:new T.Vector3(0, HEAD_CY+0.86, 5.25), downRx:0.1 };
 function rvjAviPose(o, s, skew, pit, yaw, lift){
   rvjBend(_rvA, RVJ_AVP.park, RVJ_AVP.parkW, pit, yaw); _rvA.y+=lift||0;
   const k=Math.sin(Math.PI*ldClamp(s,0,1));
@@ -80091,7 +80102,7 @@ function rvjDress(g, K, X){
   const rigB=new T.Group(); rigB.name='rvj-body-rig'; g.add(rigB); S.rigB=rigB;
   // the quiff and the aviators, in the face's rig (they turn with the face)
   const QU={ uQ:{value:new T.Vector4()}, uQRoot:{value:RVJ_QROOT.clone()}, uQM:{value:new T.Vector4(0,20,0,0)}, uGl:{value:0},
-    uLit:{value:dbLin('#2c2a4c')}, uShd:{value:dbLin('#0e0c18')}, uShn:{value:dbLin('#e6ecff')}, uCmb:{value:dbLin('#6a7ccc')}, uInk:{value:dbLin(DB_INK)} };
+    uLit:{value:dbLin('#2c2a4c')}, uShd:{value:dbLin('#15132a')}, uShn:{value:dbLin('#e6ecff')}, uCmb:{value:dbLin('#3d4680')}, uInk:{value:dbLin(DB_INK)} };
   const quiff=new T.Mesh(rvjQuiffGeo(), dbShader(RVJ_QUIFF_VS, RVJ_QUIFF_FS, QU, { side:T.DoubleSide })); quiff.name='rvj-quiff'; quiff.frustumCulled=false; rig.add(quiff);
   const avM=dbShader(TONY_PROP_VS, RVJ_PROP_FS, { uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, { vertexColors:true, side:T.DoubleSide, defines:{RVJ_LENS:'', TONY_GLINT:''} });
   const avi=new T.Group(); avi.name='rvj-aviators'; rig.add(avi); avi.add(new T.Mesh(rvjAviGeo(), avM));
@@ -80285,7 +80296,7 @@ const RVJ=Object.assign({}, NEO, { skin:[25,0.5,0.5], tuftCol:'#17142a', browL:0
   face:{ mst:'#21171c', znc:'#57507a', mth:'#3a1016', sknS:'#8c4e2c' }, faceFS:RVJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }), hairGloss:[0.16,0.22,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#d9a072', '#8a5430', '#7a4626'), skinFx:RVJ_SKIN_FX, hair:rvjHair, dress:rvjDress, tick:rvjTick });
 function dressDesiJr(g, K){
-  RVJ.skinU={ uRvTurn:{ value:0 }, uRvHair:{ value:dbLin('#17142a') }, uRvSheen:{ value:dbLin('#5a6ab8') }, uRvSilk:{ value:dbLin('#2348a8') }, uRvGold:{ value:dbLin('#ffc935') }, uRvRed:{ value:dbLin('#b0182a') } };
+  RVJ.skinU={ uRvTurn:{ value:0 }, uRvHair:{ value:dbLin('#17142a') }, uRvSheen:{ value:dbLin('#343a6e') }, uRvSilk:{ value:dbLin('#2348a8') }, uRvGold:{ value:dbLin('#ffc935') }, uRvRed:{ value:dbLin('#b0182a') } };
   return dressNeo(g, K, RVJ);
 }
 NEO_KITS.desiJr=dressDesiJr;
