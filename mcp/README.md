@@ -221,6 +221,20 @@ rises off the stream; Iris has gusts of hot wind and a cool slot; Seraphina's
 air breathes and flushes on the pulse; Nova's fills with the star's light as
 you near it; in the two labyrinths the fog warms as the egg gets nearer.
 
+**The warp.** A boost tears the air open: for as long as it lasts the player
+drives down a tunnel of the course's own air. Its throat is where they are
+headed. Round it the edge of the picture darkens and the distance dissolves
+into the air (far things first, by depth), lanes of light and ribs of it run
+outward along the walls, the far picture is drawn out toward the throat, and
+there is light at the end. Nothing near the lens is touched, so the racer
+keeps its edge, and the air's light on the racers comes up with it. Its colour
+is the course's air (the light on the racers, or the mist's and the deep
+air's), a pad's blue-white on a course with none, or `warpCol`; `warp` scales
+it per course (0: never). It opens fast and closes over about a second. A
+player who asked for less motion never sees it, nor does a reference sheet.
+`race_fx {lux:{warpHold:1}}` holds it open for a look (`reset` lets go), and
+every `race_fx` reply says how far open it is (`lux.warp`).
+
 `persist` (0..1, per 60th of a second) is the AFTERGLOW: the glow layer feeds
 back into itself, the brighter of what is lit now and what was lit a moment
 ago, so a light moving across the picture leaves a fading trail, as a vector
