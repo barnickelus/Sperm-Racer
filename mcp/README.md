@@ -172,7 +172,7 @@ switches the rule on under the tools, where it is off by default.
 `?lux=0` turns it off. A course asks for its own light with
 `TRACKS[i].lux={bloom, thr}` (Nova does; Stacey pushes both further, for her
 white lines and her neon night). From the tools:
-`race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, ripple, flash, reset}}`
+`race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, persist, ripple, flash, reset}}`
 sets it, and every `race_fx` reply reports what the GPU gave it and the light
 in force.
 
@@ -187,11 +187,25 @@ in the world it lies. Two things use it, both off unless a course asks:
 | `heat` | bends the picture in climbing bands where the view runs far and near level (1 = a hot road). `heatNear`, `heatFar`: the distance over which it comes in. `heatEl`: how far above the horizon it reaches. Nothing nearer than `heatNear` moves, and a far pixel never borrows from a near one. |
 | `mist` | the most opaque a layer of steam or fog lying on the player's road can get (0..1). `mistH` its depth in units, `mistDen` its thickness, `mistAir` a plain distance haze on top, `mistCol` its colour, `mistWisp` how patchy, `mistScale` the wisps' size, `mistRise` how fast they drift and climb, `mistGlow` how much nearby glow it picks up. |
 
-Marina (steam on an indoor pool), Lily (dusk mist on the pond) and Rosalie
-(a hot afternoon on the boards) set them in `TRACKS[i].lux`. A course can also
+`persist` (0..1, per 60th of a second) is the AFTERGLOW: the glow layer feeds
+back into itself, the brighter of what is lit now and what was lit a moment
+ago, so a light moving across the picture leaves a fading trail, as a vector
+monitor's phosphor does. Only the glow trails; the picture stays sharp. It
+fades on game time, so a frame a tool holds shows no trail. Vera uses it
+(0.8), with her lines driven past white so they bloom and a violet haze lit
+by them.
+
+Marina (steam on an indoor pool), Lily (dusk mist on the pond), Rosalie
+(a hot afternoon on the boards), Felicity (heat and dust at the end of a day on
+the loom), Perla (a studio hazer, with dry ice on the board under the plinth)
+and Eve (a night mist in the garden's hollows, lit by what glows in it, with
+short trails) set them in `TRACKS[i].lux`. Perla's towers also throw BEAMS into
+her haze: a soft cone of each gel from the lamps to the road (one draw for all
+seven), and on every bar the tower over your set-up fires like a strobe. A course can also
 change any of these keys as the race goes: its own tick sets `LUX.live` each
 frame (Lucy does: heat off the boards at dusk, a sea mist and a harder glow by
-night). `LUX.live` sits between the course's settings and a tool's, and is
+night; Eve's mist takes more of the garden's light as the egg's call swells, and
+floods when you reach her). `LUX.live` sits between the course's settings and a tool's, and is
 cleared when another course is built. Try values with
 `race_fx {lux:{heat:1.4, mist:0.5, ...}}` and compare with `race_ab`;
 `{lux:{reset:true}}` goes back to the course's own. The reply's `lux.depth`

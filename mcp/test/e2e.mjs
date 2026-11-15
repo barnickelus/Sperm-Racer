@@ -556,6 +556,35 @@ await check('Lucy: the boardwalk builds clear of the lane, her light and air cha
   const nova = json(await call('race_fx', {})).lux.light; assert.equal(nova.bloom, 1.0); assert.equal(nova.mist, 0); assert.equal(nova.heat, 0);
 });
 
+await check('Vera: her lines glow past white with an afterglow in a lit violet haze, a held frame shows no trail, and the next course has no afterglow', async () => {
+  json(await call('race_setup', { course: 'Vera', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+  const l = json(await call('race_fx', {})).lux.light;
+  assert.ok(l.persist > 0.5 && l.bloom >= 1.5 && l.mist > 0.2 && l.mistGlow > 1, 'Vera asks for her phosphor: ' + JSON.stringify(l));
+  const li = json(await call('race_light', {}));
+  assert.ok(li.glowArea > 0.1 && li.glowMean < 0.12, 'the lines glow, and the picture is not washed out: ' + JSON.stringify(li));
+  // the afterglow takes only the time it is given: a frame held by a tool, drawn twice, is the same picture
+  const same = json(await call('race_ab', { a: { lux: {} }, b: { lux: {} } }));
+  assert.ok(same.changed < 0.005, 'a held frame has no trail: ' + same.changed);
+  assert.ok(image(await call('race_film', { seconds: 0.3, frames: 2 })), 'filmed with the afterglow running');
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 0.3 }));
+  assert.equal(json(await call('race_fx', {})).lux.light.persist, 0, 'the next course has no afterglow');
+});
+
+await check('Eve, Perla and Felicity each have their own air: a lit night mist with trails, a studio haze with beams, a hot dusk', async () => {
+  const air = async (course, at) => { json(await call('race_setup', { course, character: 'proto', seed: 3 })); json(await call('race_start'));
+    json(await call('race_warp', { to: at, you: 'back', spread: 24 })); json(await call('race_drive', { seconds: 0.6 }));
+    return { l: json(await call('race_fx', {})).lux.light, li: json(await call('race_light', {})) }; };
+  const e = await air('Eve', 0.5);
+  assert.ok(e.l.mist > 0.5 && e.l.persist > 0.4 && e.l.mistGlow >= 1.7, 'Eve: a mist that takes the garden\'s light, and trails: ' + JSON.stringify(e.l));
+  assert.ok(e.li.glowMean < 0.12, 'Eve is not washed out: ' + JSON.stringify(e.li));
+  const p = await air('Perla', 0.3);
+  assert.ok(p.l.thr >= 1 && p.l.mistAir > 0 && p.l.mist > 0.3, 'Perla: a haze, and only what is brighter than her deck glows: ' + JSON.stringify(p.l));
+  assert.ok(p.li.glowMean < 0.12, 'Perla is not washed out under her beams: ' + JSON.stringify(p.li));
+  const f = await air('Felicity', 0.5);
+  assert.ok(f.l.heat > 0.5 && f.l.mist > 0.2 && f.l.persist === 0, 'Felicity: heat and dust, no trails: ' + JSON.stringify(f.l));
+  assert.ok(f.li.glowMean < 0.12, 'Felicity is not washed out: ' + JSON.stringify(f.li));
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);
