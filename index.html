@@ -76801,9 +76801,11 @@ const NEO_KITS={}, NEO_BASE={}, NEO_LOOK={}, NEO_HEAVY={};
  *           wider, being passed is a side-eye, the laugh is "ha.", a pass is the faintest smirk and a slow blink. The
  *           handlebar twitches on beat four of every other bar. Once, at the first toast of a win, he roars SKÅL for
  *           exactly one beat; then the face is straight again.
- *   KNOT    the top-knot on the tuft's spring: a twisted bun in a brass ring; it hops and lags on the beat.
- *   BEARD   golden, over the jaw from under the mouth (a shell on the head, its top edge scalloped, in the face's rig) and
- *           in a spade under the chin, with a warm shadow so the gold never goes olive; two braids off it, each with a teal
+ *   KNOT    the top-knot on the tuft's spring: a small twisted bun in a brass ring, low on the back of the crown so the
+ *           goggles lead from behind; it hops and lags on the beat.
+ *   BEARD   one golden viking beard that grows from the jaw: from the sideburns round under the mouth (a shell on the
+ *           head, its top edge scalloped) down into a broad flat-fronted spade with carved grooves, the head's outline
+ *           running on into it; a warm shadow so the gold never goes olive. Its two ends are braids, each with a teal
  *           bead and a brass one, on rubber-hose
  *           springs (VKJ_BRAID: a curve each, re-laid every frame): they swing like a metronome's arm, out to one side on
  *           every beat, stream back with speed, fly up on a hit and fling out as the face comes round for a look back.
@@ -76930,56 +76932,67 @@ const VKJ_SKIN_FX=(()=>{ const V=tonyV3, RZ=HEAD_RZ.toFixed(3), RZ2=(HEAD_RZ*HEA
         diffuseColor.rgb=mix(diffuseColor.rgb, rc*diffuse, 1.0-smoothstep(-rw2,rw2,dR));
         diffuseColor.rgb=mix(diffuseColor.rgb, INK*diffuse, 1.0-smoothstep(0.02-rw2,0.02+rw2,abs(dR))); } }
   }` }; })();
-// the top-knot (the kit's hair, on the tuft's spring): a bun on the back of the crown with a flick of hair off its top
-const VKJ_KNOT=(()=>{ const r=kitHeadPt(Math.PI, 0.98, -0.12); return { root:new T.Vector3(...r), bun:new T.Vector3(r[0], r[1]+0.86, r[2]-0.1), R:1.08 }; })();
+// the top-knot (the kit's hair, on the tuft's spring): a small twisted bun set low on the back of the crown, so from the
+// chase camera the goggles on the band lead
+const VKJ_KNOT=(()=>{ const r=kitHeadPt(Math.PI, 0.8, -0.08); return { root:new T.Vector3(...r), bun:new T.Vector3(r[0], r[1]+0.52, r[2]-0.1), R:0.65 }; })();
 function vkjHair(col){
   const K=VKJ_KNOT, bun=new T.SphereGeometry(1,24,16); bun.scale(K.R*1.06, K.R*0.92, K.R); bun.translate(K.bun.x, K.bun.y, K.bun.z);
   const p=bun.attributes.position, y0=K.root.y, top=K.bun.y+K.R*0.92;
   const parts=[[bun, col, i=>0.15+0.6*Math.max(0,Math.min(1,(p.getY(i)-y0)/(top-y0)))]];
   return { parts, tip:new T.Vector3(K.bun.x, top, K.bun.z), root:K.root.clone() };
 }
-function vkjHairPaint(geo){   // the bun's grooves, gathered to its top; the tuft lighter to its end
+function vkjHairPaint(geo){   // the bun's grooves, twisting up to its top
   const col=geo.attributes.color, pos=geo.attributes.position, fx=geo.attributes.aFlex, K=VKJ_KNOT, d=dbLin('#5e3010'), lt=dbLin('#f6cf72'), c=new T.Color();
-  for(let i=0;i<col.count;i++){ c.setRGB(col.getX(i),col.getY(i),col.getZ(i)); const f=fx.getX(i);
-    if(f<0.8){ const a=Math.atan2(pos.getX(i)-K.bun.x, pos.getZ(i)-K.bun.z), h=(pos.getY(i)-K.root.y)/2.1, g=Math.pow(Math.abs(Math.cos(a*3+h*5.5)),8);
-      c.lerp(d, 0.8*g*Math.max(0,1-Math.max(0,h-0.6)*2.5)).lerp(lt, 0.3*Math.max(0,h-0.45)); }
-    else c.lerp(lt, 0.5*(f-0.45)/0.55);
+  for(let i=0;i<col.count;i++){ c.setRGB(col.getX(i),col.getY(i),col.getZ(i));
+    const a=Math.atan2(pos.getX(i)-K.bun.x, pos.getZ(i)-K.bun.z), h=(pos.getY(i)-K.root.y)/(1.94*K.R), g=Math.pow(Math.abs(Math.cos(a*3+h*5.5)),8);
+    c.lerp(d, 0.8*g*Math.max(0,1-Math.max(0,h-0.6)*2.5)).lerp(lt, 0.3*Math.max(0,h-0.45));
     col.setXYZ(i,c.r,c.g,c.b); } }
-// what sits still in the face's rig, one mesh: the knot's brass ring, the beard's shell over the jaw and its spade under
-// the chin (a squashed sphere drawn to a round point, puffs over its lower half, the puffs' tops lighter)
-const VKJ_BUSH={ c:new T.Vector3(0, 0.3, 2.4), r:[1.7, 1.6, 1.15] };
+/* what sits still in the face's rig, one mesh: the knot's brass rings, and the beard as one shape that grows from the jaw:
+   a shell over the jaw from the sideburns round under the mouth (its top edge scalloped and tucked into the skin, so the
+   rim's ink draws it) and, out of it, a broad spade. The spade is lofted down from inside the jaw, each ring flat in front
+   and round behind, the head's outline running on down into it with no neck between; its front is carved with grooves
+   that run down to the braids, which are its ends. VKJ_WEDGE: [y, half its width, its back z, its front z] */
+const VKJ_WEDGE=[[1.55,2.05,1.3,3.4],[1.0,2.45,1.1,3.82],[0.35,2.38,1.15,3.84],[-0.45,2.05,1.38,3.66],[-1.2,1.55,1.7,3.4],[-1.72,1.02,1.92,3.2]];
 function vkjPropGeo(){ return tonyKeep('vkjProp', ()=>{
-  const B=VKJ_BUSH, g=new T.SphereGeometry(1,40,26), p=g.attributes.position, C=[], n=30, bump=new Float32Array(p.count);
-  for(let i=0;i<n;i++){ const y=1-2*(i+0.5)/n, r=Math.sqrt(1-y*y), a=i*2.39996; C.push([Math.cos(a)*r, y, Math.sin(a)*r]); }
-  for(let i=0;i<p.count;i++){ const x=p.getX(i), y=p.getY(i), z=p.getZ(i); let b=0;
-    for(const c of C){ const d=x*c[0]+y*c[1]+z*c[2]; if(d>0.86){ const t=(d-0.86)/0.14; b=Math.max(b, Math.sqrt(t*(2-t))); } }
-    b*=1-Math.max(0,Math.min(1,(y+0.1)/0.5));   // (puffs below, a smooth top inside the head)
-    const k=1+0.26*b, tp=0.4+0.6*Math.pow(Math.max(0,Math.min(1,(y+1)/1.6)),0.8); bump[i]=b; p.setXYZ(i, B.c.x+x*k*B.r[0]*tp, B.c.y+y*k*B.r[1], B.c.z+z*k*B.r[2]*(0.8+0.2*tp)); }
-  g.computeVertexNormals();
-  const K=VKJ_KNOT, ring=new T.TorusGeometry(0.8,0.2,10,28), ring2=new T.TorusGeometry(0.66,0.08,6,28), brass=dbLin('#d9a33c'), deep=dbLin('#8a5f1c');
-  const tilt=new T.Matrix4().makeRotationX(Math.PI/2-0.32);
-  // the beard over the jaw: a shell on the head from under the mouth round to the sideburns and down under the chin, its top
-  // edge scalloped and tucked into the skin (so the rim's ink draws it), grooved down its length
-  const NA=44, NE=16, sp=[], suv=[], sidx=[], sm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); };
+  const sm=(a,b,x)=>{ const t=Math.max(0,Math.min(1,(x-a)/(b-a))); return t*t*(3-2*t); }, W=VKJ_WEDGE, nW=W.length;
+  const cr=(k,t)=>{ const i=Math.max(0,Math.min(nW-2,Math.floor(t))), f=t-i, p0=W[Math.max(0,i-1)][k], p1=W[i][k], p2=W[i+1][k], p3=W[Math.min(nW-1,i+2)][k];
+    return 0.5*((2*p1)+(-p0+p2)*f+(2*p0-5*p1+4*p2-p3)*f*f+(-p0+3*p1-3*p2+p3)*f*f*f); };
+  // the spade
+  const NR=34, NS=72, CAP=0.7, wp=[], wuv=[], wix=[], wg=[], GL=[-0.8,-0.5,-0.2,0.2,0.5,0.8];
+  for(let i=0;i<=NR;i++){ const t=i/NR*(nW-1+CAP); let y, w, zb, zf;
+    if(t<=nW-1){ y=cr(0,t); w=cr(1,t); zb=cr(2,t); zf=cr(3,t); }
+    else { const s=(t-(nW-1))/CAP, kk=Math.sqrt(Math.max(0,1-s*s)), L=W[nW-1], zc=(L[2]+L[3])/2, dd=(L[3]-L[2])/2*kk; y=L[0]-0.45*s; w=L[1]*kk; zb=zc-dd; zf=zc+dd; }
+    const tip=sm(nW-2.2, nW-1+CAP, t);
+    for(let j=0;j<=NS;j++){ const a=-Math.PI/2+2*Math.PI*j/NS, ca=Math.cos(a), sa=Math.sin(a), pf=sa>0?0.42:1.0;
+      const x=w*Math.sign(ca)*Math.pow(Math.abs(ca),pf), u=w>1e-4?x/w:0, fr=sm(0.25,0.8,sa);
+      let g=0; for(const L of GL){ const ul=L*(1-0.12*tip)+0.04*Math.sin(y*2.2+L*3); g=Math.max(g, 1-sm(0,0.095,Math.abs(u-ul))); } g*=fr*sm(1.35,0.9,y);
+      const zc=(zf+zb)/2, dd=(zf-zb)/2, z=zc+dd*Math.sign(sa)*Math.pow(Math.abs(sa),pf)-0.14*g;
+      const fk=Math.max(0,1-Math.pow((Math.abs(u)-0.36)/0.42,2));   // (the bottom forks into two points, where the braids go on)
+      wp.push(x, y-0.5*tip*fk, z); wuv.push(j/NS, i/NR); wg.push(g); } }
+  for(let i=0;i<NR;i++) for(let j=0;j<NS;j++){ const a=i*(NS+1)+j, b=a+1, c=a+NS+1, d=c+1; wix.push(a,b,c, b,d,c); }
+  const wedge=new T.BufferGeometry(); wedge.setAttribute('position',new T.Float32BufferAttribute(wp,3)); wedge.setAttribute('uv',new T.Float32BufferAttribute(wuv,2)); wedge.setIndex(wix); wedge.computeVertexNormals();
+  // the shell over the jaw, from the sideburns round under the mouth and down under the chin
+  const NA=48, NE=16, sp=[], suv=[], sidx=[];
   for(let i=0;i<=NE;i++) for(let j=0;j<=NA;j++){ const u=j/NA, v=i/NE, az=(u*2-1)*1.62, aa=Math.abs(az);
-    const top=-0.53+0.27*sm(0.35,1.3,aa)+0.045*(Math.abs(Math.sin(az*14))-0.6), el=top-(top+1.5)*Math.pow(v,0.85);
-    const off=(i===0||j===0||j===NA) ? 0 : 0.2+0.12*v, ux=Math.sin(az)*Math.cos(el), uy=Math.sin(el), uz=Math.cos(az)*Math.cos(el), R=neoR(ux,uy,uz)+off;
+    const top=-0.53+0.75*sm(0.28,1.25,aa)+0.045*(Math.abs(Math.sin(az*14))-0.6), el=top-(top+1.5)*Math.pow(v,0.85);
+    const off=(i===0||j===0||j===NA) ? 0 : 0.26+0.22*Math.sin(Math.PI*Math.min(1,v*1.3))*(1-0.5*sm(1.1,1.62,aa)), ux=Math.sin(az)*Math.cos(el), uy=Math.sin(el), uz=Math.cos(az)*Math.cos(el), R=neoR(ux,uy,uz)+off;
     sp.push(R*ux, HEAD_CY+R*uy, R*uz); suv.push(u, v); }
   for(let i=0;i<NE;i++) for(let j=0;j<NA;j++){ const a=i*(NA+1)+j, b=a+1, c=a+NA+1, d=c+1; sidx.push(a,c,b, b,c,d); }
   const shell=new T.BufferGeometry(); shell.setAttribute('position',new T.Float32BufferAttribute(sp,3)); shell.setAttribute('uv',new T.Float32BufferAttribute(suv,2)); shell.setIndex(sidx); shell.computeVertexNormals();
-  const out=kitMerge([[g, null, dbLin('#f4d061')], [ring, new T.Matrix4().makeTranslation(K.root.x, K.root.y+0.22, K.root.z-0.05).multiply(tilt), brass], [ring2, new T.Matrix4().makeTranslation(K.root.x, K.root.y+0.48, K.root.z-0.12).multiply(tilt), deep], [shell, null, dbLin('#f7da6e')]]);
-  const col=out.attributes.color, hi=dbLin('#fbe7a0'), lo=dbLin('#c79a2e'), c=new T.Color();
-  { const o0=p.count+ring.attributes.position.count+ring2.attributes.position.count;
-    for(let i=0;i<=NE;i++) for(let j=0;j<=NA;j++){ const n=o0+i*(NA+1)+j, az=(j/NA*2-1)*1.62, gv=Math.pow(Math.abs(Math.cos(az*8+0.3*i/NE)),10)*Math.min(1,i/2);
-      c.setRGB(col.getX(n),col.getY(n),col.getZ(n)).lerp(lo, 0.6*gv).lerp(hi, i<=1?0.3:0); col.setXYZ(n,c.r,c.g,c.b); } }
-  for(let i=0;i<p.count;i++){ c.setRGB(col.getX(i),col.getY(i),col.getZ(i)); const b=bump[i], gv=Math.pow(Math.abs(Math.cos(Math.atan2(p.getX(i)-B.c.x, p.getZ(i)-B.c.z)*9)),14);
-    c.lerp(b>0.5?hi:lo, b>0.5?0.5*(b-0.5)*2:0.45*(1-b*2)*(p.getY(i)<B.c.y?1:0.3)).lerp(lo, 0.5*gv*(p.getY(i)<B.c.y+0.4?1:0)); col.setXYZ(i,c.r,c.g,c.b); }
+  // the knot's rings, sized to the bun
+  const K=VKJ_KNOT, ring=new T.TorusGeometry(0.74*K.R,0.185*K.R,10,28), ring2=new T.TorusGeometry(0.61*K.R,0.074*K.R,6,28), brass=dbLin('#d9a33c'), deep=dbLin('#8a5f1c');
+  const tilt=new T.Matrix4().makeRotationX(Math.PI/2-0.32), gold=dbLin('#f7da6e');
+  const out=kitMerge([[wedge, null, gold], [shell, null, gold], [ring, new T.Matrix4().makeTranslation(K.root.x, K.root.y+0.2*K.R, K.root.z-0.05).multiply(tilt), brass], [ring2, new T.Matrix4().makeTranslation(K.root.x, K.root.y+0.44*K.R, K.root.z-0.11).multiply(tilt), deep]]);
+  const col=out.attributes.color, hi=dbLin('#fbe7a0'), lo=dbLin('#93601a'), c=new T.Color(), nw=wp.length/3;
+  for(let n=0;n<nw;n++){ c.setRGB(col.getX(n),col.getY(n),col.getZ(n)).lerp(lo, 0.8*wg[n]); col.setXYZ(n,c.r,c.g,c.b); }   // the spade's grooves
+  for(let i=0;i<=NE;i++) for(let j=0;j<=NA;j++){ const n=nw+i*(NA+1)+j, az=(j/NA*2-1)*1.62, gv=Math.pow(Math.abs(Math.cos(az*8+0.3*i/NE)),10)*Math.min(1,i/2);
+    c.setRGB(col.getX(n),col.getY(n),col.getZ(n)).lerp(lo, 0.55*gv).lerp(hi, i<=1?0.3:0); col.setXYZ(n,c.r,c.g,c.b); }   // the shell's, and its lighter edge
   return out; }); }
-/* the braids: two plaits off the bottom of the bush, laid along a curve each (a quadratic from the root through a pull
-   to the tip, all three re-set every frame by vkjTick), so they bend like rubber hose. Each is a run of lobes leaning
-   left and right in turn (a three-strand plait from a distance), a brass bead, a teal bead (aG: it glows on the beat),
-   a brass cuff and a tuft. Built in braid radii: x across, y along the curve's tangent, z forward; aT where along. */
-const VKJ_BRAID={ r:0.26, roots:[[-0.46,-0.8,3.05],[0.46,-0.8,3.05]], tips:[[-0.7,-3.45,3.3],[0.7,-3.45,3.3]] };
+/* the braids: the spade's two ends, out of its bottom close together, laid along a curve each (a quadratic from the root
+   through a pull to the tip, all three re-set every frame by vkjTick), so they bend like rubber hose. Each is a run of
+   lobes leaning left and right in turn (a three-strand plait from a distance), a teal bead (aG: it glows on the beat),
+   a brass bead, a brass cuff and a tuft. Built in braid radii: x across, y along the curve's tangent, z forward; aT where along. */
+const VKJ_BRAID={ r:0.32, roots:[[-0.37,-1.75,2.6],[0.37,-1.75,2.6]], tips:[[-0.48,-4.25,2.85],[0.48,-4.25,2.85]] };
 function vkjBraidGeo(){ return tonyKeep('vkjBraid', ()=>{
   const items=[], aT=[], aI=[], aG=[], gold=dbLin('#f4d061'), goldD=dbLin('#d9ad3e'), brass=dbLin('#d9a33c'), teal=dbLin('#3ff0e0');
   const lobe=new T.SphereGeometry(1,10,7), bead=new T.SphereGeometry(1,12,9), cuff=new T.CylinderGeometry(1,1,1,12,1,false), tuft=new T.ConeGeometry(1,1,10,1);
@@ -76987,10 +77000,10 @@ function vkjBraidGeo(){ return tonyKeep('vkjBraid', ()=>{
   const M=(y,rz,sx,sy,sz)=>new T.Matrix4().compose(new T.Vector3(0,y,0), new T.Quaternion().setFromEuler(new T.Euler(0,0,rz)), new T.Vector3(sx,sy,sz));
   for(let i=0;i<2;i++){
     for(let k=0;k<10;k++){ const t=0.02+k*0.083, w=1.12-0.3*t; add(lobe, M(0, k%2?0.38:-0.38, 1.0*w, 1.35*w, 0.9*w), k%2?gold:goldD, t, i, 0); }
-    add(bead, M(0,0,1.42,1.22,1.42), teal, 0.4, i, 1);
-    add(bead, M(0,0,1.36,1.15,1.36), brass, 0.62, i, 0);
-    add(cuff, M(0,0,1.08,1.0,1.08), brass, 0.8, i, 0);
-    { const tg=tuft.clone(); tg.rotateZ(Math.PI); add(tg, M(-1.7,0,1.15,3.4,1.15), gold, 0.82, i, 0); } }
+    add(bead, M(0,0,1.36,1.18,1.36), teal, 0.64, i, 1);
+    add(bead, M(0,0,1.3,1.1,1.3), brass, 0.79, i, 0);
+    add(cuff, M(0,0,1.08,1.0,1.08), brass, 0.88, i, 0);
+    { const tg=tuft.clone(); tg.rotateZ(Math.PI); add(tg, M(-1.6,0,1.12,3.2,1.12), gold, 0.9, i, 0); } }
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aI', new T.Float32BufferAttribute(aI,1)); g.setAttribute('aG', new T.Float32BufferAttribute(aG,1));
   g.boundingSphere=new T.Sphere(new T.Vector3(0,0,2.4), 8); return g; }); }
 const VKJ_BRAID_VS=`
@@ -77131,7 +77144,7 @@ function vkjTick(o, R, now, dt, S, C, q){
   // ---- near unblinking: every blink the face books is put off ten beats more
   if(!P && S.blinkAt!==D.blinkAt){ S.blinkAt+=10; D.blinkAt=S.blinkAt; }
   // ---- what happened: a hit (the band spins, the braids fly), a pass (the toast), a win (the drop, then the toasts), the grid (a drop one bar in four)
-  if((E.takeT||-9)!==D.pTake){ D.pTake=E.takeT||-9; if(!P && now-D.pTake<0.2){ D.hitT=now; D.g=null; for(const b of D.br){ b.vy+=19; b.vx+=(b===D.br[0]?-7:7); b.vz+=4; } } }
+  if((E.takeT||-9)!==D.pTake){ D.pTake=E.takeT||-9; if(!P && now-D.pTake<0.2){ D.hitT=now; D.g=null; for(const b of D.br){ b.vy+=17; b.vx+=(b===D.br[0]?-9:9); b.vz+=10; } } }
   if(cur!==D.pCur){ if(cur==='pass' && !P && !D.g && C.rate>0.2) D.g={ k:'skal', T:nextBeat(0.45*rate) }; D.pCur=cur; }
   const win=!P && (q.fin||q.celeb) && cur!=='lose';
   if(win && !D.win && C.rate>0.2){ const Td=nextDown(0.5*rate); D.g={ k:'drop', T:Td, win:true }; D.winT=Td; }
@@ -77221,7 +77234,7 @@ function vkjTick(o, R, now, dt, S, C, q){
     const sw=P ? 0 : (0.7+0.3*(S.dance||0)+0.25*(q.idle?1:0))*(1-0.5*sp)*Math.cos(Math.PI*B);
     const U=D.BU, flyP=P && (cur==='hit'||cur==='take');
     for(let i=0;i<2;i++){ const b=D.br[i], sx=i?1:-1, r0=VKJ_BRAID.roots[i], t0=VKJ_BRAID.tips[i];
-      if(P){ b.x=flyP?sx*1.1:0; b.y=flyP?2.2:0; b.z=flyP?0.6:0; b.vx=b.vy=b.vz=0; }
+      if(P){ b.x=flyP?sx*1.3:0; b.y=flyP?1.4:0; b.z=flyP?1.0:0; b.vx=b.vy=b.vz=0; }
       else { dbSpring(b,'x','vx', 2.4*(S.ty||0)-0.22*pv+0.25*sx*sp, 9, 0.3, dt);
         dbSpring(b,'y','vy', 0.8*(S.tp||0)+0.9*sp+(boost?0.5:0), 10, 0.28, dt);
         dbSpring(b,'z','vz', -1.5*sp-(boost?0.9:0), 8, 0.35, dt); }
