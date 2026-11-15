@@ -617,6 +617,33 @@ await check('the depth of the air: least straight up and most at the horizon, a 
   const d = json(await call('race_fx', {})).lux.light; assert.equal(d.aer, 0); assert.equal(d.lit, 0); assert.equal(d.mist, 0);
 });
 
+await check('the warp: a boost opens a tunnel of the course\'s air round where the player is headed, a tool can hold it open, and a reference sheet never sees it', async () => {
+  json(await call('race_setup', { course: 'Delilah', character: 'neoProto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+  assert.equal(json(await call('race_fx', {})).lux.warp, 0, 'no boost, no warp');
+  // held open against shut: the walls (the top of the picture) change more than the throat (its middle), and most of the picture changes
+  const shut = { lux: { reset: true, warpHold: 0 } }, open = { lux: { reset: true, warpHold: 1 } };
+  const w = json(await call('race_ab', { a: shut, b: open, keep: 'a' }));
+  assert.ok(w.changed > 0.2, `the tunnel covers the picture's edge (${w.changed})`);
+  assert.ok(Math.min(w.bands[3], w.bands[4]) < w.bands[0], `the walls change more than the throat (top to bottom: ${w.bands})`);
+  // (a course turns it down or off with the `warp` key; left alone it is 1)
+  const dl = json(await call('race_fx', {})).lux.light; assert.equal(dl.warp, 1, 'every course takes the warp unless it says otherwise');
+  // a real boost opens it, and it closes again after
+  let opened = 0;
+  for (let i = 0; i < 40 && opened < 0.3; i++) { json(await call('race_drive', { seconds: 0.5 })); opened = json(await call('race_fx', {})).lux.warp; }
+  assert.ok(opened >= 0.3, 'a boost pad opens the warp: ' + opened);
+  assert.ok(image(await call('race_film', { seconds: 0.4, frames: 2 })), 'filmed in the warp');
+  // a reference sheet is the racer, not the weather: the same sheet with the warp held open
+  json(await call('race_studio', { lighting: 'course' }));
+  let s0, s1;
+  try {
+    await call('race_sheet', { rest: true, cell: 200 });
+    s0 = await call('race_sheet', { rest: true, cell: 200 });
+    json(await call('race_fx', { lux: { warpHold: 1 } }));
+    s1 = await call('race_sheet', { rest: true, cell: 200 });
+  } finally { json(await call('race_fx', { lux: { reset: true } })); json(await call('race_studio', { on: false })); }
+  assert.equal(image(s0).data === image(s1).data, true, 'the sheet is the same pixels with the warp held open');
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);
