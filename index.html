@@ -2806,6 +2806,26 @@ const SFX={
   lap(){ beep(700,0.08,'sine',0.18); },
   bump(){ noiseBurst(0.18,0.12,900); beep(180,0.1,'triangle',0.16); },
   finalLap(){ beep(660,0.12,'triangle',0.26); setTimeout(()=>beep(990,0.18,'triangle',0.28),110); },
+  // the cartoon sounds of the Neo template's acting. zip: a head whipped round to look back (a band of noise sweeping up, a
+  // slide whistle under it); punch: a fist punched into the air (a whoosh up into a soft thump), dl seconds from now so it
+  // lands on the beat; cork: a champagne cork (a pop, a click, then the fizz). k scales the level
+  zip(k){ if(!actx)return; const t=actx.currentTime, v=0.2*(k==null?1:k), dur=0.17;
+    const buf=actx.createBuffer(1,(actx.sampleRate*dur)|0,actx.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    const n=actx.createBufferSource(); n.buffer=buf; const f=actx.createBiquadFilter(); f.type='bandpass'; f.Q.value=3;
+    f.frequency.setValueAtTime(450,t); f.frequency.exponentialRampToValueAtTime(3400,t+dur*0.8);
+    const g=actx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.035); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    n.connect(f); f.connect(g); g.connect(masterGain); n.start(t); n.stop(t+dur);
+    const o=actx.createOscillator(), og=actx.createGain(); o.type='sine'; o.frequency.setValueAtTime(760,t); o.frequency.exponentialRampToValueAtTime(1700,t+0.11);
+    og.gain.setValueAtTime(0.0001,t); og.gain.exponentialRampToValueAtTime(v*0.35,t+0.02); og.gain.exponentialRampToValueAtTime(0.0001,t+0.13);
+    o.connect(og); og.connect(masterGain); o.start(t); o.stop(t+0.14); },
+  punch(k,dl){ if(!actx)return; const t=actx.currentTime+Math.max(0,dl||0), v=0.26*(k==null?1:k);
+    const o=actx.createOscillator(), g=actx.createGain(); o.type='sine'; o.frequency.setValueAtTime(170,t); o.frequency.exponentialRampToValueAtTime(52,t+0.11);
+    g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
+    o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.15); noiseBurst(0.05,0.09*(k==null?1:k),2200,Math.max(0,dl||0)); },
+  cork(){ if(!actx)return; const t=actx.currentTime;
+    const o=actx.createOscillator(), g=actx.createGain(); o.type='sine'; o.frequency.setValueAtTime(900,t); o.frequency.exponentialRampToValueAtTime(260,t+0.05);
+    g.gain.setValueAtTime(0.32,t); g.gain.exponentialRampToValueAtTime(0.0001,t+0.08); o.connect(g); g.connect(masterGain); o.start(t); o.stop(t+0.09);
+    noiseBurst(0.03,0.25,3000); noiseBurst(0.6,0.07,6000,0.05); },
 };
 
 
@@ -76790,7 +76810,7 @@ function dressNeo(g, K, P){
   ud.neo={ t:null, rig, FU, BU, UH, HU, P, EV, brTh:P.browTh||0, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
     F:new Float32Array(EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(EV.rest), cur:'rest', want:'rest', next:null, nextAt:0,
     blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, danceV:0, lose:0, loseV:0, idl:1, idlV:0, tk:1, tkV:0, tk0:1, tk0V:0, fk:0, fkV:0, flickT:-9, spn:0, spnV:0, sp:0, spV:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
-    ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null, phi:0, phiP:0, tst:0, tstV:0, rd:0, gzK:1, rigB:null,
+    ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null, phi:0, phiP:0, tst:0, tstV:0, rd:0, gzK:1, rigB:null, antG:null, antT:null, antS:1, antY0:0, antZ:true, antLoud:false, flowPosed:false,
     ev:{place:null, cand:null, candT:0, react:0, angryT:-9, takeT:-9, fireT:-9, dizzyT:-9, item:null, slow:0, alone:0, aloneAt:0, isAlone:false, passT:-9, passK:null} };
   ud.expr={ list:(P.list||NEO_LIST).slice(), cur:'rest', hold:0, forced:null,
     set(name, hold, instant){ const S=ud.neo; if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.hold=hold==null?8:hold;
@@ -76879,8 +76899,21 @@ function neoTick(o, r, now){
      done the way a 1930s head does it: the head rounds into a ball and stretches up off the neck, and the FACE travels
      round it (the face, the brows, the hair and whatever sits in it), so the body keeps its line and the face comes
      right round to the chase camera. The quicker the turn, the more the stretch; it settles as the turn does. */
-  const posed=S.cur==='back', still=posed && (portrait || !lk);   // (a sheet's fresh build has no neck to ask: the pose is the face's travel alone)
-  const Yw=posed ? 2.75 : lk && !portrait && ud.flow ? ldClamp(lk.yaw,-3,3) : 0, NKM=FLOW.BEND*0.98, nkY=still ? 0 : NKM*Math.tanh(Yw/NKM), phi=ldClamp(still ? 1.72 : Yw-nkY,-1.72,1.72);
+  /* ---- ANTICIPATION. Before the head whips round for a look back, a small move the other way: for a tenth of a second the
+     turn is held back while the head dips the opposite way, squashes and blinks; then it is let go and catches up all at
+     once, which is the whip (the speed is what stretches it). The player's own racer hears it go (SFX.zip): full for a look
+     back at someone (a pass, a threat, a glare), softer for the idle check of the road behind. */
+  let antY=0, antH=1;
+  { const G=lk && !portrait ? lk.g : null;
+    if(G && G.ov && G!==S.antG){ S.antG=G; S.antT=now; S.antS=G.side||1; S.antY0=ldClamp(lk.yaw,-3,3); S.blink=now; S.antZ=false; S.antLoud=G.k!=='peek' || (lk.w||0)>0.3; }
+    if(!G) S.antG=null;
+    const at=now-(S.antT==null?-9:S.antT);
+    if(at>=0 && at<0.24){ const ph=at<0.18 ? Math.sin(Math.PI*at/0.18) : 0; let h=at<0.11 ? 0 : (at-0.11)/0.13; h=h*h*(3-2*h);
+      antY=-S.antS*0.55*ph; antH=h; sq+=0.08*ph;
+      if(!S.antZ && at>=0.12){ S.antZ=true; if(R.you && typeof SFX!=='undefined' && SFX.zip) SFX.zip(S.antLoud ? 1 : 0.4); } } }
+  const posed=S.cur==='back';   // (posed: a sheet or a film asking for the look back itself)
+  const lkY=lk && !portrait && ud.flow ? ldClamp(lk.yaw,-3,3) : 0, Yw=posed ? 2.75 : lkY===0 ? 0 : S.antY0+(lkY-S.antY0)*antH+antY;
+  const NKM=FLOW.BEND*0.98, nkY=NKM*Math.tanh(Yw/NKM), phi=ldClamp(Yw-nkY,-1.72,1.72);
   const rd=1-Math.exp(-(phi*phi)/0.12), pv=dt>0 ? (phi-S.phiP)/dt : 0; S.phiP=phi; S.phi=phi; S.rd=rd;
   dbSpring(S,'tst','tstV',Math.min(1,Math.abs(pv)/7),22,0.6,dt);
   const stt=0.13*ldClamp(S.tst,-0.3,1.3), vk=1/Math.sqrt(1+stt), rx=(1+0.147*rd)*vk, ry=(1+0.14*rd)*(1+stt), rz=(1-0.235*rd)*vk;
@@ -76891,8 +76924,9 @@ function neoTick(o, r, now){
   // ---- the head: the expression's nod and tilt, the dance and the sway, asked of the neck (the flow body eases the request)
   const nk=ud.neck, db=Math.cos(Math.PI*B), dh2=Math.cos(Math.PI*B/2);
   if(nk){ if(nk.quaternion.equals(S.nkOut)) nk.quaternion.copy(S.nkIn); S.nkIn.copy(nk.quaternion);
-    S.eu.set(S.F[DBF_I.hp]+0.03*bob-0.08*rd, 0.1*db*S.dance+(Yw && lk ? nkY-lk.nk : 0), S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose, 'YXZ');   // (the neck is asked for its own share of a look back, eased into its limit, not for all it can bear)
-    nk.quaternion.multiply(S.nkX.setFromEuler(S.eu)); S.nkOut.copy(nk.quaternion); }
+    S.eu.set(S.F[DBF_I.hp]+0.03*bob-0.08*rd, 0.1*db*S.dance+(Yw ? nkY-(lk && !portrait ? lk.nk : 0) : 0), S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose, 'YXZ');   // (the neck is asked for its own share of a look back, eased into its limit, not for all it can bear)
+    nk.quaternion.multiply(S.nkX.setFromEuler(S.eu)); S.nkOut.copy(nk.quaternion);
+    if(portrait && ud.flow && (posed || S.flowPosed)){ flowNeck(o, -1); flowWave(o, 0, 0, 0, null); S.flowPosed=posed; } }   // (a sheet's fresh build never swims: its neck is set at once and the skin laid along it, so the look back shows whole)
   // ---- the body: the grid's bounce, the dance's hop and sway (syncObjects re-places the body every frame)
   if(!portrait){
     o.position.y+=-0.28*bob*S.idl+(S.dance>0.01?0.45*accent*S.dance:0);
@@ -77223,6 +77257,10 @@ function tonyTick(o, R, now, dt, S, C, q){
   Tn.fist.position.copy(U.uA2.value);
   { const on=Tn.arm.visible && Q!=null && sQ<0.3 && !q.portrait, gs=on?Math.sin(Math.PI*sQ/0.3):0; Tn.pop.visible=on;   // the bracelet glints at the top (LUX makes it a point of light)
     if(on){ Tn.pop.position.copy(U.uA2.value).lerp(U.uA1.value,0.22); Tn.pop.position.z+=0.9; Tn.pop.scale.setScalar(2.4*gs); Tn.pop.rotation.z=sQ*5; Tn.pop.material.uniforms.uK.value=gs; } }
+  // the punch is heard as it lands: scheduled ahead on the audio clock, so it sounds with the beat it peaks on (the record's
+  // own drops at full level, the beat clock's softer)
+  if(P!=null && (Tn.sfxP==null || Math.abs(P-Tn.sfxP)>0.08) && P-now<0.12 && R.you && !q.portrait && typeof SFX!=='undefined' && SFX.punch && Tn.arm.visible){ Tn.sfxP=P;
+    SFX.punch(fp.pk.includes(P) ? 1 : 0.55, P-now-(typeof actx!=='undefined' && actx ? (actx.outputLatency||actx.baseLatency||0) : 0)); }
   if(Q!==Tn.lastQ){ if(Q!=null && sQ<0.1 && R.you && !q.portrait && (Tn.lastQ==null || Q-Tn.lastQ>1.2) && typeof luxRipple==='function') luxRipple(Tn.fist.getWorldPosition(_tonyB), 0.4, 1.2);   // the first punch of a run goes through the picture
     Tn.lastQ=Q; }
 }
@@ -77458,7 +77496,7 @@ function dkjTick(o, R, now, dt, S, C, q){
   if(q.portrait){ D.e=cel?1:0; D.eV=0; } else for(let n=Math.max(1,Math.ceil(dt/0.016)), i=0;i<n;i++){ const st=dt/n; D.eV+=((cel?1:0)-D.e)*200*st-D.eV*(cel?18:26)*st; D.e=Math.max(0,D.e+D.eV*st); }
   const e=Math.min(1.12,D.e), e1=Math.min(1,e), A=TONY_ARM, U=D.AU; D.arm.visible=D.bottle.visible=e>0.02;
   const popped=D.popB!=null && B>=D.popB && !q.portrait;
-  if(popped && !D.popped){ D.popped=true; D.corkT=now; if(real){ if(R.you && typeof luxRipple==='function') luxRipple(D.bottle.getWorldPosition(_dkV), 0.5, 1.3); } }
+  if(popped && !D.popped){ D.popped=true; D.corkT=now; if(real && R.you && typeof SFX!=='undefined' && SFX.cork) SFX.cork(); if(real){ if(R.you && typeof luxRipple==='function') luxRipple(D.bottle.getWorldPosition(_dkV), 0.5, 1.3); } }
   const sh=q.portrait ? 0.5 : popped ? 0.25*Math.sin(2*Math.PI*B) : Math.sin(2*Math.PI*B), tilt=popped ? 0.55 : 0;   // shaken hard before the pop; after it, waved as it sprays
   U.uA2.value.set(A.a0[0]+(DKJ_ARM.up[0]+DKJ_ARM.shake*sh)*e1, A.a0[1]+DKJ_ARM.up[1]*e1, A.a0[2]+(DKJ_ARM.up[2]+0.8*tilt)*e1);
   U.uA1.value.set(A.a0[0]+DKJ_ARM.el[0]*e1, A.a0[1]+DKJ_ARM.el[1]*e1, A.a0[2]+DKJ_ARM.el[2]*e1); U.uAr.value=A.r*(0.25+0.75*e); U.uAq.value=0;
