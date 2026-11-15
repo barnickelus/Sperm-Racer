@@ -173,6 +173,7 @@ switches the rule on under the tools, where it is off by default.
 `TRACKS[i].lux={bloom, thr}` (Nova does; Stacey pushes both further, for her
 white lines and her neon night). From the tools:
 `race_fx {lux:{on, aa, scale, bloom, thr, knee, vig, persist, ripple, flash, reset}}`
+(and any key of the air below)
 sets it, and every `race_fx` reply reports what the GPU gave it and the light
 in force.
 
@@ -186,6 +187,39 @@ in the world it lies. Two things use it, both off unless a course asks:
 | --- | --- |
 | `heat` | bends the picture in climbing bands where the view runs far and near level (1 = a hot road). `heatNear`, `heatFar`: the distance over which it comes in. `heatEl`: how far above the horizon it reaches. Nothing nearer than `heatNear` moves, and a far pixel never borrows from a near one. |
 | `mist` | the most opaque a layer of steam or fog lying on the player's road can get (0..1). `mistH` its depth in units, `mistDen` its thickness, `mistAir` a plain distance haze on top, `mistCol` its colour, `mistWisp` how patchy, `mistScale` the wisps' size, `mistRise` how fast they drift and climb, `mistGlow` how much nearby glow it picks up. |
+
+**The depth of the air** (`aer`) is a whole atmosphere over the course,
+thinning upward with a scale height `aerH`. What a pixel loses to it is the
+light lost along its own line of sight: a look straight up crosses the least
+air there is, a look at the horizon the most, a far hill more than a near one.
+
+| key | what it does |
+| --- | --- |
+| `aer`, `aerDen`, `aerH` | the most opaque it gets, its thickness at the ground, its scale height. `aerY`: its floor as a height in the world (unset: the player's road), so a summit stands in thinner air than the valley. |
+| `aerCol`, `aerZen` | the colour deep air goes to, and the colour thin air has (near things go one way, far things the other) |
+| `aerSky` | how much of it the sky itself takes (default a half: a painted sky has its own horizon) |
+| `aerSun`, `aerSunP`, `aerSunCol` | the air lights up toward the sun: the course's sun light, its direction and colour, unless `sunDir:[x,y,z]` / `aerSunCol` say otherwise |
+| `amb` | how far the mist and the air take the colour of the course's ambient light as it stands this frame (a course whose light changes through the lap changes its air with it) |
+| `mistY` | the mist's floor as a height in the world (unset: it lies on the player's road): a cloud deck you climb out of |
+| `mistSteps`, `mistCell` | the air drawn in that many flat steps (cut paper, a print), and its wisps in square cells that size (blocks, tiles) |
+| `lit`, `litCol`, `litR` | **the air's light on the racers**: the scene's low point light rides at the player's side in the air's own colour (or `litCol`), reaching `litR`. Lit materials take it as any light; the cel racers take it as one more band and a sheen along the edge. |
+
+A course's air can follow the race: `TRACKS[i].air=(S,X)=>{...}` is handed the
+race as the air feels it every frame and writes the keys it wants into `X`.
+`S` has `u` (0..1 through the whole race), `lap`, `laps`, `prog`, `place`,
+`beat` / `down` (1 on each beat / each bar's first beat, falling away), `bar`,
+`boost`, `speed`, `fly`, `final` (the last lap, eased), `y` (the road's
+height), `tunnel`, `near` (how much of the way to the egg), `t`, `still`.
+
+Every course but Delilah, Clara and Bianca now has air of its own. Some of
+what the others do with it: Valentina's cloud lies in the valley and the
+summit stands above it; Pixie's fog is blocks and steps and its light cycles a
+four-colour palette on the beat; Paige's distance is sheets of tracing paper;
+Namie's is a printmaker's three flat tints, with spray by the wave; Aurora
+runs from rose mist before the sun to a clear morning; Ophelia's evening mist
+rises off the stream; Iris has gusts of hot wind and a cool slot; Seraphina's
+air breathes and flushes on the pulse; Nova's fills with the star's light as
+you near it; in the two labyrinths the fog warms as the egg gets nearer.
 
 `persist` (0..1, per 60th of a second) is the AFTERGLOW: the glow layer feeds
 back into itself, the brighter of what is lit now and what was lit a moment
