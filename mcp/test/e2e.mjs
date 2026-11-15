@@ -529,10 +529,12 @@ await check('scene_page shows the whole page; race_state carries the music clock
   if (st.music) { assert.ok(st.music.bpm > 40 && st.music.bpm < 240, `bpm ${st.music.bpm}`); assert.ok(st.music.phase >= 0 && st.music.phase < 1); }
 });
 
-await check('Lucy: the boardwalk builds clear of the lane, has its own light, dances on the beat, and night falls by the last lap', async () => {
+await check('Lucy: the boardwalk builds clear of the lane, her light and air change from dusk to night, and another course gets its own back', async () => {
   json(await call('race_setup', { course: 'Lucy', character: 'neoProto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
   const st = json(await call('race_state')); assert.equal(st.course.name || st.course, 'Lucy');
-  assert.equal(json(await call('race_fx', {})).lux.light.bloom, 1.15, 'Lucy asks for her own light');
+  // her light and air are hers, and change through the race: at dusk a little glow and heat off the boards...
+  const dusk = json(await call('race_fx', {})).lux.light;
+  assert.ok(dusk.bloom > 1.0 && dusk.bloom < 1.2 && dusk.heat > 0.3 && dusk.mist < 0.3, 'dusk: ' + JSON.stringify(dusk));
   const au = json(await call('race_audit'));
   assert.ok(au.pieces > 200, 'the boardwalk, the pier and the beach are built: ' + au.pieces + ' pieces');
   assert.equal(au.onRoad.filter(p => (p.intoRoad || 0) > 2.5).length, 0, 'nothing stands in the lane: ' + JSON.stringify(au.onRoad.slice(0, 3)));
@@ -544,8 +546,14 @@ await check('Lucy: the boardwalk builds clear of the lane, has its own light, da
   json(await call('race_warp', { to: 2.6 })); json(await call('race_drive', { seconds: 0.5 }));
   const late = json(await call('race_light', {})).pictureLuma;
   assert.ok(late < early - 0.03, `the night falls (${early} -> ${late})`);
+  // ...and by night no heat, a sea mist, and the lights glowing harder
+  const night = json(await call('race_fx', {})).lux.light;
+  assert.ok(night.bloom > dusk.bloom + 0.25 && night.heat === 0 && night.mist > dusk.mist + 0.15, 'night: ' + JSON.stringify(night));
   json(await call('race_warp', { to: 2.97 })); json(await call('race_drive', { seconds: 6 }));
   assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors on Lucy');
+  // what Lucy asked of the light pipeline frame by frame goes with her: the next course has its own settings
+  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 0.3 }));
+  const nova = json(await call('race_fx', {})).lux.light; assert.equal(nova.bloom, 1.0); assert.equal(nova.mist, 0); assert.equal(nova.heat, 0);
 });
 
 await check('no page errors through all of it', async () => {
