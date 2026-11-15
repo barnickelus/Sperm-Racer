@@ -87228,7 +87228,9 @@ const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', m
     // wisps in square cells that size (0: smooth), as blocks or tiles would.
     // lit: the air's light on the racers (a light at the player's side, in the air's own colour, or litCol), reaching litR.
     aer:0, aerH:140, aerDen:0.0012, aerCol:0xdfe8ee, aerZen:-1, aerY:-1e9, aerSky:0.5, aerSun:0, aerSunP:8, aerSunCol:-1, amb:0,
-    mistY:-1e9, mistSteps:0, mistCell:0, lit:0, litCol:-1, litR:70 } };
+    mistY:-1e9, mistSteps:0, mistCell:0, lit:0, litCol:-1, litR:70,
+    // warp: how strongly a boost opens THE WARP (see luxWarp; 0: never on this course); warpCol its colour (unset: the air's own)
+    warp:1, warpCol:-1 }, wp:0, wpT:0, wpHold:0 };
 const LUX_KEYS=['bloom','thr','knee','vig'].concat(Object.keys(LUX.air));
 function luxInit(){
   if(LUX.ok!==null) return LUX.ok;
@@ -87289,7 +87291,7 @@ function luxInit(){
         gl_FragColor=vec4(c/16.0,1.0); }`, {tSrc:{value:null}, uPx:{value:new T.Vector2()}}, {blending:T.CustomBlending, blendEquation:T.AddEquation, blendSrc:T.OneFactor, blendDst:T.OneFactor, transparent:true});
     // the picture: shockwaves bend where it is read from, the lens fringes it, the bloom is added, then the vignette and the flash
     LUX.mOut=sm(`uniform sampler2D tScene, tBloom, tDepth; uniform float uBloom, uVig, uCA, uFlash, uAspect, uT, uFxaa, uDepth; uniform vec4 uRip[4]; uniform vec2 uPx;
-      uniform vec4 uProj, uHeat, uMist, uMist2, uAir, uAer, uAerK; uniform vec3 uCamP, uCamF, uCamR, uCamU, uMistC, uAerC, uAerZ, uSunD, uSunC;
+      uniform vec4 uProj, uHeat, uMist, uMist2, uAir, uAer, uAerK, uWarp; uniform vec3 uCamP, uCamF, uCamR, uCamU, uMistC, uAerC, uAerZ, uSunD, uSunC, uWarpC; uniform float uWarpB;
       // (the air in flat steps: n levels, each edge a little soft)
       float stepped(float a, float n){ if(n<0.5) return a; float x=a*n, f=fract(x); return (floor(x)+smoothstep(0.42,0.58,f))/n; }
       float lum(vec3 c){ return dot(min(c,vec3(1.0)),vec3(0.299,0.587,0.114)); }
@@ -87302,6 +87304,10 @@ function luxInit(){
       float h21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h21(i),h21(i+vec2(1.,0.)),f.x), mix(h21(i+vec2(0.,1.)),h21(i+vec2(1.,1.)),f.x), f.y); }
+      // (the warp's streaks: n lanes round the throat, each with its own pace, a dash of light running out along it)
+      float wstreak(float a, float lr, float t, float n, float k){ float x=a*n, id=mod(floor(x),n), f=fract(x), h=h21(vec2(id,3.7+n)), h2=h21(vec2(id,9.1+n));
+        float ph=fract(lr*(0.5+0.6*h)-t*(0.9+1.5*h2)+h*7.0), p=1.0-abs(f-0.5)*2.0;
+        return pow(p,k)*step(0.3,h)*smoothstep(0.0,0.08,ph)*(1.0-smoothstep(0.25,0.7,ph)); }
       vec3 smoothed(vec2 uv){ vec3 m=texture2D(tScene,uv).rgb; if(uFxaa<0.5) return m;                 // FXAA: blend along an edge, leave the rest alone
         float nw=lum(texture2D(tScene,uv+uPx*vec2(-1.,-1.)).rgb), ne=lum(texture2D(tScene,uv+uPx*vec2(1.,-1.)).rgb), sw=lum(texture2D(tScene,uv+uPx*vec2(-1.,1.)).rgb), se=lum(texture2D(tScene,uv+uPx*vec2(1.,1.)).rgb), lm=lum(m);
         float lo=min(lm,min(min(nw,ne),min(sw,se))), hi=max(lm,max(max(nw,ne),max(sw,se))); if(hi-lo<max(0.0312,hi*0.125)) return m;
@@ -87318,6 +87324,15 @@ function luxInit(){
             vec2 dv=vec2(0.35*(w1-0.5*w2)/uAspect, 0.6*w1+0.4*w2)*uHeat.x*m*0.0032, u2=uv+dv;
             uv+=dv*smoothstep(uHeat.y*0.6,uHeat.y*1.4,viewZ(u2,ray(u2))); } }
         vec3 c=smoothed(uv); if(uCA>0.001){ vec2 o=(uv-0.5)*uCA*0.014; c.r=texture2D(tScene,uv+o).r; c.b=texture2D(tScene,uv-o).b; }
+        // THE WARP, its pull: the far picture drawn out along the lines to the throat (a near thing, the racer, keeps its edge)
+        float wFar=1.0;
+        if(uWarp.x>0.001){ if(uDepth>0.5) wFar=smoothstep(18.0,70.0,viewZ(uv,ray(uv)));
+          vec2 wv=uv-uWarp.yz; float wr=smoothstep(0.1,0.7,length(wv*vec2(uAspect,1.0)))*uWarp.x*wFar*uWarpB;
+          if(wr>0.01){ vec3 acc=c; float ws=1.0;
+            for(int i=1;i<=4;i++){ vec2 u2=uv-wv*(float(i)*0.03*wr); float w=1.0-0.18*float(i);
+              if(uDepth>0.5) w*=smoothstep(18.0,60.0,viewZ(u2,ray(u2)));
+              acc+=texture2D(tScene,u2).rgb*w; ws+=w; }
+            c=acc/ws; } }
         vec3 gl=texture2D(tBloom,uv).rgb;
         // THE DEPTH OF THE AIR: an atmosphere thinning upward. The light lost along this pixel's line of sight through it
         // (least straight up, most at the horizon), toward the colour deep air has, and brighter toward the sun
@@ -87336,13 +87351,26 @@ function luxInit(){
           vec2 q=P.xz*uMist2.y+vec2(uAir.y*uMist2.z*0.35, P.y*uMist2.y*1.6-uAir.y*uMist2.z);
           od*=mix(1.0, 0.25+1.5*(vn(q)*0.62+vn(q*2.17+7.3)*0.38), uMist2.x*(1.0-smoothstep(160.0,520.0,L)));
           c=mix(c, uMistC+min(gl,vec3(1.5))*uMist2.w, stepped(1.0-exp(-od),uAerK.y)*uMist.x); }
+        // THE WARP, its walls: round the throat the air streams past in the course's own colour. The walls close in (the
+        // edge of the picture darkens and the distance dissolves into the air, far things first), lanes of light run out
+        // along them, ribs of it pass, and there is light at the end
+        if(uWarp.x>0.001){ vec2 wd=vUv-uWarp.yz; wd.x*=uAspect; float r=length(wd), a=atan(wd.y,wd.x)/6.2831853+0.5, lr=log(max(r,0.02)), t=uWarp.w;
+          float wall=smoothstep(0.14,0.78,r), k=uWarp.x*wFar, deep=1.0;
+          if(uDepth>0.5) deep=smoothstep(60.0,420.0,viewZ(vUv,ray(vUv)));
+          float st=wstreak(a,lr,t,84.0,3.0)*1.1+wstreak(a+0.37,lr,t*0.7,31.0,1.6)*0.5;
+          float rib=pow(0.5+0.5*cos(6.2831853*(lr*1.5-t*1.6)),14.0);
+          c*=1.0-0.45*wall*k;
+          c=mix(c, uWarpC*(0.2+0.8*lum(c)), 0.55*wall*k*deep);
+          float room=1.0-0.6*lum(c);                                    // (on a pale picture the light has less to add: it must not wash the road out)
+          c+=uWarpC*(st*(0.5+0.9*wall)+rib*0.3*wall)*k*smoothstep(0.05,0.3,r)*room;
+          c+=uWarpC*exp(-r*r*20.0)*0.3*uWarp.x*room; }
         gl*=uBloom; gl=gl/(1.0+gl);                                     // (the glow itself has a ceiling: a racer in its own boost light stays a racer)
         c+=gl*(1.0-0.85*clamp(c,0.0,1.0));   // (a screen: the glow shows on what is darker than it, and never flattens what is already bright)
         vec2 q=vUv-0.5; c*=1.0-uVig*smoothstep(0.18,0.75,dot(q,q)*2.0);
         c+=uFlash;
         c+=(fract(sin(dot(gl_FragCoord.xy+uT,vec2(12.9898,78.233)))*43758.5453)-0.5)/255.0;   // (a grain of dither: no banding in the glow)
         gl_FragColor=vec4(c,1.0); }`, {tScene:{value:null}, tBloom:{value:null}, uBloom:{value:0}, uVig:{value:0}, uCA:{value:0}, uFlash:{value:0}, uAspect:{value:1}, uT:{value:0}, uFxaa:{value:0}, uPx:{value:new T.Vector2()},
-        tDepth:{value:null}, uDepth:{value:0}, uProj:{value:new T.Vector4(0.5,1400,1,1)}, uHeat:{value:new T.Vector4()}, uMist:{value:new T.Vector4(0,9,0,0)}, uMist2:{value:new T.Vector4()}, uAir:{value:new T.Vector4()}, uAer:{value:new T.Vector4()}, uAerK:{value:new T.Vector4(8,0,0,1e9)},
+        tDepth:{value:null}, uDepth:{value:0}, uProj:{value:new T.Vector4(0.5,1400,1,1)}, uHeat:{value:new T.Vector4()}, uMist:{value:new T.Vector4(0,9,0,0)}, uMist2:{value:new T.Vector4()}, uAir:{value:new T.Vector4()}, uAer:{value:new T.Vector4()}, uAerK:{value:new T.Vector4(8,0,0,1e9)}, uWarp:{value:new T.Vector4(0,0.5,0.5,0)}, uWarpC:{value:new T.Vector3(1,1,1)}, uWarpB:{value:1},
         uAerC:{value:new T.Vector3()}, uAerZ:{value:new T.Vector3()}, uSunD:{value:new T.Vector3(0,1,0)}, uSunC:{value:new T.Vector3()},
         uCamP:{value:new T.Vector3()}, uCamF:{value:new T.Vector3(0,0,-1)}, uCamR:{value:new T.Vector3(1,0,0)}, uCamU:{value:new T.Vector3(0,1,0)}, uMistC:{value:new T.Vector3(1,1,1)},
         uRip:{value:[new T.Vector4(),new T.Vector4(),new T.Vector4(),new T.Vector4()]}});
@@ -87375,9 +87403,13 @@ function luxTick(dt){
   // the mist lies on the road the player is on (not on a racer in the air), and follows a climb gently
   if(me && !me.air){ const g=me.surfY!==undefined ? me.surfY : (me.y||0); LUX.gy+=(g-LUX.gy)*(dt>0 ? Math.min(1,2*dt) : 1); }
   for(const R of LUX.rip){ R.r+=R.v*dt; R.a-=dt*1.5; } while(LUX.rip.length && LUX.rip[0].a<=0) LUX.rip.shift();
+  // the warp opens on a boost and closes after it (on game time under a tool; a frame held still shows it as it should stand)
+  { const want=wlRM() ? 0 : Math.max(racing && me.boostT>0 && !me.finished ? 1 : 0, LUX.wpHold||0), d=typeof SIM!=='undefined' && SIM.manual ? LUX.dtLast : dt;
+    if(d>0) LUX.wp+=(want-LUX.wp)*Math.min(1,(want>LUX.wp ? 7 : 2.4)*d); else LUX.wp=want;
+    if(LUX.wp<0.002 && want===0) LUX.wp=0; LUX.wpT+=d*(0.5+LUX.wp); }
   // the course's air through the race (TRACKS[i].air: see luxState), then the air's light on the racers
   { const tk=TRACKS[selTrack]||{};
-    if(tk.air){ const X=LUX.liveX||(LUX.liveX={}); tk.air(luxState(dt, me, racing), X); LUX.live=X; }
+    luxAirNow(dt, me, racing);
     luxLit(Object.assign(_luxLx, LUX.air, tk.lux, LUX.live, LUX.force), me); }
   // pace, on the wall clock (the game's own step is capped, and a capped step cannot tell 30 frames a second from 10)
   { const nw=performance.now(), ms=Math.min(100,nw-(LUX.wall||nw)); LUX.wall=nw;
@@ -87410,7 +87442,7 @@ function luxPace(ms){
   if(LUX.fast>5){ LUX.fast=0; if(LUX.scale<1) LUX.scale=Math.min(1,LUX.scale+0.05); }
 }
 /* a new course: what was given up for the last one is asked again (the target's size, learned from the device, is kept) */
-const _luxA=new T.Color(), _luxB=new T.Color(), _luxLx={};
+const _luxA=new T.Color(), _luxB=new T.Color(), _luxW=new T.Color(), _luxLx={};
 /* THE RACE, AS THE AIR FEELS IT. A course whose air changes says how in TRACKS[i].air=(S,X)=>{...}: every frame it is handed
    S (below) and writes the light keys it wants this frame into X (they sit between the course's own settings and a tool's).
      u       how far through the whole race the player is, 0..1 (laps and all; a point-to-point course: along its line)
@@ -87439,21 +87471,38 @@ function luxState(dt, me, racing){
    point light leaves its post and rides at the player's side, low and toward the camera, in the air's colour: the mist's
    and the deep air's, as the ambient light has tinted them, or litCol. It reaches litR, so it falls on the player, the
    pack round them and a pool of road, and not on the land. It goes back where it stood when the course stops asking. */
+// (the course's air hook, run: every drawn frame, and when a tool asks what light is in force between two of them)
+function luxAirNow(dt, me, racing){ const tk=TRACKS[selTrack]||{}; if(!tk.air) return; const X=LUX.liveX||(LUX.liveX={}); tk.air(luxState(dt, me, racing), X); LUX.live=X; }
+function luxAirCol(lx, c){   // the air's own colour, as a light: the mist's and the deep air's, as the ambient light has tinted them, at full strength
+  const wm=lx.mist*(0.5+0.5*lx.mistGlow), wa=lx.aer; _luxA.setHex(lx.mistCol).multiplyScalar(wm); _luxB.setHex(lx.aerCol).multiplyScalar(wa); c.copy(_luxA).add(_luxB);
+  if(wm+wa<1e-3) c.copy(sun.color); const ak=Math.max(0,Math.min(1,lx.amb)); if(ak>0){ _luxA.copy(hemi.color); const mx=Math.max(_luxA.r,_luxA.g,_luxA.b,1e-3); c.r*=1-ak+ak*_luxA.r/mx; c.g*=1-ak+ak*_luxA.g/mx; c.b*=1-ak+ak*_luxA.b/mx; }
+  const m=Math.max(c.r,c.g,c.b,1e-3); return c.multiplyScalar(1/m); }
 function luxLit(lx, me){
-  const k=lx && LUX.on && LUX.ok!==false && !LUX.lite && !SIM.calm && me && isFinite(me.x) && isFinite(me.z) && state!=='menu' ? lx.lit : 0;
+  const ok=lx && LUX.on && LUX.ok!==false && !LUX.lite && !SIM.calm && me && isFinite(me.x) && isFinite(me.z) && state!=='menu';
+  const wk=ok ? 0.7*LUX.wp*Math.max(0,Math.min(1,lx.warp)) : 0, k0=ok ? lx.lit : 0, k=Math.max(k0*(1+0.8*LUX.wp), wk);   // (in the warp the air's light comes up, and a course with none of its own takes the warp's)
   if(!(k>0.001)){ if(LUX.litOn){ const S=LUX.litOn; flesh.color.copy(S.c); flesh.intensity=S.i; flesh.position.copy(S.p); flesh.distance=500; LUX.litOn=null; } return; }
   if(!LUX.litOn) LUX.litOn={c:flesh.color.clone(), i:flesh.intensity, p:flesh.position.clone()};
   const c=flesh.color;
-  if(lx.litCol>=0) c.setHex(lx.litCol);
-  else { const wm=lx.mist*(0.5+0.5*lx.mistGlow), wa=lx.aer; _luxA.setHex(lx.mistCol).multiplyScalar(wm); _luxB.setHex(lx.aerCol).multiplyScalar(wa); c.copy(_luxA).add(_luxB);
-    if(wm+wa<1e-3) c.copy(sun.color); const ak=Math.max(0,Math.min(1,lx.amb)); if(ak>0){ _luxA.copy(hemi.color); const mx=Math.max(_luxA.r,_luxA.g,_luxA.b,1e-3); c.r*=1-ak+ak*_luxA.r/mx; c.g*=1-ak+ak*_luxA.g/mx; c.b*=1-ak+ak*_luxA.b/mx; }
-    const m=Math.max(c.r,c.g,c.b,1e-3); c.multiplyScalar(1/m); }
+  if(lx.litCol>=0) c.setHex(lx.litCol); else luxAirCol(lx, c);
+  if(wk>0.001){ luxWarpCol(lx, _luxB); c.lerp(_luxB, k0>0.001 ? 0.5*LUX.wp : 1); }
   const y=(me.surfY!==undefined && !me.air ? me.surfY : (isFinite(me.y) ? me.y : 0)); let dx=camera.position.x-me.x, dz=camera.position.z-me.z; const d=Math.hypot(dx,dz)||1;
   flesh.position.set(me.x+dx/d*8, y+1.6, me.z+dz/d*8); flesh.distance=Math.max(10,lx.litR); flesh.intensity=k;
 }
+/* THE WARP. A boost tears the air open: for as long as it lasts the player is driving down a tunnel of the course's own air.
+   Its throat is where they are headed. Round it the picture's edge darkens and the distance dissolves into the air (far
+   things first, by the depth of the picture), lanes of light and ribs of it run outward along the walls, the far picture
+   is drawn out toward the throat, and there is light at the end. Nothing near the lens is touched: the racer keeps its
+   edge. Its colour is the air's (the light on the racers, or the mist's and the deep air's), a pad's blue-white on a
+   course with no air, or warpCol; and the air's light on the racers comes up with it. It opens fast and closes slowly. A
+   player who asked for less motion never sees it; a reference sheet never does. race_fx {lux:{warpHold:1}} holds it open. */
+function luxWarpCol(lx, c){
+  if(lx.warpCol>=0) return c.setHex(lx.warpCol);
+  const C=_luxW;
+  if(lx.litCol>=0) C.setHex(lx.litCol); else if(lx.mist>0.05 || lx.aer>0.05) luxAirCol(lx, C); else C.setHex(0x9fe8ff);
+  C.r=0.3+0.7*C.r; C.g=0.3+0.7*C.g; C.b=0.3+0.7*C.b; return c.copy(C); }
 function luxHex(v, h){ return v.set((h>>16&255)/255, (h>>8&255)/255, (h&255)/255); }
 function luxMix(a, b, t){ t=t<0?0:t>1?1:t; const m=(sh)=>Math.round((a>>sh&255)+((b>>sh&255)-(a>>sh&255))*t); return (m(16)<<16)|(m(8)<<8)|m(0); }   // (two colours, as hex, blended)
-function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
+function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.wp=0; LUX.wpX=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
 /* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
 function luxRender(rect){
   if(!LUX.on || LUX.trial || !luxInit()){ renderer.render(scene,camera); return; }   // (off, or timing the game without it)
@@ -87489,7 +87538,15 @@ function luxRender(rect){
   { const still=wlRM(), heat=calm||still||LUX.lite ? 0 : lx.heat, mist=calm||LUX.lite ? 0 : lx.mist, aer=calm||LUX.lite ? 0 : lx.aer;
     o.uHeat.value.set(heat, lx.heatNear, lx.heatFar, lx.heatEl); o.uMist.value.set(mist, Math.max(0.5,lx.mistH), lx.mistDen, lx.mistAir); o.uMist2.value.set(lx.mistWisp, lx.mistScale, lx.mistRise, lx.mistGlow);
     o.uAer.value.set(aer, Math.max(1,lx.aerH), lx.aerDen, Math.max(0,Math.min(1,lx.aerSky)));
-    if(heat>0.001 || mist>0.001 || aer>0.001){ const e=camera.matrixWorld.elements, ty=Math.tan(camera.fov*Math.PI/360)/(camera.zoom||1), mc=lx.mistCol;
+    // the warp: its throat is where the player is headed, on the screen (dead ahead of the lens if that is out of sight)
+    const warp=calm || still ? 0 : Math.max(0,Math.min(1,LUX.wp*Math.max(0,lx.warp)));
+    if(warp>0.001){ const me=racers.find(r=>r.you); let wx=0.5, wy=0.52;
+      if(me && isFinite(me.x) && isFinite(me.head)){ _luxV.set(me.x+Math.sin(me.head)*260, (isFinite(me.y)?me.y:0)+5, me.z+Math.cos(me.head)*260).project(camera);
+        if(_luxV.z<1 && Math.abs(_luxV.x)<1.4 && Math.abs(_luxV.y)<1.4){ wx=Math.max(0.25,Math.min(0.75,_luxV.x*0.5+0.5)); wy=Math.max(0.3,Math.min(0.72,_luxV.y*0.5+0.5)); } }
+      LUX.wpX=LUX.wpX==null ? wx : LUX.wpX+(wx-LUX.wpX)*0.2; LUX.wpY=LUX.wpY==null ? wy : LUX.wpY+(wy-LUX.wpY)*0.2;
+      o.uWarp.value.set(warp, LUX.wpX, LUX.wpY, LUX.wpT%1000); luxWarpCol(lx, _luxA); o.uWarpC.value.set(_luxA.r,_luxA.g,_luxA.b); o.uWarpB.value=LUX.lite ? 0 : 1; }
+    else { o.uWarp.value.x=0; LUX.wpX=null; }
+    if(heat>0.001 || mist>0.001 || aer>0.001 || warp>0.001){ const e=camera.matrixWorld.elements, ty=Math.tan(camera.fov*Math.PI/360)/(camera.zoom||1), mc=lx.mistCol;
       o.uCamR.value.set(e[0],e[1],e[2]); o.uCamU.value.set(e[4],e[5],e[6]); o.uCamF.value.set(-e[8],-e[9],-e[10]); o.uCamP.value.set(e[12],e[13],e[14]);
       o.uProj.value.set(camera.near, camera.far, ty*camera.aspect, ty); luxHex(o.uMistC.value, mc);
       // the ambient light, as a tint (its brightest channel 1): the air takes it as far as the course asks
@@ -92587,6 +92644,7 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         if(lux.on!==undefined) LUX.on=!!lux.on; if(lux.scale!==undefined) LUX.scale=Math.max(0.3,Math.min(1,+lux.scale)); if(lux.reset) LUX.force=null;
         for(const k of LUX_KEYS) if(lux[k]!==undefined) (LUX.force||(LUX.force={}))[k]=+lux[k];
         if(Array.isArray(lux.sunDir) && lux.sunDir.length===3) (LUX.force||(LUX.force={})).sunDir=lux.sunDir.map(Number);
+        if(lux.reset) LUX.wpHold=0; if(lux.warpHold!==undefined) LUX.wpHold=Math.max(0,Math.min(1,+lux.warpHold||0));
         if(lux.auto!==undefined) LUX.auto=!!lux.auto;
         // pace:{on, off, seconds}: run luxPace on made-up frame times (ms with the pipeline at full size, ms without it; its cost
         // falls with the target's size and again when lite) and say what it would give up; nothing is kept
@@ -92602,8 +92660,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
+      { const m0=racers.find(r=>r.you); luxAirNow(0, m0, !!m0 && (state==='race'||state==='done')); }   // (a tool steps the game without drawing every step: the air as it stands now, not as of the last frame drawn)
       return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
-        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length } }; },
+        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length, warp:+LUX.wp.toFixed(3) } }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
