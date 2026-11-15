@@ -644,6 +644,28 @@ await check('the warp: a boost opens a tunnel of the course\'s air round where t
   assert.equal(image(s0).data === image(s1).data, true, 'the sheet is the same pixels with the warp held open');
 });
 
+await check('the warp has degrees: a drift opens it least and shortest, a boost pad more, the boost item most and longest', async () => {
+  json(await call('race_setup', { course: 'Delilah', character: 'proto', seed: 3 })); json(await call('race_start'));
+  const coast = (seconds) => call('race_drive', { seconds, autopilot: false, keys: [] });   // (off the gas: no pad or drift of the game's own gets in the way)
+  const warp = async () => json(await call('race_fx', {})).lux.warp;
+  const run = async (kind) => {
+    for (let i = 0; i < 40 && await warp() > 0.01; i++) await coast(0.5);
+    const B = json(await call('race_fx', { boost: kind })).boosts; assert.ok(B[kind] && B[kind].w > 0, 'the game lists its boosts: ' + JSON.stringify(B));
+    let peak = 0, secs = 0;
+    for (let i = 0; i < 32; i++) { await coast(0.25); const w = await warp(); peak = Math.max(peak, w); if (w > 0.05) secs += 0.25; else if (peak > 0) break; }
+    return { peak, secs };
+  };
+  const d = await run('driftS'), p = await run('pad'), it = await run('item');
+  assert.ok(d.peak > 0.15 && d.peak < p.peak - 0.1 && p.peak < it.peak - 0.1, `a drift opens it least, the item most: ${JSON.stringify({ d, p, it })}`);
+  assert.ok(d.secs < p.secs && p.secs < it.secs, `and for the shortest time, the item the longest: ${JSON.stringify({ d, p, it })}`);
+  // the degrees are not one picture turned up: a drift's is at the picture's edge, the item's reaches the middle
+  const none = { lux: { reset: true, warpHold: 0 } };
+  const lo = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 0.38 } }, keep: 'a' }));
+  const hi = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 1 } }, keep: 'a' }));
+  assert.ok(hi.changed > lo.changed + 0.15, `the item's tunnel covers far more of the picture than a drift's (${lo.changed} against ${hi.changed})`);
+  await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);

@@ -58835,7 +58835,7 @@ function mzTurnPads(r,dt){
     const st=r._mzIn||0, intent=st*side>0.2 && (r.drift!==1 || r.driftDir===side);   // (steering into the turn; a drift the other way, or steering out, is not taking it)
     if(!intent) zi=-1; }
   if(zi!==prev){
-    if(prev>=0 && r._mzPadS===3 && (r._mzPadG||0)>=MZA.PAD_PAY){ r.boostT=Math.max(r.boostT,MZA.PAD_BOOST); r._mzPadB=(r._mzPadB||0)+1; burst(r.x,r.y+1,r.z,0x66ff88,10,40,0.35,3); if(r.you && SFX.boost) SFX.boost(); }
+    if(prev>=0 && r._mzPadS===3 && (r._mzPadG||0)>=MZA.PAD_PAY){ boostGive(r,MZA.PAD_BOOST,'pad'); r._mzPadB=(r._mzPadB||0)+1; burst(r.x,r.y+1,r.z,0x66ff88,10,40,0.35,3); if(r.you && SFX.boost) SFX.boost(); }
     r._mzZone=zi; r._mzPadG=0; r._mzPadS=0; r._mzPadR=-1; r._mzPadV=0; }
   if(zi<0) return;
   // (the angle: the heading's lean in toward the turn's centre off its curve — a little out is running
@@ -59035,7 +59035,7 @@ function mzFrame(r){ const f=MZ_FR, h=r.head; f.p.x=r.x; f.p.y=r.surfY!=null?r.s
 // directional pads in the loops: a kick only for a kart on its way back out
 function mzPads(r){
   const M=MAZE; for(const p of M.pads){ if(Math.hypot(r.x-p.x,r.z-p.z)<p.r && Math.sin(r.head)*p.dx+Math.cos(r.head)*p.dz>0.3 && r.spd>0){
-    r.boostT=Math.max(r.boostT,0.95); const now=performance.now(); if(now-(r._padHit||0)>700){ r._padHit=now; burst(r.x,r.y+2,r.z,0x9fe8ff,15,50,0.4,4); if(r.you) SFX.boost(); } break; } }
+    boostGive(r,0.95,'pad'); const now=performance.now(); if(now-(r._padHit||0)>700){ r._padHit=now; burst(r.x,r.y+2,r.z,0x9fe8ff,15,50,0.4,4); if(r.you) SFX.boost(); } break; } }
 }
 // the chase camera never sinks into a ridge, never loses the kart behind one, never enters the egg
 const _mzV=new T.Vector3();
@@ -77873,8 +77873,32 @@ function dbFrameTick(){ if(typeof renderer==='undefined' || !camera) return; con
  * Cost: head + tail skin, their two inks, the face, the brows, the tuft and its ink, the halo and two boost flames. */
 const NEO={ k:0.8, skin:[172,0.62,0.6], ink:'#141016', tuftCol:'#185058' };
 // Downbeat's face with its star cut made a five-point star (the game's star pupil; Dash's own wedge is untouched)
+/* The face's light is the head's. Downbeat's face is lit from DB_L, a fixed key in view space that its body is lit from too. A Neo
+   head is lit by the cel skin (TPL_GLSL_CEL): the scene's own sun, a different direction and a different threshold. So where
+   the two disagreed, on the far eye of a three-quarter view, the lids and the whites took their shadow colours while the skin
+   round them stayed lit, and a grey patch sat in the eye like a hole. The face now asks the scene for its sun (its material
+   has lights) and takes the head's threshold (uCel, shared with the skin), so a lid is in shadow exactly where its skin is. */
 const NEO_FACE_FS=DB_FACE_FS.replace('else { vec2 sc=pc+pr*vec2(0.26,0.3), v=q-sc; float a=atan(v.y,v.x), rs=pr.y*0.5*(0.3+0.7*pow(abs(cos(2.0*a)),5.0));',
-  'else { vec2 sc=pc+pr*vec2(0.27,0.33), v=q-sc; float a=atan(v.y,v.x), m=mod(a-1.5708+0.6283,1.2566)-0.6283, rs=pr.y*0.38*(0.42+0.58*pow(max(cos(m*2.5),0.0),2.2));');
+  'else { vec2 sc=pc+pr*vec2(0.27,0.33), v=q-sc; float a=atan(v.y,v.x), m=mod(a-1.5708+0.6283,1.2566)-0.6283, rs=pr.y*0.38*(0.42+0.58*pow(max(cos(m*2.5),0.0),2.2));')
+  .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>
+uniform vec4 uCel;
+#if NUM_DIR_LIGHTS > 0
+struct DirectionalLight { vec3 direction; vec3 color; };
+uniform DirectionalLight directionalLights[ NUM_DIR_LIGHTS ];
+#endif`)
+  .replace('float lit=smoothstep(-fw*4.0,fw*4.0,dot(normalize(vNv),DB_L)-0.06);', `float lit;
+  { vec3 Lk=normalize(vec3(-0.35, 0.55, 0.75));
+    #if NUM_DIR_LIGHTS > 0
+    Lk=normalize(directionalLights[ 0 ].direction + vec3(0.0, 0.25, 0.7));
+    #endif
+    float nl=dot(normalize(vNv), Lk), aa=fwidth(nl)*0.9+0.003; lit=smoothstep(uCel.x-aa, uCel.x+aa, nl); }   // (TPL_GLSL_CEL's own test)`);
+// the face's material: Downbeat's shader with the scene's lights in it (for the sun, above) and the head's cel threshold
+function neoFaceMat(fs, FU, cel){
+  FU.uCel=cel.uCel;
+  const m=dbShader(DB_FACE_VS, fs, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4, lights:true});
+  Object.assign(m.uniforms, T.UniformsUtils.merge([T.UniformsLib.lights]), FU);   // (three fills the lights in; the face's own stay shared by reference)
+  return m;
+}
 let _neoFaceGeo=null, _neoBrowGeo=null;
 const neoR=(x,y,z)=>1/Math.sqrt(x*x/(HEAD_RX*HEAD_RX)+y*y/(HEAD_RY*HEAD_RY)+z*z/(HEAD_RZ*HEAD_RZ));   // the flow head's radius along a unit direction
 // the face: a patch on the front of the flow head (azimuth x elevation round the forward axis), face units = the head's
@@ -77988,7 +78012,7 @@ function dressNeo(g, K, P){
     uWht:{value:dbLin('#fdfbf4')}, uWhtS:{value:dbLin('#d6e4e6')}, uInk:{value:ink}, uMth:{value:dbLin('#3c1218')}, uTng:{value:dbLin('#e0584a')}, uAcc:{value:dbLin('#e2412f')} };
   if(P.face) for(const k in P.face){ const n='u'+k[0].toUpperCase()+k.slice(1); (FU[n]||(FU[n]={value:null})).value=dbLin(P.face[k]); }
   if(P.faceU) Object.assign(FU, P.faceU());
-  const face=new T.Mesh(neoFaceGeometry(), dbShader(DB_FACE_VS, P.faceFS||NEO_FACE_FS, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4}));
+  const face=new T.Mesh(neoFaceGeometry(), neoFaceMat(P.faceFS||NEO_FACE_FS, FU, cel));
   face.name='neo-face'; face.renderOrder=1; rig.add(face);
   const BU={ uBr:{value:new Float32Array(8)}, uBrL:{value:P.browL||0.64}, uInk:{value:ink} };
   const brows=new T.Mesh(neoBrowGeometry(), dbShader(DB_BROW_VS, DB_BROW_FS, BU, {transparent:true, depthWrite:false, side:T.DoubleSide}));
@@ -84242,7 +84266,12 @@ function lockHint(t){ let n='Circuit Cup'; try{ const m=CUP_META[(t&&t.reward||1
 function grantUnlock(t){ try{ const a=unlockedIds(); if(a.indexOf(t.id)<0){ a.push(t.id); localStorage.setItem('sr_unlocks',JSON.stringify(a)); } }catch(_){} }
 // the select grid's order: the finished characters first, then the style variants, the locked ones last
 const SEL_VARIANTS=new Set(['guidoFluid','punkFluid','voxel','kingVox','wire','dough','mosaic','bead','beadSalty','beadJuan','paint','felt','paper','ukiyo','ryuKenji','dragoTony','rastaDragon','beadBosun','beadBandido']);
-function selOrdered(){ const rank=t=>SEL_VARIANTS.has(t.id)?(isLocked(t)?2+(t.reward||0)/10:1):0; return SPERM_TYPES.map((t,i)=>[t,i]).sort((a,b)=>rank(a[0])-rank(b[0])||a[1]-b[1]).map(x=>x[0]); }
+// the menus' order (the select grid, its 3D roster, the home's racer strip, the racer numbers): the Neo racers first, in the order
+// they were made (the four built before the registry, then every kit that registers in NEO_KITS); then the base racers, the
+// variants and the locked ones; and Neo Proto, the template they were all drawn from, at the back
+const NEO_FRONT=new Set(['tonyGuido','kingJr','chadJr','rastaJr']);
+function selRank(t){ if(t.id==='neoProto') return 9; if(NEO_FRONT.has(t.id) || NEO_KITS[t.id]) return -1; return SEL_VARIANTS.has(t.id)?(isLocked(t)?2+(t.reward||0)/10:1):0; }
+function selOrdered(){ return SPERM_TYPES.map((t,i)=>[t,i]).sort((a,b)=>selRank(a[0])-selRank(b[0])||a[1]-b[1]).map(x=>x[0]); }
 let chosenType = SPERM_TYPES[0]; // default Guido energy
 // Circuit Cup state (the cup module, after endRace): the live run's lineup, scores and eggs
 let gpActive=false, gpIndex=0, gpLineup=null, gpScores=null, gpEggs=null;
@@ -84505,10 +84534,22 @@ function hazardSurfY(r,x,z){
   const dx=x-sp.p.x, dz=z-sp.p.z, hl=Math.hypot(sp.t.x,sp.t.z)||1;
   return sp.p.y + Math.sin(sp.bank||0)*(dx*sp.n.x+dz*sp.n.z) + sp.t.y/hl*(dx*sp.t.x+dz*sp.t.z)/hl;
 }
+/* THE DEGREES OF A BOOST. Every boost in the game, how long it lasts (t, seconds: as each always was) and how far it opens
+   THE WARP (w, 0..1: see luxWarp). Three degrees, and the rest placed between them:
+     a drift's mini-turbo   the least and the shortest: a flick of streaks at the picture's edge (a long drift a little more)
+     landing a jump         about a long drift's
+     a slingshot            more: it was earned over seconds in a rival's tow
+     a boost pad            the middle degree: the walls come in
+     a rocket start         nearly the most: the race's first moment
+     the boost item         the most and the longest: the whole tunnel, ribs and light at the end, and it closes slowest
+   Whoever is already boosting keeps the higher degree until that boost is spent. */
+const BOOST={ driftS:{t:0.5,w:0.38}, driftL:{t:0.9,w:0.5}, land:{t:0.7,w:0.46}, sling:{t:0.7,w:0.6}, pad:{t:0.85,w:0.72}, start:{t:1.3,w:0.86}, item:{t:1.4,w:1.0} };
+function boostGive(r, secs, kind){ const w=(BOOST[kind]||BOOST.pad).w; r.wpL=r.boostT>0 ? Math.max(r.wpL||0, w) : w; r.boostT=Math.max(r.boostT, secs);
+  if(r.you && kind==='item' && typeof LUX!=='undefined' && !wlRM()) LUX.flash=Math.max(LUX.flash, 0.14); }
 function useItem(r){
   if(r.you && r._roll>0) return;   // can't fire mid-roulette
   if(!r.item)return;
-  if(r.item==='boost'){ r.boostT=Math.max(r.boostT,1.4); }
+  if(r.item==='boost'){ boostGive(r,BOOST.item.t,'item'); }
   else if(r.item==='spore'){
     const m=new T.Mesh(new T.SphereGeometry(2.4,10,8),
       new T.MeshPhongMaterial({color:0xff5d8f,emissive:0x661022,flatShading:true}));
@@ -84790,7 +84831,7 @@ function updateRacer(r,dt){
   // slipstream (see SLIPSTREAM): sitting in a rival's tow lifts the top speed and charges a slingshot
   { const q=onRoad?draftOf(r):0; r.draft=(r.draft||0)+(q-(r.draft||0))*Math.min(1,5*dt);
     if(q>0.12){ r.draftCharge=(r.draftCharge||0)+dt*(0.5+0.5*q)*(r.you?1:DRAFT.AI); target*=1+DRAFT.GAIN*r.draft;
-      if(r.draftCharge>=DRAFT.CHARGE){ r.draftCharge=0; r.boostT=Math.max(r.boostT,DRAFT.SLING); r.slingN=(r.slingN||0)+1;
+      if(r.draftCharge>=DRAFT.CHARGE){ r.draftCharge=0; boostGive(r,DRAFT.SLING,'sling'); r.slingN=(r.slingN||0)+1;
         if(r.you){ SFX.boost(); kickShake(0.22); showToast('Slingshot!','t-green'); } } }
     else r.draftCharge=Math.max(0,(r.draftCharge||0)-dt*0.9); }
   // boost
@@ -84833,8 +84874,8 @@ function updateRacer(r,dt){
     if(MAZE) r.spd*=Math.pow(Math.abs(steer)>0.6?0.3:0.7,dt);   // a maze drift bleeds speed (hard at full lock: a handbrake U-turn)
   } else {
     if(r.drift===1){                            // released → mini-turbo
-      if(r.driftCharge>1.2) r.boostT=Math.max(r.boostT,0.9);
-      else if(r.driftCharge>0.55) r.boostT=Math.max(r.boostT,0.5);
+      if(r.driftCharge>1.2) boostGive(r,BOOST.driftL.t,'driftL');
+      else if(r.driftCharge>0.55) boostGive(r,BOOST.driftS.t,'driftS');
       r.drift=0; r.driftCharge=0; r.driftDir=0;
       r.slip=0; r._grip=0.32;                    // clean, straight launch out of the drift
     }
@@ -84933,7 +84974,7 @@ function updateRacer(r,dt){
   // boost pads — drive over a chevron strip for a speed kick
   for(const p of boostPads){
     if(Math.hypot(r.x-p.x, r.z-p.z) < p.r){
-      r.boostT=Math.max(r.boostT,0.85);
+      boostGive(r,BOOST.pad.t,'pad');
       const now=performance.now();
       if(now-(r._padHit||0)>700){ r._padHit=now;
         burst(r.x, r.y+2, r.z, 0xffb44a, 15, 50, 0.4, 4);
@@ -84989,7 +85030,7 @@ function updateRacer(r,dt){
     const _bank=(_sl.bank||0) + ((_s2.bank||0)-(_sl.bank||0))*_tf;
     const groundY=_a.y + (_b.y-_a.y)*_tf + Math.sin(_bank)*_lat + HOVER_H;
     if(r.vy<0 && r.y<=groundY){ r.y=groundY; r.air=false; r.vy=0;
-      r.boostT=Math.max(r.boostT,0.7);            // landing boost rewards the jump
+      boostGive(r,BOOST.land.t,'land');           // landing boost rewards the jump
       burst(r.x,r.y+1,r.z,0xffc6dd,12,45,0.4,4); if(r.you){ kickShake(0.5); SFX.boost(); buzz(HAPTIC.land); } }
   }
 }
@@ -87251,7 +87292,7 @@ const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', m
     aer:0, aerH:140, aerDen:0.0012, aerCol:0xdfe8ee, aerZen:-1, aerY:-1e9, aerSky:0.5, aerSun:0, aerSunP:8, aerSunCol:-1, amb:0,
     mistY:-1e9, mistSteps:0, mistCell:0, lit:0, litCol:-1, litR:70,
     // warp: how strongly a boost opens THE WARP (see luxWarp; 0: never on this course); warpCol its colour (unset: the air's own)
-    warp:1, warpCol:-1 }, wp:0, wpT:0, wpHold:0 };
+    warp:1, warpCol:-1 }, wp:0, wpT:0, wpHold:0, wpPk:0, wpAt:null };
 const LUX_KEYS=['bloom','thr','knee','vig'].concat(Object.keys(LUX.air));
 function luxInit(){
   if(LUX.ok!==null) return LUX.ok;
@@ -87348,7 +87389,7 @@ function luxInit(){
         // THE WARP, its pull: the far picture drawn out along the lines to the throat (a near thing, the racer, keeps its edge)
         float wFar=1.0;
         if(uWarp.x>0.001){ if(uDepth>0.5) wFar=smoothstep(18.0,70.0,viewZ(uv,ray(uv)));
-          vec2 wv=uv-uWarp.yz; float wr=smoothstep(0.1,0.7,length(wv*vec2(uAspect,1.0)))*uWarp.x*wFar*uWarpB;
+          vec2 wv=uv-uWarp.yz; float wr=smoothstep(mix(0.5,0.1,uWarp.x),mix(1.1,0.7,uWarp.x),length(wv*vec2(uAspect,1.0)))*uWarp.x*wFar*uWarpB;
           if(wr>0.01){ vec3 acc=c; float ws=1.0;
             for(int i=1;i<=4;i++){ vec2 u2=uv-wv*(float(i)*0.03*wr); float w=1.0-0.18*float(i);
               if(uDepth>0.5) w*=smoothstep(18.0,60.0,viewZ(u2,ray(u2)));
@@ -87376,15 +87417,17 @@ function luxInit(){
         // edge of the picture darkens and the distance dissolves into the air, far things first), lanes of light run out
         // along them, ribs of it pass, and there is light at the end
         if(uWarp.x>0.001){ vec2 wd=vUv-uWarp.yz; wd.x*=uAspect; float r=length(wd), a=atan(wd.y,wd.x)/6.2831853+0.5, lr=log(max(r,0.02)), t=uWarp.w;
-          float wall=smoothstep(0.14,0.78,r), k=uWarp.x*wFar, deep=1.0;
+          // (by degree: a little of it is streaks at the picture's edge; more, and the walls come in toward the throat; all of
+          // it, and the ribs pass and there is light at the end)
+          float L=uWarp.x, wall=smoothstep(mix(0.55,0.14,L),mix(1.1,0.78,L),r), k=L*wFar, deep=1.0;
           if(uDepth>0.5) deep=smoothstep(60.0,420.0,viewZ(vUv,ray(vUv)));
           float st=wstreak(a,lr,t,84.0,3.0)*1.1+wstreak(a+0.37,lr,t*0.7,31.0,1.6)*0.5;
           float rib=pow(0.5+0.5*cos(6.2831853*(lr*1.5-t*1.6)),14.0);
           c*=1.0-0.45*wall*k;
           c=mix(c, uWarpC*(0.2+0.8*lum(c)), 0.55*wall*k*deep);
           float room=1.0-0.6*lum(c);                                    // (on a pale picture the light has less to add: it must not wash the road out)
-          c+=uWarpC*(st*(0.5+0.9*wall)+rib*0.3*wall)*k*smoothstep(0.05,0.3,r)*room;
-          c+=uWarpC*exp(-r*r*20.0)*0.3*uWarp.x*room; }
+          c+=uWarpC*(st*(0.25*L*L+1.15*wall)*mix(sqrt(L),1.0,L)+rib*0.3*wall*L*smoothstep(0.6,0.92,L))*wFar*smoothstep(0.05,0.3,r)*room;
+          c+=uWarpC*exp(-r*r*20.0)*0.3*L*smoothstep(0.5,0.95,L)*room; }
         gl*=uBloom; gl=gl/(1.0+gl);                                     // (the glow itself has a ceiling: a racer in its own boost light stays a racer)
         c+=gl*(1.0-0.85*clamp(c,0.0,1.0));   // (a screen: the glow shows on what is darker than it, and never flattens what is already bright)
         vec2 q=vUv-0.5; c*=1.0-uVig*smoothstep(0.18,0.75,dot(q,q)*2.0);
@@ -87424,10 +87467,7 @@ function luxTick(dt){
   // the mist lies on the road the player is on (not on a racer in the air), and follows a climb gently
   if(me && !me.air){ const g=me.surfY!==undefined ? me.surfY : (me.y||0); LUX.gy+=(g-LUX.gy)*(dt>0 ? Math.min(1,2*dt) : 1); }
   for(const R of LUX.rip){ R.r+=R.v*dt; R.a-=dt*1.5; } while(LUX.rip.length && LUX.rip[0].a<=0) LUX.rip.shift();
-  // the warp opens on a boost and closes after it (on game time under a tool; a frame held still shows it as it should stand)
-  { const want=wlRM() ? 0 : Math.max(racing && me.boostT>0 && !me.finished ? 1 : 0, LUX.wpHold||0), d=typeof SIM!=='undefined' && SIM.manual ? LUX.dtLast : dt;
-    if(d>0) LUX.wp+=(want-LUX.wp)*Math.min(1,(want>LUX.wp ? 7 : 2.4)*d); else LUX.wp=want;
-    if(LUX.wp<0.002 && want===0) LUX.wp=0; LUX.wpT+=d*(0.5+LUX.wp); }
+  luxWarpStep(dt, me, racing);
   // the course's air through the race (TRACKS[i].air: see luxState), then the air's light on the racers
   { const tk=TRACKS[selTrack]||{};
     luxAirNow(dt, me, racing);
@@ -87516,6 +87556,17 @@ function luxLit(lx, me){
    edge. Its colour is the air's (the light on the racers, or the mist's and the deep air's), a pad's blue-white on a
    course with no air, or warpCol; and the air's light on the racers comes up with it. It opens fast and closes slowly. A
    player who asked for less motion never sees it; a reference sheet never does. race_fx {lux:{warpHold:1}} holds it open. */
+// The warp opens to the degree of the boost that is on (BOOST), fast, and closes after it: the higher it opened the slower
+// it closes. On game time under a tool (which steps the game without drawing every step); a frame held still shows it as
+// it should stand.
+function luxWarpStep(dt, me, racing){
+  const man=typeof SIM!=='undefined' && SIM.manual, d=man ? Math.max(0, Math.min(5, SIM.t-(LUX.wpAt==null ? SIM.t : LUX.wpAt))) : dt; LUX.wpAt=man ? SIM.t : null;
+  const lvl=racing && me.boostT>0 && !me.finished ? (me.wpL||BOOST.pad.w) : 0, want=wlRM() ? 0 : Math.max(lvl, LUX.wpHold||0);
+  if(want>0) LUX.wpPk=Math.max(want, LUX.wp>0.02 ? LUX.wpPk||0 : 0);
+  if(LUX.wpSnap || (!(d>0) && !man)){ LUX.wp=want; LUX.wpSnap=false; }   // (a tool set or let go of its hold: at once)
+  else if(d>0) LUX.wp+=(want-LUX.wp)*(1-Math.exp(-(want>LUX.wp ? 7 : 3.4-2.0*(LUX.wpPk||0.7))*d));
+  if(LUX.wp<0.004 && want===0){ LUX.wp=0; LUX.wpPk=0; } LUX.wpT+=d*(0.5+LUX.wp);
+}
 function luxWarpCol(lx, c){
   if(lx.warpCol>=0) return c.setHex(lx.warpCol);
   const C=_luxW;
@@ -87523,7 +87574,7 @@ function luxWarpCol(lx, c){
   C.r=0.3+0.7*C.r; C.g=0.3+0.7*C.g; C.b=0.3+0.7*C.b; return c.copy(C); }
 function luxHex(v, h){ return v.set((h>>16&255)/255, (h>>8&255)/255, (h&255)/255); }
 function luxMix(a, b, t){ t=t<0?0:t>1?1:t; const m=(sh)=>Math.round((a>>sh&255)+((b>>sh&255)-(a>>sh&255))*t); return (m(16)<<16)|(m(8)<<8)|m(0); }   // (two colours, as hex, blended)
-function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.wp=0; LUX.wpX=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
+function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.wp=0; LUX.wpPk=0; LUX.wpAt=null; LUX.wpX=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
 /* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
 function luxRender(rect){
   if(!LUX.on || LUX.trial || !luxInit()){ renderer.render(scene,camera); return; }   // (off, or timing the game without it)
@@ -89983,7 +90034,7 @@ countdown = function(){
       // touch: holding the stick through GO, not pulled back to brake (the kart drives itself forward)
       const launching = isTouch ? (joyActive && joyY < 0.55) : (keys.has('arrowup')||keys.has('w'));
       if(me && me.spectator) showBanner('Watching');
-      else if(me && launching){ me.boostT=Math.max(me.boostT,1.3); showBanner('Rocket Start!'); }
+      else if(me && launching){ boostGive(me,BOOST.start.t,'start'); showBanner('Rocket Start!'); }
       else showBanner('Go!');
       kickShake(0.5);
     }
@@ -92662,13 +92713,15 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
           note:'overBright: share of the picture brighter than the threshold (what blooms). glowArea: share where the glow adds more than 4% of white. Map: the picture in grey, glow in yellow, over-bright with no glow in pink.' };
       } finally { SIM.hold=wasHold; }
     },
-    'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux}={})=>{ let paced; if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
+    'race.fx': ({slipstream, edenLive, flowBody:fb, tail, lux, boost}={})=>{ let paced;
+      // boost: give YOUR racer a boost of that kind, as the game does (BOOST: driftS, driftL, land, sling, pad, start, item)
+      if(boost!==undefined){ if(!BOOST[boost]) throw new Error('boost is one of '+Object.keys(BOOST).join(', ')); const m=racers.find(r=>r.you); if(!m || state!=='race') throw new Error('no race is running'); boostGive(m, BOOST[boost].t, boost); } if(tail!==undefined) FLOW.force=tail&&Object.keys(tail).length?tail:null;
       // lux: the light pipeline. {on, scale} set it; {bloom, thr, knee, vig} override the course's light until {reset:true}; {ripple:k} throws a shockwave from your racer, {flash:k} a flash
       if(lux){ if(lux.aa && lux.aa!==LUX.aa){ LUX.aa=lux.aa; if(LUX.scene){ if(LUX.scene.depthTexture) LUX.scene.depthTexture.dispose(); LUX.scene.dispose(); LUX.mips.forEach(m=>m.dispose()); } LUX.ok=null; LUX.w=LUX.h=0; luxInit(); }
         if(lux.on!==undefined) LUX.on=!!lux.on; if(lux.scale!==undefined) LUX.scale=Math.max(0.3,Math.min(1,+lux.scale)); if(lux.reset) LUX.force=null;
         for(const k of LUX_KEYS) if(lux[k]!==undefined) (LUX.force||(LUX.force={}))[k]=+lux[k];
         if(Array.isArray(lux.sunDir) && lux.sunDir.length===3) (LUX.force||(LUX.force={})).sunDir=lux.sunDir.map(Number);
-        if(lux.reset) LUX.wpHold=0; if(lux.warpHold!==undefined) LUX.wpHold=Math.max(0,Math.min(1,+lux.warpHold||0));
+        if(lux.reset && LUX.wpHold){ LUX.wpHold=0; LUX.wpSnap=true; } if(lux.warpHold!==undefined){ LUX.wpHold=Math.max(0,Math.min(1,+lux.warpHold||0)); LUX.wpSnap=true; }
         if(lux.auto!==undefined) LUX.auto=!!lux.auto;
         // pace:{on, off, seconds}: run luxPace on made-up frame times (ms with the pipeline at full size, ms without it; its cost
         // falls with the target's size and again when lite) and say what it would give up; nothing is kept
@@ -92684,9 +92737,9 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       if(edenLive!==undefined) EDEN_CALL.gain=edenLive?1:0;
       const me=racers.find(r=>r.you), fa=me&&me.obj&&me.obj.userData.flow&&me.obj.userData.flow.a, act={};   // what your tail is acting right now
       if(fa) for(const k of FLOW_ACT.keys.concat(['kick','snap'])) act[k]=+fa[k].toFixed(3);
-      { const m0=racers.find(r=>r.you); luxAirNow(0, m0, !!m0 && (state==='race'||state==='done')); }   // (a tool steps the game without drawing every step: the air as it stands now, not as of the last frame drawn)
+      { const m0=racers.find(r=>r.you), rc=!!m0 && (state==='race'||state==='done'); luxAirNow(0, m0, rc); if(SIM.manual) luxWarpStep(0, m0, rc); }   // (a tool steps the game without drawing every step: the air as it stands now, not as of the last frame drawn)
       return { slipstream:DRAFT_FX.force, edenLive:EDEN_CALL.gain>0, flowBody:FLOW.all?'all':FLOW.on, flowIds:Object.keys(FLOW_IDS), tail:FLOW.force, tailAct:fa?act:null,
-        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length, warp:+LUX.wp.toFixed(3) } }; },
+        lux:{ on:LUX.on, ok:LUX.ok, why:LUX.why||undefined, target:LUX.type, msaa:LUX.msaa, aa:LUX.msaa?'msaa':'fxaa', scale:LUX.scale, size:[LUX.w,LUX.h], auto:LUX.auto, pace:{ ms:+LUX.ema.toFixed(1), base:LUX.base==null?null:+LUX.base.toFixed(1), lite:LUX.lite, trials:LUX.trials }, paced, depth:LUX.depth, smoothing:!!(LUX.mOut && LUX.mOut.uniforms.uFxaa.value>0.5), light:Object.assign({bloom:LUX.bloom, thr:LUX.thr, knee:LUX.knee, vig:LUX.vig}, LUX.air, (TRACKS[selTrack]||{}).lux, LUX.live, LUX.force), ripples:LUX.rip.length, warp:+LUX.wp.toFixed(3) }, boosts:BOOST }; },
 
     'race.motion': async ({racer, seconds=3, still=false, autopilot=true, series=false}={})=>{
       const r=racers.find(x=>racer?x.name===racer:x.you); if(!r) throw new Error('no racer "'+(racer||'you')+'"');
