@@ -235,6 +235,23 @@ player who asked for less motion never sees it, nor does a reference sheet.
 `race_fx {lux:{warpHold:1}}` holds it open for a look (`reset` lets go), and
 every `race_fx` reply says how far open it is (`lux.warp`).
 
+The warp has **degrees**, one for each kind of boost (`BOOST` in the game: how
+long each lasts, as it always did, and how far it opens the warp):
+
+| boost | seconds | degree | what you see |
+| --- | --- | --- | --- |
+| a drift's mini-turbo (short / long) | 0.5 / 0.9 | 0.38 / 0.5 | a flick of streaks at the picture's edge |
+| landing a jump | 0.7 | 0.46 | the same, a little more |
+| a slingshot out of a rival's tow | 0.7 | 0.6 | streaks reaching in from the edge |
+| a boost pad | 0.85 | 0.72 | the walls come in: streaks across the picture, the edge darkens, the distance is drawn out |
+| a rocket start | 1.3 | 0.86 | nearly the whole tunnel |
+| the boost item | 1.4 | 1.0 | the whole tunnel: ribs passing, light at the end, a flash as it opens |
+
+The higher it opened the slower it closes, so the item's is the longest as
+well as the most. `race_fx {boost:'driftS' | 'driftL' | 'land' | 'sling' |
+'pad' | 'start' | 'item'}` gives your racer that boost as the game does, and
+the reply's `boosts` lists the table.
+
 `persist` (0..1, per 60th of a second) is the AFTERGLOW: the glow layer feeds
 back into itself, the brighter of what is lit now and what was lit a moment
 ago, so a light moving across the picture leaves a fading trail, as a vector
