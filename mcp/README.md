@@ -195,11 +195,17 @@ fades on game time, so a frame a tool holds shows no trail. Vera uses it
 (0.8), with her lines driven past white so they bloom and a violet haze lit
 by them.
 
-Marina (steam on an indoor pool), Lily (dusk mist on the pond) and Rosalie
-(a hot afternoon on the boards) set them in `TRACKS[i].lux`. A course can also
+Marina (steam on an indoor pool), Lily (dusk mist on the pond), Rosalie
+(a hot afternoon on the boards), Felicity (heat and dust at the end of a day on
+the loom), Perla (a studio hazer, with dry ice on the board under the plinth)
+and Eve (a night mist in the garden's hollows, lit by what glows in it, with
+short trails) set them in `TRACKS[i].lux`. Perla's towers also throw BEAMS into
+her haze: a soft cone of each gel from the lamps to the road (one draw for all
+seven), and on every bar the tower over your set-up fires like a strobe. A course can also
 change any of these keys as the race goes: its own tick sets `LUX.live` each
 frame (Lucy does: heat off the boards at dusk, a sea mist and a harder glow by
-night). `LUX.live` sits between the course's settings and a tool's, and is
+night; Eve's mist takes more of the garden's light as the egg's call swells, and
+floods when you reach her). `LUX.live` sits between the course's settings and a tool's, and is
 cleared when another course is built. Try values with
 `race_fx {lux:{heat:1.4, mist:0.5, ...}}` and compare with `race_ab`;
 `{lux:{reset:true}}` goes back to the course's own. The reply's `lux.depth`
