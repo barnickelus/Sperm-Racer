@@ -19,6 +19,10 @@
   window.__srHome=c?'classic':'horizon';
   if(!c) ['monoton','space-mono-400','space-mono-700'].forEach(function(n){ var l=document.createElement('link');
     l.rel='preload'; l.as='font'; l.type='font/woff2'; l.crossOrigin='anonymous'; l.href='fonts/'+n+'.woff2'; document.head.appendChild(l); });
+  // ...and the still of the course its window will open on (the one last picked: sr_poster; a first visit's is the strip's first
+  // card), fetched while the page's script is still being read, so the window has its picture the moment the deck is painted
+  if(!c){ var p='nova'; try{ p=localStorage.getItem('sr_poster')||p; }catch(_){}
+    if(/^[a-z]+$/.test(p)){ var l=document.createElement('link'); l.rel='preload'; l.as='image'; l.href='posters/'+p+'.jpg'; document.head.appendChild(l); } }
 })();
 </script>
 <style>
@@ -87114,16 +87118,75 @@ function previewRacerNow(){
 }
 function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=setTimeout(previewRacerNow, delay); }
 function previewSoon(delay){
+  if(PREBUILD.job){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too)
   clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
   PREVIEW.timer=setTimeout(previewNow, delay);
 }
 function previewNow(){
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
   if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
-  if(PREVIEW.built!==selTrack){ const b0=performance.now(); buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; }   // (true: the preview keeps the racers it has; only the course is new)
+  PREBUILD.job=null; PREBUILD.n=0; PREBUILD.draw=0;   // (a build asked for by a pick or a flick takes over from the boot's; it uses what the boot has made so far)
+  { const nb=PREVIEW.built!==selTrack; if(nb || racers.length<6 || (chosenType && racers[0].id!==chosenType.id)){ const b0=performance.now(); if(nb) buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; } }   // (true: the preview keeps the racers it has; only the course is new)
+  previewPoolDrop();   // (whatever the boot made ahead and nobody took, and its cast: the line-up is the scene's from here on)
   PREVIEW.pending=false; PREVIEW.hold=0;
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
   let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
+}
+/* THE BOOT'S BUILD, A PIECE AT A TIME. The first home screen used to do all of its heavy work in two blocks: the course and
+   six character models built in one task, then every shader in the scene compiled inside the first frame drawn. For those seconds
+   the page could not answer a tap (the first visit's "Got it" seemed frozen). The same work is now a list of short steps, each in
+   a task of its own with a frame between them, so a tap is answered between any two:
+     the course · its shaders · each of the six racers (its model, then seated and its shaders, then drawn) · the card lifts.
+   Each racer is made into a pool (PREBUILD.pool, the line-up in PREBUILD.cast) and seated at once: buildRacers(true) takes the
+   model from the pool and seats the first PREBUILD.n of the cast, so the grid grows a racer at a time. renderer.compile moves
+   the shader work out of the frame (see warmShaders), and a frame is then drawn behind the tuning card (PREBUILD.draw), because
+   a GPU does the rest of its work (buffers, textures, the program's last link) the first time a thing is actually drawn: one
+   racer's worth a frame, not the whole scene's in the first frame the player sees.
+   While the first visit's welcome is up only the plain work is done (the course and the six models, each a short step, none of
+   it drawn): the window shows the course's poster, and the GPU's share (shaders, the frames drawn behind the card), whose length
+   no page can know, starts the moment the welcome closes. A pick or a flick during the boot takes over (previewNow) with whatever the pool holds; a race
+   started during it builds its own field, and the pool is dropped. */
+const PREBUILD={job:null, cast:null, pool:{}, loop:false, n:0, draw:0};
+function previewPoolTake(id){ const o=PREBUILD.pool[id]; if(!o) return null; delete PREBUILD.pool[id]; o.visible=true; return o; }
+function previewPoolDrop(){ for(const id in PREBUILD.pool){ const o=PREBUILD.pool[id]; scene.remove(o); disposeObject(o); } PREBUILD.pool={}; PREBUILD.cast=null; PREBUILD.n=0; PREBUILD.draw=0; }
+function previewBoot(){
+  const st=$('start'), wl=$('welcome');
+  const loop=()=>{ if(!PREBUILD.loop){ PREBUILD.loop=true; requestAnimationFrame(frame); } };
+  const alive=()=>state==='menu' && !st.classList.contains('hidden');
+  clearTimeout(PREVIEW.timer); PREVIEW.timer=0;   // (the deck's own set-up may already have asked for the build: this is it)
+  PREVIEW.pending=true; previewTune(true);
+  const steps=(function*(){
+    const b0=performance.now();
+    if(PREVIEW.built!==selTrack) buildTrack(selTrack);
+    loop(); yield;
+    const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
+    for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0, tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
+    const cast=PREBUILD.cast=[chosenType].concat(others.slice(0,5));
+    for(let k=0;k<cast.length;k++){ const t=cast[k];                        // the models, into the pool
+      const o=mcpIsolate(()=>makeCell(t.hue, t.id), 10+k); o.visible=false; scene.add(o); PREBUILD.pool[t.id]=o;
+      yield; }
+    while(wl && !wl.classList.contains('hidden')) yield;                    // the first visit's welcome: nothing for the GPU until it closes
+    try{ renderer.compile(scene, camera); }catch(e){ console.error(e); }
+    yield;
+    for(let k=0;k<cast.length;k++){
+      PREBUILD.n=k+1; buildRacers(true);                                    // seated: the grid so far (a pick that moved on is built here)
+      try{ renderer.compile(scene, camera); }catch(e){ console.error(e); }
+      PREBUILD.draw=1; while(PREBUILD.draw>0) yield; }                      // ...and drawn once, behind the card
+    DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name;
+    previewNow();
+  })();
+  PREBUILD.job=steps;
+  const run=()=>{
+    if(PREBUILD.job!==steps){ loop(); return; }                             // (previewNow took over, or a race built its own field)
+    if(!alive()){
+      if(PREVIEW.built<0) buildTrack(selTrack); loop();                     // (the loop never runs on a world that was not built)
+      if(state!=='menu'){ PREBUILD.job=null; PREVIEW.pending=false; previewPoolDrop(); return; }   // a race is on: it built what it needs
+      requestAnimationFrame(()=>setTimeout(run,0)); return; }               // another screen is over the home (the racer select, a lobby): the build waits for it
+    let r; try{ r=steps.next(); }catch(e){ console.error(e); PREBUILD.job=null; previewPoolDrop(); loop(); previewNow(); return; }
+    if(r.done){ if(PREBUILD.job===steps) PREBUILD.job=null; loop(); return; }
+    requestAnimationFrame(()=>setTimeout(run,0));                           // a frame, then a task: the browser paints and takes input between two steps
+  };
+  run();
 }
 /* ============== LUX: the engine's light pipeline ============== *
  * Until now the picture went straight from the scene to the screen: anything brighter than white clipped, every glow
@@ -87723,9 +87786,7 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
   const beat=0.5+0.5*Math.sin(tsec*1.6);
-  for(const p of TRACK_PULSE){ if(p.mat){
-    const b=new T.Color(p.base); b.multiplyScalar(0.7+beat*p.amp);
-    p.mat.emissive.copy(b); } }
+  for(const p of TRACK_PULSE){ if(p.mat) p.mat.emissive.set(p.base).multiplyScalar(0.7+beat*p.amp); }   // (set in place: no colour made per pulse per frame)
   if(TRACK_PULSE.motes){
     const md=TRACK_PULSE.motesDim||0;
     TRACK_PULSE.motes.material.opacity=(0.32+beat*0.3)*(md?md:1);
@@ -87884,8 +87945,9 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
   updateParticles(dt);
   perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
-  const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold);   // (the last picture stays up; the Horizon window has its card over it)
-  if(draw && !held && (!menuLo || (++menuTick&1))){ luxTick(dt); if(hzWin && HZV.rect.w>1) hzDraw(); else luxRender(); }
+  const warm=PREBUILD.draw>0 && state==='menu';                           // (the boot's build: one frame drawn behind the card for each piece it adds, see PREBUILD)
+  const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold) && !warm;   // (the last picture stays up; the Horizon window has its card over it)
+  if(draw && !held && (warm || !menuLo || (++menuTick&1))){ luxTick(dt); if(hzWin && HZV.rect.w>1) hzDraw(); else luxRender(); if(warm) PREBUILD.draw--; }
   if(PERF.on){ perfMark('render'); const ri=renderer.info; if(draw){ PERF.calls+=ri.render.calls; PERF.tris+=ri.render.triangles; } PERF.geos=ri.memory.geometries; PERF.texs=ri.memory.textures;
     const np=renderer.info.programs?renderer.info.programs.length:0; if(PERF.progN!=null && np!==PERF.progN && PERF.compiles.length<40) PERF.compiles.push({ frame:PERF.n, programs:np-PERF.progN, ms:+(performance.now()-PERF.f0).toFixed(1), what:renderer.info.programs.slice(Math.max(0,PERF.progN)).map(p=>p.name+(PERF.keyOf?PERF.keyOf(p):'')) }); PERF.progN=np;   // a frame that compiled shaders
     const ft=performance.now()-PERF.f0; if(PERF.ft.length<20000) PERF.ft.push(ft); if(ft>PERF.worst){ PERF.worst=ft; PERF.worstAt={ frame:PERF.n, seg:Object.assign({}, PERF.seg), prev:PERF.prevSeg }; } PERF.prevSeg=Object.assign({}, PERF.seg); }
@@ -90030,6 +90092,7 @@ const _origBuildRacers = buildRacers;
 // scratch on every flick of the course strip — up to half a second of the stall on an iPad — for a preview whose cast had not changed.
 // A race start never passes it: every race builds its own fresh line-up and state.
 buildRacers = function(reuse){
+  if(!reuse && (PREBUILD.job || PREBUILD.cast)){ PREBUILD.job=null; PREVIEW.pending=false; previewPoolDrop(); }   // a race builds its own field: what the home's boot made ahead goes
   if(MCP_SEED!=null && !reuse) mcpReseed(3);   // (seeded: the line-up and the field drawn from their own stream, whatever the course build used)
   ghostClear();   // a new grid: whatever ghost was on the scene goes with the old one
   // line-up: your chosen sperm + 5 of the OTHER characters as opponents (6 total —
@@ -90059,6 +90122,10 @@ buildRacers = function(reuse){
     for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0; const tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
     lineup=[chosenType, others[0], others[1], others[2], others[3], others[4]];
     // the preview keeps the opponents it has (a fresh draw would only mean rebuilding them); the pick itself is slot 0
+    // the boot's line-up, if it made one ahead (see PREBUILD): the same five rivals, the pick in front
+    // (a pick that moved on to one of those rivals: the first pick takes its place on the grid)
+    if(reuse && PREBUILD.cast){ const rest=PREBUILD.cast.slice(1).filter(t=>t!==chosenType); if(rest.length<5 && PREBUILD.cast[0]!==chosenType) rest.push(PREBUILD.cast[0]);
+      if(rest.length===5){ lineup=[chosenType].concat(rest); if(PREBUILD.n) lineup=lineup.slice(0,PREBUILD.n); } }   // (while the boot is still seating them: the grid so far)
     if(reuse && racers.length===6){ const old=racers.slice(1).map(r=>SPERM_TYPES.find(t=>t.id===r.id));
       if(old.every(t=>t && !t.hidden && t.id!==chosenType.id)) lineup=[chosenType, ...old]; }
   }
@@ -90118,7 +90185,7 @@ buildRacers = function(reuse){
     const s=SAMP[2];
     const lane=(k-(lineup.length-1)/2)*7.5;   // centered grid, spacing tightened from 9 to fit 6 within HW=22
     const keep=held[k];
-    const obj=keep ? keep.obj : mcpIsolate(()=>makeCell(t.hue, t.id), 10+k);        // full character model for everyone (you + opponents)
+    const obj=keep ? keep.obj : ((reuse && previewPoolTake(t.id)) || mcpIsolate(()=>makeCell(t.hue, t.id), 10+k));        // full character model for everyone (you + opponents); the boot's preview may have made it ahead
     // start the grid well behind the start/finish gantry (built at SAMP[0], ~y+14, full
     // road width) instead of almost on top of it — spawning this close put the chase
     // camera and the countdown's orbit cam right in the gate geometry for the opening
@@ -91792,6 +91859,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const t=TRACKS[i], el=hd.querySelector('.hz-tune'); if(!t||!el) return;
     const im=posterLoad(t), show=()=>{ if(TRACKS[selTrack]!==t && el.dataset.for!==t.name) return; el.style.backgroundImage='url("'+posterUrl(t)+'")'; el.classList.add('has-poster'); };
     el.dataset.for=t.name;
+    try{ localStorage.setItem('sr_poster',t.name.toLowerCase()); }catch(_){}   // (the next visit fetches it from the page's head)
     if(im.complete && im.naturalWidth) show(); else { el.classList.remove('has-poster'); el.style.backgroundImage=''; im.onload=show; im.onerror=()=>{ el.classList.remove('has-poster'); el.style.backgroundImage=''; }; }   // (until it is in: the outline, never the last course's picture)
     clearTimeout(poTimer); poTimer=setTimeout(()=>{ const ord=courseStripOrder(), k=ord.indexOf(i); for(const d of [1,-1,2,-2,3]){ const j=ord[k+d]; if(j!==undefined) posterLoad(TRACKS[j]); } },1200);
   }
@@ -91823,8 +91891,7 @@ $('start').classList.remove('hidden');
 state='menu';
 previewTune(true);
 requestAnimationFrame(()=>setTimeout(()=>{
-  previewNow();                // build the default circuit and show the grid behind the menu
-  requestAnimationFrame(frame);
+  previewBoot();               // build the default circuit and its grid behind the menu, a piece at a time (and start the loop)
   setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
 },0));
 
