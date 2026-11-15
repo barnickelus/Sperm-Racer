@@ -552,8 +552,9 @@ await check('Lucy: the boardwalk builds clear of the lane, her light and air cha
   json(await call('race_warp', { to: 2.97 })); json(await call('race_drive', { seconds: 6 }));
   assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors on Lucy');
   // what Lucy asked of the light pipeline frame by frame goes with her: the next course has its own settings
-  json(await call('race_setup', { course: 'Nova', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 0.3 }));
-  const nova = json(await call('race_fx', {})).lux.light; assert.equal(nova.bloom, 1.0); assert.equal(nova.mist, 0); assert.equal(nova.heat, 0);
+  // (Delilah asks for no air at all: none of Lucy's is left on her)
+  json(await call('race_setup', { course: 'Delilah', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 0.3 }));
+  const next = json(await call('race_fx', {})).lux.light; assert.ok(next.bloom < 1.0, 'the plain glow: ' + next.bloom); assert.equal(next.mist, 0); assert.equal(next.heat, 0);
 });
 
 await check('Vera: her lines glow past white with an afterglow in a lit violet haze, a held frame shows no trail, and the next course has no afterglow', async () => {
@@ -592,8 +593,9 @@ await check('the depth of the air: least straight up and most at the horizon, a 
   assert.ok(early.aer > 0.3 && early.lit > 0.2 && early.mist > 0.4, 'Aurora starts in mist, with the air lit and lighting the racers: ' + JSON.stringify(early));
   // the air alone, against none: it changes the distance, and the top of the picture (the least air) far less than its middle (the horizon)
   const none = { lux: { reset: true, aer: 0, mist: 0, heat: 0, lit: 0 } };
-  const a = json(await call('race_ab', { a: none, b: { lux: { reset: true, mist: 0, heat: 0, lit: 0, aer: 1, aerDen: 0.004, aerSky: 1, aerCol: 0xff00ff } }, keep: 'a' }));
-  assert.ok(a.changed > 0.1, `the air covers the distance (${a.changed})`);
+  const a = json(await call('race_ab', { a: none, b: { lux: { reset: true, mist: 0, heat: 0, lit: 0, aer: 1, aerDen: 0.0012, aerH: 60, aerSky: 1, aerCol: 0xff00ff } }, keep: 'a' }));
+  assert.ok(a.changed > 0.05, `the air covers the distance (${a.changed})`);
+  const hi = Math.max(...a.bands); assert.ok(a.bands[0] < hi * 0.6, `the top of the sky crosses the least air, the horizon the most (top to bottom: ${a.bands})`);
   // the light on the racers changes the racers, and little else
   const l = json(await call('race_ab', { a: none, b: { lux: { reset: true, aer: 0, mist: 0, heat: 0, lit: 1.5, litCol: 0xffe0a0 } }, keep: 'a' }));
   assert.ok(l.changed > 0.0005 && l.changed < 0.25, `the air's light falls on the racers and a pool of road (${l.changed})`);

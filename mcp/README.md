@@ -120,7 +120,7 @@ repeated and checked:
 
 | Tool | What it does |
 |---|---|
-| `race_ab` | **One frozen frame under two settings**, side by side, with a map of what changed and the numbers (share of pixels changed, mean difference, where). `a`, `b` are `race_fx` argument objects: `{lux:{on:false}}` against `{lux:{on:true}}`, `{tail:{}}` against `{tail:{happy:1}}`. |
+| `race_ab` | **One frozen frame under two settings**, side by side, with a map of what changed and the numbers (share of pixels changed, mean difference, where, and `bands`: the mean difference in eight bands, top to bottom). `a`, `b` are `race_fx` argument objects: `{lux:{on:false}}` against `{lux:{on:true}}`, `{tail:{}}` against `{tail:{happy:1}}`. |
 | `race_light` | **The light, measured**: the share of the picture that is over-bright, how much glow LUX adds and where it is hottest, with a map. Tune a course's light by the numbers. |
 | `race_review` | **The whole checklist in one call**, for a `character` (motion, the flow body's skin, a reference sheet, palette, surfaces, render cost) or a `course` (three views, HUD contrast, the light, what stands in the lane, shimmer; `deep:true` also races it to the finish and analyses its music). Every item comes back `{check, ok, value, want}`; `pass` is all of them. |
 

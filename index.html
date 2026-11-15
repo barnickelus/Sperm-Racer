@@ -84283,7 +84283,7 @@ function luxState(dt, me, racing){
   S.laps=lapsOf()||1;
   if(racing){ const pr=trackLoop ? ((!me._cp && (me.prog||0)>0.6) ? 0 : (me.prog||0)) : Math.max(0,Math.min(1,(me.idx||0)/Math.max(1,SAMP.length-1)));
     const u=trackLoop ? Math.min(1,((me.lap|0)+pr)/S.laps) : pr, fin=trackLoop ? ((me.lap|0)>=S.laps-1 ? 1 : 0) : (pr>0.8 ? 1 : 0);
-    S.u=SIM.warped || !(dt>0) ? u : S.u+(u-S.u)*e(4); S.lap=me.lap|0; S.prog=pr; S.place=me.place||1; S.done=!!me.finished;
+    S.u=u; S.lap=me.lap|0; S.prog=pr; S.place=me.place||1; S.done=!!me.finished;
     S.boost+=((me.boostT>0 ? 1 : 0)-S.boost)*e(6); S.speed+=(Math.min(1.3,Math.abs(me.spd||0)/140)-S.speed)*e(4); S.fly+=((me.air ? 1 : 0)-S.fly)*e(8); S.final+=(fin-S.final)*e(1.2);
     S.y=LUX.gy; S.tunnel+=((trackLoop && tunnelAt(pr) ? 1 : 0)-S.tunnel)*e(3);
     const egg=TRACK_PULSE.egg; if(egg && isFinite(me.x)){ egg.getWorldPosition(_luxV); const d=Math.hypot(_luxV.x-me.x, _luxV.z-me.z); if(S.d0==null || d>S.d0) S.d0=Math.max(d,1); S.near=Math.max(0,Math.min(1,1-d/S.d0)); } else S.near=0; }
@@ -89389,8 +89389,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
         await new Promise(res=>requestAnimationFrame(()=>{ g.drawImage(src,0,0,src.width,src.height,0,0,W,H); res(); })); return g; };
       let ga, gb; try{ ga=await grab(a); gb=await grab(b); if(keep==='a') fx(a); } finally { SIM.hold=wasHold; }
       const da=ga.getImageData(0,0,W,H).data, db=gb.getImageData(0,0,W,H).data, heat=document.createElement('canvas'); heat.width=W; heat.height=H; const gh=heat.getContext('2d'), hd=gh.createImageData(W,H);
-      let n=0, sum=0, x0=W, y0=H, x1=-1, y1=-1, brighter=0;
-      for(let i=0,p=0;i<W*H;i++,p+=4){ const d=Math.max(Math.abs(da[p]-db[p]),Math.abs(da[p+1]-db[p+1]),Math.abs(da[p+2]-db[p+2])); sum+=d;
+      let n=0, sum=0, x0=W, y0=H, x1=-1, y1=-1, brighter=0; const band=[0,0,0,0,0,0,0,0];
+      for(let i=0,p=0;i<W*H;i++,p+=4){ const d=Math.max(Math.abs(da[p]-db[p]),Math.abs(da[p+1]-db[p+1]),Math.abs(da[p+2]-db[p+2])); sum+=d; band[Math.min(7,(((i/W)|0)*8/H)|0)]+=d;
         brighter+=(db[p]+db[p+1]+db[p+2])-(da[p]+da[p+1]+da[p+2]);
         if(d>12){ n++; const x=i%W, y=(i/W)|0; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
         const k=Math.min(1,d/90); hd.data[p]=30+225*k; hd.data[p+1]=24+120*k*k; hd.data[p+2]=40*(1-k); hd.data[p+3]=255; }
@@ -89401,7 +89401,8 @@ if(new URLSearchParams(location.search).has('mcp')) import('./mcp/bridge.js').th
       const url=out.toDataURL('image/jpeg',0.9);
       return { mimeType:'image/jpeg', data:url.slice(url.indexOf(',')+1), width:out.width, height:out.height,
         changed:+(n/(W*H)).toFixed(4), meanDelta:+(sum/(W*H)).toFixed(2), brighter:+(brighter/(3*W*H)).toFixed(2),
-        where:n ? { x:[+(x0/W).toFixed(2), +(x1/W).toFixed(2)], y:[+(y0/H).toFixed(2), +(y1/H).toFixed(2)] } : null };
+        where:n ? { x:[+(x0/W).toFixed(2), +(x1/W).toFixed(2)], y:[+(y0/H).toFixed(2), +(y1/H).toFixed(2)] } : null,
+        bands:band.map(v=>+(v/(W*H/8)).toFixed(2)) };   // (the mean difference in eight bands of the picture, top to bottom)
     },
     /* The light, measured: how much of the picture is over-bright (what LUX blooms from), how much glow that puts on the
        picture and where it is hottest, with a map of it. To tune a course's light by numbers, not by eye. */
