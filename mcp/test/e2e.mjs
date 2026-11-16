@@ -666,6 +666,29 @@ await check('the warp has degrees: a drift opens it least and shortest, a boost 
   await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
 });
 
+await check('Big Shot Darius stands in a cartridge and fires himself on a boost (the item further than a drift); Ryū Kenji Dragon Jr. is a dragon on four legs', async () => {
+  const coast = (seconds) => call('race_drive', { seconds, autopilot: false, keys: [] });
+  json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+  const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
+  const walk = n => { if (n.name) names.push(n.name); (n.children || []).forEach(walk); }; walk(round);
+  for (const k of ['ksh-case', 'ksh-case-mesh', 'ksh-belt', 'ksh-cape', 'ksh-collar', 'ksh-lift']) assert.ok(names.includes(k), 'the round has its ' + k + ': ' + names.join(','));
+  const lean = async () => (json(await call('scene_graph', { root: 'ksh-case', depth: 0 })).root.rotation || [0])[0];
+  json(await call('race_fx', { boost: 'driftS' })); await coast(0.35); const ld = await lean();
+  await coast(3);
+  json(await call('race_fx', { boost: 'item' })); await coast(0.35); const li = await lean();
+  assert.ok(ld > 0.25 && li > 0.9 && li > ld + 0.3, `fired: a drift tips him a little, the boost item nearly flat (${ld.toFixed(2)} rad against ${li.toFixed(2)})`);
+  await coast(3); const lr = await lean(); assert.ok(lr < li - 0.4, `and he stands back up after (${lr.toFixed(2)})`);
+  assert.ok(image(await call('race_sheet', { rest: true, cell: 200 })), 'his sheet');
+  json(await call('race_setup', { course: 'Victoria', character: 'ryuDragonJr', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+  const legs = json(await call('scene_graph', { depth: 12, maxNodes: 2000 })), found = { leg: 0, tuft: 0 };
+  const walk2 = n => { if (n.name === 'ryd-leg') found.leg++; if (n.name === 'ryd-tuft') found.tuft++; (n.children || []).forEach(walk2); }; walk2(legs.root);
+  assert.ok(found.leg >= 4 && found.tuft >= 1, 'four legs and a tuft at the tail: ' + JSON.stringify(found));
+  const m = json(await call('race_motion', { seconds: 2 })), P = Object.fromEntries(m.probes.map(q => [q.probe, q]));
+  assert.ok(P.footFL && P.footFL.travel > 2 && P.footFR.travel > 2, 'his feet paddle as he goes: ' + JSON.stringify([P.footFL, P.footFR]));
+  assert.ok(P.neck && P.neck.snaps <= 2, 'and his neck eases: ' + JSON.stringify(P.neck));
+  assert.ok(image(await call('race_sheet', { rest: true, cell: 200 })), 'his sheet');
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);
