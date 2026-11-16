@@ -75323,6 +75323,7 @@ function flowAct(F, r, dt){
   if(r.celebT>0 || (r.finished && r.place<=3)){ T.happy=1; T.angry=0; } else if(r.finished) T.angry=Math.max(T.angry,0.55);
   if(T.happy>T.angry) T.angry*=1-T.happy; else T.happy*=1-T.angry;                               // one feeling at a time
   if(T.limp){ T.happy=0; T.angry=0; T.fear=0; }
+  const ax=F.ax; if(ax) for(const k of FLOW_ACT.keys) if(ax[k]>T[k]) T[k]=ax[k];   // (a racer's own acting may ask for a feeling too: THE NEO ACTOR)
   const fo=FLOW.force; if(fo && r.you) for(const k of FLOW_ACT.keys) if(fo[k]!==undefined) T[k]=fo[k];
   const UP={stiff:10,happy:6,angry:8,fear:9,limp:10,brake:8,air:8}, DN={stiff:2.4,happy:2.2,angry:1.8,fear:3,limp:3,brake:4,air:4}; let any=0;
   for(const k of FLOW_ACT.keys){ A[k]+=(T[k]-A[k])*Math.min(1,(T[k]>A[k]?UP[k]:DN[k])*dt); any+=A[k]; }
@@ -75331,7 +75332,7 @@ function flowAct(F, r, dt){
   A.kickV+=(-80*A.kick-10*A.kickV)*dt; A.kick+=A.kickV*dt; A.any=any+Math.abs(A.kick)+A.snap;
   const base=4+spd*0.06;
   A.phx+=dt*base*(0.75*A.stiff+0.7*A.fear+0.2*A.air-0.5*A.limp-0.55*A.angry);   // the swim's own beat: quick when stiff, nearly stopped when sulking
-  A.wag+=dt*(13+3*A.happy); A.th+=dt*(5.5+2.5*A.angry); A.sh+=dt*41;
+  A.wag+=dt*(13+3*A.happy)*(ax?ax.wagF:1); A.th+=dt*(5.5+2.5*A.angry); A.sh+=dt*41;
 }
 function flowDrive(o, r, dt){
   const F=o.userData.flow; if(!F) return; F.defer=true; flowAct(F, r, dt);
@@ -75353,7 +75354,7 @@ function flowDrive(o, r, dt){
 /* What the animation asks of the tail, in the body's own space: the swim (the wave, or a styled swim, or the lash) plus
    what the springs add. A curve, not yet the spine: flowFlush joins it to the head and lays the skin along it. */
 function flowWave(g, phase, amp, lift, st){
-  const ud=g.userData, F=ud.flow, n=F.n, i0=F.i0, LK=TAIL_SWIM.lag, tailS=ud.tailS, lash=_WL.on, BX=F.bx, BY=F.by, BZ=F.bz, A=F.a;
+  const ud=g.userData, F=ud.flow, n=F.n, i0=F.i0, LK=TAIL_SWIM.lag, tailS=ud.tailS, lash=_WL.on, BX=F.bx, BY=F.by, BZ=F.bz, A=F.a, AX=F.ax||null;
   F.phase=phase; F.amp=amp;
   // the acting (flowAct): how much of the plain swim is left, how round it is, and what each feeling adds
   let ampK=1, hel=FLOW.HEL, act=0, ph=phase, lagK=1;
@@ -75367,13 +75368,14 @@ function flowWave(g, phase, amp, lift, st){
       else { const a=ph-lag*lagK, e=amp*FLOW.AMP*ampK*t*t; x=Math.sin(a)*e; y=hel*Math.cos(a)*e; }
       if(A && A.any>0.003){ const t2=t*t, tip=sm(0.4,1,t), hk=sm(0.7,1,t);
         x+=A.kick*9*Math.pow(t,1.3); zo+=A.snap*5*hk*hk; y+=A.snap*2.2*t2;                       // the boost's kick and the whip's recoil; the cracked tip, coiled
-        x+=act*( A.happy*FLOW_ACT.WAG*Math.sin(A.wag-2.2*t)*tip                                // the wag
+        x+=act*( A.happy*FLOW_ACT.WAG*(AX?AX.wag:1)*Math.sin(A.wag-2.2*t)*tip                                // the wag
                + A.angry*(FLOW_ACT.SLAP*Math.pow(t,1.25)*Math.tanh(2.6*Math.sin(A.th-1.3*t)) + 1.7*Math.sin(3*A.th+1)*sm(0.78,1,t))   // the slow slap, and the tip's flick
                + A.fear*0.8*Math.sin(A.sh-9*t)*t );                                            // the shiver
         y+=act*( A.happy*(4.4*Math.pow(t,1.6)+3.4*t2*t2*t+0.9*Math.sin(A.wag)*Math.sin(A.wag)*t2)   // carried high, tip curled, a bounce in it
                - A.angry*2.3*t2 + A.fear*3.4*Math.pow(t,1.4) - A.limp*3.2*t2 + A.brake*2.8*t2 + A.air*2.6*t2 );
         zo+=act*A.happy*2.0*hk*hk;                                          // ...and the curl: the tip comes back over itself
         if(y<-2.6*t) y=-2.6*t; }                                                               // (never through the road)
+      if(AX && !lash){ const t2=t*t; if(AX.ty) y+=AX.ty*t2*t; if(AX.sw) x+=AX.sw*Math.sin(AX.sp-1.6*t)*t2; }   // the actor's tap of the tip and its lazy swish
       const d=21*t; x+=F.sw*d*d*0.5+Math.sin(F.dr)*d; y+=(F.vy+(lift||0))*t*t+(tailS?tailS(t)*_TW.pg:0); }
     BX[i]=x; BY[i]=y; BZ[i]=F.z[i]+zo; }
   if(!F.defer) flowFlush(g);
@@ -77899,7 +77901,7 @@ function dbTick(o, r, now){
   S.psiH=0.24*ldClamp(S.turnF*14,-1,1) - 0.55*ar*DB_ENV(0)*Math.cos(sp) + 0.12*db*S.dance;   // into the turn; answering the stroke; the dance
   S.rhoH=S.lookR + S.F[DBF_I.ht] + 0.2*db*S.dance + 0.1*dh2*S.lose;
   // the bob: squash on the downbeat, stretch on the off-beat, volume kept; beat 1 of the bar a bigger hit. (fire laughs at twice the beat)
-  dbSpring(S,'lf','lfV',S.cur==='fire'?1:0,9,1,dt);             // (eased in and out on a spring: both shapes peak on the beat, so the blend never jumps)
+  dbSpring(S,'lf','lfV',S.cur==='fire'||S.cur==='haha'?1:0,9,1,dt);             // (eased in and out on a spring: both shapes peak on the beat, so the blend never jumps)
   const bob=Math.cos(2*Math.PI*C.phase)*(1-S.lf)+Math.cos(4*Math.PI*B)*S.lf, bd=Math.min(C.bar,4-C.bar), accent=Math.exp(-(bd*bd)/0.1);
   let sq=(idle?0.085:0.068)*bob*(1+0.6*accent)*(1-0.6*S.lose);
   if(spin && now-E.takeT<0.22) sq=0;
@@ -77986,7 +77988,7 @@ function dbFace(S, C, now, dt, E, lk, portrait){
     const a=2*Math.PI*B;
     eb[k*4]=ldClamp(gx,-1,1)*rx*0.24+dz*0.26*rx*Math.cos(a); eb[k*4+1]=ldClamp(gy,-1,1)*ry*0.2+dz*0.24*ry*Math.sin(a)-0.13*ry; eb[k*4+2]=F[I.pup]; eb[k*4+3]=0.85;
     const lid=k?F[I.lidR]:F[I.lidL]; ld[k*4]=lid+(-1.12-lid)*bk; ld[k*4+1]=F[I.slant]; ld[k*4+2]=lidD+(-0.2-lidD)*bk*0.3; ld[k*4+3]=lidDC; }
-  let mO=F[I.mO]; if(S.cur==='fire') mO*=0.72+0.28*Math.cos(4*Math.PI*B);   // the laugh: at twice the beat
+  let mO=F[I.mO]; if(S.cur==='fire' || S.cur==='haha') mO*=0.72+0.28*Math.cos(4*Math.PI*B);   // the laugh: at twice the beat (haha: the Neo actor's name for it)
   S.FU.uMA.value.set(F[I.mS]*0.32*Math.max(0,F[I.mR]), DB_MOUTH.y, F[I.mW], Math.max(0,mO));
   S.FU.uMB.value.set(F[I.mC], ldClamp(F[I.mR],0,1), ldClamp(F[I.mT],0,1), ldClamp(F[I.mTg],0,1));
   S.FU.uMC.value.set(F[I.mS], S.fem?1:0, ldClamp(chk,0,1), 0);
@@ -78051,10 +78053,39 @@ uniform DirectionalLight directionalLights[ NUM_DIR_LIGHTS ];
     Lk=normalize(directionalLights[ 0 ].direction + vec3(0.0, 0.25, 0.7));
     #endif
     float nl=dot(normalize(vNv), Lk), aa=fwidth(nl)*0.9+0.003; lit=smoothstep(uCel.x-aa, uCel.x+aa, nl); }   // (TPL_GLSL_CEL's own test)`);
-// the face's material: Downbeat's shader with the scene's lights in it (for the sun, above) and the head's cel threshold
-function neoFaceMat(fs, FU, cel){
-  FU.uCel=cel.uCel;
-  const m=dbShader(DB_FACE_VS, fs, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4, lights:true});
+/* The face LIES ON the skin, wherever it has travelled. It was a rigid shell cut to the resting head and turned with the
+   face rig; but a glance turns the face a little way round a head that has hardly begun to round (the look back's ball
+   comes on with the turn), and a rigid shell turned on an egg dips under it on the side it turns from: the far eye was
+   eaten away along a jagged line. Each vertex is now placed on the head itself: its direction from the head's centre,
+   turned by the face's travel (uPhi), out to the resting head's surface in that direction, and then through the skin's
+   own squash, rounding and lift (neoSq's arithmetic in the head's real units, on the head's own uniforms). So the face
+   is exactly a skin of paint at any turn, squash or smear. Its mesh takes the inverse of the rig's matrix (neoTick). */
+const NEO_FACE_VS=`
+attribute vec2 aF;
+uniform vec4 uEA[2];
+uniform float uPop, uPhi;
+uniform vec4 uNeoSq;
+uniform vec3 uNeoRd;
+varying vec2 vF; varying vec3 vNv;
+#include <fog_pars_vertex>
+const vec3 HR2=vec3(${(HEAD_RX*HEAD_RX).toFixed(4)},${(HEAD_RY*HEAD_RY).toFixed(4)},${(HEAD_RZ*HEAD_RZ).toFixed(4)});
+void main(){
+  vec3 q=position-vec3(0.0,${HEAD_CY.toFixed(4)},0.0); float c=cos(uPhi), s=sin(uPhi);
+  vec3 d=normalize(vec3(c*q.x+s*q.z, q.y, c*q.z-s*q.x));                       // where on the head this point of the face now is
+  vec3 p=d*inversesqrt(dot(d*d,1.0/HR2)), n=normalize(p/HR2);                   // the resting head's surface there, and its normal
+  p+=n*0.05;
+  for(int i=0;i<2;i++){ vec2 e=(aF-uEA[i].xy)/(uEA[i].zw*1.15); p+=n*uPop*0.7*exp(-2.2*dot(e,e)); }   // the take: the eyes pop out
+  float w=smoothstep(-4.75,-1.5,p.z), sq=uNeoSq.x*w; vec3 r=mix(vec3(1.0),uNeoRd,smoothstep(-4.75,-3.0,p.z));
+  p=vec3(p.x*(1.0+0.5*sq)*r.x, p.y*(1.0-sq)*r.y+uNeoSq.y*w+${HEAD_CY.toFixed(4)}, p.z*(1.0+0.5*sq)*r.z);   // the skin's own squash, rounding and lift
+  vF=aF; vNv=normalize(normalMatrix*n);
+  vec4 mvPosition=modelViewMatrix*vec4(p,1.0);
+  gl_Position=projectionMatrix*mvPosition;
+  #include <fog_vertex>
+}`;
+// the face's material: Downbeat's fragment shader with the scene's lights in it (for the sun, above) and the head's cel threshold
+function neoFaceMat(fs, FU, cel, UH){
+  FU.uCel=cel.uCel; FU.uPhi={ value:0 }; FU.uNeoSq=UH.uNeoSq; FU.uNeoRd=UH.uNeoRd;   // (the head's own squash and rounding, by reference)
+  const m=dbShader(NEO_FACE_VS, fs, FU, {transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-4, lights:true});
   Object.assign(m.uniforms, T.UniformsUtils.merge([T.UniformsLib.lights]), FU);   // (three fills the lights in; the face's own stay shared by reference)
   return m;
 }
@@ -78128,10 +78159,21 @@ function neoInkMat(U, col){
 const NEO_LOOKS={ wary:{lidL:1.15,lidR:1.15,pup:0.6,eyeS:1.08,brL:0.5,brR:0.5,brT:-0.5,brA:0.35,mW:0.78,mO:0.26,mC:-0.5,mR:0.15,mT:0.7,chk:0,gy:-0.1},
   check:{lidL:0.78,lidR:0.96,brL:0.08,brR:0.5,brT:-0.05,brA:0.45,mW:0.98,mO:0,mC:0.6,mS:0.4,chk:0.4} };
 NEO_LOOKS.back=NEO_LOOKS.check;   // a pose (race_pose, a sheet): the look back over the shoulder itself, wearing the check's face
-const NEO_LIST=DB_LIST.concat(['wary','check','back']);
+// the actor's faces (see THE NEO ACTOR). Five of its own: a yawn, glee (eyes shut, laughing), a pout, a sly sideways look, calm
+// (eyes shut over a small smile). Seven are the race's poses under names no kit hangs a gag on (NEO_ALIAS).
+Object.assign(NEO_LOOKS, {
+  yawn:{lidL:-0.85,lidR:-0.85,lidD:-1.0,brL:0.62,brR:0.62,brT:-0.3,brA:0.5,mW:0.72,mO:1.5,mC:0,mR:1,mT:0.2,mTg:0.9,chk:0,hp:-0.1},
+  glee:{lidL:0.95,lidR:0.95,lidD:0.3,lidDC:1,brL:0.6,brR:0.6,brT:-0.2,brA:0.6,mW:1.58,mO:1.1,mC:1.2,mT:1,mTg:0.55,chk:1,hp:-0.1},
+  pout:{lidL:0.3,lidR:0.3,slant:-0.35,lidD:-0.9,brL:0.15,brR:0.15,brT:-0.5,brA:0,mW:0.5,mO:0.08,mC:-0.7,mR:0.6,chk:0,gx:0.3,gy:-0.4,hp:0.18},
+  sly: {lidL:0.34,lidR:0.5,slant:0.15,lidD:-0.9,lidDC:0.3,brL:-0.1,brR:0.4,brT:0.1,brA:0.3,mW:1.0,mO:0,mC:0.55,mS:0.8,chk:0.5,gx:0.7,ht:0.08},
+  calm:{lidL:0.95,lidR:0.95,lidD:0.28,lidDC:1,brL:0.34,brR:0.34,brT:-0.12,brA:0.5,mW:1.12,mO:0,mC:0.85,chk:0.75,hp:-0.04} });
+const NEO_ALIAS={smug:'pass', glum:'passed', haha:'fire', grr:'angry', keen:'boost', eek:'wary', hmm:'check'};
+const NEO_ACT_FACES=['yawn','glee','pout','sly','calm'].concat(Object.keys(NEO_ALIAS));
+const NEO_LIST=DB_LIST.concat(['wary','check','back'], NEO_ACT_FACES);
 function neoEV(over, list, brA){   // a kit's expressions as arrays: Downbeat's, the look-back pair, then the kit's own over them
-  const out={}; for(const k of list){ const src=Object.assign({}, DB_EXPR[k], NEO_LOOKS[k], over&&over[k]); if(brA && !(over&&over[k])) src.brA=(src.brA!=null?src.brA:DB_EXPR_BASE.brA)+brA;
-    const a=new Float32Array(DBF.length); DBF.forEach((f,i)=>a[i]=(src[f]!=null?src[f]:DB_EXPR_BASE[f])); out[k]=a; }
+  const out={}; for(const k0 of list){ const k=NEO_ALIAS[k0] && !(over&&over[k0]) ? NEO_ALIAS[k0] : k0;   // (an alias is the kit's own version of the pose it stands for)
+    const src=Object.assign({}, DB_EXPR[k], NEO_LOOKS[k], over&&over[k]); if(brA && !(over&&over[k])) src.brA=(src.brA!=null?src.brA:DB_EXPR_BASE.brA)+brA;
+    const a=new Float32Array(DBF.length); DBF.forEach((f,i)=>a[i]=(src[f]!=null?src[f]:DB_EXPR_BASE[f])); out[k0]=a; }
   return out; }
 const NEO_EV=neoEV(null, NEO_LIST);
 function dressNeoProto(g, K){ return dressNeo(g, K, NEO); }
@@ -78140,7 +78182,8 @@ function dressNeoProto(g, K){ return dressNeo(g, K, NEO); }
    paint (skinU its uniforms); face {skn, sknS, wht, whtS, mth, tng, acc} the face's colours; browL, browTh the brows; ev
    its expressions (DB_EV's shape) and list their names; hair(col) its own hair on the tuft's spring ({parts, tip, root}), hairPaint(geo),
    flexK how far the spring bends it; dress(g, K, ctx) whatever else it wears, and tick(o, r, now, dt, S, C, q) what
-   that does each frame. */
+   that does each frame (q.act: the actor's channels this frame); act its manners, the body language it plays and how
+   (see THE NEO ACTOR and THE NEO CAST'S MANNERS: a new kit sets <ITS PROFILE>.act there). */
 function dressNeo(g, K, P){
   const ud=g.userData, h=P.skin, skin=new T.Color().setHSL(h[0]/360,h[1],h[2]), ink=dbLin(P.ink);
   // the stock face goes (its eyes, pupils, catch-lights); the mouth stays as the hidden handle syncObjects scales
@@ -78171,8 +78214,8 @@ function dressNeo(g, K, P){
     uWht:{value:dbLin('#fdfbf4')}, uWhtS:{value:dbLin('#d6e4e6')}, uInk:{value:ink}, uMth:{value:dbLin('#3c1218')}, uTng:{value:dbLin('#e0584a')}, uAcc:{value:dbLin('#e2412f')} };
   if(P.face) for(const k in P.face){ const n='u'+k[0].toUpperCase()+k.slice(1); (FU[n]||(FU[n]={value:null})).value=dbLin(P.face[k]); }
   if(P.faceU) Object.assign(FU, P.faceU());
-  const face=new T.Mesh(neoFaceGeometry(), neoFaceMat(P.faceFS||NEO_FACE_FS, FU, cel));
-  face.name='neo-face'; face.renderOrder=1; rig.add(face);
+  const face=new T.Mesh(neoFaceGeometry(), neoFaceMat(P.faceFS||NEO_FACE_FS, FU, cel, UH));
+  face.name='neo-face'; face.renderOrder=1; face.matrixAutoUpdate=false; rig.add(face);   // (it lies on the skin by its own shader: its matrix undoes the rig's, see NEO_FACE_VS)
   const BU={ uBr:{value:new Float32Array(8)}, uBrL:{value:P.browL||0.64}, uInk:{value:ink} };
   const brows=new T.Mesh(neoBrowGeometry(), dbShader(DB_BROW_VS, DB_BROW_FS, BU, {transparent:true, depthWrite:false, side:T.DoubleSide}));
   brows.name='neo-brows'; brows.renderOrder=1; rig.add(brows);
@@ -78193,7 +78236,7 @@ function dressNeo(g, K, P){
   for(const k in pr) g.add(bodyPart(pr[k]));
   ud.motionProbes=[['beatClock',pr.beat,'pos'],['bob',pr.bob,'pos'],['vBob',pr.vb,'pos'],['vStroke',pr.vs,'pos'],['tipSway',pr.sw,'pos'],['tuftTip',tProbe,'pos']];   // tipSway: the swim's sideways reach at the tip, as asked of the skin this frame
   const EV=P.ev||NEO_EV;
-  ud.neo={ t:null, rig, FU, BU, UH, HU, P, EV, brTh:P.browTh||0, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
+  ud.neo={ t:null, rig, face, FU, BU, UH, HU, P, EV, brTh:P.browTh||0, fem:false, gs0:0, g0:1, g1:1, gx0:0, gL:2, gOn:false, gReq:1, sig:0, lastB:null, tph:0, tphV:0, tdt:1/60,
     F:new Float32Array(EV.rest), FV:new Float32Array(DBF.length), FT:new Float32Array(EV.rest), cur:'rest', want:'rest', next:null, nextAt:0,
     blinkAt:4, blink:0, rs:4241, bob:0, lf:0, lfV:0, dance:0, danceV:0, lose:0, loseV:0, idl:1, idlV:0, tk:1, tkV:0, tk0:1, tk0V:0, fk:0, fkV:0, flickT:-9, spn:0, spnV:0, sp:0, spV:0, pSpin:false, nkIn:new T.Quaternion(), nkOut:new T.Quaternion(), nkX:new T.Quaternion(), eu:new T.Euler(),
     ty:0, tyV:0, tp:0, tpV:0, tw:0, hdP:null, pr, t0:null, phi:0, phiP:0, tst:0, tstV:0, rd:0, gzK:1, rigB:null, antG:null, antT:null, antS:1, antY0:0, antZ:true, antLoud:false, flowPosed:false,
@@ -78202,10 +78245,295 @@ function dressNeo(g, K, P){
     set(name, hold, instant){ const S=ud.neo; if(!name){ this.forced=null; this.hold=0; return; } this.forced=name; this.hold=hold==null?8:hold;
       if(instant){ S.F.set(S.EV[name]); S.FT.set(S.EV[name]); S.FV.fill(0); S.cur=name; S.want=name; S.next=null; this.cur=name; } } };
   ud.tick=neoTick; ud.tailHook=neoTailHook; ud.whipHold=dbWhipHold; ud.beatOf=beatOf;
+  // the actor's handle: play a phrase by name, or the next of the racer's show-off phrases (the select stage's tap)
+  ud.act={ play:(name, o2)=>naQueue(ud.neo, name, Object.assign({ now:true }, o2)), show(){ const S2=ud.neo, Pn=naPersona(S2.P), A=S2.act||naState(S2); return naQueue(S2, Pn.show[A.showI++%Pn.show.length], { now:true }); },
+    get names(){ return Object.keys(NEO_MOVES); }, get cur(){ const A=ud.neo.act; return A && A.cur ? A.cur.name : null; } };
   if(P.dress) P.dress(g, K, { rig, ink, cel, UH, skin, S:ud.neo });
   dbFace(ud.neo, DB_PORTRAIT, 0, 0, ud.neo.ev, null, true);   // (the face drawn before its first frame)
   return true;
 }
+/* ============== THE NEO ACTOR: body language for every racer on the Neo template ============== *
+ * The kit already had a face that acts, a tail that feels (flowAct), a bob on the beat, a win dance and the look back.
+ * What it did not have was a BODY that acts: every Neo racer stood and drove the same way, and all of a racer's
+ * character was in its face and its props. The actor is a library of body-language phrases, the way a 1930s short is
+ * built from stock gestures (the take, the laugh, the sulk, the strut), played by one scheduler, in each racer's own
+ * manner.
+ *
+ *   CHANNELS  what a phrase may move, all of it added to what the kit already does:
+ *               hp hy hr   the head on its neck: nod (+ down), turn, tilt (asked of the flow body's neck, which eases it)
+ *               sq sz dy   the head's squash (+) or stretch (-), its smear along the way it is going (+ longer), and its lift
+ *               by br bp bw the whole body: up, roll, pitch (+ nose down), yaw
+ *               ty sw      the tail: a tap of the tip (units up), a lazy swish (units; the phase is the actor's)
+ *               happy angry fear limp stiff   the tail's feelings (flowAct's own channels, asked for by name)
+ *               calm       how much of the beat's bob is held still (0..1)
+ *               flick blink  the tuft flicked, a blink (on a rising edge)
+ *   FACES     a phrase wears a face of the actor's own (NEO_ACT_FACES), never one of the race's (pass, win, angry...):
+ *             every kit hangs its gags on those names, and a nod on the grid must not draw Ryu's sword. Seven are the race's
+ *             poses under another name (NEO_ALIAS: smug = pass, glum = passed, haha = fire, grr = angry, keen = boost,
+ *             eek = wary, hmm = check), taken from the kit's own version of each, so Leif's smug is still deadpan; five are
+ *             new (yawn, glee, pout, sly, calm).
+ *   PHRASES   NEO_MOVES: each {n: its length in beats, face: the expression it wears (if the face is free), now: starts
+ *             at once (a landing, a bump) instead of on the coming beat, f(c, b, u, n, d): writes the channels at beat b
+ *             of n (u = b/n; d = +1 or -1, a side drawn when it starts)}. Accents are written to land ON whole beats.
+ *   WHEN      the race:  a place taken or lost, a hit shaken off, a rival spun out near by (the laugh), a boost
+ *                        lighting (the launch), a jump and its landing, a lap, an item picked up, paint traded, someone
+ *                        bearing down; the lights counting down (a crouch that deepens, and the launch at GO)
+ *             idling:    on the grid, the home window and the select stage, a fidget every bar or three
+ *             cruising:  alone on the road with nothing happening, one now and then
+ *             the finish: a cycle of the racer's own win (or lose) phrases under the dance
+ *             always:    a lean of the head into a corner, a stretch under acceleration and a squash under braking,
+ *                        the head lolling round while dizzy, a struggle in the dam's glue, the racer's own carriage
+ *   WHO       a racer's persona (its profile's `act`, over NEO_ACT_DEF) says which phrases it uses for what and how:
+ *             amp (how big), tempo (2 = half time), fidget (how often), lean, accel, hop, body (how much of the whole-body
+ *             channels it takes: 0 for a kit that poses its own body), carry (its resting carriage:
+ *             chin, tilt, height), wag / wagF (the tail's wag: reach, rate), idle / cruise {phrase: weight},
+ *             on {event: [phrases]}, show (what the select stage's tap runs through).
+ *   MANNERS   one phrase at a time (a new one fades the old out); a reaction waits for the look back and for a kit's own
+ *             gag to finish (a kit expression on the face, or one forced), and is dropped if that takes too long; nothing
+ *             starts in a spin. The neck's share goes through the flow body's easing, so race_review's neck check holds.
+ *   ud.act    {play(name), show(), names, cur}: for the select stage, a film, or a kit that wants a phrase of its own. */
+const NA_P=x=>x<=0||x>=1?0:Math.sin(Math.PI*x)*Math.sin(Math.PI*x);          // a bump: 0 at both ends, 1 in the middle
+const NA_W=(u,a,b)=>dbSm5(u/(a||0.15))*dbSm5((1-u)/(b||0.2));                // a window over a phrase: in over a, out over b
+const NA_S=x=>Math.sin(2*Math.PI*x);
+const NA_E=(b,a,z,w)=>dbSm5((b-a)/(w||0.3))*(1-dbSm5((b-z)/(w||0.3)));       // held from beat a to beat z, eased over w
+const NA_CH=['hp','hy','hr','sq','sz','dy','by','br','bp','bw','ty','sw','happy','angry','fear','limp','stiff','calm','flick','blink'];
+// how big each channel plays (the phrases are written at a modest size; a rubber-hose body wants them bold)
+const NA_G={hp:1.25, hy:1.15, hr:1.3, sq:1.15, by:1.8, br:1.7, bp:1.6, bw:1.6, ty:1.6, sw:1.5};
+const NEO_MOVES={
+  // ---- reactions
+  yes:    {n:2.6, face:'smug',   f(c,b){ const p=NA_P(b-0.5)+0.8*NA_P(b-1.5); c.hp=0.3*p; c.sq=0.04*p; c.happy=0.6; }},              // two nods, down on the beat
+  no:     {n:4,   face:'glum', f(c,b,u){ const w=NA_W(u,0.1,0.2); c.hy=0.32*Math.sin(Math.PI*b)*w; c.hp=0.08*w; c.angry=0.5*w; }},
+  cheer:  {n:2.75,face:'smug',   f(c,b){ const k=NA_P(b), j=NA_P((b-0.9)/1.1), l=NA_P((b-1.85)/0.75);                               // crouch, off on the beat, down on the next
+            c.sq=0.13*k-0.15*j+0.1*l; c.by=-0.35*k+1.9*j; c.hp=0.1*k-0.14*j; c.happy=1; c.flick=l; }},
+  laugh:  {n:4,   face:'haha',   f(c,b,u){ const w=NA_W(u,0.1,0.2); c.hp=-0.16*w; c.by=0.42*NA_P((b*2)%1)*w; c.br=0.06*NA_S(b/2)*w; c.happy=w; }},
+  sulk:   {n:6,   face:'pout',   f(c,b,u){ const w=NA_W(u,0.12,0.25); c.hp=0.3*w; c.by=-0.5*w; c.dy=-0.08*w; c.hy=0.1*NA_S(b/2)*w*dbSm5((u-0.3)/0.2); c.limp=0.7*w; c.calm=w; }},
+  rage:   {n:3,   face:'grr',  f(c,b,u){ const w=NA_W(u,0.08,0.25); c.by=0.7*NA_P((b*2)%1)*(b<2?1:0); c.hy=0.14*Math.sin(Math.PI*b)*w; c.sq=0.06*w; c.angry=1; }},   // four stamps
+  flinch: {n:1.5, now:1, face:'eek', f(c,b){ const e=b<0.15?dbSm5(b/0.15):Math.exp(-(b-0.15)*3.2)*(1-dbSm5((b-1.1)/0.4)); c.sq=0.17*e; c.hp=0.2*e; c.by=-0.45*e; c.fear=e; c.blink=b<0.12?1:0; }},
+  shiver: {n:2,   face:'eek',   f(c,b,u){ const w=NA_W(u,0.1,0.4); c.bw=0.09*NA_S(b*4)*w; c.br=0.05*NA_S(b*4+0.25)*w; c.sq=0.06*w+0.03*NA_S(b*4)*w; c.fear=w; }},
+  launch: {n:2,   now:1, f(c,b){ const k=NA_P(b/0.5), x=Math.max(0,b-0.3), s=(1-Math.exp(-x*9))*Math.exp(-x*2.2)*1.6*(1-dbSm5((b-1.5)/0.5));       // rear back, then the long stretch
+            c.sq=0.14*k-0.04*s; c.sz=-0.1*k+0.3*s; c.bp=-0.09*k+0.1*s; c.by=-0.2*k+0.25*s; c.stiff=1; }},
+  land:   {n:1.2, now:1, f(c,b){ const e=Math.exp(-b*4.5)*Math.cos(2*Math.PI*b*1.1)*(1-dbSm5((b-0.8)/0.4))*dbSm5(b/0.06); c.sq=0.24*e; c.by=-0.5*e; c.hp=0.1*e; c.flick=b<0.15?1:0; }},
+  jump:   {n:1,   now:1, f(c,b,u){ const w=NA_P(u); c.sq=-0.12*w; c.hp=-0.1*w; }},
+  gotit:  {n:1.5, f(c,b){ const p=NA_P(b/1.2); c.by=0.7*p; c.hr=0.16*p; c.hp=-0.12*p; c.sq=-0.07*p; c.happy=0.8*p; }},
+  bump:   {n:1.6, now:1, f(c,b,u,n,d){ const e=Math.exp(-b*2.6)*(1-dbSm5((b-1.1)/0.5)); c.br=d*0.3*e*Math.cos(2*Math.PI*b*1.3); c.sq=0.1*e*Math.sin(2*Math.PI*b*1.3); c.hr=-d*0.14*e*Math.cos(2*Math.PI*b*1.3); }},   // the jelly wobble
+  // ---- fidgets, on the grid and alone on the road
+  yawn:   {n:5,   face:'yawn',   f(c,b,u){ const w=NA_W(u,0.3,0.3); c.sq=-0.15*w; c.dy=0.22*w; c.hp=-0.2*w; c.calm=w; c.limp=0.3*w; }},
+  stretch:{n:4,   face:'glee',    f(c,b,u){ const w=NA_W(u,0.25,0.25); c.sq=-0.17*w; c.dy=0.25*w; c.hp=-0.14*w; c.br=0.07*NA_S(b/4)*w; c.calm=w; }},
+  limber: {n:4.5, f(c,b,u){ const w=NA_W(u,0.1,0.15); c.hr=0.27*Math.sin(Math.PI*(b-0.5))*w; c.by=0.3*NA_P(b%1)*w; }},                // the neck rolled side to side, on the beats
+  bounce: {n:4.25,f(c,b,u){ const w=NA_W(u,0.08,0.12); c.by=0.85*NA_P(b%1)*w; c.sq=(0.07*Math.cos(2*Math.PI*b)-0.02)*w; c.happy=0.4*w; }},   // a boxer's hops, down on the beat
+  shimmy: {n:2.5, face:'smug',   f(c,b,u){ const w=NA_W(u,0.12,0.2); c.bw=0.2*NA_S(b*2)*w; c.br=0.1*NA_S(b)*w; c.happy=w; }},
+  tap:    {n:8,   f(c,b,u){ const w=NA_W(u,0.06,0.1), k=Math.cos(Math.PI*b); c.ty=3.2*NA_P(b%1)*w; c.hp=0.07*k*k*w; }},              // the tail's tip taps the beat
+  preen:  {n:4,   face:'smug',   f(c,b,u){ const w=NA_W(u,0.15,0.2); c.hp=-0.17*w; c.hy=0.3*NA_S(b/4)*w; c.hr=0.07*w; c.calm=0.5*w; }},
+  groove: {n:8,   f(c,b,u){ const w=NA_W(u,0.06,0.1), k=Math.cos(Math.PI*b); c.hp=0.17*k*k*w; c.br=0.09*Math.sin(Math.PI*(b-0.5))*w; c.sw=1.6*w; }},   // nodding along
+  peer:   {n:3,   face:'hmm',  f(c,b,u){ const w=NA_W(u,0.15,0.25); c.bp=0.07*w; c.hp=-0.05*w; c.sz=0.12*w; c.hy=0.16*NA_S(b/3)*w; c.stiff=0.5*w; }},
+  shake:  {n:1.5, f(c,b,u){ const w=NA_W(u,0.08,0.5); c.bw=0.2*NA_S(b*3)*w; c.hr=0.1*NA_S(b*3+0.2)*w; c.flick=b<0.2?1:0; c.blink=b<0.12?1:0; }},   // a wet dog's
+  sigh:   {n:4,   face:'glum',  f(c,b,u){ const r=dbSm5(b/1.2)*(1-dbSm5((b-1.2)/0.6)), s=dbSm5((b-1.4)/0.8)*(1-dbSm5((b-3)/1));
+            c.sq=-0.07*r+0.09*s; c.dy=0.1*r; c.by=-0.3*s; c.hp=-0.06*r+0.16*s; c.calm=NA_W(u,0.1,0.1); }},
+  sway:   {n:8,   f(c,b,u){ const w=NA_W(u,0.1,0.15); c.br=0.12*NA_S(b/4)*w; c.hr=-0.06*NA_S(b/4)*w; c.sw=1.4*w; c.calm=0.5*w; }},
+  wiggle: {n:2.25,face:'glee',   f(c,b,u){ const w=NA_W(u,0.1,0.2); c.br=0.15*NA_S(b)*w; c.by=0.45*NA_P(b%1)*w; c.happy=w; }},
+  // ---- phrases with a character in them
+  strut:  {n:8,   face:'sly',    f(c,b,u){ const w=NA_W(u,0.08,0.12); c.br=0.1*Math.sin(Math.PI*(b-0.5))*w; c.bw=0.06*Math.sin(Math.PI*b)*w; c.hp=-0.09*w; c.sw=1.2*w; }},   // shoulders rolling, chin up
+  puff:   {n:3.5, face:'smug',   f(c,b,u){ const w=dbSm5(b/0.9)*(1-dbSm5((b-2.2)/0.5)), x=NA_P((b-2.3)/1.1); c.sq=-0.11*w+0.06*x; c.dy=0.16*w; c.hp=-0.13*w; c.calm=w; }},   // puffed up, held, let go
+  regal:  {n:6,   face:'calm',    f(c,b,u){ const w=NA_W(u,0.12,0.18); c.hp=-0.16*w; c.hy=0.26*NA_S(b/6)*w; c.dy=0.1*w; c.sq=-0.05*w; c.calm=0.7*w; }},      // the crowd acknowledged, left and right
+  slownod:{n:3,   f(c,b){ c.hp=0.24*NA_P((b-0.25)/2.5); c.calm=NA_P(b/3); }},
+  still:  {n:4,   f(c,b,u){ c.calm=NA_W(u,0.1,0.15); c.hp=0.2*NA_P((b-2.5)/1.5); c.blink=b>2.4&&b<2.55?1:0; }},                         // nothing at all, then one nod
+  headroll:{n:4,  face:'calm', f(c,b,u){ const w=NA_W(u,0.15,0.2), a=2*Math.PI*b/4; c.hr=0.22*Math.sin(a)*w; c.hp=0.1*(1-Math.cos(a))*w; c.sw=1.2*w; }},
+  surf:   {n:8,   f(c,b,u){ const w=NA_W(u,0.1,0.12), s=NA_S(b/4); c.br=0.2*s*w; c.hy=0.14*s*w; c.hr=0.08*s*w; c.by=0.25*s*s*w; c.sw=1.5*w; c.happy=0.3*w; }},   // carving, rail to rail
+  hips:   {n:4.25,face:'smug',   f(c,b,u){ const w=NA_W(u,0.08,0.12); c.bw=0.17*Math.sin(Math.PI*(b-0.5))*w; c.br=0.07*Math.sin(Math.PI*(b-0.5))*w; c.by=0.3*NA_P(b%1)*w; c.happy=w; }},   // a hit to each side, on the beats
+  lowride:{n:8,   face:'sly',    f(c,b,u){ const w=NA_W(u,0.08,0.1), h=NA_P(((b+0.4)%2)/0.8); c.bp=(-0.1-0.1*h)*w; c.by=0.35*h*w; c.sw=1.2*w; c.calm=0.4*w; }},   // sat back, the nose hopping on two and four
+  hero:   {n:4,   face:'keen',  f(c,b,u,n,d){ const w=NA_E(b,0.6,3,0.5); c.hp=-0.2*w; c.hy=d*0.26*w; c.hr=-d*0.08*w; c.sq=-0.06*w; c.dy=0.08*w; c.calm=w; c.stiff=0.6*w; }},   // the pose, held
+  twitch: {n:2,   face:'eek',   f(c,b,u,n,d){ const a=NA_E(b,0.1,0.6,0.14), z=NA_E(b,0.9,1.45,0.14); c.hy=d*0.24*(a-z); c.hp=0.04*(a+z); c.blink=(b>0.6&&b<0.72)||(b>1.5&&b<1.62)?1:0; c.fear=0.4*(a+z); }},
+  snap:   {n:3,   face:'hmm',  f(c,b,u,n,d){ const a=NA_E(b,0.2,1.7,0.18); c.hy=d*0.3*a; c.calm=NA_W(u,0.05,0.1); c.stiff=a; }},                    // one sharp look, held, and back
+  squint: {n:5,   face:'sly',    f(c,b,u){ const w=NA_W(u,0.2,0.25); c.hr=0.13*w; c.hp=0.05*w; c.calm=w; c.sw=0.8*w; }},
+  bow:    {n:4,   f(c,b){ const w=dbSm5(b)*(1-dbSm5((b-2.4)/1.2)); c.hp=0.42*w; c.by=-0.2*w; c.calm=1; }},
+  spin:   {n:4,   face:'glee',    f(c,b){ const k=NA_P(b/0.9), j=NA_P((b-0.9)/2.2), t=dbSm5((b-0.9)/2.2);                              // crouch, and once right round in the air
+            c.bw=t<1?2*Math.PI*t:0; c.by=-0.3*k+1.5*j; c.sq=0.1*k-0.1*j+0.1*NA_P((b-3)/0.9); c.happy=1; }},
+};
+// a persona's defaults: the template's own manner (Neo Proto's: bright, bouncy, pleased with everything)
+const NEO_ACT_DEF={ amp:1, tempo:1, fidget:1, lean:1, accel:1, hop:1, body:1, carry:{hp:0, hr:0, dy:0}, wag:1, wagF:1,
+  idle:{bounce:1, limber:1, stretch:0.8, shake:0.6, tap:0.6, wiggle:0.8}, cruise:{groove:1, tap:0.6, peer:0.5},
+  on:{ pass:['cheer','yes'], passed:['no'], hit:['rage'], laugh:['laugh'], boost:['launch'], go:['launch'], land:['land'], jump:['jump'], item:['gotit'], bump:['bump'],
+       threat:['shiver'], lap:['yes'], win:['spin','cheer','wiggle','bounce'], lose:['sulk','sigh'] },
+  show:['wiggle','cheer','spin','laugh'] };
+const NA_NOW={boost:1, go:1, land:1, jump:1, bump:1};                        // what cannot wait for a beat
+const NA_CD={pass:4, passed:4, hit:3, laugh:7, boost:2.5, go:1, land:0.8, jump:0.8, item:5, bump:2.2, threat:8, lap:6};   // seconds before the same kind of thing is acted again
+const NA_YIELD={rest:1, whistle:1, tired:1, pass:1, passed:1, check:1};     // the race's own expressions a phrase's face may take the place of
+for(const k of NEO_ACT_FACES) NA_YIELD[k]=1;                                    // (and another phrase's)     // the expressions a phrase's own face may take the place of
+const NA_BASE={}; for(const k of NEO_LIST) NA_BASE[k]=1;
+function naPersona(P){
+  if(P._na) return P._na; const a=P.act||{}, d=NEO_ACT_DEF;
+  const p=Object.assign({}, d, a, { carry:Object.assign({}, d.carry, a.carry), on:Object.assign({}, d.on, a.on), idle:a.idle||d.idle, cruise:a.cruise||d.cruise, show:a.show||d.show });
+  if(p.body<1){ p.show=p.show.filter(n=>n!=='spin'); for(const k in p.on) p.on[k]=p.on[k].filter(n=>n!=='spin'); }   // (a whole turn in the air is all or nothing)
+  return P._na=p;
+}
+function naState(S){
+  const c={}, t={}; for(const k of NA_CH){ c[k]=0; t[k]=0; } c.face=null; c.sp=0;
+  return S.act={ c, t, cur:null, prev:null, q:null, cd:{}, last:null, fidAt:null, seq:0, showI:0, sp:0, acc:0, spdP:null, yr:0, hdP:null, cdT:0, quiet:0, flP:false, blP:false,
+    pBoost:false, pAir:false, pLap:null, pItem:null, pPassT:-9, pSpin:false, pSt:null, pNear:false, rs:[], hitAt:0, finAt:null };
+}
+function naPick(S, A, table){   // one of a persona's weighted phrases, never the same twice running
+  let tot=0; for(const k in table) if(k!==A.last && NEO_MOVES[k]) tot+=table[k];
+  if(!(tot>0)){ for(const k in table) if(NEO_MOVES[k]) return k; return null; }
+  let x=dbRnd(S)*tot; for(const k in table){ if(k===A.last || !NEO_MOVES[k]) continue; x-=table[k]; if(x<=0) return k; }
+  return null;
+}
+function naQueue(S, name, o){   // ask for a phrase: {now, until (drop it if it has not started by then), amp, kind}
+  const A=S.act||naState(S), M=NEO_MOVES[name]; if(!M) return false; o=o||{};
+  A.q={ name, M, now:!!(o.now||M.now), until:o.until==null?1e18:o.until, amp:o.amp||1, kind:o.kind||'', d:o.d||(dbRnd(S)<0.5?-1:1), fid:!!o.fid };
+  return true;
+}
+function naTrig(S, P, kind, now, o){   // something happened: the persona's phrase for it, if it has one and the last one is not too recent
+  const A=S.act, list=P.on[kind]; if(!list || !list.length || now<(A.cd[kind]||0)) return false;
+  A.cd[kind]=now+(NA_CD[kind]||3);
+  const name=list.length===1 ? list[0] : list[Math.floor(dbRnd(S)*list.length)%list.length];
+  return naQueue(S, name, Object.assign({ kind, now:!!NA_NOW[kind], until:now+2.6 }, o));
+}
+function naStart(S, P, q, now){
+  const A=S.act; if(A.cur) A.prev=Object.assign(A.cur, { out:now });
+  A.cur={ name:q.name, M:q.M, t0:now, amp:q.amp, d:q.d, fast:q.now, kind:q.kind, fid:q.fid, tempo:q.now?1:P.tempo, out:null }; A.last=q.name; A.q=null; A.quiet=0;
+}
+// one frame: what happened, what to play, and the channels (S.act.c) for neoTick to apply
+function naTick(o, R, now, dt, S, C, x){
+  const A=S.act||naState(S), P=naPersona(S.P), c=A.c, t=A.t, E=S.ev, lk=x.lk, st=x.st, B=C.beats, rate=C.rate>0.2?C.rate:2;
+  for(const k of NA_CH) c[k]=0; c.face=null;
+  const kitBusy=!!x.forced || !NA_BASE[S.cur], looking=!!(lk && lk.g && lk.g.ov), spin=x.spin, spd=x.spd;
+  // ---- what happened
+  if(x.racing){
+    const boost=R.boostT>0; if(boost && !A.pBoost) naTrig(S, P, 'boost', now); A.pBoost=boost;
+    const air=!!R.air; if(air && !A.pAir) naTrig(S, P, 'jump', now); if(!air && A.pAir) naTrig(S, P, 'land', now); A.pAir=air;
+    if(A.pLap!=null && R.lap>A.pLap) naTrig(S, P, 'lap', now); A.pLap=R.lap;
+    if(R.item && !A.pItem) naTrig(S, P, 'item', now); A.pItem=R.item;
+    if(E.passT>A.pPassT+0.5 && now<E.passT) naTrig(S, P, E.passK==='pass'?'pass':'passed', now, { until:now+3.2 }); A.pPassT=E.passT;
+    if(!spin && A.pSpin) A.hitAt=now+0.9; if(A.hitAt && now>=A.hitAt){ A.hitAt=0; naTrig(S, P, 'hit', now); }
+    if(lk && lk.w>0.62 && !A.pThreat) naTrig(S, P, 'threat', now); A.pThreat=!!(lk && lk.w>0.45);
+    // the others: one of them spun out near by (the laugh), one of them close enough to trade paint
+    if(typeof racers!=='undefined'){ let near=1e9, ns=1;
+      for(let i=0;i<racers.length;i++){ const q=racers[i]; if(q===R || q.spectator) continue; const dx=q.x-R.x, dz=q.z-R.z, d=Math.hypot(dx,dz), sp=q.spinT>0;
+        if(sp && !A.rs[i] && d<75 && !spin) naTrig(S, P, 'laugh', now, { until:now+2 }); A.rs[i]=sp;
+        if(d<near){ near=d; ns=(dx*Math.cos(R.head||0)-dz*Math.sin(R.head||0))>=0?-1:1; } }
+      const hit=near<8.2; if(hit && !A.pNear && !spin) naTrig(S, P, 'bump', now, { d:ns }); A.pNear=near<10.5; }
+  } else { A.pBoost=false; A.pAir=false; A.pLap=R.lap; A.pItem=R.item; A.pPassT=E.passT; A.hitAt=0; A.pNear=false; }
+  A.pSpin=spin;
+  if(A.pSt==='count' && st==='race') naTrig(S, P, 'go', now); A.pSt=st;
+  // ---- the finish: the racer's own win (or lose) phrases, one after another under the dance
+  const fin=x.fin || (x.celeb && !x.racing);
+  if(fin){ if(A.finAt==null) A.finAt=now+0.6;
+    if(!A.cur && !A.q && now>=A.finAt){ const win=!x.fin || R.place<=3, list=P.on[win?'win':'lose'];
+      if(list && list.length){ naQueue(S, list[A.seq++%list.length], { kind:win?'win':'lose' }); A.finAt=now+(win?0.4:2.5)/rate*4; } } }
+  else A.finAt=null;
+  // ---- fidgets: idling (the grid, the home window, the select stage), and now and then alone on the road
+  A.quiet=(x.racing && !x.idle && !spin && !(R.boostT>0) && !looking && spd>25) ? A.quiet+dt : 0;
+  if(!fin && !A.cur && !A.q && !kitBusy && !looking && st!=='count'){
+    const idle=x.idle && !x.racing || (x.idle && spd<4);
+    if(idle || (A.quiet>3 && E.alone>1)){
+      if(A.fidAt==null || A.fidAt-B>64) A.fidAt=B+(idle?2:8)+dbRnd(S)*8/P.fidget;
+      if(B>=A.fidAt){ const name=naPick(S, A, idle?P.idle:P.cruise); if(name) naQueue(S, name, { fid:true, until:now+2 }); A.fidAt=null; } }
+    else A.fidAt=null; }
+  // ---- start what is waiting: at once, or on the coming beat; never in a spin, and a reaction waits for a look back and a kit's own gag
+  if(A.q){ const q=A.q;
+    if(now>q.until) A.q=null;
+    else if(q.now){ if(!spin) naStart(S, P, q, now); }
+    else if(!spin && !looking && !kitBusy && !(A.cur && !A.cur.fid && !A.cur.out && now-A.cur.t0<0.5)){
+      const tb=(1-C.phase)/rate; if(tb<0.05 || tb>1/rate-0.03 || C.rate<=0.2) naStart(S, P, q, now); } }
+  // a fidget steps aside for a kit's gag, a look back or a spin
+  if(A.cur && A.cur.fid && !A.cur.out && (kitBusy || spin || (looking && !x.idle))) A.cur.out=now;
+  // ---- play: the phrase, and the one it replaced as that fades
+  for(let i=0;i<2;i++){ const L=i?A.prev:A.cur; if(!L) continue;
+    const b=(now-L.t0)*rate/L.tempo, n=L.M.n;
+    let g=dbSm5((now-L.t0)/(L.fast?0.07:0.12))*L.amp*(L.fast?1:P.amp); if(L.out!=null) g*=1-dbSm5((now-L.out)/0.22);
+    if(b>=n || (L.out!=null && now-L.out>=0.22)){ if(i) A.prev=null; else { A.cur=null; if(L.fid) A.fidAt=null; } continue; }
+    for(const k of NA_CH) t[k]=0;
+    L.M.f(t, b, b/n, n, L.d);
+    for(const k of NA_CH) if(t[k]) c[k]+= (k==='bw' && L.M===NEO_MOVES.spin) ? t[k] : t[k]*(k==='flick'||k==='blink'?1:g*(NA_G[k]||1)*(k==='by'?P.hop:1));
+    if(!i && L.M.face && L.out==null && b<n-0.4) c.face=L.M.face; }
+  // ---- always: the carriage, the corner, the throttle, a dizzy head, the dam's glue, the lights
+  c.hp+=P.carry.hp; c.hr+=P.carry.hr; c.dy+=P.carry.dy;
+  { const hd=R.head||0; if(A.hdP==null) A.hdP=hd; let dh=hd-A.hdP; dh-=Math.round(dh/6.2832)*6.2832; A.hdP=hd;
+    const e=1-Math.exp(-dt*5), yr=dt>0?ldClamp(dh/dt,-3,3):0; A.yr+=(yr-A.yr)*e;
+    if(A.spdP==null) A.spdP=spd; const ac=dt>0?ldClamp((spd-A.spdP)/dt,-260,260):0; A.spdP=spd; A.acc+=(ac-A.acc)*e;
+    if(x.racing && !spin){ c.hr+=ldClamp(-A.yr*0.085+(R.slip||0)*0.12,-0.2,0.2)*P.lean;                                   // into the corner
+      c.sz+=ldClamp(A.acc/700,-0.12,0.16)*P.accel; c.sq+=ldClamp(-A.acc/2400,0,0.05)*P.accel; c.bp+=ldClamp(-A.acc/2200,0,0.07)*P.accel; } }   // smeared long by the throttle, bunched up (nose down) by the brakes
+  { const dz=now<(E.dizzyT||0) ? Math.min(1,(E.dizzyT-now)/0.5) : 0; if(dz>0){ c.hr+=0.17*Math.sin(Math.PI*B)*dz; c.hp+=0.08*Math.cos(Math.PI*B)*dz; } }
+  if(R.glueT>0){ c.bw+=0.1*NA_S(B*2); c.sq+=0.05*NA_S(B*2+0.25); c.angry=1; }
+  if(st==='count'){ A.cdT+=dt; const k=dbSm5(A.cdT/2.6)*(0.7+0.3*NA_P((A.cdT/0.75)%1)); c.sq+=0.1*k; c.by-=0.45*k; c.bp-=0.05*k; c.stiff=Math.max(c.stiff,k); c.calm=Math.max(c.calm,0.6*k); }
+  else A.cdT=0;
+  if(P.body!==1){ c.by*=P.body; c.br*=P.body; c.bp*=P.body; c.bw*=P.body; }   // (a kit that moves its own body takes less of the actor's, or none)
+  // ---- the tail's swish runs on the actor's own phase, a stroke every two beats
+  A.sp+=dt*rate*Math.PI; c.sp=A.sp;
+  if(c.flick>0.5 && !A.flP) S.flickT=now; A.flP=c.flick>0.5;
+  if(c.blink>0.5 && !A.blP) S.blink=now; A.blP=c.blink>0.5;
+  c.calm=ldClamp(c.calm,0,1); c.wag=P.wag; c.wagF=P.wagF;
+  return c;
+}
+/* ============== THE NEO CAST'S MANNERS (see THE NEO ACTOR): who moves how ============== *
+ * One row a racer: which of the actor's phrases it uses for what, and how big, how often and at what tempo. Everything
+ * a row leaves out is the template's own (NEO_ACT_DEF: Neo Proto's bright bounce).
+ *   Tony the Guido      all front: struts and preens on the grid, throws himself into corners, stamps when he is passed
+ *   Darius King Jr.     regal, at half time: chin up, acknowledges the crowd, a gracious nod for whoever he passes
+ *   Chad Brody Jr.      loose: carves side to side like a board on a wave, shakes a hit off like water
+ *   Winston Irie Jr.    unhurried, at half time: rolls his head, nods along, taps the beat with his tail; nothing rattles him
+ *   Super Freak Jr.     the dance floor's: hips, shimmies, a spin; the biggest wag in the field
+ *   Juan Jr.            proud and warm: puffs up, bounces on the beat, a spin when he wins
+ *   Lil Pepe Jr.        a lowrider, at half time: sat back with the nose hopping on two and four, one slow nod for a pass
+ *   Leif Laserbeard Jr. deadpan: almost nothing moves. One slow nod is his cheer, his laugh and his answer to a pass
+ *   Ravi Chandra Jr.    the hero: strikes the pose and holds it, bigger than everyone, shivers grandly at a threat
+ *   Daryl Diamond Jr.   wired: twitches, peers ahead, bounces on his toes, flinches at whoever comes near
+ *   Ryu Kenji Jr.       composed: stillness, one sharp look, a nod; and a bow when he is beaten
+ *   Rusty Malone Jr.    slow and cool, at half time: a squint with the head on one side, a slow shake for a hit
+ * A kit's profile names its row (act:NEO_MANNERS.x), so a racer made from another's profile moves as that racer does
+ * unless it says otherwise (see the end of the kits: the cartridge and the dragons). */
+const NEO_MANNERS={
+  proto:{ show:['wiggle','cheer','spin','laugh','bounce'] },
+  tony:{ amp:1.15, lean:1.35, accel:1.2, carry:{hp:-0.06}, wag:1.2, fidget:1.2,
+  idle:{strut:2, preen:1.5, bounce:1, limber:1, shake:0.4}, cruise:{strut:2, groove:1},
+  on:{ pass:['yes'], passed:['no','rage'], hit:['rage'], lap:['yes'], win:['shimmy','cheer','strut','spin'], lose:['rage','sulk'] },
+  show:['strut','preen','cheer','shimmy','spin'] },
+  darius:{ amp:0.9, tempo:2, lean:0.6, hop:0.6, fidget:0.8, carry:{hp:-0.08, dy:0.04}, wagF:0.8,
+  idle:{regal:2, puff:1.5, slownod:1, still:0.8}, cruise:{regal:1.5, sway:1},
+  on:{ pass:['slownod'], passed:['puff','no'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['regal','puff','cheer'], lose:['sigh'] },
+  show:['regal','puff','slownod','cheer'] },
+  chad:{ lean:1.45, wag:1.2, carry:{hr:0.03},
+  idle:{surf:2, sway:1, shake:1, yawn:0.7, groove:1}, cruise:{surf:2, groove:1.2},
+  on:{ pass:['yes'], passed:['sigh'], hit:['shake'], threat:[], win:['surf','bounce','wiggle','spin'], lose:['sigh'] },
+  show:['surf','shake','wiggle','spin'] },
+  winston:{ amp:0.9, tempo:2, fidget:0.8, lean:0.8, accel:0.8, wagF:0.6,
+  idle:{headroll:2, groove:2, sway:1.2, tap:1.5, yawn:0.6}, cruise:{groove:2, tap:1.5, headroll:1},
+  on:{ pass:['slownod'], passed:['slownod'], hit:['sigh'], threat:[], lap:['slownod'], item:[], win:['groove','headroll','bounce','sway'], lose:['sigh'] },
+  show:['headroll','groove','tap','bounce'] },
+  freak:{ amp:1.2, fidget:1.4, lean:1.2, wag:1.45, wagF:1.3,
+  idle:{hips:2, shimmy:1.5, preen:1.2, bounce:0.8, tap:0.8}, cruise:{hips:1.5, groove:1, shimmy:1},
+  on:{ pass:['shimmy'], passed:['no'], hit:['rage'], lap:['shimmy'], win:['hips','spin','shimmy','cheer'], lose:['sulk'] },
+  show:['hips','shimmy','spin','preen'] },
+  juan:{ amp:1.05, carry:{hp:-0.04},
+  idle:{puff:1.6, preen:1.2, bounce:1.2, tap:1, groove:1}, cruise:{groove:1.5, puff:0.8},
+  on:{ pass:['yes'], passed:['no'], hit:['rage'], win:['spin','puff','cheer','bounce'], lose:['sulk'] },
+  show:['puff','bounce','spin','preen'] },
+  pepe:{ amp:0.95, tempo:2, lean:0.7, fidget:0.9, carry:{hp:-0.03, hr:0.04}, wagF:0.7,
+  idle:{lowride:2.5, groove:1.2, slownod:1, still:0.6, tap:1}, cruise:{lowride:2, groove:1},
+  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['lowride','groove','bounce'], lose:['sigh'] },
+  show:['lowride','groove','slownod','bounce'] },
+  leif:{ amp:0.7, tempo:2, fidget:0.5, lean:0.4, accel:0.6, hop:0.5, wag:0.6, wagF:0.6,
+  idle:{still:2.5, slownod:1.2, puff:0.6, shake:0.3}, cruise:{still:1.5, peer:0.6},
+  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], bump:[], item:[], lap:['slownod'], win:['slownod','puff','cheer'], lose:['still'] },
+  show:['still','slownod','puff','cheer'] },
+  ravi:{ amp:1.2, lean:1.2, carry:{hp:-0.04},
+  idle:{hero:2.2, preen:1.4, stretch:0.8, puff:1, bounce:0.6}, cruise:{hero:1.5, peer:1, groove:0.8},
+  on:{ pass:['hero'], passed:['no'], hit:['rage'], lap:['hero'], win:['hero','spin','cheer','shimmy'], lose:['sulk'] },
+  show:['hero','spin','preen','cheer'] },
+  daryl:{ fidget:1.8, lean:1.1, accel:1.35, wagF:1.4,
+  idle:{twitch:3, bounce:1.2, peer:1.2, shake:0.7, limber:0.8}, cruise:{twitch:2, peer:1.5},
+  on:{ pass:['yes','cheer'], passed:['flinch','no'], hit:['rage'], threat:['shiver','twitch'], bump:['flinch'], lap:['yes'], win:['bounce','cheer','shimmy','twitch'], lose:['sulk'] },
+  show:['twitch','bounce','cheer','shiver'] },
+  ryu:{ amp:0.85, fidget:0.6, lean:0.8, accel:0.8, hop:0.7, wag:0.8,
+  idle:{still:2, snap:1.5, slownod:1, stretch:0.4}, cruise:{still:1.2, snap:1.2, peer:0.8},
+  on:{ pass:['slownod'], passed:['snap'], hit:['still'], laugh:['slownod'], threat:['snap'], bump:[], lap:['slownod'], win:['slownod','regal','cheer'], lose:['bow'] },
+  show:['snap','still','slownod','bow'] },
+  rusty:{ amp:0.85, tempo:2, fidget:0.6, lean:0.7, hop:0.7, carry:{hr:0.03}, wagF:0.7,
+  idle:{squint:2, still:1.2, sway:1, slownod:0.8, tap:0.8}, cruise:{squint:1.5, sway:1},
+  on:{ pass:['slownod'], passed:['squint'], hit:['no'], laugh:['slownod'], threat:['squint'], bump:[], lap:['slownod'], win:['slownod','sway','puff'], lose:['sigh'] },
+  show:['squint','slownod','sway','puff'] },
+};
+NEO.act=NEO_MANNERS.proto;
 // the swim: the flow body's own wave (flowWave, exactly as wiggleTail would hand it over), on a phase the tick locked to the beat
 function neoTailHook(g, phase, amp, lift, st){
   const S=g.userData.neo, F=g.userData.flow; if(!F) return;
@@ -78254,6 +78582,10 @@ function neoTick(o, r, now){
   { const G=lk && lk.g; if(G && G.ov && Math.abs(lk.yaw)>1.1 && !portrait){
       if(G.k==='peek' && lk.w>0.3){ if(want==='rest'||want==='whistle'||want==='tired'||want==='boost') want='wary'; }
       else if(want==='rest'||want==='whistle') want=G.k==='glare' ? 'angry' : 'check'; } }
+  // the actor: this frame's body language (see THE NEO ACTOR), and the face a phrase wears where the face is free
+  const AC=portrait ? null : naTick(o, R, now, dt, S, C, { st, lk, idle, racing, fin, celeb, spin, spd, forced:!!ud.expr.forced });
+  if(AC && AC.face && NA_YIELD[want] && S.EV[AC.face]) want=AC.face;
+  if(ud.flow) ud.flow.ax=AC;
   const X=ud.expr; if(X.forced){ want=X.forced; if(X.hold>0){ X.hold-=dt; if(X.hold<=0) X.forced=null; } }
   if(want!==S.want){ S.want=want;
     if(DB_NOW_EXPR[want] || want==='wary' || portrait || C.rate<=0){ S.next=want; S.nextAt=now; }
@@ -78270,7 +78602,7 @@ function neoTick(o, r, now){
   const Fw=ud.flow, lagTip=Fw ? Fw.t[Fw.n-1]*NEO_LAG : NEO_LAG;   // (the wave runs a hair past t=1 at the tip)
   S.tph=Math.PI*S.sig+Math.PI/2+lagTip; S.tphV=Math.PI*dbGearRate(S,B)*C.rate; S.tdt=dt;   // the tip's swing is at its widest on every whole stroke
   // ---- the bob: squash on the downbeat, stretch on the off-beat, volume kept, beat 1 harder (the laugh at double time)
-  dbSpring(S,'lf','lfV',S.cur==='fire'?1:0,9,1,dt);
+  dbSpring(S,'lf','lfV',S.cur==='fire'||S.cur==='haha'?1:0,9,1,dt);
   const bob=Math.cos(2*Math.PI*(C.phase-(S.P.bobPh||0)))*(1-S.lf)+Math.cos(4*Math.PI*B)*S.lf, abx=((C.bar-(S.P.accentBar||0))%4+4)%4, bd=Math.min(abx,4-abx), accent=Math.exp(-(bd*bd)/0.1);   // (bobPh: a kit that squashes on the off-beat; accentBar: one whose accent is not beat 1)
   const dance=(fin||celeb)&&S.cur!=='lose'?1:0, lose=fin&&S.cur==='lose'?1:0;
   // (every switch here eases on a spring: the grid's bigger bounce, the take's freeze, the dance and the sway)
@@ -78280,6 +78612,7 @@ function neoTick(o, r, now){
   let sq=(0.068+0.017*S.idl)*bob*bk*(1-0.6*S.lose);
   S.bob=sq;
   let dy=-(0.12+0.12*S.idl)*bob*bk;
+  if(AC){ const cm=1-0.75*AC.calm; sq=sq*cm+AC.sq; dy=dy*cm+AC.dy; }   // (the actor: a phrase's own squash and lift, the bob held as still as it asks)
   /* ---- THE LOOK BACK. The look (socialLook) can ask the head for far more than a neck has: a glance back over the
      shoulder is two radians and more. The neck gives what a neck can (eased into the flow body's limit), and the rest is
      done the way a 1930s head does it: the head rounds into a ball and stretches up off the neck, and the FACE travels
@@ -78307,21 +78640,24 @@ function neoTick(o, r, now){
   const nkY=S.nkS, phi=ldClamp(Yw-nkY,-1.72,1.72);
   const rd=1-Math.exp(-(phi*phi)/0.12), pv=dt>0 ? (phi-S.phiP)/dt : 0; S.phiP=phi; S.phi=phi; S.rd=rd;
   dbSpring(S,'tst','tstV',Math.min(1,Math.abs(pv)/7),22,0.6,dt);
-  const stt=0.13*ldClamp(S.tst,-0.3,1.3), vk=1/Math.sqrt(1+stt), rx=(1+0.147*rd)*vk, ry=(1+0.14*rd)*(1+stt), rz=(1-0.235*rd)*vk;
+  const stt=0.13*ldClamp(S.tst,-0.3,1.3), vk=1/Math.sqrt(1+stt); let rx=(1+0.147*rd)*vk, ry=(1+0.14*rd)*(1+stt), rz=(1-0.235*rd)*vk;
+  if(AC && AC.sz){ const k=1+ldClamp(AC.sz,-0.25,0.4), j=1/Math.sqrt(k); rz*=k; rx*=j; ry*=j; }   // (the actor's smear: longer along the way it is going, its volume kept)
   dy+=0.3*rd+0.45*stt; S.gzK=1-0.75*rd;   // (the eyes were aimed for a head that stopped at the neck's limit)
   S.UH.uNeoSq.value.x=sq; S.UH.uNeoSq.value.y=dy; S.UH.uNeoRd.value.set(rx, ry, rz);
   { const sx=(1+0.5*sq)*rx, sy=(1-sq)*ry, sz=(1+0.5*sq)*rz; S.rig.scale.set(sx, sy, sz); S.rig.rotation.y=phi; S.rig.position.set(0, HEAD_CY*(1-sy)+dy, 0);
+    S.rig.updateMatrix(); S.face.matrix.copy(S.rig.matrix).invert(); S.FU.uPhi.value=phi;   // (the face is laid on the skin by its shader, at this turn)
     if(S.rigB){ S.rigB.scale.set(sx, sy, sz); S.rigB.position.copy(S.rig.position); } }
   // ---- the head: the expression's nod and tilt, the dance and the sway, asked of the neck (the flow body eases the request)
   const nk=ud.neck, db=Math.cos(Math.PI*B), dh2=Math.cos(Math.PI*B/2);
   if(nk){ if(nk.quaternion.equals(S.nkOut)) nk.quaternion.copy(S.nkIn); S.nkIn.copy(nk.quaternion);
-    S.eu.set(S.F[DBF_I.hp]+0.03*bob-0.08*rd, 0.1*db*S.dance+(Yw || Math.abs(nkY)>1e-4 ? nkY-(lk && !portrait ? lk.nk : 0) : 0), S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose, 'YXZ');   // (the neck is asked for its own share of a look back, eased into its limit, not for all it can bear)
+    S.eu.set(S.F[DBF_I.hp]+0.03*bob-0.08*rd+(AC?AC.hp:0), 0.1*db*S.dance+(Yw || Math.abs(nkY)>1e-4 ? nkY-(lk && !portrait ? lk.nk : 0) : 0)+(AC?AC.hy:0), S.F[DBF_I.ht]+0.16*db*S.dance+0.1*dh2*S.lose+(AC?AC.hr:0), 'YXZ');   // (the neck is asked for its own share of a look back, eased into its limit, not for all it can bear)
     nk.quaternion.multiply(S.nkX.setFromEuler(S.eu)); S.nkOut.copy(nk.quaternion);
     if(portrait && ud.flow && (posed || S.flowPosed)){ flowNeck(o, -1); flowWave(o, 0, 0, 0, null); S.flowPosed=posed; } }   // (a sheet's fresh build never swims: its neck is set at once and the skin laid along it, so the look back shows whole)
   // ---- the body: the grid's bounce, the dance's hop and sway (syncObjects re-places the body every frame)
   if(!portrait){
-    o.position.y+=-0.28*bob*S.idl+(S.dance>0.01?0.45*accent*S.dance:0);
+    o.position.y+=-0.28*bob*S.idl*(AC?1-0.75*AC.calm:1)+(S.dance>0.01?0.45*accent*S.dance:0);
     if(S.dance>0.01) o.rotateZ(0.1*db*S.dance);
+    if(AC){ o.position.y+=AC.by; if(AC.bw) o.rotateY(AC.bw); if(AC.bp) o.rotateX(AC.bp); if(AC.br) o.rotateZ(AC.br); }   // the actor's body: up, yaw, pitch, roll
     if(celeb){ o.position.y-=Math.abs(Math.sin(now*7))*2.2; o.rotation.y-=Math.sin(now*4.5)*0.35; o.rotation.z-=Math.sin(now*4.5+1)*0.15; }   // (the generic finish bounce, taken away in advance: the dance is on the beat)
   }
   // ---- the tuft: a rubber-hose spring. The bob drives it down and up (it lags), the head's turn swings it, speed streams it, a take flicks it
@@ -78334,7 +78670,7 @@ function neoTick(o, r, now){
     const fx=S.P.flexK==null?1:S.P.flexK;
     S.HU.uFlex.value.set(S.ty*fx, S.tp*fx, (0.05+0.08*S.sp)*fx, S.tw); }
   dbFace(S, C, now, dt, E, lk, portrait);
-  if(S.P.tick) S.P.tick(o, R, now, dt, S, C, { portrait, idle, fin, celeb, spin, racing, spd, sq, accent, lk });
+  if(S.P.tick) S.P.tick(o, R, now, dt, S, C, { portrait, idle, fin, celeb, spin, racing, spd, sq, accent, lk, act:AC });
   // ---- the probes race_motion reads
   const P=S.pr, drf=100*((now-(S.t0==null?(S.t0=now):S.t0))%1000);
   P.beat.position.set(C.phase*2,0,0); P.bob.position.set(0,sq*10,0); P.vb.position.set(0,sq*10+drf,0); P.vs.position.set(S.sig+drf,0,0);
@@ -78489,7 +78825,14 @@ void main(){
 #ifdef TONY_GLINT
   { float hs=dot(n,normalize(DB_L+normalize(vV))), hw=fwidth(hs)*0.7+1e-4; c+=vC*uGl*smoothstep(0.975-hw,0.975+hw,hs); }   // a hard highlight on every link, past white
 #endif
-  gl_FragColor=vec4(mix(uInk,c,smoothstep(0.3-rf,0.3+rf,rim)),1.0);
+  // the ink: where the surface turns away from the eye. A rubber-hose arm (TONY_BEND) takes a wider band than a prop: on a
+  // thin tube the prop's rim was a hairline beside the body's ink, and an arm is drawn with the same pen as the body
+#ifdef TONY_BEND
+  float rk=0.56;
+#else
+  float rk=0.3;
+#endif
+  gl_FragColor=vec4(mix(uInk,c,smoothstep(rk-rf,rk+rf,rim)),1.0);
   #include <fog_fragment>
   gl_FragColor=linearToOutputTexel(gl_FragColor);
 }`;
@@ -78662,7 +79005,7 @@ function tonyTick(o, R, now, dt, S, C, q){
   if(Q!==Tn.lastQ){ if(Q!=null && sQ<0.1 && R.you && !q.portrait && (Tn.lastQ==null || Q-Tn.lastQ>1.2) && typeof luxRipple==='function') luxRipple(Tn.fist.getWorldPosition(_tonyB), 0.4, 1.2);   // the first punch of a run goes through the picture
     Tn.lastQ=Q; }
 }
-const TONY=Object.assign({}, NEO, { skin:[23,0.8,0.55], tuftCol:'#24130b', browL:0.7, browTh:0.125, flexK:0.4, ev:TONY_EV, list:TONY_LIST,
+const TONY=Object.assign({}, NEO, { act:NEO_MANNERS.tony, skin:[23,0.8,0.55], tuftCol:'#24130b', browL:0.7, browTh:0.125, flexK:0.4, ev:TONY_EV, list:TONY_LIST,
   face:{ sknS:'#9c4418', wht:'#ffffff', whtS:'#e9dfe2', mth:'#3a1016' },
   paint:tonyPaint, skinFx:TONY_SKIN_FX, hair:tonyHair, hairPaint:tonyHairPaint, dress:tonyDress, tick:tonyTick });
 function dressTonyGuido(g, K){
@@ -78908,7 +79251,7 @@ function dkjTick(o, R, now, dt, S, C, q){
       D.bottle.updateMatrixWorld(true); const m=D.bottle.localToWorld(_dkV.set(0,2.7,0)), d=_dkW.set(0,1,0).transformDirection(D.bottle.matrixWorld);
       for(let i=0;i<14;i++){ const sp=12+dbRnd(S)*10; emit(m.x, m.y, m.z, {color:i%3===0?0xffd24a:i%3===1?0xfff2c0:0xffffff, life:0.8, vx:d.x*sp+(dbRnd(S)-0.5)*8, vy:d.y*sp+7+dbRnd(S)*6, vz:d.z*sp+(dbRnd(S)-0.5)*8, s0:3.4, s1:0.8, grav:34, op:0.95}); } } }
 }
-const DKJ=Object.assign({}, NEO, { skin:[30,0.5,0.36], tuftCol:'#2a190d', hairGloss:[0.2,0,0,0], browL:0.68, browTh:0.2, flexK:0.35, ev:DKJ_EV, list:DKJ_LIST,
+const DKJ=Object.assign({}, NEO, { act:NEO_MANNERS.darius, skin:[30,0.5,0.36], tuftCol:'#2a190d', hairGloss:[0.2,0,0,0], browL:0.68, browTh:0.2, flexK:0.35, ev:DKJ_EV, list:DKJ_LIST,
   face:{ tth:'#ffc935', tthS:'#b9770e', mst:'#1a0f0a', mth:'#3a1016' }, faceFS:DKJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }),
   paint:dkjPaint, skinFx:DKJ_SKIN_FX, hair:dkjHair, hairPaint:dkjHairPaint, dress:dkjDress, tick:dkjTick });
 function dressKingJr(g, K){
@@ -79156,7 +79499,7 @@ function chjTick(o, R, now, dt, S, C, q){
   kitArmPose(D.AU, D.e, [CHJ_ARM.up[0]+0.45*w, CHJ_ARM.up[1], CHJ_ARM.up[2]], CHJ_ARM.el);
   D.hand.position.copy(D.AU.uA2.value);
 }
-const CHJ=Object.assign({}, NEO, { skin:[24,0.55,0.64], tuftCol:'#e3bf62', browL:0.66, browTh:0.18, flexK:0.85, ev:CHJ_EV, list:CHJ_LIST,
+const CHJ=Object.assign({}, NEO, { act:NEO_MANNERS.chad, skin:[24,0.55,0.64], tuftCol:'#e3bf62', browL:0.66, browTh:0.18, flexK:0.85, ev:CHJ_EV, list:CHJ_LIST,
   face:{ mst:'#9a6a3c', znc:'#fbfbf6', mth:'#3a1016' }, faceFS:CHJ_FACE_FS, hairGloss:[0.16,0.18,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f4c6a0', '#c46e4a', '#b06044'), skinFx:CHJ_SKIN_FX, hair:chjHair, hairPaint:chjHairPaint, dress:chjDress, tick:chjTick });
 function dressChadJr(g, K){
@@ -79246,7 +79589,7 @@ function wijTick(o, R, now, dt, S, C, q){
   kitArmPose(D.AU, D.e, [WIJ_ARM.up[0]+0.75*w, WIJ_ARM.up[1]-0.2*Math.abs(w), WIJ_ARM.up[2]], WIJ_ARM.el);
   D.hand.position.copy(D.AU.uA2.value);
 }
-const WIJ=Object.assign({}, NEO, { skin:[24,0.45,0.27], tuftCol:'#1c110a', browL:0.64, browTh:0.17, flexK:0.75, ev:WIJ_EV, list:WIJ_LIST,
+const WIJ=Object.assign({}, NEO, { act:NEO_MANNERS.winston, skin:[24,0.45,0.27], tuftCol:'#1c110a', browL:0.64, browTh:0.17, flexK:0.75, ev:WIJ_EV, list:WIJ_LIST,
   face:{ mth:'#3a1016' }, faceFS:WIJ_FACE_FS, hairGloss:[0.16,0.1,0,0], accentBar:2, bobPh:0.5,
   paint:(g,lin)=>kitPaint(g, lin, '#7a5236', '#3a2414', '#33200f'), skinFx:WIJ_SKIN_FX, hair:wijHair, dress:wijDress, tick:wijTick });
 function dressRastaJr(g, K){
@@ -79687,7 +80030,7 @@ function rkjTick(o, R, now, dt, S, C, q){
   if(nk && !P){ const bb=Math.pow(0.5+0.5*Math.cos(2*Math.PI*ph),2), pit=(drift ? 0.12 : celeb ? 0.07 : 0.035)*bb, roll=(q.idle ? 0.05 : 0.02)*Math.sin(Math.PI*B);
     nk.quaternion.multiply(_rkjQ.setFromEuler(_rkjE.set(pit, 0, roll, 'YXZ'))); S.nkOut.copy(nk.quaternion); }
 }
-const RKJ=Object.assign({}, NEO, { skin:[22,0.48,0.3], tuftCol:'#11152e', browL:0.66, browTh:0.18, flexK:0.6, ev:RKJ_EV, list:RKJ_LIST,
+const RKJ=Object.assign({}, NEO, { act:NEO_MANNERS.freak, skin:[22,0.48,0.3], tuftCol:'#11152e', browL:0.66, browTh:0.18, flexK:0.6, ev:RKJ_EV, list:RKJ_LIST,
   face:{ mst:'#120806', gld:'#ffc935', gldS:'#b9770e', mth:'#3a1016' }, faceFS:RKJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }), hairGloss:[0.18,0.24,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#86583a', '#3e2616', '#3a2212'), skinFx:RKJ_SKIN_FX, hair:rkjHair, hairPaint:rkjHairPaint, dress:rkjDress, tick:rkjTick });
 function dressRickJr(g, K){
@@ -79772,7 +80115,7 @@ function jjHair(col){
   return { parts:[[tg, col, fl]], tip:new T.Vector3(...pts[5]), root:new T.Vector3(0, y0-0.2, 0.2) };
 }
 // the sombrero, from the base of its crown: an oval there (to sit over the long head) rounding as it rises, a band, the brim
-const JJ_HAT={ p:[0, HEAD_CY+2.5, -0.15], rx:-0.28, crownH:4.2, rIn:2.12, rOut:5.15, ez:1.45, ezB:1.12, grip:[-4.95, 0.55, 1.1], clampGrip:[-4.5, 0.9, 2.4] };
+const JJ_HAT={ p:[0, HEAD_CY+2.5, -0.15], rx:-0.28, crownH:4.2, rIn:2.12, rOut:5.15, ez:1.45, ezB:1.12, grip:[-4.95, 0.55, 1.1], clampGrip:[-1.3, 3.6, 0.55] };   // (clampGrip: on the side of the crown, near its top)
 function jjHatGeo(){ return tonyKeep('jjHat', ()=>{
   const H=JJ_HAT, straw=dbLin('#f0d58e'), red=dbLin('#d8382a'), dark=dbLin('#2c1b14'), items=[], sm=x=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
   const ovz=y=>H.ez-(H.ez-1)*sm(y/H.crownH);
@@ -79927,7 +80270,7 @@ function jjArmGeo(skin){ return tonyKeep('jjArm', ()=>{
 // where the glove goes, in the face rig: the wrist and the elbow for each gag (the shoulder is TONY_ARM.a0)
 const JJ_ARM={ reachE:[-5.1,3.9,0.3], raise:[-3.5,9.4,1.7], raiseE:[-5.2,5.8,0.7], tada:[-5.6,8.4,2.6], tadaE:[-5.4,4.9,1.0],
   high:[-2.4,8.9,1.6], highE:[-5.0,5.6,0.6], bow:[-7.6,2.7,2.8], bowE:[-5.8,3.4,0.6], swoon:[-1.9,5.15,3.05], swoonE:[-5.0,4.6,1.8],
-  clampE:[-6.4,3.6,1.6], twirlE:[-4.4,0.8,2.2] };
+  clampE:[-10.2,6.8,0.6], twirlE:[-4.4,0.8,2.2] };
 const _jjH=new T.Vector3(), _jjL=new T.Vector3(), _jjG=new T.Vector3(), _jjU=new T.Vector3(), _jjF=new T.Vector3(), _jjQ2=new T.Quaternion();
 function jjDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, skin=X.skin.clone().convertSRGBToLinear();
@@ -80014,7 +80357,7 @@ function jjTick(o, R, now, dt, S, C, q){
       for(let i=0;i<16;i++){ const a=dbRnd(S)*Math.PI*2, sp=8+dbRnd(S)*10; emit(hp.x, hp.y+1, hp.z, {color:[0xd8382a,0xffc43a,0x2f8a3c,0xfbf8f0][i%4], life:1.1, vx:Math.cos(a)*sp, vy:12+dbRnd(S)*10, vz:Math.sin(a)*sp, s0:2.4, s1:1.4, grav:26, op:0.95}); }
       D.tingT=now; }
     D.pC8=c8; }
-  else if(clamp){ want=true; el=JJ_ARM.clampE; wr=fromGrip(_jjF.set(...JJ_HAT.clampGrip).applyQuaternion(hatQ(onRx,onRz,0)).add(onP).clone(), el, 0.7).toArray(); }   // a hand on the brim, holding the hat on
+  else if(clamp){ want=true; el=JJ_ARM.clampE; wr=fromGrip(_jjF.set(...JJ_HAT.clampGrip).applyQuaternion(hatQ(onRx,onRz,0)).add(onP).clone(), el, 0.7).toArray(); }   // a hand on the crown, holding the hat on (the arm arcs out round the brim and over its lip: gripping the brim itself, the forearm cut through the lip)
   else if(twirl){ want=true; el=JJ_ARM.twirlE; const a=P ? 0 : 2*Math.PI*B; const tp=D.tipR.clone(); tp.x+=0.25*Math.cos(a); tp.y+=0.25*Math.sin(a); wr=fromGrip(tp, el, 1.25).toArray(); }
   if(!cel){ dbSpring(D,'bow','bowV',0,9,0.7,dt); D.pC8=9; if(P) D.bow=0; }
   if(!tip){ D.rel=null; }
@@ -80047,7 +80390,7 @@ function jjTick(o, R, now, dt, S, C, q){
     if(on){ D.ting.position.copy(D.AU.uA2.value).addScaledVector(_jjU.subVectors(D.AU.uA2.value, D.AU.uA1.value).normalize(), 1.6); D.ting.position.z+=0.6;
       D.ting.scale.setScalar(3.2*e); D.ting.rotation.z=1.4*t; D.ting.material.uniforms.uK.value=e; } }
 }
-const JJ=Object.assign({}, NEO, { skin:[26,0.62,0.63], tuftCol:'#1a1210', browL:0.66, browTh:0.21, flexK:0.45, ev:JJ_EV, list:JJ_LIST,
+const JJ=Object.assign({}, NEO, { act:NEO_MANNERS.juan, skin:[26,0.62,0.63], tuftCol:'#1a1210', browL:0.66, browTh:0.21, flexK:0.45, ev:JJ_EV, list:JJ_LIST,
   face:{ mth:'#3a1016' }, hairGloss:[0.24,0.3,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f8d6ae', '#c27a4c', '#b46c42'), skinFx:JJ_SKIN_FX, hair:jjHair, dress:jjDress, tick:jjTick });
 function dressJuanJr(g, K){
@@ -80413,7 +80756,7 @@ function pjTick(o, R, now, dt, S, C, q){
     const ss=!P && D.arm.visible && sl>=0 && sl<0.28 ? Math.sin(Math.PI*sl/0.28) : 0; D.spark.visible=ss>0.01;
     if(D.spark.visible){ D.spark.position.z+=0.6; D.spark.scale.setScalar(2.2*ss); D.spark.rotation.z=sl*6; D.spark.material.uniforms.uK.value=ss; } }
 }
-const PJ=Object.assign({}, NEO, { skin:[350,0.78,0.8], tuftCol:'#c4232b', browL:0.66, browTh:0.19, flexK:1, ev:PJ_EV, list:PJ_LIST,
+const PJ=Object.assign({}, NEO, { act:NEO_MANNERS.pepe, skin:[350,0.78,0.8], tuftCol:'#c4232b', browL:0.66, browTh:0.19, flexK:1, ev:PJ_EV, list:PJ_LIST,
   face:{ sknS:'#c98c98', mth:'#3a1016', mst:'#1c1412' }, faceFS:PJ_FACE_FS, hairGloss:[0.08,0.1,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f8dde1', '#d99aa6', '#c98f9d'), skinFx:PJ_SKIN_FX, hair:pjHair, dress:pjDress, tick:pjTick });
 function dressPepeJr(g, K){
@@ -80890,7 +81233,7 @@ function vkjTick(o, R, now, dt, S, C, q){
   D.ga+=dt*(boost?9:0.5+0.025*spd); D.gear.rotation.z=D.ga; D.gear.material.uniforms.uGl.value=P ? 0 : 0.4+1.2*Math.exp(-C.phase*5);
   D.gog.children[0].material.uniforms.uGl.value=P ? 0 : 0.3+1.4*flash;
 }
-const VKJ=Object.assign({}, NEO, { skin:[22,0.72,0.75], tuftCol:'#d48a2c', browL:0.7, browTh:0.24, flexK:0.45, ev:VKJ_EV, list:VKJ_LIST,
+const VKJ=Object.assign({}, NEO, { act:NEO_MANNERS.leif, skin:[22,0.72,0.75], tuftCol:'#d48a2c', browL:0.7, browTh:0.24, flexK:0.45, ev:VKJ_EV, list:VKJ_LIST,
   face:{ mst:'#f2c95a', mstS:'#b98a2a', nose:'#f29274', noseS:'#c4644a', mth:'#3a1016', sknS:'#c98462' }, faceFS:VKJ_FACE_FS, faceU:()=>({ uVkM:{value:new T.Vector4()} }),
   hairGloss:[0.14,0.16,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f7d6bc', '#d7906c', '#c4785a'), skinFx:VKJ_SKIN_FX, hair:vkjHair, hairPaint:vkjHairPaint, dress:vkjDress, tick:vkjTick });
@@ -81418,7 +81761,7 @@ function rvjTick(o, R, now, dt, S, C, q){
         const sl=D.slo>0.3; emit(_rvA.x,_rvA.y,_rvA.z,{color:RVJ_PETAL[(st+i)%4], life:sl?1.6:0.9, vx:(dbRnd(S)-0.5)*(sl?4:12), vy:sl?1.5+dbRnd(S)*2:8+dbRnd(S)*6, vz:(dbRnd(S)-0.5)*(sl?4:12), s0:1.5, s1:0.7, grav:sl?1.2:14, op:0.95}); } } }
   if(flipOn && fu>=0 && fu<0.1 && R.you && !P && !D.zipD && typeof SFX!=='undefined' && SFX.zip){ D.zipD=true; SFX.zip(0.6); } if(!flipOn) D.zipD=false;
 }
-const RVJ=Object.assign({}, NEO, { skin:[25,0.5,0.5], tuftCol:'#17142a', browL:0.66, browTh:0.22, flexK:0.55, ev:RVJ_EV, list:RVJ_LIST,
+const RVJ=Object.assign({}, NEO, { act:NEO_MANNERS.ravi, skin:[25,0.5,0.5], tuftCol:'#17142a', browL:0.66, browTh:0.22, flexK:0.55, ev:RVJ_EV, list:RVJ_LIST,
   face:{ mst:'#21171c', znc:'#57507a', mth:'#3a1016', sknS:'#8c4e2c' }, faceFS:RVJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }), hairGloss:[0.16,0.22,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#d9a072', '#8a5430', '#7a4626'), skinFx:RVJ_SKIN_FX, hair:rvjHair, dress:rvjDress, tick:rvjTick });
 function dressDesiJr(g, K){
@@ -82084,7 +82427,7 @@ function ddjTick(o, R, now, dt, S, C, q){
   S.FU.uDd.value.set(Math.max(0,D.dol), Math.max(0,D.sw), P ? 0.3 : (now*0.9)%1, Math.max(0,D.red));
   if(S.FU.uTgl) S.FU.uTgl.value=P ? 0 : 0.3*Math.exp(-5*ph)+2.2*(now>=D.tingS ? Math.exp(-6*(now-D.tingS)) : 0);
 }
-const DDJ=Object.assign({}, NEO, { skin:[26,0.62,0.74], tuftCol:'#6a4426', browL:0.68, browTh:0.2, flexK:0, hairGloss:[0.2,0.22,0,0], ev:DDJ_EV, list:DDJ_LIST,
+const DDJ=Object.assign({}, NEO, { act:NEO_MANNERS.daryl, skin:[26,0.62,0.74], tuftCol:'#6a4426', browL:0.68, browTh:0.2, flexK:0, hairGloss:[0.2,0.22,0,0], ev:DDJ_EV, list:DDJ_LIST,
   face:{ gld:'#ffc935', gldS:'#b9770e', dolC:'#11803c', redC:'#e2554a', mth:'#3a1016' }, faceFS:DDJ_FACE_FS, faceU:()=>({ uTgl:{value:0}, uDd:{value:new T.Vector4()} }),
   paint:(g,lin)=>kitPaint(g, lin, '#f6dcc4', '#d39c74', '#1e2a4c'), skinFx:DDJ_SKIN_FX, hair:ddjHair, hairPaint:ddjHairPaint, dress:ddjDress, tick:ddjTick });
 function dressWallJr(g, K){
@@ -82635,7 +82978,7 @@ function ryjTick(o, R, now, dt, S, C, q){
   if(!P){ const bt=(now-S.blink)/0.34, bk=bt>=0&&bt<1?Math.sin(Math.PI*bt):0, ld=S.FU.uLd.value, F=S.F;
     if(bk>0 && !face) for(let i=0;i<2;i++){ const lid=i?F[I.lidR]:F[I.lidL]; ld[i*4]=lid+(-1.12-lid)*bk; } }
 }
-const RYJ=Object.assign({}, NEO, { skin:[163,0.5,0.46], tuftCol:'#f4ecd2', browL:0.7, browTh:0.27, flexK:0.6, ev:RYJ_EV, list:RYJ_LIST,
+const RYJ=Object.assign({}, NEO, { act:NEO_MANNERS.ryu, skin:[163,0.5,0.46], tuftCol:'#f4ecd2', browL:0.7, browTh:0.27, flexK:0.6, ev:RYJ_EV, list:RYJ_LIST,
   face:{ mth:'#3a1016', muz:'#a6e6cc', muzS:'#5fae92', fang:'#fdf8ea', iris:'#f4b52e', scl:'#17604e' }, faceFS:RYJ_FACE_FS, faceU:()=>({ uRk:{value:new T.Vector4()} }),
   hairGloss:[0.16,0.2,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#bfe8cc', '#1d6f5c', '#17604e'), skinFx:RYJ_SKIN_FX, hair:ryjHair, hairPaint:ryjHairPaint, dress:ryjDress, tick:ryjTick });
@@ -83900,7 +84243,7 @@ function rmjTick(o, R, now, dt, S, C, q){
 }
 // the hat tip's tilt (+ forward) by beats into its bar: flicked back on the downbeat, held, and settling with a little nod
 function rmjTipA(tu){ if(tu<0 || tu>2.6) return 0; if(tu<0.15) return -0.34*rmjSm(tu/0.15); if(tu<1.2) return -0.34+0.04*Math.sin(Math.PI*(tu-0.15)/1.05); return -0.34*(1-rmjSm((tu-1.2)/1.0))+0.07*Math.sin(Math.PI*rmjSm((tu-1.2)/1.4)); }
-const RMJ=Object.assign({}, NEO, { skin:[27,0.6,0.71], tuftCol:'#b8501f', browL:0.66, browTh:0.22, flexK:0.6, ev:RMJ_EV, list:RMJ_LIST,
+const RMJ=Object.assign({}, NEO, { act:NEO_MANNERS.rusty, skin:[27,0.6,0.71], tuftCol:'#b8501f', browL:0.66, browTh:0.22, flexK:0.6, ev:RMJ_EV, list:RMJ_LIST,
   face:{ mst:'#c25a28', mstS:'#7a3014', nose:'#e2866a', noseS:'#b0583e', scar:'#a83a2c', stub:'#7a4630', blush:'#e8705a', soot:'#2a2220', mth:'#3a1016', wht:'#fdf9ee' },
   faceFS:RMJ_FACE_FS, faceU:()=>({ uRmF:{value:new T.Vector4()} }), hairGloss:[0.14,0.16,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f7dcbe', '#c98a5c', '#f0dcbc'), skinFx:RMJ_SKIN_FX, hair:rmjHair, hairPaint:rmjHairPaint, dress:rmjDress, tick:rmjTick });
@@ -83915,6 +84258,11 @@ NEO_LOOK.outlawJr={react:5.5, zeta:0.9, turn:0.95, lid:0.8, smug:1.2, smirk:0.1,
 NEO_HEAVY.outlawJr=2;
 for(const R of [MUSIC_STYLES, ALT_MAP, FINAL_LAP_CUE]) if(R.hillbilly!==undefined && R.outlawJr===undefined) R.outlawJr=R.hillbilly;   // his record: the one Rusty Malone's line inherits through SR_BASE (outlaw → hillbilly), Copper Coil Breakdown; nobody else reads these keys
 
+// the racers made from another Neo racer's profile carry its manner (the profile's act); those whose own kit moves the
+// whole body take less of the actor's body channels: Big Shot Darius (a cartridge that struts and leans by itself) none,
+// the dragons on their four legs some
+if(typeof KSH_P!=='undefined') KSH_P.act=Object.assign({}, KSH_P.act, { body:0, show:['regal','slownod','puff'] });
+for(const P of [typeof RYD!=='undefined'?RYD:null, typeof CHD!=='undefined'?CHD:null, typeof TDJ!=='undefined'?TDJ:null, typeof WDJ!=='undefined'?WDJ:null]) if(P) P.act=Object.assign({}, P.act, { body:0.6 });
 function makeCell(hue, typeId){ const g=rigNeck(flowKeep(makeCellBuild(hue, typeId))), post=NEO_POST[typeId]; if(post) post(g); return g; }
 // a kit that took the flow tail off for a body of its own (a dragon, a flagellum) is not on the flow body: its head's ink goes too
 function flowKeep(g){ const ud=g.userData, F=ud.flow; if(!F) return g;
@@ -91575,7 +91923,7 @@ const SEL3D=(function(){
   function say(msg){ const t=BARKS[(cur&&cur.id)||(want&&want.id)]; const b=msg||t; if(!b) return; bark.textContent=b; bark.classList.remove('on'); void bark.offsetWidth; bark.classList.add('on'); }
   function showOff(){
     say();
-    if(live && cur && !cur.bad){ cur.r.celebT=6; cur.r.flick=1; lastIn=tsec; redraw=true; }
+    if(live && cur && !cur.bad){ const a=cur.o.userData.act; if(a) a.show(); else cur.r.celebT=6; cur.r.flick=1; lastIn=tsec; redraw=true; }   // (a Neo racer: the next of its own phrases, see THE NEO ACTOR)
     else { ph.classList.remove('pop'); void ph.offsetWidth; ph.classList.add('pop'); }
   }
 
