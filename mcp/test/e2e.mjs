@@ -659,10 +659,13 @@ await check('the warp has degrees: a drift opens it least and shortest, a boost 
   assert.ok(d.peak > 0.15 && d.peak < p.peak - 0.1 && p.peak < it.peak - 0.1, `a drift opens it least, the item most: ${JSON.stringify({ d, p, it })}`);
   assert.ok(d.secs < p.secs && p.secs < it.secs, `and for the shortest time, the item the longest: ${JSON.stringify({ d, p, it })}`);
   // the degrees are not one picture turned up: a drift's is at the picture's edge, the item's reaches the middle
+  // (taken on a fresh frame two seconds into a new race: after all that coasting the lens can be buried in pale scenery, where nothing brightens much)
+  json(await call('race_setup', { course: 'Delilah', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 2 }));
   const none = { lux: { reset: true, warpHold: 0 } };
   const lo = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 0.38 } }, keep: 'a' }));
   const hi = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 1 } }, keep: 'a' }));
-  assert.ok(hi.changed > lo.changed + 0.15, `the item's tunnel covers far more of the picture than a drift's (${lo.changed} against ${hi.changed})`);
+  assert.ok(hi.changed > lo.changed + 0.15 && hi.meanDelta > lo.meanDelta * 1.4, `the item's tunnel covers more of the picture than a drift's, and far more strongly (${lo.changed} and ${lo.meanDelta} against ${hi.changed} and ${hi.meanDelta})`);
+  const mid = b => (b.bands[3] + b.bands[4]) / 2; assert.ok(mid(hi) > mid(lo) * 1.4, `and it reaches the middle of the picture, where a drift's does not (${mid(lo)} against ${mid(hi)})`);
   await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
 });
 
