@@ -90355,14 +90355,14 @@ function previewRacerNow(){
 }
 function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=setTimeout(previewRacerNow, delay); }
 function previewSoon(delay){
-  if(PREBUILD.job){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too)
+  if(PREBUILD.job && !PREBUILD.live){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too). (Once its window is open, PREBUILD.live, a pick takes it over like any other build)
   clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
   PREVIEW.timer=setTimeout(previewNow, delay);
 }
 function previewNow(){
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
   if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
-  PREBUILD.job=null; PREBUILD.n=0; PREBUILD.draw=0;   // (a build asked for by a pick or a flick takes over from the boot's; it uses what the boot has made so far)
+  PREBUILD.job=null; PREBUILD.n=0; PREBUILD.draw=0; PREBUILD.live=false;   // (a build asked for by a pick or a flick takes over from the boot's; it uses what the boot has made so far)
   { const nb=PREVIEW.built!==selTrack; if(nb || racers.length<6 || (chosenType && racers[0].id!==chosenType.id)){ const b0=performance.now(); if(nb) buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; } }   // (true: the preview keeps the racers it has; only the course is new)
   previewPoolDrop();   // (whatever the boot made ahead and nobody took, and its cast: the line-up is the scene's from here on)
   PREVIEW.pending=false; PREVIEW.hold=0;
@@ -90382,10 +90382,18 @@ function previewNow(){
    While the first visit's welcome is up only the plain work is done (the course and the six models, each a short step, none of
    it drawn): the window shows the course's poster, and the GPU's share (shaders, the frames drawn behind the card), whose length
    no page can know, starts the moment the welcome closes. A pick or a flick during the boot takes over (previewNow) with whatever the pool holds; a race
-   started during it builds its own field, and the pool is dropped. */
-const PREBUILD={job:null, cast:null, pool:{}, loop:false, n:0, draw:0};
+   started during it builds its own field, and the pool is dropped.
+   THE WINDOW OPENS ON THE COURSE, NOT ON THE WHOLE GRID. The card used to stay up until all six racers were made, seated and
+   drawn: on a slow device that was most of the wait, for five rivals that are a far-off row of dots in this window. It lifts
+   now as soon as the course and the pick have been drawn once (PREBUILD.live); the rivals are made and come to the grid one at
+   a time behind the open window. From then on a flick of the strip takes the build over like any other (previewSoon). A pooled
+   model is not on the scene until it is seated, so the shaders compiled before the card lifts are the course's and the pick's
+   only. The boot's rivals are drawn from the racers that are quick to make (BOOT_SLOW names the few that are not: each a
+   tenth of a second or more of one unbroken task, which is a tap not answered); a race draws its own field from everyone. */
+const PREBUILD={job:null, cast:null, pool:{}, loop:false, n:0, draw:0, live:false};
+const BOOT_SLOW={kingVox:1, mosaic:1, juan:1, kasi:1, outlaw:1};
 function previewPoolTake(id){ const o=PREBUILD.pool[id]; if(!o) return null; delete PREBUILD.pool[id]; o.visible=true; return o; }
-function previewPoolDrop(){ for(const id in PREBUILD.pool){ const o=PREBUILD.pool[id]; scene.remove(o); disposeObject(o); } PREBUILD.pool={}; PREBUILD.cast=null; PREBUILD.n=0; PREBUILD.draw=0; }
+function previewPoolDrop(){ for(const id in PREBUILD.pool){ const o=PREBUILD.pool[id]; scene.remove(o); disposeObject(o); } PREBUILD.pool={}; PREBUILD.cast=null; PREBUILD.n=0; PREBUILD.draw=0; PREBUILD.live=false; }
 function previewBoot(){
   const st=$('start'), wl=$('welcome');
   const loop=()=>{ if(!PREBUILD.loop){ PREBUILD.loop=true; requestAnimationFrame(frame); } };
@@ -90396,19 +90404,23 @@ function previewBoot(){
     const b0=performance.now();
     if(PREVIEW.built!==selTrack) buildTrack(selTrack);
     loop(); yield;
-    const others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
+    let others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden && !BOOT_SLOW[t.id]);
+    if(others.length<5) others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
     for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0, tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
     const cast=PREBUILD.cast=[chosenType].concat(others.slice(0,5));
-    for(let k=0;k<cast.length;k++){ const t=cast[k];                        // the models, into the pool
-      const o=mcpIsolate(()=>makeCell(t.hue, t.id), 10+k); o.visible=false; scene.add(o); PREBUILD.pool[t.id]=o;
-      yield; }
-    while(wl && !wl.classList.contains('hidden')) yield;                    // the first visit's welcome: nothing for the GPU until it closes
+    const model=k=>{ const t=cast[k]; if(!PREBUILD.pool[t.id]) PREBUILD.pool[t.id]=mcpIsolate(()=>makeCell(t.hue, t.id), 10+k); };   // into the pool (not onto the scene: buildRacers seats it)
+    model(0); yield;
+    for(let k=1;k<cast.length && wl && !wl.classList.contains('hidden');k++){ model(k); yield; }   // the first visit's welcome is being read: the rivals' models meanwhile, a short step each
+    while(wl && !wl.classList.contains('hidden')) yield;                    // ...and nothing for the GPU until it closes
+    PREBUILD.n=1; buildRacers(true);                                        // the pick, seated on the course
     try{ renderer.compile(scene, camera); }catch(e){ console.error(e); }
-    yield;
-    for(let k=0;k<cast.length;k++){
+    PREBUILD.draw=1; while(PREBUILD.draw>0) yield;                          // drawn once, behind the card...
+    PREBUILD.live=true; PREVIEW.pending=false; PREVIEW.hold=0; previewTune(false);   // ...and the card lifts: the window is open on the course
+    for(let k=1;k<cast.length;k++){                                         // the rivals come to the grid behind the open window
+      model(k); yield;
       PREBUILD.n=k+1; buildRacers(true);                                    // seated: the grid so far (a pick that moved on is built here)
       try{ renderer.compile(scene, camera); }catch(e){ console.error(e); }
-      PREBUILD.draw=1; while(PREBUILD.draw>0) yield; }                      // ...and drawn once, behind the card
+      yield; }
     DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name;
     previewNow();
   })();
