@@ -659,11 +659,49 @@ await check('the warp has degrees: a drift opens it least and shortest, a boost 
   assert.ok(d.peak > 0.15 && d.peak < p.peak - 0.1 && p.peak < it.peak - 0.1, `a drift opens it least, the item most: ${JSON.stringify({ d, p, it })}`);
   assert.ok(d.secs < p.secs && p.secs < it.secs, `and for the shortest time, the item the longest: ${JSON.stringify({ d, p, it })}`);
   // the degrees are not one picture turned up: a drift's is at the picture's edge, the item's reaches the middle
+  // (taken on a fresh frame two seconds into a new race: after all that coasting the lens can be buried in pale scenery, where nothing brightens much)
+  json(await call('race_setup', { course: 'Delilah', character: 'proto', seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 2 }));
   const none = { lux: { reset: true, warpHold: 0 } };
   const lo = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 0.38 } }, keep: 'a' }));
   const hi = json(await call('race_ab', { a: none, b: { lux: { reset: true, warpHold: 1 } }, keep: 'a' }));
-  assert.ok(hi.changed > lo.changed + 0.15, `the item's tunnel covers far more of the picture than a drift's (${lo.changed} against ${hi.changed})`);
+  assert.ok(hi.changed > lo.changed + 0.15 && hi.meanDelta > lo.meanDelta * 1.4, `the item's tunnel covers more of the picture than a drift's, and far more strongly (${lo.changed} and ${lo.meanDelta} against ${hi.changed} and ${hi.meanDelta})`);
+  const mid = b => (b.bands[3] + b.bands[4]) / 2; assert.ok(mid(hi) > mid(lo) * 1.4, `and it reaches the middle of the picture, where a drift's does not (${mid(lo)} against ${mid(hi)})`);
   await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
+});
+
+await check('Big Shot Darius stands on his base at the line and flies level, nose first, once he is moving; a boost flashes off his base', async () => {
+  json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
+  const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
+  const walk = n => { if (n.name) names.push(n.name); (n.children || []).forEach(walk); }; walk(round);
+  for (const k of ['ksh-case', 'ksh-case-mesh', 'ksh-belt', 'ksh-cape', 'ksh-collar', 'ksh-lift']) assert.ok(names.includes(k), 'the round has its ' + k + ': ' + names.join(','));
+  const node = async (name) => json(await call('scene_graph', { root: name, depth: 0 })).root;
+  const lean = async () => ((await node('ksh-case')).rotation || [0])[0];
+  await call('race_drive', { seconds: 0.1, autopilot: false, keys: [] });
+  const l0 = await lean(); assert.ok(Math.abs(l0) < 0.3, `on the line he stands on his base (${l0.toFixed(2)} rad)`);
+  json(await call('race_drive', { seconds: 3 }));
+  const l1 = await lean(); assert.ok(l1 > 1.25 && l1 < 1.75, `under way he lies level, as a bullet flies (${l1.toFixed(2)} rad, a quarter turn is 1.57)`);
+  const caseY = (await node('ksh-case')).position, liftP = (await node('ksh-lift')).position;
+  assert.ok(caseY && liftP && caseY[2] < -4, 'the case is out behind him: ' + JSON.stringify([caseY, liftP]));
+  json(await call('race_fx', { boost: 'item' })); json(await call('race_drive', { seconds: 0.15 }));
+  const fl = (await node('ksh-flash')).scale; assert.ok(fl && fl[0] > 2, 'the boost flashes off his base: ' + JSON.stringify(fl));
+  // brought to a stop, he stands back up
+  let low = 9; for (let i = 0; i < 24 && low > 0.6; i++) { await call('race_drive', { seconds: 0.4, autopilot: false, keys: ['arrowdown'] }); low = Math.min(low, await lean()); }
+  assert.ok(low < 0.6, `stopped, he stands up again (${low.toFixed(2)})`);
+  assert.ok(image(await call('race_sheet', { rest: true, cell: 200 })), 'his sheet');
+});
+
+await check('the Neo dragons (Ryū, Chad, Tony, Winston) each stand on four legs, swim with them, and ease their necks', async () => {
+  for (const [id, tip] of [['ryuDragonJr', 'ryd-tuft'], ['chadDragonJr', 'chd-fluke'], ['tonyDragonJr', 'tdj-spade'], ['rastaDragonJr', 'wdj-tuft']]) {
+    json(await call('race_setup', { course: 'Victoria', character: id, seed: 3 })); json(await call('race_start')); json(await call('race_drive', { seconds: 1 }));
+    const gr = json(await call('scene_graph', { depth: 12, maxNodes: 2000 })), found = { leg: 0, tip: 0 };
+    const walk = n => { if (n.name === 'ndr-leg') found.leg++; if (n.name === tip) found.tip++; (n.children || []).forEach(walk); }; walk(gr.root);
+    assert.ok(found.leg >= 4 && found.tip >= 1, id + ': four legs and the end of a tail: ' + JSON.stringify(found));
+    const m = json(await call('race_motion', { seconds: 2 })), P = Object.fromEntries(m.probes.map(q => [q.probe, q]));
+    assert.ok(P.footFL && P.footFL.travel > 2 && P.footFR.travel > 2, id + ': his feet swim as he goes: ' + JSON.stringify([P.footFL, P.footFR]));
+    assert.ok(P.neck && P.neck.snaps <= 2, id + ': his neck eases: ' + JSON.stringify(P.neck));
+    assert.ok(m.skin && m.skin.lengthMin > 0.97 && m.skin.lengthMax < 1.03, id + ': the body keeps its length: ' + JSON.stringify(m.skin));
+  }
+  assert.ok(image(await call('race_sheet', { rest: true, cell: 200 })), 'a sheet');
 });
 
 await check('no page errors through all of it', async () => {
