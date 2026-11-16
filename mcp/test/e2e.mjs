@@ -669,21 +669,34 @@ await check('the warp has degrees: a drift opens it least and shortest, a boost 
   await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
 });
 
-await check('Big Shot Darius stands on his base at the line and flies level, nose first, once he is moving; a boost flashes off his base', async () => {
+await check('Big Shot Darius stands on his base at the line, fists on his hips, and flies level, nose first, arms swept back; a boost flashes off his base and throws his fists out ahead', async () => {
   json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
   const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
   const walk = n => { if (n.name) names.push(n.name); (n.children || []).forEach(walk); }; walk(round);
-  for (const k of ['ksh-case', 'ksh-case-mesh', 'ksh-belt', 'ksh-cape', 'ksh-collar', 'ksh-lift']) assert.ok(names.includes(k), 'the round has its ' + k + ': ' + names.join(','));
+  for (const k of ['ksh-case', 'ksh-case-mesh', 'ksh-belt', 'ksh-cape', 'ksh-collar', 'ksh-lift', 'ksh-yoke', 'ksh-arm-right', 'ksh-arm-left']) assert.ok(names.includes(k), 'the round has its ' + k + ': ' + names.join(','));
   const node = async (name) => json(await call('scene_graph', { root: name, depth: 0 })).root;
   const lean = async () => ((await node('ksh-case')).rotation || [0])[0];
-  await call('race_drive', { seconds: 0.1, autopilot: false, keys: [] });
+  const hand = async (side) => (await node('ksh-hand-' + side)).position;   // (in his shoulders' frame: y up the case, which is forward when he flies)
+  await call('race_drive', { seconds: 1.5, autopilot: false, keys: [] });
   const l0 = await lean(); assert.ok(Math.abs(l0) < 0.3, `on the line he stands on his base (${l0.toFixed(2)} rad)`);
+  const hR0 = await hand('right'), hL0 = await hand('left');
+  for (const h of [hR0, hL0]) assert.ok(h[1] > 3.2 && h[1] < 5.2 && Math.abs(h[0]) < 5, 'standing easy, his fists are on his hips: ' + JSON.stringify([hR0, hL0]));
   json(await call('race_drive', { seconds: 3 }));
   const l1 = await lean(); assert.ok(l1 > 1.25 && l1 < 1.75, `under way he lies level, as a bullet flies (${l1.toFixed(2)} rad, a quarter turn is 1.57)`);
   const caseY = (await node('ksh-case')).position, liftP = (await node('ksh-lift')).position;
   assert.ok(caseY && liftP && caseY[2] < -4, 'the case is out behind him: ' + JSON.stringify([caseY, liftP]));
+  // (cruising: once whatever he is acting at the rivals round him has passed, a shrug as one goes by, a fist out ahead when he leads)
+  let fin = await hand('left'); for (let i = 0; i < 16 && !(Math.abs(fin[0]) > 5.2 && fin[1] < 6); i++) { json(await call('race_drive', { seconds: 0.5 })); fin = await hand('left'); }
+  assert.ok(Math.abs(fin[0]) > 5.2 && fin[1] < 6, 'flying, his arms are swept back like fins: ' + JSON.stringify(fin));
   json(await call('race_fx', { boost: 'item' })); json(await call('race_drive', { seconds: 0.15 }));
   const fl = (await node('ksh-flash')).scale; assert.ok(fl && fl[0] > 2, 'the boost flashes off his base: ' + JSON.stringify(fl));
+  json(await call('race_drive', { seconds: 0.35 }));
+  const pR = await hand('right'), pL = await hand('left'); assert.ok(pR[1] > 12 && pL[1] > 12, 'the boost item: both fists out ahead of him: ' + JSON.stringify([pR, pL]));
+  // a hit: he flails, and it does not snap his neck
+  json(await call('race_drive', { seconds: 2.5 })); json(await call('race_fx', { hit: 1 }));
+  const mo = json(await call('race_motion', { seconds: 1.5 })), pr = Object.fromEntries(mo.probes.map(q => [q.probe, q]));
+  assert.ok(pr.handR.travel > 8 && pr.handL.travel > 8, 'hit, his arms flail: ' + JSON.stringify([pr.handR.travel, pr.handL.travel]));
+  assert.ok(pr.neck.snaps <= 2, 'and his neck eases through it: ' + pr.neck.snaps);
   // brought to a stop, he stands back up
   let low = 9; for (let i = 0; i < 24 && low > 0.6; i++) { await call('race_drive', { seconds: 0.4, autopilot: false, keys: ['arrowdown'] }); low = Math.min(low, await lean()); }
   assert.ok(low < 0.6, `stopped, he stands up again (${low.toFixed(2)})`);
