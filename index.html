@@ -78330,7 +78330,9 @@ for(const k of NEO_ACT_FACES) NA_YIELD[k]=1;                                    
 const NA_BASE={}; for(const k of NEO_LIST) NA_BASE[k]=1;
 function naPersona(P){
   if(P._na) return P._na; const a=P.act||{}, d=NEO_ACT_DEF;
-  return P._na=Object.assign({}, d, a, { carry:Object.assign({}, d.carry, a.carry), on:Object.assign({}, d.on, a.on), idle:a.idle||d.idle, cruise:a.cruise||d.cruise, show:a.show||d.show });
+  const p=Object.assign({}, d, a, { carry:Object.assign({}, d.carry, a.carry), on:Object.assign({}, d.on, a.on), idle:a.idle||d.idle, cruise:a.cruise||d.cruise, show:a.show||d.show });
+  if(p.body<1){ p.show=p.show.filter(n=>n!=='spin'); for(const k in p.on) p.on[k]=p.on[k].filter(n=>n!=='spin'); }   // (a whole turn in the air is all or nothing)
+  return P._na=p;
 }
 function naState(S){
   const c={}, t={}; for(const k of NA_CH){ c[k]=0; t[k]=0; } c.face=null; c.sp=0;
@@ -78431,6 +78433,75 @@ function naTick(o, R, now, dt, S, C, x){
   c.calm=ldClamp(c.calm,0,1); c.wag=P.wag; c.wagF=P.wagF;
   return c;
 }
+/* ============== THE NEO CAST'S MANNERS (see THE NEO ACTOR): who moves how ============== *
+ * One row a racer: which of the actor's phrases it uses for what, and how big, how often and at what tempo. Everything
+ * a row leaves out is the template's own (NEO_ACT_DEF: Neo Proto's bright bounce).
+ *   Tony the Guido      all front: struts and preens on the grid, throws himself into corners, stamps when he is passed
+ *   Darius King Jr.     regal, at half time: chin up, acknowledges the crowd, a gracious nod for whoever he passes
+ *   Chad Brody Jr.      loose: carves side to side like a board on a wave, shakes a hit off like water
+ *   Winston Irie Jr.    unhurried, at half time: rolls his head, nods along, taps the beat with his tail; nothing rattles him
+ *   Super Freak Jr.     the dance floor's: hips, shimmies, a spin; the biggest wag in the field
+ *   Juan Jr.            proud and warm: puffs up, bounces on the beat, a spin when he wins
+ *   Lil Pepe Jr.        a lowrider, at half time: sat back with the nose hopping on two and four, one slow nod for a pass
+ *   Leif Laserbeard Jr. deadpan: almost nothing moves. One slow nod is his cheer, his laugh and his answer to a pass
+ *   Ravi Chandra Jr.    the hero: strikes the pose and holds it, bigger than everyone, shivers grandly at a threat
+ *   Daryl Diamond Jr.   wired: twitches, peers ahead, bounces on his toes, flinches at whoever comes near
+ *   Ryu Kenji Jr.       composed: stillness, one sharp look, a nod; and a bow when he is beaten
+ *   Rusty Malone Jr.    slow and cool, at half time: a squint with the head on one side, a slow shake for a hit
+ * A kit's profile names its row (act:NEO_MANNERS.x), so a racer made from another's profile moves as that racer does
+ * unless it says otherwise (see the end of the kits: the cartridge and the dragons). */
+const NEO_MANNERS={
+  proto:{ show:['wiggle','cheer','spin','laugh','bounce'] },
+  tony:{ amp:1.15, lean:1.35, accel:1.2, carry:{hp:-0.06}, wag:1.2, fidget:1.2,
+  idle:{strut:2, preen:1.5, bounce:1, limber:1, shake:0.4}, cruise:{strut:2, groove:1},
+  on:{ pass:['yes'], passed:['no','rage'], hit:['rage'], lap:['yes'], win:['shimmy','cheer','strut','spin'], lose:['rage','sulk'] },
+  show:['strut','preen','cheer','shimmy','spin'] },
+  darius:{ amp:0.9, tempo:2, lean:0.6, hop:0.6, fidget:0.8, carry:{hp:-0.08, dy:0.04}, wagF:0.8,
+  idle:{regal:2, puff:1.5, slownod:1, still:0.8}, cruise:{regal:1.5, sway:1},
+  on:{ pass:['slownod'], passed:['puff','no'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['regal','puff','cheer'], lose:['sigh'] },
+  show:['regal','puff','slownod','cheer'] },
+  chad:{ lean:1.45, wag:1.2, carry:{hr:0.03},
+  idle:{surf:2, sway:1, shake:1, yawn:0.7, groove:1}, cruise:{surf:2, groove:1.2},
+  on:{ pass:['yes'], passed:['sigh'], hit:['shake'], threat:[], win:['surf','bounce','wiggle','spin'], lose:['sigh'] },
+  show:['surf','shake','wiggle','spin'] },
+  winston:{ amp:0.9, tempo:2, fidget:0.8, lean:0.8, accel:0.8, wagF:0.6,
+  idle:{headroll:2, groove:2, sway:1.2, tap:1.5, yawn:0.6}, cruise:{groove:2, tap:1.5, headroll:1},
+  on:{ pass:['slownod'], passed:['slownod'], hit:['sigh'], threat:[], lap:['slownod'], item:[], win:['groove','headroll','bounce','sway'], lose:['sigh'] },
+  show:['headroll','groove','tap','bounce'] },
+  freak:{ amp:1.2, fidget:1.4, lean:1.2, wag:1.45, wagF:1.3,
+  idle:{hips:2, shimmy:1.5, preen:1.2, bounce:0.8, tap:0.8}, cruise:{hips:1.5, groove:1, shimmy:1},
+  on:{ pass:['shimmy'], passed:['no'], hit:['rage'], lap:['shimmy'], win:['hips','spin','shimmy','cheer'], lose:['sulk'] },
+  show:['hips','shimmy','spin','preen'] },
+  juan:{ amp:1.05, carry:{hp:-0.04},
+  idle:{puff:1.6, preen:1.2, bounce:1.2, tap:1, groove:1}, cruise:{groove:1.5, puff:0.8},
+  on:{ pass:['yes'], passed:['no'], hit:['rage'], win:['spin','puff','cheer','bounce'], lose:['sulk'] },
+  show:['puff','bounce','spin','preen'] },
+  pepe:{ amp:0.95, tempo:2, lean:0.7, fidget:0.9, carry:{hp:-0.03, hr:0.04}, wagF:0.7,
+  idle:{lowride:2.5, groove:1.2, slownod:1, still:0.6, tap:1}, cruise:{lowride:2, groove:1},
+  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['lowride','groove','bounce'], lose:['sigh'] },
+  show:['lowride','groove','slownod','bounce'] },
+  leif:{ amp:0.7, tempo:2, fidget:0.5, lean:0.4, accel:0.6, hop:0.5, wag:0.6, wagF:0.6,
+  idle:{still:2.5, slownod:1.2, puff:0.6, shake:0.3}, cruise:{still:1.5, peer:0.6},
+  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], bump:[], item:[], lap:['slownod'], win:['slownod','puff','cheer'], lose:['still'] },
+  show:['still','slownod','puff','cheer'] },
+  ravi:{ amp:1.2, lean:1.2, carry:{hp:-0.04},
+  idle:{hero:2.2, preen:1.4, stretch:0.8, puff:1, bounce:0.6}, cruise:{hero:1.5, peer:1, groove:0.8},
+  on:{ pass:['hero'], passed:['no'], hit:['rage'], lap:['hero'], win:['hero','spin','cheer','shimmy'], lose:['sulk'] },
+  show:['hero','spin','preen','cheer'] },
+  daryl:{ fidget:1.8, lean:1.1, accel:1.35, wagF:1.4,
+  idle:{twitch:3, bounce:1.2, peer:1.2, shake:0.7, limber:0.8}, cruise:{twitch:2, peer:1.5},
+  on:{ pass:['yes','cheer'], passed:['flinch','no'], hit:['rage'], threat:['shiver','twitch'], bump:['flinch'], lap:['yes'], win:['bounce','cheer','shimmy','twitch'], lose:['sulk'] },
+  show:['twitch','bounce','cheer','shiver'] },
+  ryu:{ amp:0.85, fidget:0.6, lean:0.8, accel:0.8, hop:0.7, wag:0.8,
+  idle:{still:2, snap:1.5, slownod:1, stretch:0.4}, cruise:{still:1.2, snap:1.2, peer:0.8},
+  on:{ pass:['slownod'], passed:['snap'], hit:['still'], laugh:['slownod'], threat:['snap'], bump:[], lap:['slownod'], win:['slownod','regal','cheer'], lose:['bow'] },
+  show:['snap','still','slownod','bow'] },
+  rusty:{ amp:0.85, tempo:2, fidget:0.6, lean:0.7, hop:0.7, carry:{hr:0.03}, wagF:0.7,
+  idle:{squint:2, still:1.2, sway:1, slownod:0.8, tap:0.8}, cruise:{squint:1.5, sway:1},
+  on:{ pass:['slownod'], passed:['squint'], hit:['no'], laugh:['slownod'], threat:['squint'], bump:[], lap:['slownod'], win:['slownod','sway','puff'], lose:['sigh'] },
+  show:['squint','slownod','sway','puff'] },
+};
+NEO.act=NEO_MANNERS.proto;
 // the swim: the flow body's own wave (flowWave, exactly as wiggleTail would hand it over), on a phase the tick locked to the beat
 function neoTailHook(g, phase, amp, lift, st){
   const S=g.userData.neo, F=g.userData.flow; if(!F) return;
@@ -78888,7 +78959,7 @@ function tonyTick(o, R, now, dt, S, C, q){
   if(Q!==Tn.lastQ){ if(Q!=null && sQ<0.1 && R.you && !q.portrait && (Tn.lastQ==null || Q-Tn.lastQ>1.2) && typeof luxRipple==='function') luxRipple(Tn.fist.getWorldPosition(_tonyB), 0.4, 1.2);   // the first punch of a run goes through the picture
     Tn.lastQ=Q; }
 }
-const TONY=Object.assign({}, NEO, { skin:[23,0.8,0.55], tuftCol:'#24130b', browL:0.7, browTh:0.125, flexK:0.4, ev:TONY_EV, list:TONY_LIST,
+const TONY=Object.assign({}, NEO, { act:NEO_MANNERS.tony, skin:[23,0.8,0.55], tuftCol:'#24130b', browL:0.7, browTh:0.125, flexK:0.4, ev:TONY_EV, list:TONY_LIST,
   face:{ sknS:'#9c4418', wht:'#ffffff', whtS:'#e9dfe2', mth:'#3a1016' },
   paint:tonyPaint, skinFx:TONY_SKIN_FX, hair:tonyHair, hairPaint:tonyHairPaint, dress:tonyDress, tick:tonyTick });
 function dressTonyGuido(g, K){
@@ -79134,7 +79205,7 @@ function dkjTick(o, R, now, dt, S, C, q){
       D.bottle.updateMatrixWorld(true); const m=D.bottle.localToWorld(_dkV.set(0,2.7,0)), d=_dkW.set(0,1,0).transformDirection(D.bottle.matrixWorld);
       for(let i=0;i<14;i++){ const sp=12+dbRnd(S)*10; emit(m.x, m.y, m.z, {color:i%3===0?0xffd24a:i%3===1?0xfff2c0:0xffffff, life:0.8, vx:d.x*sp+(dbRnd(S)-0.5)*8, vy:d.y*sp+7+dbRnd(S)*6, vz:d.z*sp+(dbRnd(S)-0.5)*8, s0:3.4, s1:0.8, grav:34, op:0.95}); } } }
 }
-const DKJ=Object.assign({}, NEO, { skin:[30,0.5,0.36], tuftCol:'#2a190d', hairGloss:[0.2,0,0,0], browL:0.68, browTh:0.2, flexK:0.35, ev:DKJ_EV, list:DKJ_LIST,
+const DKJ=Object.assign({}, NEO, { act:NEO_MANNERS.darius, skin:[30,0.5,0.36], tuftCol:'#2a190d', hairGloss:[0.2,0,0,0], browL:0.68, browTh:0.2, flexK:0.35, ev:DKJ_EV, list:DKJ_LIST,
   face:{ tth:'#ffc935', tthS:'#b9770e', mst:'#1a0f0a', mth:'#3a1016' }, faceFS:DKJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }),
   paint:dkjPaint, skinFx:DKJ_SKIN_FX, hair:dkjHair, hairPaint:dkjHairPaint, dress:dkjDress, tick:dkjTick });
 function dressKingJr(g, K){
@@ -79382,7 +79453,7 @@ function chjTick(o, R, now, dt, S, C, q){
   kitArmPose(D.AU, D.e, [CHJ_ARM.up[0]+0.45*w, CHJ_ARM.up[1], CHJ_ARM.up[2]], CHJ_ARM.el);
   D.hand.position.copy(D.AU.uA2.value);
 }
-const CHJ=Object.assign({}, NEO, { skin:[24,0.55,0.64], tuftCol:'#e3bf62', browL:0.66, browTh:0.18, flexK:0.85, ev:CHJ_EV, list:CHJ_LIST,
+const CHJ=Object.assign({}, NEO, { act:NEO_MANNERS.chad, skin:[24,0.55,0.64], tuftCol:'#e3bf62', browL:0.66, browTh:0.18, flexK:0.85, ev:CHJ_EV, list:CHJ_LIST,
   face:{ mst:'#9a6a3c', znc:'#fbfbf6', mth:'#3a1016' }, faceFS:CHJ_FACE_FS, hairGloss:[0.16,0.18,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f4c6a0', '#c46e4a', '#b06044'), skinFx:CHJ_SKIN_FX, hair:chjHair, hairPaint:chjHairPaint, dress:chjDress, tick:chjTick });
 function dressChadJr(g, K){
@@ -79472,7 +79543,7 @@ function wijTick(o, R, now, dt, S, C, q){
   kitArmPose(D.AU, D.e, [WIJ_ARM.up[0]+0.75*w, WIJ_ARM.up[1]-0.2*Math.abs(w), WIJ_ARM.up[2]], WIJ_ARM.el);
   D.hand.position.copy(D.AU.uA2.value);
 }
-const WIJ=Object.assign({}, NEO, { skin:[24,0.45,0.27], tuftCol:'#1c110a', browL:0.64, browTh:0.17, flexK:0.75, ev:WIJ_EV, list:WIJ_LIST,
+const WIJ=Object.assign({}, NEO, { act:NEO_MANNERS.winston, skin:[24,0.45,0.27], tuftCol:'#1c110a', browL:0.64, browTh:0.17, flexK:0.75, ev:WIJ_EV, list:WIJ_LIST,
   face:{ mth:'#3a1016' }, faceFS:WIJ_FACE_FS, hairGloss:[0.16,0.1,0,0], accentBar:2, bobPh:0.5,
   paint:(g,lin)=>kitPaint(g, lin, '#7a5236', '#3a2414', '#33200f'), skinFx:WIJ_SKIN_FX, hair:wijHair, dress:wijDress, tick:wijTick });
 function dressRastaJr(g, K){
@@ -79913,7 +79984,7 @@ function rkjTick(o, R, now, dt, S, C, q){
   if(nk && !P){ const bb=Math.pow(0.5+0.5*Math.cos(2*Math.PI*ph),2), pit=(drift ? 0.12 : celeb ? 0.07 : 0.035)*bb, roll=(q.idle ? 0.05 : 0.02)*Math.sin(Math.PI*B);
     nk.quaternion.multiply(_rkjQ.setFromEuler(_rkjE.set(pit, 0, roll, 'YXZ'))); S.nkOut.copy(nk.quaternion); }
 }
-const RKJ=Object.assign({}, NEO, { skin:[22,0.48,0.3], tuftCol:'#11152e', browL:0.66, browTh:0.18, flexK:0.6, ev:RKJ_EV, list:RKJ_LIST,
+const RKJ=Object.assign({}, NEO, { act:NEO_MANNERS.freak, skin:[22,0.48,0.3], tuftCol:'#11152e', browL:0.66, browTh:0.18, flexK:0.6, ev:RKJ_EV, list:RKJ_LIST,
   face:{ mst:'#120806', gld:'#ffc935', gldS:'#b9770e', mth:'#3a1016' }, faceFS:RKJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }), hairGloss:[0.18,0.24,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#86583a', '#3e2616', '#3a2212'), skinFx:RKJ_SKIN_FX, hair:rkjHair, hairPaint:rkjHairPaint, dress:rkjDress, tick:rkjTick });
 function dressRickJr(g, K){
@@ -80273,7 +80344,7 @@ function jjTick(o, R, now, dt, S, C, q){
     if(on){ D.ting.position.copy(D.AU.uA2.value).addScaledVector(_jjU.subVectors(D.AU.uA2.value, D.AU.uA1.value).normalize(), 1.6); D.ting.position.z+=0.6;
       D.ting.scale.setScalar(3.2*e); D.ting.rotation.z=1.4*t; D.ting.material.uniforms.uK.value=e; } }
 }
-const JJ=Object.assign({}, NEO, { skin:[26,0.62,0.63], tuftCol:'#1a1210', browL:0.66, browTh:0.21, flexK:0.45, ev:JJ_EV, list:JJ_LIST,
+const JJ=Object.assign({}, NEO, { act:NEO_MANNERS.juan, skin:[26,0.62,0.63], tuftCol:'#1a1210', browL:0.66, browTh:0.21, flexK:0.45, ev:JJ_EV, list:JJ_LIST,
   face:{ mth:'#3a1016' }, hairGloss:[0.24,0.3,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f8d6ae', '#c27a4c', '#b46c42'), skinFx:JJ_SKIN_FX, hair:jjHair, dress:jjDress, tick:jjTick });
 function dressJuanJr(g, K){
@@ -80639,7 +80710,7 @@ function pjTick(o, R, now, dt, S, C, q){
     const ss=!P && D.arm.visible && sl>=0 && sl<0.28 ? Math.sin(Math.PI*sl/0.28) : 0; D.spark.visible=ss>0.01;
     if(D.spark.visible){ D.spark.position.z+=0.6; D.spark.scale.setScalar(2.2*ss); D.spark.rotation.z=sl*6; D.spark.material.uniforms.uK.value=ss; } }
 }
-const PJ=Object.assign({}, NEO, { skin:[350,0.78,0.8], tuftCol:'#c4232b', browL:0.66, browTh:0.19, flexK:1, ev:PJ_EV, list:PJ_LIST,
+const PJ=Object.assign({}, NEO, { act:NEO_MANNERS.pepe, skin:[350,0.78,0.8], tuftCol:'#c4232b', browL:0.66, browTh:0.19, flexK:1, ev:PJ_EV, list:PJ_LIST,
   face:{ sknS:'#c98c98', mth:'#3a1016', mst:'#1c1412' }, faceFS:PJ_FACE_FS, hairGloss:[0.08,0.1,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f8dde1', '#d99aa6', '#c98f9d'), skinFx:PJ_SKIN_FX, hair:pjHair, dress:pjDress, tick:pjTick });
 function dressPepeJr(g, K){
@@ -81116,7 +81187,7 @@ function vkjTick(o, R, now, dt, S, C, q){
   D.ga+=dt*(boost?9:0.5+0.025*spd); D.gear.rotation.z=D.ga; D.gear.material.uniforms.uGl.value=P ? 0 : 0.4+1.2*Math.exp(-C.phase*5);
   D.gog.children[0].material.uniforms.uGl.value=P ? 0 : 0.3+1.4*flash;
 }
-const VKJ=Object.assign({}, NEO, { skin:[22,0.72,0.75], tuftCol:'#d48a2c', browL:0.7, browTh:0.24, flexK:0.45, ev:VKJ_EV, list:VKJ_LIST,
+const VKJ=Object.assign({}, NEO, { act:NEO_MANNERS.leif, skin:[22,0.72,0.75], tuftCol:'#d48a2c', browL:0.7, browTh:0.24, flexK:0.45, ev:VKJ_EV, list:VKJ_LIST,
   face:{ mst:'#f2c95a', mstS:'#b98a2a', nose:'#f29274', noseS:'#c4644a', mth:'#3a1016', sknS:'#c98462' }, faceFS:VKJ_FACE_FS, faceU:()=>({ uVkM:{value:new T.Vector4()} }),
   hairGloss:[0.14,0.16,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f7d6bc', '#d7906c', '#c4785a'), skinFx:VKJ_SKIN_FX, hair:vkjHair, hairPaint:vkjHairPaint, dress:vkjDress, tick:vkjTick });
@@ -81644,7 +81715,7 @@ function rvjTick(o, R, now, dt, S, C, q){
         const sl=D.slo>0.3; emit(_rvA.x,_rvA.y,_rvA.z,{color:RVJ_PETAL[(st+i)%4], life:sl?1.6:0.9, vx:(dbRnd(S)-0.5)*(sl?4:12), vy:sl?1.5+dbRnd(S)*2:8+dbRnd(S)*6, vz:(dbRnd(S)-0.5)*(sl?4:12), s0:1.5, s1:0.7, grav:sl?1.2:14, op:0.95}); } } }
   if(flipOn && fu>=0 && fu<0.1 && R.you && !P && !D.zipD && typeof SFX!=='undefined' && SFX.zip){ D.zipD=true; SFX.zip(0.6); } if(!flipOn) D.zipD=false;
 }
-const RVJ=Object.assign({}, NEO, { skin:[25,0.5,0.5], tuftCol:'#17142a', browL:0.66, browTh:0.22, flexK:0.55, ev:RVJ_EV, list:RVJ_LIST,
+const RVJ=Object.assign({}, NEO, { act:NEO_MANNERS.ravi, skin:[25,0.5,0.5], tuftCol:'#17142a', browL:0.66, browTh:0.22, flexK:0.55, ev:RVJ_EV, list:RVJ_LIST,
   face:{ mst:'#21171c', znc:'#57507a', mth:'#3a1016', sknS:'#8c4e2c' }, faceFS:RVJ_FACE_FS, faceU:()=>({ uTgl:{value:0} }), hairGloss:[0.16,0.22,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#d9a072', '#8a5430', '#7a4626'), skinFx:RVJ_SKIN_FX, hair:rvjHair, dress:rvjDress, tick:rvjTick });
 function dressDesiJr(g, K){
@@ -82310,7 +82381,7 @@ function ddjTick(o, R, now, dt, S, C, q){
   S.FU.uDd.value.set(Math.max(0,D.dol), Math.max(0,D.sw), P ? 0.3 : (now*0.9)%1, Math.max(0,D.red));
   if(S.FU.uTgl) S.FU.uTgl.value=P ? 0 : 0.3*Math.exp(-5*ph)+2.2*(now>=D.tingS ? Math.exp(-6*(now-D.tingS)) : 0);
 }
-const DDJ=Object.assign({}, NEO, { skin:[26,0.62,0.74], tuftCol:'#6a4426', browL:0.68, browTh:0.2, flexK:0, hairGloss:[0.2,0.22,0,0], ev:DDJ_EV, list:DDJ_LIST,
+const DDJ=Object.assign({}, NEO, { act:NEO_MANNERS.daryl, skin:[26,0.62,0.74], tuftCol:'#6a4426', browL:0.68, browTh:0.2, flexK:0, hairGloss:[0.2,0.22,0,0], ev:DDJ_EV, list:DDJ_LIST,
   face:{ gld:'#ffc935', gldS:'#b9770e', dolC:'#11803c', redC:'#e2554a', mth:'#3a1016' }, faceFS:DDJ_FACE_FS, faceU:()=>({ uTgl:{value:0}, uDd:{value:new T.Vector4()} }),
   paint:(g,lin)=>kitPaint(g, lin, '#f6dcc4', '#d39c74', '#1e2a4c'), skinFx:DDJ_SKIN_FX, hair:ddjHair, hairPaint:ddjHairPaint, dress:ddjDress, tick:ddjTick });
 function dressWallJr(g, K){
@@ -82861,7 +82932,7 @@ function ryjTick(o, R, now, dt, S, C, q){
   if(!P){ const bt=(now-S.blink)/0.34, bk=bt>=0&&bt<1?Math.sin(Math.PI*bt):0, ld=S.FU.uLd.value, F=S.F;
     if(bk>0 && !face) for(let i=0;i<2;i++){ const lid=i?F[I.lidR]:F[I.lidL]; ld[i*4]=lid+(-1.12-lid)*bk; } }
 }
-const RYJ=Object.assign({}, NEO, { skin:[163,0.5,0.46], tuftCol:'#f4ecd2', browL:0.7, browTh:0.27, flexK:0.6, ev:RYJ_EV, list:RYJ_LIST,
+const RYJ=Object.assign({}, NEO, { act:NEO_MANNERS.ryu, skin:[163,0.5,0.46], tuftCol:'#f4ecd2', browL:0.7, browTh:0.27, flexK:0.6, ev:RYJ_EV, list:RYJ_LIST,
   face:{ mth:'#3a1016', muz:'#a6e6cc', muzS:'#5fae92', fang:'#fdf8ea', iris:'#f4b52e', scl:'#17604e' }, faceFS:RYJ_FACE_FS, faceU:()=>({ uRk:{value:new T.Vector4()} }),
   hairGloss:[0.16,0.2,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#bfe8cc', '#1d6f5c', '#17604e'), skinFx:RYJ_SKIN_FX, hair:ryjHair, hairPaint:ryjHairPaint, dress:ryjDress, tick:ryjTick });
@@ -83997,7 +84068,7 @@ function rmjTick(o, R, now, dt, S, C, q){
 }
 // the hat tip's tilt (+ forward) by beats into its bar: flicked back on the downbeat, held, and settling with a little nod
 function rmjTipA(tu){ if(tu<0 || tu>2.6) return 0; if(tu<0.15) return -0.34*rmjSm(tu/0.15); if(tu<1.2) return -0.34+0.04*Math.sin(Math.PI*(tu-0.15)/1.05); return -0.34*(1-rmjSm((tu-1.2)/1.0))+0.07*Math.sin(Math.PI*rmjSm((tu-1.2)/1.4)); }
-const RMJ=Object.assign({}, NEO, { skin:[27,0.6,0.71], tuftCol:'#b8501f', browL:0.66, browTh:0.22, flexK:0.6, ev:RMJ_EV, list:RMJ_LIST,
+const RMJ=Object.assign({}, NEO, { act:NEO_MANNERS.rusty, skin:[27,0.6,0.71], tuftCol:'#b8501f', browL:0.66, browTh:0.22, flexK:0.6, ev:RMJ_EV, list:RMJ_LIST,
   face:{ mst:'#c25a28', mstS:'#7a3014', nose:'#e2866a', noseS:'#b0583e', scar:'#a83a2c', stub:'#7a4630', blush:'#e8705a', soot:'#2a2220', mth:'#3a1016', wht:'#fdf9ee' },
   faceFS:RMJ_FACE_FS, faceU:()=>({ uRmF:{value:new T.Vector4()} }), hairGloss:[0.14,0.16,0,0],
   paint:(g,lin)=>kitPaint(g, lin, '#f7dcbe', '#c98a5c', '#f0dcbc'), skinFx:RMJ_SKIN_FX, hair:rmjHair, hairPaint:rmjHairPaint, dress:rmjDress, tick:rmjTick });
@@ -84012,75 +84083,11 @@ NEO_LOOK.outlawJr={react:5.5, zeta:0.9, turn:0.95, lid:0.8, smug:1.2, smirk:0.1,
 NEO_HEAVY.outlawJr=2;
 for(const R of [MUSIC_STYLES, ALT_MAP, FINAL_LAP_CUE]) if(R.hillbilly!==undefined && R.outlawJr===undefined) R.outlawJr=R.hillbilly;   // his record: the one Rusty Malone's line inherits through SR_BASE (outlaw → hillbilly), Copper Coil Breakdown; nobody else reads these keys
 
-/* ============== THE NEO CAST'S MANNERS (see THE NEO ACTOR): who moves how ============== *
- * One row a racer: which of the actor's phrases it uses for what, and how big, how often and at what tempo. Everything
- * a row leaves out is the template's own (NEO_ACT_DEF: Neo Proto's bright bounce).
- *   Tony the Guido      all front: struts and preens on the grid, throws himself into corners, stamps when he is passed
- *   Darius King Jr.     regal, at half time: chin up, acknowledges the crowd, a gracious nod for whoever he passes
- *   Chad Brody Jr.      loose: carves side to side like a board on a wave, shakes a hit off like water
- *   Winston Irie Jr.    unhurried, at half time: rolls his head, nods along, taps the beat with his tail; nothing rattles him
- *   Super Freak Jr.     the dance floor's: hips, shimmies, a spin; the biggest wag in the field
- *   Juan Jr.            proud and warm: puffs up, bounces on the beat, a spin when he wins
- *   Lil Pepe Jr.        a lowrider, at half time: sat back with the nose hopping on two and four, one slow nod for a pass
- *   Leif Laserbeard Jr. deadpan: almost nothing moves. One slow nod is his cheer, his laugh and his answer to a pass
- *   Ravi Chandra Jr.    the hero: strikes the pose and holds it, bigger than everyone, shivers grandly at a threat
- *   Daryl Diamond Jr.   wired: twitches, peers ahead, bounces on his toes, flinches at whoever comes near
- *   Ryu Kenji Jr.       composed: stillness, one sharp look, a nod; and a bow when he is beaten
- *   Rusty Malone Jr.    slow and cool, at half time: a squint with the head on one side, a slow shake for a hit
- * Two racers built on these kits by another hand keep the manner of the racer they are made from, with less of the
- * whole-body channels, because their own kits move their bodies: Big Shot Darius (a cartridge that struts and leans by
- * itself: none) and Ryu Kenji Dragon Jr. (a dragon on four legs: some). */
-NEO.act={ show:['wiggle','cheer','spin','laugh','bounce'] };
-TONY.act={ amp:1.15, lean:1.35, accel:1.2, carry:{hp:-0.06}, wag:1.2, fidget:1.2,
-  idle:{strut:2, preen:1.5, bounce:1, limber:1, shake:0.4}, cruise:{strut:2, groove:1},
-  on:{ pass:['yes'], passed:['no','rage'], hit:['rage'], lap:['yes'], win:['shimmy','cheer','strut','spin'], lose:['rage','sulk'] },
-  show:['strut','preen','cheer','shimmy','spin'] };
-DKJ.act={ amp:0.9, tempo:2, lean:0.6, hop:0.6, fidget:0.8, carry:{hp:-0.08, dy:0.04}, wagF:0.8,
-  idle:{regal:2, puff:1.5, slownod:1, still:0.8}, cruise:{regal:1.5, sway:1},
-  on:{ pass:['slownod'], passed:['puff','no'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['regal','puff','cheer'], lose:['sigh'] },
-  show:['regal','puff','slownod','cheer'] };
-CHJ.act={ lean:1.45, wag:1.2, carry:{hr:0.03},
-  idle:{surf:2, sway:1, shake:1, yawn:0.7, groove:1}, cruise:{surf:2, groove:1.2},
-  on:{ pass:['yes'], passed:['sigh'], hit:['shake'], threat:[], win:['surf','bounce','wiggle','spin'], lose:['sigh'] },
-  show:['surf','shake','wiggle','spin'] };
-WIJ.act={ amp:0.9, tempo:2, fidget:0.8, lean:0.8, accel:0.8, wagF:0.6,
-  idle:{headroll:2, groove:2, sway:1.2, tap:1.5, yawn:0.6}, cruise:{groove:2, tap:1.5, headroll:1},
-  on:{ pass:['slownod'], passed:['slownod'], hit:['sigh'], threat:[], lap:['slownod'], item:[], win:['groove','headroll','bounce','sway'], lose:['sigh'] },
-  show:['headroll','groove','tap','bounce'] };
-RKJ.act={ amp:1.2, fidget:1.4, lean:1.2, wag:1.45, wagF:1.3,
-  idle:{hips:2, shimmy:1.5, preen:1.2, bounce:0.8, tap:0.8}, cruise:{hips:1.5, groove:1, shimmy:1},
-  on:{ pass:['shimmy'], passed:['no'], hit:['rage'], lap:['shimmy'], win:['hips','spin','shimmy','cheer'], lose:['sulk'] },
-  show:['hips','shimmy','spin','preen'] };
-JJ.act={ amp:1.05, carry:{hp:-0.04},
-  idle:{puff:1.6, preen:1.2, bounce:1.2, tap:1, groove:1}, cruise:{groove:1.5, puff:0.8},
-  on:{ pass:['yes'], passed:['no'], hit:['rage'], win:['spin','puff','cheer','bounce'], lose:['sulk'] },
-  show:['puff','bounce','spin','preen'] };
-PJ.act={ amp:0.95, tempo:2, lean:0.7, fidget:0.9, carry:{hp:-0.03, hr:0.04}, wagF:0.7,
-  idle:{lowride:2.5, groove:1.2, slownod:1, still:0.6, tap:1}, cruise:{lowride:2, groove:1},
-  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], lap:['slownod'], win:['lowride','groove','bounce'], lose:['sigh'] },
-  show:['lowride','groove','slownod','bounce'] };
-VKJ.act={ amp:0.7, tempo:2, fidget:0.5, lean:0.4, accel:0.6, hop:0.5, wag:0.6, wagF:0.6,
-  idle:{still:2.5, slownod:1.2, puff:0.6, shake:0.3}, cruise:{still:1.5, peer:0.6},
-  on:{ pass:['slownod'], passed:['still'], hit:['no'], laugh:['slownod'], threat:[], bump:[], item:[], lap:['slownod'], win:['slownod','puff','cheer'], lose:['still'] },
-  show:['still','slownod','puff','cheer'] };
-RVJ.act={ amp:1.2, lean:1.2, carry:{hp:-0.04},
-  idle:{hero:2.2, preen:1.4, stretch:0.8, puff:1, bounce:0.6}, cruise:{hero:1.5, peer:1, groove:0.8},
-  on:{ pass:['hero'], passed:['no'], hit:['rage'], lap:['hero'], win:['hero','spin','cheer','shimmy'], lose:['sulk'] },
-  show:['hero','spin','preen','cheer'] };
-DDJ.act={ fidget:1.8, lean:1.1, accel:1.35, wagF:1.4,
-  idle:{twitch:3, bounce:1.2, peer:1.2, shake:0.7, limber:0.8}, cruise:{twitch:2, peer:1.5},
-  on:{ pass:['yes','cheer'], passed:['flinch','no'], hit:['rage'], threat:['shiver','twitch'], bump:['flinch'], lap:['yes'], win:['bounce','cheer','shimmy','twitch'], lose:['sulk'] },
-  show:['twitch','bounce','cheer','shiver'] };
-RYJ.act={ amp:0.85, fidget:0.6, lean:0.8, accel:0.8, hop:0.7, wag:0.8,
-  idle:{still:2, snap:1.5, slownod:1, stretch:0.4}, cruise:{still:1.2, snap:1.2, peer:0.8},
-  on:{ pass:['slownod'], passed:['snap'], hit:['still'], laugh:['slownod'], threat:['snap'], bump:[], lap:['slownod'], win:['slownod','regal','cheer'], lose:['bow'] },
-  show:['snap','still','slownod','bow'] };
-RMJ.act={ amp:0.85, tempo:2, fidget:0.6, lean:0.7, hop:0.7, carry:{hr:0.03}, wagF:0.7,
-  idle:{squint:2, still:1.2, sway:1, slownod:0.8, tap:0.8}, cruise:{squint:1.5, sway:1},
-  on:{ pass:['slownod'], passed:['squint'], hit:['no'], laugh:['slownod'], threat:['squint'], bump:[], lap:['slownod'], win:['slownod','sway','puff'], lose:['sigh'] },
-  show:['squint','slownod','sway','puff'] };
-if(typeof KSH_P!=='undefined') KSH_P.act=Object.assign({}, DKJ.act, { body:0, show:['regal','slownod','puff'] });
-if(typeof RYD!=='undefined') RYD.act=Object.assign({}, RYJ.act, { body:0.6 });
+// the racers made from another Neo racer's profile carry its manner (the profile's act); those whose own kit moves the
+// whole body take less of the actor's body channels: Big Shot Darius (a cartridge that struts and leans by itself) none,
+// the dragons on their four legs some
+if(typeof KSH_P!=='undefined') KSH_P.act=Object.assign({}, KSH_P.act, { body:0, show:['regal','slownod','puff'] });
+for(const P of [typeof RYD!=='undefined'?RYD:null, typeof CHD!=='undefined'?CHD:null, typeof TDJ!=='undefined'?TDJ:null, typeof WDJ!=='undefined'?WDJ:null]) if(P) P.act=Object.assign({}, P.act, { body:0.6 });
 function makeCell(hue, typeId){ const g=rigNeck(flowKeep(makeCellBuild(hue, typeId))), post=NEO_POST[typeId]; if(post) post(g); return g; }
 // a kit that took the flow tail off for a body of its own (a dragon, a flagellum) is not on the flow body: its head's ink goes too
 function flowKeep(g){ const ud=g.userData, F=ud.flow; if(!F) return g;
