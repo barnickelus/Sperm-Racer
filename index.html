@@ -84335,7 +84335,8 @@ for(const R of [MUSIC_STYLES, ALT_MAP, FINAL_LAP_CUE]) if(R.hillbilly!==undefine
  *             speed), a red border at the hem. The AGAL: two black twisted cords round the crown, glinting on the downbeat, and
  *             its two cord tassels (the tuft's spring) down the back. The TAILS: two ends of the cloth off the back of the
  *             head, tasselled; they hang over the bisht at rest, stream back and flutter with speed (more on a boost), swing on
- *             the head's turns and lag a hair behind the face when it whips round. A hit knocks the whole thing askew.
+ *             the head's turns and lag a hair behind the face when it whips round, trailing behind him through a full look
+ *             back. A hit knocks the whole thing askew.
  *   FACE      Dash's face in his acting (SKJ_EXPR): serene. Half lids and an amused brow at rest; eyes shut over a smile for a
  *             pass (of course); a polite smile and a glance for whoever passes him; UFF (a wince, a small O) for a hit and a
  *             raised brow (tsk) after it; humming with his eyes shut when he is alone; a gracious smile even when he loses.
@@ -84432,8 +84433,18 @@ const skjDir=(az,el)=>[Math.sin(az)*Math.cos(el), Math.sin(el), Math.cos(az)*Mat
    close on the crown, a soft fold at the brow, hanging free at the sides and the back below the ears. */
 function skjEdge(az){ const a=Math.abs(skjW(az)), fr=0.9-0.14*Math.min(1,a/0.95)**2;
   if(a<0.95) return fr; if(a<1.34) return fr+(-1.04-fr)*skjSm((a-0.95)/0.39); if(a<2.3) return -1.04; return -1.04+0.62*skjSm((a-2.3)/0.7); }
-function skjOff(az, el){ const a=Math.abs(skjW(az)), e=skjEdge(az), hang=skjSm((0.3-el)/1.25)*skjSm((a-1.05)/0.32);
-  return 0.34+0.1*skjSm((a-1.2)/1.2)-0.1*skjSm((el-1.1)/0.4)+0.36*hang+0.1*hang*Math.sin(a*11+0.6)+0.22*skjSm(1-(el-e)/0.4)*(1-skjSm((a-1.0)/0.3)); }
+function skjOff(az, el){ const a=Math.abs(skjW(az)), e=skjEdge(az);
+  return 0.34+0.1*skjSm((a-1.2)/1.2)-0.1*skjSm((el-1.1)/0.4)+0.22*skjSm(1-(el-e)/0.4)*(1-skjSm((a-1.0)/0.3)); }
+/* Below the ears the cloth does not follow the head round under it (a drawstring bag): from a knee at the head's widest it
+   HANGS, straight down to its hem, flaring a little and falling in soft folds. hw: how much a column hangs (none round the
+   face or at the nape, all of it at the sides). v runs from the crown (0) to the hem (1), the fringe past it. */
+const SKJ_VS=0.7, SKJ_KN=-0.06, SKJ_HEM=-2.3;
+const skjHangW=a=>skjSm((a-0.98)/0.3)*(1-skjSm((a-2.3)/0.5));
+function skjShellPt(az, v){ const a=Math.abs(skjW(az)), hw=skjHangW(a), e=skjEdge(az), eS=e+(Math.max(e,SKJ_KN)-e)*hw, vs=1+(SKJ_VS-1)*hw;
+  const f=Math.min(1, v/vs), el=Math.PI/2-(Math.PI/2-eS)*f, K=skjOn(skjDir(az,el), skjOff(az,el)+0.2*hw*skjSm((f-0.55)/0.45));
+  if(v<=vs || hw<1e-4) return K;
+  const Dh=Math.max(0, K[1]-SKJ_HEM)*hw, t=(v-vs)/(1-vs), dr=t*Dh, h=[Math.sin(az),0,Math.cos(az)], fl=0.07*dr+0.16*dr*dr/Math.max(1,Dh)+0.09*Math.sin(a*11+0.6)*Math.min(1,t);
+  return [K[0]+h[0]*fl, K[1]-dr, K[2]+h[2]*fl]; }
 const SKJ_AGAL=az=>0.96-0.2*(1-Math.cos(az))/2;   // the agal's elevation round the crown: higher in front
 // a rest point on the cloth as (unit direction from the head's centre, radial offset off the egg)
 function skjDO(p){ const l=Math.hypot(p[0],p[1],p[2]), d=[p[0]/l,p[1]/l,p[2]/l]; return [d, l-neoR(d[0],d[1],d[2])]; }
@@ -84452,15 +84463,17 @@ function skjClothGeo(){ return tonyKeep('skjCloth', ()=>{
     for(let i=0;i<NV;i++) for(let j=0;j<NU;j++){ const a=i*(NU+1)+j, b=a+1, c=a+NU+1, d=c+1; idx.push(a,c,b, b,c,d); }
     const g=new T.BufferGeometry(); g.setAttribute('position',new T.Float32BufferAttribute(pos,3)); g.setAttribute('uv',new T.Float32BufferAttribute(uv,2)); g.setIndex(idx); g.computeVertexNormals(); return g; };
   // the shell: u round from the back, v from the crown to the edge
-  const shell=grid(132, 22, (u,v)=>{ const az=Math.PI+u*Math.PI*2, el=Math.PI/2-(Math.PI/2-skjEdge(az))*v; return skjOn(skjDir(az,el), skjOff(az,el)); });
+  const shell=grid(132, 30, (u,v)=>skjShellPt(Math.PI+u*Math.PI*2, v));
   { const n=shell.attributes.normal; for(let i=0;i<n.count;i++){ const u=shell.attributes.uv.getX(i); if(u<1e-4||u>1-1e-4){ const p=shell.attributes.position, d=new T.Vector3(p.getX(i),p.getY(i),p.getZ(i)).normalize(); n.setXYZ(i,d.x,d.y,d.z); } } }   // (the seam: one normal both sides)
   put(shell, 0);
+  // the fringe along the hem, where it hangs (kind 4: cut into tassels by the shader)
+  put(grid(132, 2, (u,v)=>skjShellPt(Math.PI+u*Math.PI*2, 1+0.07*v)), 4);
   // the fold: a soft roll along the edge round the face
-  { const pts=[]; for(let i=0;i<=60;i++){ const az=-1.42+2.84*i/60, el=skjEdge(az)+0.02; pts.push(new T.Vector3(...skjOn(skjDir(az,el), skjOff(az,el)+0.05))); }
-    const tb=new T.TubeGeometry(new T.CatmullRomCurve3(pts),120,0.22,8,false); put(tb, 1); }
+  { const pts=[]; for(let i=0;i<=60;i++){ const az=-1.25+2.5*i/60, p=skjShellPt(az, 0.995), a=Math.abs(az), l=Math.hypot(p[0],p[2])||1; pts.push(new T.Vector3(p[0]+p[0]/l*0.05, p[1]+0.03*(1-skjHangW(a)), p[2]+p[2]/l*0.05)); }
+    const tb=new T.TubeGeometry(new T.CatmullRomCurve3(pts),120,0.2,8,false); put(tb, 1); }
   // the agal: two black cords round the crown
-  for(const [de,oo] of [[0.085,0.5],[-0.085,0.49]]){ const pts=[]; for(let i=0;i<72;i++){ const az=i/72*Math.PI*2, el=SKJ_AGAL(az)+de; pts.push(new T.Vector3(...skjOn(skjDir(az,el), skjOff(az,el)+oo-0.17))); }
-    put(new T.TubeGeometry(new T.CatmullRomCurve3(pts,true),144,0.28,8,true), 2); }
+  for(const [de,oo] of [[0.062,0.41],[-0.062,0.4]]){ const pts=[]; for(let i=0;i<72;i++){ const az=i/72*Math.PI*2, el=SKJ_AGAL(az)+de; pts.push(new T.Vector3(...skjOn(skjDir(az,el), skjOff(az,el)+oo-0.17))); }
+    put(new T.TubeGeometry(new T.CatmullRomCurve3(pts,true),144,0.195,8,true), 2); }
   // the tails: off the back of the head behind each ear, hanging down and back (they stream with speed)
   for(const sd of [-1,1]){ const NW=4, NS=18, L=5.0, az0=Math.PI-sd*0.46, el0=0.6, roots=[], pos=[], uv=[], hang=[];
     for(let c=0;c<=NW;c++){ const s=c/NW*2-1, az=az0+s*0.21; roots.push(skjOn(skjDir(az,el0), skjOff(az,el0)+0.04)); }
@@ -84491,12 +84504,12 @@ vec3 rZ(vec3 v, float a){ float c=cos(a), s=sin(a); return vec3(c*v.x-s*v.y, s*v
 void main(){
   vec3 d=normalize(rY(rX(rZ(aD,uTilt.x),uTilt.y),uPhi));
   vec3 p=d*(inversesqrt(dot(d*d,1.0/${SKJ_HR2}))+aO), n=rY(rX(rZ(normal,uTilt.x),uTilt.y),uPhi);
-  if(aK<0.5){ float hw=smoothstep(0.55,1.0,uv.y)*smoothstep(1.0,1.45,abs(uv.x-0.5)*6.28318);   // the hanging sides and back
+  if(aK<0.5 || aK>3.5){ float hw=(aK>3.5 ? 1.0 : smoothstep(0.55,1.0,uv.y))*smoothstep(1.0,1.45,abs(uv.x-0.5)*6.28318);   // the hanging sides and back
     p+=rY(vec3(uSw.x, 0.0, -uSw.z), uPhi)*hw; }
   float w=smoothstep(-4.75,-1.5,p.z), sq=uNeoSq.x*w; vec3 r=mix(vec3(1.0),uNeoRd,smoothstep(-4.75,-3.0,p.z));
   vec3 S=vec3((1.0+0.5*sq)*r.x, (1.0-sq)*r.y, (1.0+0.5*sq)*r.z);
   p=p*S;
-  if(aK>2.5){ float t=uv.y, a=uTl.x*(0.3+0.7*t);
+  if(aK>2.5 && aK<3.5){ float t=uv.y, a=uTl.x*(0.3+0.7*t);
     vec3 h=rY(rX(aH,a),uTl.w*t*sqrt(t)), nr=rY(rX(normal,a),uTl.w*t*sqrt(t));
     h+=nr*uTl.y*t*sin(uTl.z-t*6.5+uv.x*1.3);
     h=rY(rZ(h,uTilt.x),uPhiT); n=rY(rZ(nr,uTilt.x),uPhiT);
@@ -84509,34 +84522,42 @@ void main(){
   vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-// the check: doubled red lines on white (a broad line and a fine one beside it), a solid block where they cross; faded to
-// its average tint where it would be finer than a pixel
+// the shemagh's weave, as on the card: on white, a broad red line and a fine one beside it each way, a solid red block where
+// the broad ones cross, a small red diamond in every cell; a red border band at the hem and a short tasselled fringe. Fine
+// (about a third of a unit a cell): it is faded to its own average tint wherever it would be finer than a pixel
 const SKJ_CLOTH_FS=DB_GLSL_L+`
 uniform vec3 uInk, uRed, uWht; uniform float uGl;
 varying vec3 vNv, vV, vP, vN0; varying vec2 vU; varying float vK;
 #include <fog_pars_fragment>
 float skjL(float x){ float f=fract(x+0.5)-0.5, aw=fwidth(x)*0.75+1e-4;
-  float a=1.0-smoothstep(0.08-aw,0.08+aw,abs(f)), b=1.0-smoothstep(0.024-aw,0.024+aw,abs(f-0.25));
-  return mix(max(a,b), 0.22, smoothstep(0.18,0.42,fwidth(x))); }
+  float a=1.0-smoothstep(0.11-aw,0.11+aw,abs(f)), b=1.0-smoothstep(0.036-aw,0.036+aw,abs(f-0.3));
+  return mix(max(a,b), 0.3, smoothstep(0.16,0.4,fwidth(x))); }
+float skjD(vec2 q){ vec2 f=fract(q)-vec2(0.69,0.66); float d=abs(f.x)+abs(f.y)-0.15, w=length(fwidth(q))*0.5+1e-4;   // the diamond in a cell
+  return (1.0-smoothstep(-w,w,d))*(1.0-smoothstep(0.16,0.4,length(fwidth(q)))); }
+float skjChk2(vec2 q){ return max(max(skjL(q.x), skjL(q.y)), skjD(q)); }
 void main(){
   vec3 n=normalize(vNv); bool fr=gl_FrontFacing; if(!fr) n=-n;
   float d=dot(n,DB_L)-0.06, fw=fwidth(d)*0.7+1e-4, k=smoothstep(-fw,fw,d), K=vK;
   vec3 c;
-  if(K<1.5){ vec3 q=vP/0.82, m=abs(normalize(vN0)); float wx=1.0-smoothstep(0.5,0.82,m.x), wy=1.0-smoothstep(0.5,0.82,m.y), wz=1.0-smoothstep(0.5,0.82,m.z);
+  if(K<1.5){ vec3 q=vP/0.3, m=abs(normalize(vN0)); float wx=1.0-smoothstep(0.5,0.82,m.x), wy=1.0-smoothstep(0.5,0.82,m.y), wz=1.0-smoothstep(0.5,0.82,m.z);
     float rr=max(max(wx*skjL(q.x), wy*skjL(q.y)), wz*skjL(q.z));
-    if(K<0.5){ float v=vU.y, vw=fwidth(v)*0.75+1e-4; rr=max(rr, smoothstep(0.915-vw,0.915+vw,v)*(1.0-smoothstep(0.955-vw,0.955+vw,v)));   // the red border at the hem
-      rr=max(rr, smoothstep(0.972-vw,0.972+vw,v)); }
+    rr=max(rr, max(max(smoothstep(0.6,0.85,m.x)*skjD(q.zy), smoothstep(0.6,0.85,m.y)*skjD(q.xz)), smoothstep(0.6,0.85,m.z)*skjD(q.xy)));   // (the diamonds, on whichever face of the weave is turned to the eye)
+    if(K<0.5){ float v=vU.y, vw=fwidth(v)*0.75+1e-4; rr=max(rr, smoothstep(0.87-vw,0.87+vw,v)*(1.0-smoothstep(0.935-vw,0.935+vw,v)));   // the red border at the hem
+      rr=max(rr, smoothstep(0.958-vw,0.958+vw,v)*(1.0-smoothstep(0.972-vw,0.972+vw,v))); rr*=1.0-0.85*(smoothstep(0.935-vw,0.935+vw,v)*(1.0-smoothstep(0.958-vw,0.958+vw,v))); }
     c=mix(uWht, uRed, rr); }
-  else if(K<2.5){ float tw=fract(vU.x*260.0+vU.y*2.0), fd=1.0-smoothstep(0.2,0.6,fwidth(vU.x*260.0));   // the cord, twisted
+  else if(K<2.5){ float tw=fract(vU.x*360.0+vU.y*2.0), fd=1.0-smoothstep(0.2,0.6,fwidth(vU.x*360.0));   // the cord, twisted
     c=vec3(0.035,0.032,0.04)*(1.0+0.8*smoothstep(0.35,0.5,abs(tw-0.5))*fd);
     float hs=dot(n,normalize(DB_L+normalize(vV))), hw=fwidth(hs)*0.7+1e-4; c+=vec3(0.36,0.36,0.42)*(0.25+uGl)*smoothstep(0.965-hw,0.965+hw,hs); }
-  else { vec2 q=vec2(vU.x*4.0, vU.y*17.0); float t=vU.y, tw=fwidth(t)*0.75+1e-4;
+  else if(K>3.5){ float a=abs(vU.x-0.5)*6.28318, hw=smoothstep(0.98,1.28,a)*(1.0-smoothstep(2.3,2.8,a)); if(hw<0.5) discard;   // the fringe, where it hangs
+    float s=fract(vU.x*230.0), sw=fwidth(vU.x*230.0); if(sw<0.5 && abs(s-0.5)>0.27) discard;
+    c=mix(uWht, uRed, step(0.55,vU.y)); }
+  else { vec2 q=vec2(vU.x*6.0, vU.y*18.0); float t=vU.y, tw=fwidth(t)*0.75+1e-4;
     if(t>1.0){ float s=fract(vU.x*9.0), sw=fwidth(vU.x*9.0); if(abs(s-0.5)>0.28+sw*0.5) discard; c=mix(uWht, uRed, smoothstep(1.085,1.095,t)); }   // the tassels
-    else { float rr=max(skjL(q.x), skjL(q.y)); vec2 f=fract(q)-0.5; float lz=abs(f.x)+abs(f.y)-0.12, lw=fwidth(lz)+1e-4; rr=max(rr, (1.0-smoothstep(-lw,lw,lz))*(1.0-smoothstep(0.2,0.45,fwidth(q.y))));
+    else { float rr=skjChk2(q);
       rr=max(rr, smoothstep(0.84-tw,0.84+tw,t)*(1.0-smoothstep(0.9-tw,0.9+tw,t))); rr=max(rr, smoothstep(0.93-tw,0.93+tw,t)*(1.0-smoothstep(0.95-tw,0.95+tw,t)));
       c=mix(uWht, uRed, rr); } }
   c=mix(c*0.64+vec3(0.0,0.01,0.03),c,k); if(!fr) c*=0.66;
-  float rim=abs(dot(n,normalize(vV))), rf=fwidth(rim)+1e-4; c=mix(uInk,c,smoothstep(0.22-rf,0.22+rf,rim));
+  float rim=abs(dot(n,normalize(vV))), rf=fwidth(rim)+1e-4, rk=K>2.5 && K<3.5 ? 0.07 : 0.22; c=mix(uInk,c,smoothstep(rk-rf,rk+rf,rim));   // (a tail seen edge-on is a pale sliver of cloth, never an inked stick)
   gl_FragColor=vec4(c,1.0);
   #include <fog_fragment>
   gl_FragColor=linearToOutputTexel(gl_FragColor);
@@ -84544,12 +84565,12 @@ void main(){
 // the agal's two cord tassels hang off the back of the cords, down the back of the shemagh (the tuft: they swing on its spring)
 function skjHair(col){
   const parts=[], az=Math.PI, el=SKJ_AGAL(az)-0.12, base=skjOn(skjDir(az,el), skjOff(az,el)+0.38); base[1]+=HEAD_CY; let tip=null;
-  for(const sx of [-0.34,0.34]){ const pts=[0,0.33,0.66,1].map(t=>[base[0]+sx*(1+0.25*t), base[1]-2.3*t-0.25*t*t, base[2]-0.55*t-0.25*t*t]);
-    const [tg, f]=tplStrand(pts, 12, 7, u=>0.13*(1-0.3*u)+0.02); parts.push([tg, col, f]);
-    const e=pts[3], kn=new T.SphereGeometry(0.27,10,8); kn.scale(1,1.25,1); kn.translate(e[0], e[1]-0.15, e[2]); parts.push([kn, col, 1]);
-    const fr=new T.ConeGeometry(0.3,0.75,10,1,true); fr.rotateX(Math.PI); fr.translate(e[0], e[1]-0.62, e[2]); parts.push([fr, dbLin('#2a2630'), 1]);
+  for(const sx of [-0.3,0.3]){ const pts=[0,0.5,1].map(t=>[base[0]+sx*(1+0.15*t), base[1]-0.95*t, base[2]-0.3*t]);   // (short and fat: tassels, never a loose line)
+    const [tg, f]=tplStrand(pts, 6, 7, u=>0.17*(1-0.2*u)+0.03); parts.push([tg, col, f]);
+    const e=pts[2], kn=new T.SphereGeometry(0.3,10,8); kn.scale(1,1.2,1); kn.translate(e[0], e[1]-0.12, e[2]); parts.push([kn, col, 1]);
+    const fr=new T.ConeGeometry(0.36,0.6,10,1,true); fr.rotateX(Math.PI); fr.translate(e[0], e[1]-0.5, e[2]); parts.push([fr, dbLin('#2a2630'), 1]);
     const bd=new T.TorusGeometry(0.2,0.07,6,12); bd.rotateX(Math.PI/2); bd.translate(e[0], e[1]+0.08, e[2]); parts.push([bd, dbLin('#e2b23a'), 1]);
-    if(!tip) tip=new T.Vector3(e[0], e[1]-0.9, e[2]); }
+    if(!tip) tip=new T.Vector3(e[0], e[1]-0.8, e[2]); }
   return { parts, tip, root:new T.Vector3(base[0], base[1]+0.1, base[2]) };
 }
 /* THE BISHT: a black cloak with broad gold borders, bound to the skin from under the shemagh down the tail (it bends with the
@@ -84613,7 +84634,7 @@ function skjMerge(items){
    hood's plume. Kinds (aK): 0 white plumage with dark arrowhead flecks, 1 the wings' barred feathers, 2 yellow (cere, feet),
    3 slate (beak, talons), 4 leather (hood, jesses), 5 gold, 6 the plume, 7 the head (its eyes painted in it, under the hood).
    Feet at the origin, facing +z. */
-const SKJ_FC={ hc:[0,3.12,0.34], hr:0.84, neck:[0,2.5,0.12], hinge:[0,3.62,-0.3], plume:[0,4.03,0.22], wing:[0.74,2.38,0.0], tail:[0,0.72,-0.62], s:1.4 };
+const SKJ_FC={ hc:[0,3.12,0.34], hr:0.84, neck:[0,2.5,0.12], hinge:[0,3.62,-0.3], plume:[0,4.03,0.22], wing:[0.74,2.38,0.0], tail:[0,0.66,-0.74], s:1.4 };
 function skjFalconGeo(){ return tonyKeep('skjFalcon', ()=>{
   const F=SKJ_FC, it=[], V=(x,y,z)=>new T.Vector3(x,y,z), Q=(x,y,z)=>new T.Quaternion().setFromEuler(new T.Euler(x,y,z)), M=(p,q,s)=>new T.Matrix4().compose(p, q||new T.Quaternion(), s||V(1,1,1));
   const W=dbLin('#f6f4ee'), WG=dbLin('#d9d4ca'), Y=dbLin('#f2c230'), SL=dbLin('#3a3e48'), LE=dbLin('#7a3c1c'), GO=dbLin('#f0c040'), RD=dbLin('#c42020');
@@ -84623,7 +84644,7 @@ function skjFalconGeo(){ return tonyKeep('skjFalcon', ()=>{
   for(const sx of [-1,1]){ const lg=new T.CylinderGeometry(0.13,0.15,0.62,8); it.push([lg, M(V(sx*0.32,0.32,0.12)), Y, 2, 0]);
     for(const a of [-0.45,0,0.45]){ const tg=new T.CylinderGeometry(0.075,0.09,0.42,6); it.push([tg, M(V(sx*0.32+Math.sin(a)*0.18,0.06,0.12+Math.cos(a)*0.18), Q(Math.PI/2-0.2,a,0)), Y, 2, 0]);
       const tl=new T.ConeGeometry(0.06,0.2,5); it.push([tl, M(V(sx*0.32+Math.sin(a)*0.38,0.0,0.12+Math.cos(a)*0.38), Q(Math.PI/2+0.9,a,0)), SL, 3, 0]); }
-    const js=new T.BoxGeometry(0.09,0.95,0.03); it.push([js, M(V(sx*0.36,-0.2,0.2), Q(0.15,0,sx*0.12)), LE, 4, 0]);
+    const js=new T.BoxGeometry(0.11,0.46,0.04); it.push([js, M(V(sx*0.36,0.16,0.27), Q(0.35,0,sx*0.1)), LE, 4, 0]);   // (short, from the leg band to the toes)
     const bl=new T.TorusGeometry(0.15,0.045,5,10); it.push([bl, M(V(sx*0.32,0.42,0.12), Q(Math.PI/2,0,0)), LE, 4, 0]); }
   // the head (part 1): white, the eyes painted in; the hooked beak and its yellow cere
   const hc=V(...F.hc);
@@ -84643,7 +84664,7 @@ function skjFalconGeo(){ return tonyKeep('skjFalcon', ()=>{
     it.push([sph(1,16,12), M(h0.clone().add(V(sx*0.1,-0.85,-0.22)), Q(0.32,0,sx*0.06), V(0.26,1.0,0.66)), WG, 1, wp]);
     for(const [dy,dz,r] of [[-1.75,-0.48,0.0],[-1.62,-0.2,0.12],[-1.45,0.05,0.24]]){ it.push([sph(1,10,8), M(h0.clone().add(V(sx*0.12,dy,dz)), Q(0.32+r,0,0), V(0.15,0.55,0.24)), WG, 1, wp]); } }
   // the tail (part 5): a fan of five feathers, down and back
-  for(let i=-2;i<=2;i++){ it.push([sph(1,10,8), M(V(i*0.17,0.25,-0.95), Q(-0.55,0,i*0.13), V(0.17,0.78,0.07)), WG, 1, 5]); }
+  for(let i=-2;i<=2;i++){ it.push([sph(1,12,8), M(V(i*0.15,0.24,-1.02-0.04*Math.abs(i)), Q(0.57,0,-i*0.22), V(0.23,0.54,0.13)), WG, 1, 5]); }   // (a fan hanging down-back off the rump: broad and thick, never a spike)
   // (every part is built where it sits; the matrices in uFM are about their own pivots: see skjFalconPose)
   const g=skjMerge(it); g.boundingSphere=new T.Sphere(new T.Vector3(0,2,0), 60); return g; }); }
 const SKJ_FALCON_VS=`
@@ -84837,7 +84858,7 @@ function skjTick(o, R, now, dt, S, C, q){
     else { dbSpring(D,'pt','ptV',phi,11,0.45,dt); dbSpring(D,'tr','trV',D.trT||0,10,0.32,dt); dbSpring(D,'tp','tpV',D.tpT||0,10,0.4,dt);
       dbSpring(D,'sw','swV',-2.6*(S.ty||0),9,0.35,dt); dbSpring(D,'sb','sbV',q.sq||0,14,0.25,dt); }
     D.tph+=dt*(4+15*sk+(boost?9:0));
-    U.uPhi.value=phi; U.uPhiT.value=D.pt; U.uTilt.value.set(D.tr, D.tp, 0);
+    U.uPhi.value=phi; U.uPhiT.value=D.pt*(1-0.92*rd); U.uTilt.value.set(D.tr, D.tp, 0);   // (as the face comes right round, the tails stay trailing behind him: swung round with it they stood out sideways, seen edge-on, a long dark stick)
     U.uTl.value.set(P ? 0.1 : (0.1+0.42*sk+(boost?0.14:0))*(1-0.8*rd)-1.2*D.sb, P ? 0.04 : 0.05+0.3*sk+(boost?0.22:0), D.tph, P ? 0 : D.sw);
     U.uSw.value.set(P ? 0 : -1.4*(S.ty||0), D.bl, P ? 0 : 0.35*sk+(boost?0.25:0));
     U.uGl.value=P ? 0 : 0.2+1.6*Math.exp(-6*b4);
@@ -84946,7 +84967,7 @@ function skjTick(o, R, now, dt, S, C, q){
   { const t=(now-D.tingT)/0.4, on=!P && t>0 && t<1, gs=on?Math.sin(Math.PI*t):0; D.ting.visible=on;
     if(on){ D.ting.position.copy(D.hand.position); D.ting.position.y+=0.6; D.ting.scale.setScalar(2.6*gs); skjFaceCam(D.ting); D.ting.rotateZ(t*3); D.ting.material.uniforms.uK.value=gs; } }
 }
-const SKJ=Object.assign({}, NEO, { skin:[26,0.48,0.56], tuftCol:'#16141a', browL:0.66, browTh:0.22, flexK:0.45, ev:SKJ_EV, list:SKJ_LIST,
+const SKJ=Object.assign({}, NEO, { skin:[26,0.48,0.56], tuftCol:'#16141a', browL:0.66, browTh:0.22, flexK:0.35, ev:SKJ_EV, list:SKJ_LIST,
   act:{ amp:0.8, tempo:2, fidget:0.7, lean:0.55, accel:0.55, hop:0.5, carry:{hp:-0.07, dy:0.04}, wag:0.75, wagF:0.65,
     idle:{regal:1.6, skjSerene:1.4, still:1.2, slownod:1.0, sway:0.8}, cruise:{skjSerene:1.2, regal:1.0, sway:1.2, still:0.8},
     on:{ pass:['slownod'], passed:['skjAfter'], hit:['skjShrug'], laugh:['slownod'], threat:[], bump:['still'], lap:['slownod'], item:[], win:['regal','skjSerene','sway','slownod'], lose:['bow'] },
