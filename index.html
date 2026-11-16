@@ -84366,6 +84366,7 @@ const KJ_EXPR={
   win:    {lidL:-0.25,lidR:-0.25,lidD:-0.35,lidDC:1.0,brL:0.55,brR:0.55,brT:-0.15,brA:0.6,mW:1.66,mO:1.02,mC:1.2,mT:1,mTg:0.45,chk:1,hp:-0.12},
   whistle:{lidL:0.55,lidR:0.62,lidD:-1.0,brL:0.38,brR:0.16,brT:-0.1,brA:0.45,mW:0.42,mO:0.38,mC:0,mR:1,mS:0.3,chk:0.8,gx:0.2,gy:0.2,hp:-0.06},
   check:  {lidL:0.62,lidR:0.88,lidD:-1.0,lidDC:0.3,gy:0.45,brL:0.06,brR:0.56,brT:-0.05,brA:0.5,mW:1.34,mO:0.22,mC:0.9,mT:1,mS:0.55,chk:0.65},
+  smug:   {lidL:0.6,lidR:0.66,lidD:-1.0,lidDC:0.5,gy:0.48,brL:0.28,brR:0.6,brT:-0.06,brA:0.6,mW:1.42,mO:0.34,mC:1.02,mT:1,mS:0.5,chk:0.9,ht:0.08},   // (the actor's: a grin over the rim)
   // his own: the shout (TWENDE!), the push (the shades back up), the airbrush (tongue out), the one-ear listen
   shout:  {lidL:0.66,lidR:0.66,lidD:-0.75,lidDC:0.7,brL:0.58,brR:0.58,brT:-0.24,brA:0.6,mW:1.42,mO:1.42,mC:0.62,mT:0.9,mTg:0.6,chk:0.9,hp:-0.16},
   push:   {lidL:0.55,lidR:0.6,lidD:-1.0,lidDC:0.4,brL:0.2,brR:0.52,brT:-0.06,brA:0.55,mW:1.36,mO:0.2,mC:0.95,mT:1,mS:0.6,chk:0.8,hp:-0.07,ht:0.08},
@@ -84728,7 +84729,7 @@ function kjTick(o, R, now, dt, S, C, q){
   const D=S.kj; if(!D) return;
   const ud=o.userData, B=C.beats, ph=C.phase||0, bk=C.k||0, x=B+bk, b4=((x%4)+4)%4, P=!!q.portrait, I=DBF_I, k=NEO.k, E=S.ev||{};
   const real=!P && R!==DB_NOR && typeof emit==='function', cur=S.cur, spd=q.spd||0, boost=(R.boostT||0)>0 && !P, celeb=(q.fin||q.celeb) && cur!=='lose', spin=!!q.spin;
-  const rd=P ? 0 : (S.rd||0), phi=P ? 0 : (S.phi||0), A0=TONY_ARM.a0, rate=Math.max(0.3, C.rate||2), st=typeof state!=='undefined' ? state : 'race';
+  const rd=S.rd||0, phi=S.phi||0, A0=TONY_ARM.a0, rate=Math.max(0.3, C.rate||2), st=typeof state!=='undefined' ? state : 'race';
   D.P=P; D.turnU.value=phi;
   const kick=P ? 0 : Math.exp(-7*ph);
   if(!P && st==='count'){ D.cut=false; D.onB=null; }
@@ -84749,8 +84750,9 @@ function kjTick(o, R, now, dt, S, C, q){
   if(!P && pu>=-0.3 && pu<0.5 && D.puDone!==D.puB && !spin){ if(pu>=-0.3 && !ud.expr.forced) ud.expr.set('push', 0.9/rate); }
   // ---- the slap: on a boost, at GO, and on every "Twende!" of his record
   if(!P){
-    if(boost && !D.pBoost && !D.cut && B-D.slB>3.5) D.slB=Math.ceil(B+0.45);
-    if(D.pSt==='count' && st==='race' && B-D.slB>3.5) D.slB=Math.ceil(B+0.45);
+    const nextSlap=()=>Math.max(Math.ceil(B+0.45), D.puB-B>-0.8 ? D.puB+1 : -99);   // (on the next beat, or after a push under way)
+    if(boost && !D.pBoost && !D.cut && B-D.slB>3.5) D.slB=nextSlap();
+    if(D.pSt==='count' && st==='race' && B-D.slB>3.5) D.slB=nextSlap();
     for(const c of D.calls){ const bt=B+(c[0]-now)*rate; if(c[2]) continue;
       if(c[1] && bt-B>0.5 && bt-B<1.6 && Math.abs(bt-D.slB)>3 && !D.cut && !spin){ c[2]=1; D.slB=bt; }
       else if(!c[1] && now>=c[0]-0.02){ c[2]=1; D.ehT=c[0]; } } }
@@ -84791,19 +84793,20 @@ function kjTick(o, R, now, dt, S, C, q){
     if(on){ D.ting.scale.setScalar(2.8*e); D.ting.rotation.z=1.2*t; D.ting.material.uniforms.uK.value=e; } }
   D.shm.material.uniforms.uGl.value=P ? 0 : 2.5*Math.max(0, 1-(now-D.tingT)/0.3)*(now>=D.tingT?1:0);
   // ---- the neon: on the beat, flared by a boost, out (sputtering) while the system is cut, slammed back on; party colours for a win
-  let neon=P ? 0.95 : 0.55+0.55*kick+1.1*(boost?1:0)+0.35*D.loud*kick;
+  let neon=P ? 0.95 : 0.5+0.5*kick+0.5*(boost?1:0)+0.35*D.loud*kick;
   if(D.cut){ const t=now-D.cutT; neon*=t<0.6 ? (Math.sin(t*70)>0.1?0.9:0.05)*(1-t/0.6) : (Math.sin(now*41)>0.94 ? 0.35 : 0); }
   const on=now>=D.onT ? Math.exp(-4*(now-D.onT)) : 0; neon+=3*on;
-  const sb2=sb>=0 && sb<0.25 ? Math.exp(-14*sb) : sb>=0.5 && sb<0.75 ? Math.exp(-14*(sb-0.5)) : 0; neon+=1.4*sb2;   // (each slap jolts the lights)
+  const sb2=sb>=0 && sb<0.25 ? Math.exp(-14*sb) : sb>=0.5 && sb<0.75 ? Math.exp(-14*(sb-0.5)) : 0; neon+=1.1*sb2;   // (each slap jolts the lights)
   { const party=celeb && !P ? Math.floor(B)%3 : 0; D.neonU.value.set(neon, party===1?1:0, party===2?1:0, 0); }
-  D.under.material.opacity=P ? 0 : ldClamp(0.16+0.2*kick*(D.cut?0:1)+0.32*(boost?1:0)+0.5*on,0,0.9); D.under.scale.setScalar(5+1.6*kick+3*(boost?1:0));
+  D.under.material.opacity=P ? 0 : ldClamp(0.14+0.18*kick*(D.cut?0:1)+0.1*(boost?1:0)+0.4*on,0,0.7); D.under.scale.setScalar(5+1.6*kick+1.5*(boost?1:0));
   if(celeb && !P) D.under.material.color.setHSL(((Math.floor(B)%3)*0.33+0.92)%1, 1, 0.55); else D.under.material.color.set(0xff2fa8);
   // ---- the cans: at rest round his neck, out of the face's way as the head rounds for a look back; the right one lifted to
   //      his ear for a listen; the faces thump on the kick (harder through the drops of his record)
   const PU=D.PU;
   if(P){ D.lift=lsn?1:0; D.liftV=0; } else dbSpring(D,'lift','liftV',lsn?1:0,11,0.62,dt);
   for(let i=0;i<2;i++){ const c=D.cups[i], sx=i?-1:1;
-    c.p.set(KJ_CUP.p.x*sx, KJ_CUP.p.y, KJ_CUP.p.z).add(_kjA.set(0.55*sx*rd, -0.85*rd, -0.5*rd));
+    const w=rd*(sx*phi>0 ? 1 : 0.35);                                // (the side the face comes round to gives way most)
+    c.p.set(KJ_CUP.p.x*sx, KJ_CUP.p.y, KJ_CUP.p.z).add(_kjA.set(0.25*sx*w, -0.75*w, -2.4*w));
     c.ax.set(KJ_CUP.ax.x*sx, KJ_CUP.ax.y, KJ_CUP.ax.z);
     if(i===1 && D.lift>0.001){ const f=ldClamp(D.lift,0,1.1); c.p.lerp(KJ_CUP.ear, f); c.ax.lerp(_kjB.set(-1,0.05,0.05), Math.min(1,f)).normalize(); }
     _kjQ.setFromUnitVectors(_kjB.set(0,0,1), c.ax); c.M.compose(c.p, _kjQ, _kjC.set(1,1,1)); }
