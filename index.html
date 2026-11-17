@@ -86441,25 +86441,34 @@ const SJ_BROW_FS=DB_BROW_FS.replace('uniform vec3 uInk;', 'uniform vec3 uInk, uB
    bald pate the cap hides. On the body, not turned: the navy peacoat from the neck (a V at the throat showing the jersey,
    lapels, two rows of brass buttons down the front, a hem), and the Breton stripes of his jersey down the tail */
 const SJ_SKIN_FX=(()=>{ const V=tonyV3, RZ=HEAD_RZ.toFixed(3), RZ2=(HEAD_RZ*HEAD_RZ).toFixed(3);
-  return { key:'sj-1',
+  return { key:'sj-2',
   vpars:'attribute vec3 aZT; varying vec3 vZT;', vmain:' vZT=aZT;',
-  fpars:'varying vec3 vZT; uniform float uSjTurn; uniform vec4 uNeoSq;',
+  fpars:'varying vec3 vZT; uniform float uSjTurn; uniform vec4 uNeoSq; float sjB=0.0;',
   fmain:`{ float z=vZT.x, l=max(length(vZT.yz),1e-4), sd=vZT.y/l, up=vZT.z/l, ang=atan(up,sd);
     const vec3 EDGE=${V('#8e94a2')}, BRD=${V('#f6f5f0')}, BRDS=${V('#c3c8d4')}, NAVY=${V('#26345f')}, NAVYL=${V('#36487a')}, CREAM=${V('#f4f1e8')}, STR=${V('#1f3a7e')}, BRASS=${V('#f2c64a')}, INK=${V('#141016')};
     if(uNeoSq.z<0.99 && z>-4.9){
       float e=sqrt(max(1.0-z*z/${RZ2},0.0)), ct=cos(uSjTurn), sn=sin(uSjTurn); vec3 d=vec3(e*sd, e*up, z/${RZ});
       vec3 r=vec3(d.x*ct-d.z*sn, d.y, d.x*sn+d.z*ct);
-      float az=atan(r.x, r.z), el=asin(clamp(r.y,-1.0,1.0)), aa=abs(az), rg=0.028*sin(az*29.0+el*7.0)*sin(az*17.0-el*11.0);
-      float top=-0.46+0.42*smoothstep(0.3,1.05,aa)+0.04*abs(sin(az*13.0));                 // the jaw line: under the lip, up the cheeks, level along the side
-      float rw=0.055*sin(el*23.0+az*5.0)+0.03*sin(el*41.0);                                 // (the whiskers' edges bushy, not ruled)
-      float dB=min(el-top-rg, max(abs(aa-1.38+0.04*el)-0.2+0.07*smoothstep(0.0,0.66,el)-rw, el-0.66));   // ... and the side-whiskers, tapering up to the band
-      dB=max(dB, aa-1.58-0.1*smoothstep(-0.1,-0.9,el)-rw);                                  // (back to the whiskers: the jaw ends there)
-      float dW=dB, aw=fwidth(dW)*0.75+0.003, m=1.0-smoothstep(-aw,aw,dW);
-      float cf=1.0-smoothstep(0.12,0.3,fwidth(az)*30.0), curl=smoothstep(0.55,0.95,abs(sin(az*30.0+el*9.0)))*cf*(1.0-smoothstep(0.0,0.12,-dW));
-      vec3 bc=mix(BRD,BRDS,0.45*curl+0.25*smoothstep(-0.5,-1.3,el));
+      float az=atan(r.x, r.z), el=asin(clamp(r.y,-1.0,1.0)), aa=abs(az);
+      // THE BEARD: a horseshoe round the face, of an even width, puffed along both edges like a cartoon cloud. rho: how far round
+      // from the face's centre; psi: which way round it (0 straight up, pi under the chin). Under the lip below, round the jaw,
+      // and up the sides into whiskers that meet the cap; the cheeks inside it stay his own ruddy skin
+      float rho=acos(clamp(r.z,-1.0,1.0)), psi=atan(abs(r.x), r.y), lo=-cos(psi);
+      float r1=0.82-0.3*smoothstep(0.0,1.0,lo), wB=0.4+0.05*smoothstep(0.0,1.0,lo);
+      float fo=fract(psi*2.9+0.25)*2.0-1.0, fi=fract(psi*3.6)*2.0-1.0;
+      float pO=0.085*sqrt(max(0.0,1.0-fo*fo)), pI=0.05*sqrt(max(0.0,1.0-fi*fi));   // round puffs, a cusp between each
+      float dO=rho-(r1+wB+pO), dB=max(r1-pI-rho, dO);
+      dB=max(dB, (0.8-psi)*0.9);                                                    // (up to the cap and no further)
+      // THE FRINGE: one continuous band of white hair round the back of the head under the cap, its lower edge in the same
+      // puffs, joining the whiskers at the sides
+      float rim=0.68+0.2*min(0.0,cos(aa)), fh=fract(aa*4.4+0.5)*2.0-1.0, pH=0.07*sqrt(max(0.0,1.0-fh*fh));
+      float dF=max(max(rim-0.19-pH-el, el-rim-0.12), 1.12-aa);
+      float dW=min(dB,dF), aw=fwidth(dW)*0.75+0.003, m=1.0-smoothstep(-aw,aw,dW);
+      float sh=smoothstep(-0.14,0.0,max(dO, rim-0.14-pH-el))*(1.0-smoothstep(0.0,0.02,dW));   // a cool shade toward the outer puffs
+      vec3 bc=mix(BRD,BRDS,0.4*sh);
       diffuseColor.rgb=mix(diffuseColor.rgb, bc*diffuse, m);
-      diffuseColor.rgb=mix(diffuseColor.rgb, EDGE*diffuse, 0.7*(1.0-smoothstep(0.012-aw,0.012+aw,abs(dW+0.012))));
-      totalEmissiveRadiance=mix(totalEmissiveRadiance, vec3(0.13,0.135,0.15), m); }   // (white in the shade too: a beard is never grey slate)
+      diffuseColor.rgb=mix(diffuseColor.rgb, EDGE*diffuse, 0.75*(1.0-smoothstep(0.013-aw,0.013+aw,abs(dW+0.013))));
+      totalEmissiveRadiance=mix(totalEmissiveRadiance, vec3(0.06,0.065,0.075), m); sjB=m; }   // (and its shade lifted: see sjDress)
     if(z<-4.62){
       // the peacoat: navy wool to its hem, the jersey in a V at the throat, lapels beside it, brass buttons down the front
       float hem=-9.4+0.18*sin(ang*2.0), dHm=z-hem, hw=fwidth(dHm)*0.75+0.004;
@@ -86482,8 +86491,8 @@ const SJ_SKIN_FX=(()=>{ const V=tonyV3, RZ=HEAD_RZ.toFixed(3), RZ2=(HEAD_RZ*HEAD
       totalEmissiveRadiance*=0.5; } }` }; })();
 // the hair: a white fringe of short tufts out from under the cap round the sides and the back, each curling up at its end
 function sjHair(col){
-  const parts=[]; let tip=null; const N=7;
-  for(let i=0;i<N;i++){ const az=Math.PI+(i/(N-1)*2-1)*0.75, el=0.42+0.04*Math.cos(i*2.1), r=kitHeadPt(az, el, -0.05), o=[Math.sin(az),0,Math.cos(az)];
+  const parts=[]; let tip=null; const N=1;   // (the fringe is painted in the skin; the tuft's spring keeps one strand under the cap, out of sight)
+  for(let i=0;i<N;i++){ const az=Math.PI+(N>1?i/(N-1)*2-1:0)*0.75, el=0.42+0.04*Math.cos(i*2.1), r=kitHeadPt(az, el, -0.05), o=[Math.sin(az),0,Math.cos(az)];
     const L=0.9+0.35*((i*5)%3)/2, fl=0.5, cu=(i%2?1:-1)*0.35;
     const pts=[0,0.4,0.75,1].map(t=>[r[0]+o[0]*fl*t+cu*t*t*o[2], r[1]-L*0.7*t+0.6*t*t*t, r[2]+o[2]*fl*t-cu*t*t*o[0]]);
     const [tg, f]=tplStrand(pts, 10, 7, u=>0.3*Math.pow(1-u,0.7)+0.06); parts.push([tg, col, f]); if(i===(N>>1)) tip=new T.Vector3(...pts[3]); }
@@ -86766,6 +86775,13 @@ function sjCollarGeo(K){ return tonyKeep('sjCollar', ()=>{
 function sjDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, FK=ud.flow ? ud.flow.K : { neck:FLOW.NECK, k:FLOW.K }, skin=X.skin.clone().convertSRGBToLinear();
   if(ud.glow) ud.glow.material.color.multiplyScalar(0.8);
+  // the white of the beard and the fringe stays white in the shade: his own copy of the skin's light lifts it to a soft cool
+  // grey where the cel shade would have made it a grey slab (sjB: the beard's and the fringe's paint, from SJ_SKIN_FX)
+  for(const m of [K.head.material, K.tailMesh.material]){ const ob=m.onBeforeCompile;
+    m.onBeforeCompile=sh=>{ ob(sh); sh.fragmentShader=sh.fragmentShader.replace('vec3 outgoingLight = tplOut + totalEmissiveRadiance;', 'vec3 outgoingLight = mix(tplOut, max(tplOut, vec3(0.6,0.64,0.72)), sjB) + totalEmissiveRadiance;'); };
+    m.customProgramCacheKey=()=>'neo-skin-sj-lift-2'; }
+  // the stock tuft is hidden: his hair is the painted fringe
+  for(const c of [...rig.children]) if(c.isMesh && c.geometry && rig.children.some(t=>t.name==='neo-tuft' && t.geometry===c.geometry)) c.visible=false;
   const rigB=new T.Group(); rigB.name='sj-body-rig'; g.add(rigB); S.rigB=rigB;   // (squashes with the head, does not turn with the face: the arms, the squeeze-box)
   // the brows: big and white
   { const br=rig.getObjectByName('neo-brows'); if(br){ S.BU.uBrC={ value:dbLin('#f6f5f0') }; br.material=dbShader(DB_BROW_VS, SJ_BROW_FS, S.BU, { transparent:true, depthWrite:false, side:T.DoubleSide }); br.position.set(0,0.05,0.06); br.scale.set(1.06,1.08,1); } }
@@ -86923,7 +86939,7 @@ function sjTick(o, R, now, dt, S, C, q){
     const bowlG=()=>sjToG(D, D.pipe, D.bent ? _sjT.set(1.57,-1.44,0) : _sjT.set(SJ_PIPE.bowl[0], SJ_PIPE.bowl[1]+0.48, 0));
     if(beat!==D.rB && ph<0.25){ D.rB=beat;
       const every=cur==='whistle' || (D.cbOn && D.cbE>0.5) || cur==='squeeze';
-      if(!boost && !spin && (every || b4<0.5)) sjSmoke(D, now, false, bowlG(), _sjB.set(0,1,0.15), every?3:2.2, every?0.32:0.4, every?1.1:1.4, every?1.1:1.5, 1.5, 2.0); }
+      if(!boost && !spin && (every || b4<0.5)) sjSmoke(D, now, false, bowlG().add(_sjC.set(0.35*D.side,0.35,0)), _sjB.set(0.55*D.side,1,0.05), every?3:2.4, every?0.26:0.3, every?1.0:1.25, every?1.1:1.5, 1.4, 1.6); }   // (up and away from his face, out past his cheek)
     if(boost && real && now-D.puffT>0.07){ D.puffT=now; const p=bowlG(); o.updateWorldMatrix(true,false); o.localToWorld(p); const hd=R.head||0;
       emit(p.x, p.y, p.z, {color:0xe4e6ec, life:0.55, vx:-Math.sin(hd)*18+(dbRnd(S)-0.5)*3, vy:3+dbRnd(S)*3, vz:-Math.cos(hd)*18+(dbRnd(S)-0.5)*3, s0:1.4, s1:3.2, op:0.7}); }
     const RP=D.SU.uRP.value, RQ=D.SU.uRQ.value, dz=(0.6+spd*0.11)*dt;
@@ -86936,7 +86952,8 @@ function sjTick(o, R, now, dt, S, C, q){
     const RP=D.SU.uRP.value, RQ=D.SU.uRQ.value; for(let i=0;i<SJ_SN;i++){ RP[i].set(0,0,0,0); RQ[i].set(0,0,0,0); }
     const my=HEAD_CY+DB_MOUTH.y*k;
     if(cur==='ring'||cur==='puff'){ RP[0].set(0, my+0.6, headSurfZ(0,my)+3.0, 1.15); RQ[0].set(-0.35,0.0,0,0.85); }
-    else { const p=sjToG(D, D.pipe, D.bent ? _sjT.set(1.62,-1.47,0) : _sjT.set(SJ_PIPE.bowl[0], SJ_PIPE.bowl[1]+0.55, 0)); RP[SJ_RN].set(p.x+0.1, p.y+1.0, p.z-0.2, 0.75); RQ[SJ_RN].set(0,0,0,0.75); } }
+    else { const p=sjToG(D, D.pipe, D.bent ? _sjT.set(1.62,-1.47,0) : _sjT.set(SJ_PIPE.bowl[0], SJ_PIPE.bowl[1]+0.55, 0)), sd=D.side;   // two puffs rising off the bowl, out past his cheek and fading
+      RP[SJ_RN].set(p.x+0.9*sd, p.y+1.6, p.z-0.5, 0.42); RQ[SJ_RN].set(0,0,0,0.7); RP[SJ_RN+1].set(p.x+1.7*sd, p.y+3.1, p.z-1.2, 0.58); RQ[SJ_RN+1].set(0,0.6,0,0.38); } }
   // ---- the arms: the salute, the telescope, the tug at the cap, the squeeze-box; where each wants to be, if anywhere
   const AR=D.arms[0], AL=D.arms[1], A0=SJ_A0;
   let poseR=null, poseL=null, stiffR=20;
