@@ -86644,7 +86644,7 @@ const PXJ_KNOT=new T.Vector3(0, HEAD_CY-HEAD_RY-0.06, 0.42);
 function pxjBadgeGeo(){ return tonyKeep('pxjBadge', ()=>{
   const it=[], Bx=(w,h,d,x,y,z,c)=>{ const g=new T.BoxGeometry(w,h,d); g.translate(x,y,z); it.push([g,null,dbLin(c),0]); };
   Bx(0.34,0.26,0.12, 0,-0.12,0, '#c4cad2'); Bx(0.2,0.3,0.08, 0,-0.32,0.02, '#aeb6c0');                  // the clip
-  const W=1.05, H=1.36, y0=-0.42-H/2;
+  const W=0.95, H=1.18, y0=-0.4-H/2;
   Bx(W,H,0.14, 0,y0,0, '#fbfbf7'); Bx(W*0.94,0.3,0.02, 0,y0+H/2-0.2,0.08, '#2456b0');
   Bx(0.38,0.44,0.02, -0.24,y0+0.12,0.08, '#d9e2ef');
   const face=new T.SphereGeometry(0.12,10,8); face.scale(1,1.1,0.3); face.translate(-0.24,y0+0.1,0.1); it.push([face,null,dbLin('#f0cda8'),0]);
@@ -86731,8 +86731,8 @@ function pxjDress(g, K, X){
   const cting=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); cting.name='pxj-card-ting'; cting.visible=false; cting.renderOrder=3; rigB.add(cting);
   const hand=new T.Object3D(); rigB.add(hand); ud.motionProbes.push(['glasses',gl,'pos'],['hand',hand,'pos'],['badge',badge,'pos']);
   S.pxj={ g, rig, rigB, turnU:X.cel.uKitTurn, hp, cow, CU, gl, glF, glL, ting, hting, tie, TU, badge, arm, AU, card, cting, hand, GL, r2b:new T.Matrix4(), B:0, P:false,
-    gs:0, gsV:0, gk:0, gkV:0, gp:0, gpV:0, cw:0, cwV:0, cwE:0, hk:0, hkV:0, tf:0, tfV:0, tb:0, tbV:0, tw:0, sw:0, swV:0,
-    gag:null, knock:0, knockT:-9, kSide:1, fixed:true, pTake:-9, pCur:'rest', lastG:null, pItem:null, winBar:null, gridBar:null, tingT:-9, htingT:-9, cardT:-9, nodT:-9, tugT:-9,
+    gs:0, gsV:0, gk:0, gkV:0, ts:0, tsV:0, gp:0, gpV:0, cw:0, cwV:0, cwE:0, hk:0, hkV:0, tf:0, tfV:0, tb:0, tbV:0, tw:0, sw:0, swV:0,
+    gag:null, knock:0, knockT:-9, kSide:1, pSpin:false, spinEnd:-9, fixed:true, pTake:-9, pCur:'rest', lastG:null, pItem:null, winBar:null, gridBar:null, tingT:-9, htingT:-9, cardT:-9, nodT:-9, tugT:-9,
     e:0, eV:0, hpos:new T.Vector3(), hposV:new T.Vector3(), ep:new T.Vector3(), epV:new T.Vector3(), ay:new T.Vector3(0,1,0), ayV:new T.Vector3(), ax:new T.Vector3(1,0,0), axV:new T.Vector3(), handOn:false };
   pxjTick(g, DB_NOR, 0, 0, S, DB_PORTRAIT, { portrait:true, accent:0, spd:0 });   // (posed before its first frame)
 }
@@ -86752,7 +86752,9 @@ function pxjTick(o, R, now, dt, S, C, q){
   if(!P){
     // a hit: knocked out of his part, the glasses crooked, the tie over his shoulder; put right on the beat once the spin is over
     if((E.takeT||-9)!==D.pTake){ D.pTake=E.takeT||-9; if(now-D.pTake<0.25){ D.knock=1; D.knockT=now; D.kSide=dbRnd(S)<0.5?-1:1; D.cwE=1; if(D.gag && D.gag.k!=='fix') pxjEnd(D); else if(D.gag) pxjEnd(D); } }
-    if(D.knock && !spin && !D.gag && now-D.knockT>0.5 && C.rate>0.2) pxjStart(D, 'fix', Math.ceil(B+PXJ_GAG.fix.pre), now, rate);
+    if(D.pSpin && !spin) D.spinEnd=now; D.pSpin=spin;
+    const glaring=lk && lk.g && lk.g.ov && now-(D.spinEnd||0)<3.5;   // (he glares back at whoever it was first, cowlick and all; then puts himself right)
+    if(D.knock && !spin && !D.gag && now-D.knockT>0.5 && now-(D.spinEnd||0)>1.05 && !glaring && C.rate>0.2) pxjStart(D, 'fix', Math.ceil(B+PXJ_GAG.fix.pre), now, rate);
     if(D.knock && (now-D.knockT>9 || C.rate<=0.2 && now-D.knockT>3)) D.knock=0;   // (a wall-time limit: never left knocked about)
     // a pass: the look's glance back at them, and the glasses adjust on the coming beat; a green tick over his head
     const G=lk && lk.g;
@@ -86831,24 +86833,29 @@ function pxjTick(o, R, now, dt, S, C, q){
   if(!P && k==='fix' && gg && !gg.done.comb && b>=0.98){ gg.done.comb=1; D.htingT=now; }
   { const t=(now-D.htingT)/0.5, on=!P && t>0 && t<1, e=on?Math.pow(Math.sin(Math.PI*t),0.8):0; D.hting.visible=on;
     if(on){ D.hting.scale.setScalar(2.8*e); D.hting.rotation.z=1.5*t; D.hting.material.uniforms.uK.value=e; } }
-  // ---- the tie: hangs from the knot and swings on the beat, streams back with speed and flaps on a boost; flipped up over his
-  //      right shoulder by a hit, until the tug
-  { const TU=D.TU, sp=P ? 0 : Math.min(1, spd/140);
+  // ---- the tie: hangs from the knot and swings on the beat while he is slow or waiting; at racing speed it streams back out past
+  //      his right cheek along the side of his head (a tidy flutter), and on a boost it whips straight back and flaps hard;
+  //      flipped up over his right shoulder by a hit, until the tug
+  { const TU=D.TU, sp=P ? 0 : Math.min(1, spd/120);
     if(P){ D.tf=tieUp?1:0; D.tb=0; D.tfV=D.tbV=0; } else { dbSpring(D,'tf','tfV',tieUp?1:0,tieUp?18:20,tieUp?0.45:0.5,dt); dbSpring(D,'tb','tbV',boost?1:0,9,0.7,dt); }
-    D.tw+=dt*(6+10*sp+8*D.tb);
-    const sw=P ? 0 : 0.18*Math.cos(Math.PI*B)-1.2*(S.ty||0), fl=(0.05+0.25*sp+0.35*D.tb)*Math.sin(D.tw), fl2=(0.04+0.2*sp+0.3*D.tb)*Math.sin(D.tw-1.4);
+    if(P){ D.ts=0; D.tsV=0; } else dbSpring(D,'ts','tsV',Math.max(0.85*sp, boost?1:0),6,0.8,dt);
+    D.tw+=dt*(6+9*sp+10*D.tb);
+    const st=ldClamp(D.ts,0,1.1), sw=P ? 0 : (0.18*Math.cos(Math.PI*B)-1.2*(S.ty||0))*(1-st), fl=(0.04+0.22*st+0.4*D.tb)*Math.sin(D.tw), fl2=(0.04+0.2*st+0.35*D.tb)*Math.sin(D.tw-1.4);
     const tg=k==='fix' && bp>1.88 && bp<2.4 ? Math.sin(Math.PI*(bp-1.88)/0.52) : k==='tug' && bp>-0.1 && bp<0.4 ? Math.sin(Math.PI*(bp+0.1)/0.5) : 0;   // the tug pulls the knot down a touch
     const A0t=TU.uA0.value; A0t.copy(PXJ_KNOT); A0t.y-=0.12*tg;
-    const s=Math.max(sp*0.55, D.tb), f=ldClamp(D.tf,-0.2,1.25);
-    // hanging (and streaming): the tip down and back, further back the faster
-    _pxjB.set(sw*0.6+fl*0.4, -0.72+0.3*s, -0.08-0.55*s); _pxjC.set(sw+fl2, -1.85+1.45*s+0.15*Math.abs(fl2), -0.25-1.7*s);
+    const f=ldClamp(D.tf,-0.2,1.25), K=PXJ_KNOT;
+    // hanging: the tip down and a touch back
+    _pxjB.set(K.x+sw*0.6+fl*0.4, K.y-0.68, K.z-0.08); _pxjC.set(K.x+sw+fl2, K.y-1.55, K.z-0.25);
+    // streaming: out under his right jaw and back along the side of his head, the tip fluttering (further back on a boost)
+    _pxjD.set(-1.6, K.y-0.25+0.3*fl, K.z-0.55); _pxjB.lerp(_pxjD, st);
+    _pxjD.set(-3.35+0.3*fl2, HEAD_CY-1.0+0.45*fl+0.2*D.tb, -2.7-0.9*D.tb); _pxjC.lerp(_pxjD, st);
     // flipped over his right shoulder: out round the side of his head below the cheek, and up onto the shoulder behind it
-    _pxjD.set(-4.6, HEAD_CY-2.0, 0.2).sub(A0t); TU.uA1.value.copy(A0t).add(_pxjB.lerp(_pxjD, f));
-    _pxjD.set(-2.9+0.15*Math.sin(D.tw*0.5)*f, HEAD_CY+1.5, -3.2).sub(A0t); TU.uA2.value.copy(A0t).add(_pxjC.lerp(_pxjD, f));
+    _pxjD.set(-4.6, HEAD_CY-2.0, 0.2); TU.uA1.value.copy(_pxjB.lerp(_pxjD, f));
+    _pxjD.set(-2.9+0.15*Math.sin(D.tw*0.5)*f, HEAD_CY+1.5, -3.2); TU.uA2.value.copy(_pxjC.lerp(_pxjD, f));
     _pxjA.copy(TU.uA1.value).sub(TU.uA0.value); _pxjB.copy(TU.uA2.value).sub(TU.uA1.value); _pxjA.cross(_pxjB);
     if(_pxjA.lengthSq()>1e-4) TU.uAn.value.copy(_pxjA.normalize()); else TU.uAn.value.set(1,0,0); }
   // ---- the badge: swings from its clip on the beat, a beat behind the head's turns, back with speed
-  { const sw=P ? 0 : 0.16*Math.sin(Math.PI*(B-0.25))-0.9*(S.ty||0), bk2=P ? 0 : -0.35*Math.min(1,spd/140)-0.3*D.tb+0.3*(S.tp||0);
+  { const sw=P ? 0 : 0.16*Math.sin(Math.PI*(B-0.25))-0.9*(S.ty||0), bk2=P ? 0 : -0.75*Math.min(1,spd/120)-0.35*D.tb+0.3*(S.tp||0);
     if(P){ D.sw=sw; D.swV=0; } else dbSpring(D,'sw','swV',sw,10,0.35,dt);
     D.badge.rotation.set(-0.12+bk2, 0.42+0.4*D.sw, D.sw); }
   // ---- the arm: where the gag wants the hand (and the elbow), carried into the body's rig, on springs (a sharp one for a pinch)
@@ -86859,7 +86866,7 @@ function pxjTick(o, R, now, dt, S, C, q){
     // the pinch at the outer corner of his right lens (where the glasses are, wherever the face is)
     D.gl.updateMatrix(); const tip=pxjR2B(D, _pxjA.copy(D.GL.corner[-1]).applyMatrix4(D.gl.matrix)).clone();
     const out=pxjR2B(D, _pxjB.set(-0.9,0.12,0.42)).sub(pxjR2B(D, _pxjC.set(0,0,0))).normalize().clone();
-    const hz=out.clone().negate(), hy=pxjR2B(D, _pxjB.set(0.12,0.86,0.5)).sub(pxjR2B(D, _pxjC.set(0,0,0))); hy.addScaledVector(hz,-hy.dot(hz)).normalize(); const hx=hy.clone().cross(hz);
+    const hz=out.clone().negate(), hy=pxjR2B(D, _pxjB.set(0.12,0.86,0.5)).sub(pxjR2B(D, _pxjC.set(0,0,0))).clone(); hy.addScaledVector(hz,-hy.dot(hz)).normalize(); const hx=hy.clone().cross(hz);
     tip.addScaledVector(out, 0.12);
     wr=place(tip, PXJ_PIN, hx, hy, hz); ay=hy; ax=hx; el=new T.Vector3(A0[0]-1.5, A0[1]-1.2, A0[2]+2.2); }
   else if(mode==='knot'){ hv=0;
@@ -86876,7 +86883,7 @@ function pxjTick(o, R, now, dt, S, C, q){
     const z0=0.6-0.8*i, PX=PXJ_HAIR.part, x=PX+0.1+2.3*dr, z=z0-0.6*dr*dr;
     const yy=HEAD_RY*Math.sqrt(Math.max(0.04,1-(x/HEAD_RX)**2-(z/HEAD_RZ)**2)), nrm=new T.Vector3(x/(HEAD_RX*HEAD_RX), yy/(HEAD_RY*HEAD_RY), z/(HEAD_RZ*HEAD_RZ)).normalize();
     const tip=pxjR2B(D, new T.Vector3(x, HEAD_CY+yy, z).addScaledVector(nrm, 0.42+0.55*lift)).clone(), n=pxjR2B(D, nrm.clone()).sub(pxjR2B(D, _pxjC.set(0,0,0))).normalize();
-    const hz=n.clone().negate(), hx=pxjR2B(D, _pxjB.set(0.25,0,1)).sub(pxjR2B(D, _pxjC.set(0,0,0))); hx.addScaledVector(hz,-hx.dot(hz)).normalize(); const hy=hz.clone().cross(hx);
+    const hz=n.clone().negate(), hx=pxjR2B(D, _pxjB.set(0.25,0,1)).sub(pxjR2B(D, _pxjC.set(0,0,0))).clone(); hx.addScaledVector(hz,-hx.dot(hz)).normalize(); const hy=hz.clone().cross(hx);
     wr=place(tip, PXJ_COMB, hx, hy, hz); ay=hy; ax=hx; el=new T.Vector3(A0[0]-1.9, A0[1]+2.6, A0[2]+0.4); sharp=a>-0.45 && a<0.1; }
   kitArmSpring(D, want, dt, P);
   if(wr){ _pxjA.copy(wr).sub(_pxjB.set(...A0)); _pxjC.copy(el).sub(_pxjB);
