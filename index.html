@@ -2743,6 +2743,39 @@ addEventListener('error', ev=>{
 });
 const isTouch=matchMedia('(pointer:coarse)').matches;
 if(isTouch)document.body.classList.add('touch');
+/* THE CRASH GUARD. iOS Safari ends a page that runs short of memory without a word (it reloads it, or shows "A problem
+   repeatedly occurred"), and it can take the page's WebGL away, leaving a black screen. The game now notices both, and runs
+   lighter afterwards rather than falling over the same way again.
+   - A heartbeat (localStorage sr_alive) says the page is alive and on screen; leaving properly (pagehide, or the tab going
+     to the background) clears it. A page that starts and finds the last one still marked alive on screen a moment ago
+     knows that page died while it was being played: a crash.
+   - Each crash, or a reload after lost graphics, raises SAFE.level (kept across visits, sr_safe): 1 draws at a lower
+     resolution with the light pipeline lite; 2 also turns the light pipeline and the 3D racer stage off. Three clean
+     sessions in a row (three minutes or more on screen, then left properly) bring it down a step.
+   - Lost graphics: three asks the browser for the context back while the page stays alive and a card says so; if it has
+     not come back in four seconds, the page reloads itself (your racer and course are kept: they are remembered anyway). */
+const SAFE=(()=>{ const K='sr_alive', KL='sr_safe'; let prev=null, st={lvl:0, clean:0, n:0};
+  try{ prev=JSON.parse(localStorage.getItem(K)||'null'); Object.assign(st, JSON.parse(localStorage.getItem(KL)||'{}')); }catch(_){}
+  const now=Date.now(), crashed=!!(prev && prev.v===1 && now-(prev.at||0)<180000), ctx=!!(prev && prev.ctx);
+  if(crashed||ctx){ st.lvl=Math.min(2,(st.lvl|0)+1); st.n=(st.n|0)+1; st.clean=0; }
+  const save=()=>{ try{ localStorage.setItem(KL, JSON.stringify(st)); }catch(_){} };
+  const mark=o=>{ try{ localStorage.setItem(K, JSON.stringify(Object.assign({at:Date.now()}, o))); }catch(_){} };
+  save();
+  const S={level:st.lvl|0, crashed, ctx, lost:false, shown:0};
+  let since=document.visibilityState==='visible' ? now : 0, counted=false;
+  const leave=()=>{ if(since && !counted && Date.now()-since>180000){ counted=true; st.clean=(st.clean|0)+1; if(st.clean>=3 && st.lvl>0){ st.lvl--; st.clean=0; } save(); } mark({v:0}); };
+  S.beat=()=>{ if(document.visibilityState==='visible' && !S.lost) mark({v:1}); };
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ if(!since) since=Date.now(); S.beat(); } else leave(); });
+  addEventListener('pagehide',leave);
+  S.beat(); setInterval(S.beat,4000);
+  // lost graphics: the card, then (if the browser keeps it) a reload that the next page counts as a crash
+  S.watch=cv=>{ let timer=0, card=null;
+    cv.addEventListener('webglcontextlost',()=>{ S.lost=true; mark({v:0});
+      if(!card){ card=document.createElement('div'); card.style.cssText='position:fixed;inset:0;z-index:998;display:flex;align-items:center;justify-content:center;background:rgba(10,6,8,.72);color:#f6eee6;font:600 15px/1.4 ui-monospace,monospace;text-align:center;padding:24px'; card.textContent='Restoring graphics…'; }
+      (document.body||document.documentElement).appendChild(card);
+      clearTimeout(timer); timer=setTimeout(()=>{ if(!S.lost) return; mark({v:0, ctx:1}); location.reload(); }, 4000); }, false);
+    cv.addEventListener('webglcontextrestored',()=>{ S.lost=false; clearTimeout(timer); if(card && card.parentNode) card.parentNode.removeChild(card); S.beat(); }, false); };
+  return S; })();
 
 // Restrict iPad gestures that interfere with gameplay: pinch-zoom, double-tap
 // zoom, long-press selection/callout, and rubber-band scroll.
@@ -39273,9 +39306,10 @@ const renderer=new T.WebGLRenderer({antialias:true});
 renderer.debug.checkShaderErrors=/[?&](mcp|debug)\b/.test(location.search);
 renderer.setClearColor(0x1c1218);
 renderer.outputEncoding=T.sRGBEncoding;            // richer, less muddy color
-const RES=isTouch?0.88:0.95;                       // sharper for iPad + modern displays
+const RES=(isTouch?0.88:0.95)*(SAFE.level>=2?0.72:SAFE.level>=1?0.85:1);   // sharper for iPad + modern displays (lower after a crash: see SAFE)
 renderer.setPixelRatio(Math.min((devicePixelRatio||1),2)*RES);
 app.appendChild(renderer.domElement);
+SAFE.watch(renderer.domElement);   // lost graphics: a card, and the context asked back (see SAFE)
 
 const scene=new T.Scene();
 const SKY=0x3a2632;
@@ -59605,10 +59639,24 @@ function disposeObject(o){
   o.traverse(c=>{ if(c.geometry) c.geometry.dispose();
     if(c.material) (Array.isArray(c.material)?c.material:[c.material]).forEach(freeMat); });
 }
+/* A COURSE'S PAINTED ART GOES WITH IT. Victoria's five sets (two 2048-square atlases and more: about 44 MB of canvas), the
+   shore's prints (Rosalie) and the boardwalk's signs and faces (Lucy) were painted once and then kept for the whole visit,
+   course after course. On a phone that is memory the page needs (iOS ends a page that runs short, without a word), so they
+   are let go when another course is built: the GPU's copy, and the canvas's own pixels (a canvas holds its pixels until it
+   is collected, whoever still points at it). They are painted again, a moment's work, if the course comes round again. */
+function artFreeCanvas(c){ if(c && c.getContext && c.width){ c.width=0; c.height=0; } }
+function artFreeTex(t){ if(!t || !t.isTexture) return; t.dispose(); artFreeCanvas(t.image); }
+function artLeave(idx){
+  const tk=TRACKS[idx]||{};
+  if(!tk.victoria && VIC_CAN){ const V=VIC_CAN; VIC_CAN=null; artFreeCanvas(V.A); artFreeCanvas(V.B); artFreeCanvas(V.C); for(const k in V.deck) artFreeCanvas(V.deck[k]); }
+  if(!tk.shore) for(const k in SH_TEX){ artFreeTex(SH_TEX[k]); delete SH_TEX[k]; }
+  if(!tk.jersey) for(const k in BW_TEX){ artFreeTex(BW_TEX[k]); delete BW_TEX[k]; }
+}
 function buildTrack(idx){
   if(camera.far!==1400){ camera.far=1400; camera.updateProjectionMatrix(); }   // (Nova sees further: its star is across the map)
   luxCourse();
   if(BW_U.tLm.value && !TRACKS[idx].jersey){ BW_U.tLm.value.dispose(); BW_U.tLm.value=null; }   // (Lucy's map of the light on her ground: 11 MB, let go when she is)
+  artLeave(idx);   // the painted art of the course being left goes with it (see artLeave)
   sun.target.position.set(0,0,0); sun.target.updateMatrixWorld();   // (...and aims the sun lamp at you from its star: every other course gets the lamp's aim back)
   selTrack=idx; PREVIEW.built=idx;   // (the home deck's preview knows what the scene holds: see PREVIEW)
   MAZE=null;                             // the labyrinth's state: set again only by mzBuildTrack
@@ -92562,7 +92610,7 @@ function previewBoot(){
  * ripples and lens at zero LUX is invisible. ?lux=0 turns it off; race_fx {lux:{...}} tunes and reports it. A course
  * can ask for its own light with TRACKS[i].lux={bloom, thr}, and its own air; and can change them as the race goes, from
  * its own tick (LUX.live: the same keys, set each frame; cleared when another course is built). */
-const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', msaa:0, scale:1,
+const LUX={ on:!/[?&]lux=0\b/.test(location.search) && SAFE.level<2, ok:null, why:'', type:'', msaa:0, scale:1,
   // anti-aliasing: a multisampled target on a desktop; on a phone or tablet a plain one smoothed in the last pass (FXAA), at a
   // quarter of the memory, and never more than MAXPX pixels however dense the screen
   aa:isTouch?'fxaa':'msaa', MAXPX:isTouch?2.4e6:6e6, auto:!/[?&](mcp|debug)\b/.test(location.search),
@@ -92573,7 +92621,7 @@ const LUX={ on:!/[?&]lux=0\b/.test(location.search), ok:null, why:'', type:'', m
   // of distance; mistCol its colour; mistWisp how patchy (0 = even); mistScale the wisps' size (per unit); mistRise how
   // fast they drift and climb; mistGlow how much of the glow round a light the mist picks up.
   // pace (see luxPace): base = a frame's time without the pipeline, measured (null until it has been); lite = the air and the smoothing given up
-  base:null, baseAt:0, pt:0, trial:null, trials:0, skip:0, lite:false, offBy:null, wall:0,
+  base:null, baseAt:0, pt:0, trial:null, trials:0, skip:0, lite:SAFE.level>=1, offBy:null, wall:0,
   depth:false, gy:0, pers:null, persI:0, persClear:true, dtLast:0, air:{ persist:0, heat:0, heatNear:60, heatFar:380, heatEl:0.14, mist:0, mistH:9, mistDen:0.006, mistAir:0, mistCol:0xdfe8ee, mistWisp:0.6, mistScale:0.035, mistRise:0.5, mistGlow:0.5,
     // THE DEPTH OF THE AIR (aer): a whole atmosphere over the course, thinning upward with a scale height of aerH from
     // aerY (unset: the player's road). What a pixel loses to it is the light lost along its own line of sight, exactly: a
@@ -92871,7 +92919,7 @@ function luxWarpCol(lx, c){
   C.r=0.3+0.7*C.r; C.g=0.3+0.7*C.g; C.b=0.3+0.7*C.b; return c.copy(C); }
 function luxHex(v, h){ return v.set((h>>16&255)/255, (h>>8&255)/255, (h&255)/255); }
 function luxMix(a, b, t){ t=t<0?0:t>1?1:t; const m=(sh)=>Math.round((a>>sh&255)+((b>>sh&255)-(a>>sh&255))*t); return (m(16)<<16)|(m(8)<<8)|m(0); }   // (two colours, as hex, blended)
-function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.wp=0; LUX.wpPk=0; LUX.wpAt=null; LUX.wpX=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=false; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
+function luxCourse(){ LUX.live=null; LUX.liveX=null; LUX.litOn=null; flesh.distance=500; LUX.st=null; LUX.wp=0; LUX.wpPk=0; LUX.wpAt=null; LUX.wpX=null; LUX.persClear=true; if(LUX.offBy==='auto'){ LUX.on=true; LUX.why=''; } LUX.offBy=null; LUX.lite=SAFE.level>=1; LUX.base=null; LUX.trial=null; LUX.slow=0; LUX.fast=0; LUX.skip=0; LUX.ema=16.7; }
 /* draw the frame through the pipeline. rect: a viewport on the canvas {x,y,w,h} (the home deck's window) or nothing for all of it */
 function luxRender(rect){
   if(!LUX.on || LUX.trial || !luxInit()){ renderer.render(scene,camera); return; }   // (off, or timing the game without it)
@@ -95780,7 +95828,7 @@ const SEL3D=(function(){
   const nameEl=$('stname'), descEl=$('stdesc'), readEl=$('stread'), hzNo=$('hzsno');
   // an automatic fallback lasts this session only (sessionStorage); it sticks (localStorage) only after a
   // second session also proved slow, so one stall (a first shader compile, a busy moment) can't lose 3D for good
-  let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':(sessionStorage.getItem(LSK)==='0'?'off':'auto'); }catch(_){}
+  let mode='auto'; try{ const v=localStorage.getItem(LSK); mode=v==='0'?'off':v==='1'?'on':(sessionStorage.getItem(LSK)==='0'||SAFE.level>=2?'off':'auto'); }catch(_){}   // (after crashes on this device, see SAFE: off unless asked for)
   let vis=false, live=false, S=null, cur=null, want=null, peeking=null;
   let pendT=0, pendR=0, relT=0, peekT=0, hintMsg='';
   const cache=[];                                         // LRU of entries, most recent last
@@ -97240,6 +97288,7 @@ $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
 state='menu';
 previewTune(true);
+if(SAFE.crashed||SAFE.ctx) setTimeout(()=>showToast(SAFE.level>=2 ? 'Running light after a crash on this device' : 'Running a little lighter after a crash'),1600);   // (see SAFE)
 requestAnimationFrame(()=>setTimeout(()=>{
   previewBoot();               // build the default circuit and its grid behind the menu, a piece at a time (and start the loop)
   setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
