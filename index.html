@@ -91968,6 +91968,7 @@ function camPushOut(dt){
   _cpD.copy(raw).add(_cpC);
   if(!camClearOf(_cpD)) _camPush.copy(_cpC); else _camPush.copy(_cpK);
 }
+const PCAM={back:-23, backBoost:-22, backTube:-18, backMega:-34, up:12, upBoost:11.5, upTube:10, upMega:15, ahead:16, aim:1.2, fov:2};   // the close view on a portrait phone (see updateCameraCore)
 function updateCamera(dt){
   // a push left from last frame is only ours to strip if nothing else has moved the lens
   const pushed=_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6;
@@ -92143,6 +92144,10 @@ function updateCameraCore(dt){
     return;
   }
   const close=camMode==='close';   // the same chase, pulled in: a bigger racer on a small screen
+  // ...on a phone held upright (the close view is a portrait phone's default) the narrow frame made that racer fill two thirds
+  // of its width from a lens only 8 up: further back, higher and aimed further down the road, the racer stands a little
+  // smaller and lower and the road ahead opens up (PCAM; a landscape screen keeps the close view as it was)
+  const pc=close && camera.aspect<0.8 ? PCAM : null;
   // tube mode: inside a tunnel the camera closes in tight and low — claustrophobic,
   // and it rolls with the berm bank so wall-riding reads through the lens too
   const tube=state==='race' && TRACKS[selTrack].berm && tunnelAt(me.prog);
@@ -92160,9 +92165,9 @@ function updateCameraCore(dt){
     CAMFX.swing+=(swingT-CAMFX.swing)*Math.min(1,3.2*dt);
     if(me.air) CAMFX.wasAir=true; else if(CAMFX.wasAir){ CAMFX.wasAir=false; CAMFX.landV-=Math.min(14, 5+Math.abs(me.vy||0)*0.08); }
     CAMFX.landV=(CAMFX.landV-CAMFX.land*90*dt)*Math.exp(-9*dt); CAMFX.land+=CAMFX.landV*dt; }
-  const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
+  const back=fwd.clone().multiplyScalar((pc ? (mega?pc.backMega:(tube?pc.backTube:(boost?pc.backBoost:pc.back))) : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
   if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(pc ? (mega?pc.upMega:(tube?pc.upTube:(boost?pc.upBoost:pc.up))) : close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
   { const dx=me.x-(CAMFX.px??me.x), dy=me.y-CAMFX.py, dz=me.z-CAMFX.pz; CAMFX.px=me.x; CAMFX.py=me.y; CAMFX.pz=me.z;
@@ -92175,14 +92180,14 @@ function updateCameraCore(dt){
     camera.position.z += camTremor(2)*camShake*1.25;
     camShake=Math.max(0,camShake-dt*5);
   }
-  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(close?12:18)).add(new T.Vector3(0,close?0.6:4,0));
+  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(pc?pc.ahead:close?12:18)).add(new T.Vector3(0,pc?pc.aim:close?0.6:4,0));
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
   else { const rollT=state==='race' && !me.finished ? ldClamp(-CAMFX.rate*0.035, -0.055, 0.055) : 0;   // lean into the turn
     CAMFX.roll+=(rollT-CAMFX.roll)*Math.min(1,4*dt); if(Math.abs(CAMFX.roll)>1e-4) camera.rotateZ(_camRoll=CAMFX.roll); }
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
   const spN=ldClamp(Math.abs(me.spd||0)/142, 0, 1), spW=state==='race'?(1-spN)*(1-spN):0;   // a crawl narrows the lens a little; flat out is the old 64
-  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW)) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
+  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW))+(pc?pc.fov:0) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
