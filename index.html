@@ -2742,7 +2742,8 @@ const SAFE=(()=>{ const K='sr_alive', KL='sr_safe'; let prev=null, st={lvl:0, cl
   save();
   const S={level:st.lvl|0, crashed, ctx, lost:false, shown:0};
   let since=document.visibilityState==='visible' ? now : 0, counted=false;
-  const leave=()=>{ if(since && !counted && Date.now()-since>180000){ counted=true; st.clean=(st.clean|0)+1; if(st.clean>=3 && st.lvl>0){ st.lvl--; st.clean=0; } save(); } mark({v:0}); };
+  const leave=()=>{ if(S.reloading){ mark({v:0, ctx:1}); return; }   // (our own reload after lost graphics: the next page counts it)
+    if(since && !counted && Date.now()-since>180000){ counted=true; st.clean=(st.clean|0)+1; if(st.clean>=3 && st.lvl>0){ st.lvl--; st.clean=0; } save(); } mark({v:0}); };
   S.beat=()=>{ if(document.visibilityState==='visible' && !S.lost) mark({v:1}); };
   document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'){ if(!since) since=Date.now(); S.beat(); } else leave(); });
   addEventListener('pagehide',leave);
@@ -2752,7 +2753,7 @@ const SAFE=(()=>{ const K='sr_alive', KL='sr_safe'; let prev=null, st={lvl:0, cl
     cv.addEventListener('webglcontextlost',()=>{ S.lost=true; mark({v:0});
       if(!card){ card=document.createElement('div'); card.style.cssText='position:fixed;inset:0;z-index:998;display:flex;align-items:center;justify-content:center;background:rgba(10,6,8,.72);color:#f6eee6;font:600 15px/1.4 ui-monospace,monospace;text-align:center;padding:24px'; card.textContent='Restoring graphics…'; }
       (document.body||document.documentElement).appendChild(card);
-      clearTimeout(timer); timer=setTimeout(()=>{ if(!S.lost) return; mark({v:0, ctx:1}); location.reload(); }, 4000); }, false);
+      clearTimeout(timer); timer=setTimeout(()=>{ if(!S.lost) return; S.reloading=true; mark({v:0, ctx:1}); location.reload(); }, 4000); }, false);
     cv.addEventListener('webglcontextrestored',()=>{ S.lost=false; clearTimeout(timer); if(card && card.parentNode) card.parentNode.removeChild(card); S.beat(); }, false); };
   return S; })();
 
@@ -91821,6 +91822,7 @@ function syncObjects(dt,now){
     }
     // characters that carry their own rig (springs, airflow, mood) drive it here. Guarded
     // on userData, so it costs nothing for every other racer on the grid.
+    try{   // (a racer's own rig: one that keeps throwing is switched off, see hookFault)
     if(r.obj.userData.bandido) updateBandido(r.obj, r, dt);
     if(r.obj.userData.bosun) updateBosun(r.obj, r, dt);
     if(r.obj.userData.salty) updateSalty(r.obj, r, dt);
@@ -91828,6 +91830,7 @@ function syncObjects(dt,now){
     if(r.obj.userData.sway) updateSway(r.obj, r, now);   // Winston's locks, Cleetus's jug + straw
     if(r.obj.userData.scarf) updateScarf(r.obj, r, now); // Birdie's scarf streams, swings and lifts
     if(r.obj.userData.flow) flowFlush(r.obj, dt);        // the flow body's skin, once every tick above has had its say about the neck
+    }catch(e){ hookFault(r.obj, e); }
     // celebration body language: happy bounce + side-to-side victory sway
     if(r.celebT>0){ r.celebT-=dt;
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
@@ -93120,23 +93123,39 @@ function raceStep(dt){
   }
   syncHUD();
 }
+/* THE FAULT FENCE. The loop used to ask for its next frame at the end of each one, so a single throw anywhere in a frame
+   (any racer's animation, any course's scenery, the light pipeline) stopped the game for good: a frozen picture and a red
+   line at the bottom, which on a phone looks like a crash. Now the next frame is always asked for, and each stage of a
+   frame (the race, the racers, the camera, the world's animation, the particles, the picture) is fenced: a stage that
+   throws loses only the rest of itself for that frame. A racer whose own animation keeps throwing has it switched off
+   (it races on, plain); a picture that keeps failing through the light pipeline is drawn without it. Every fault is still
+   reported (the console, the page's error line and the tests' page errors), once per kind, so nothing is hidden. */
+const FAULT={n:0, seen:new Set(), off:{}};
+function fault(where, e){ FAULT.n++; FAULT.off[where]=(FAULT.off[where]||0)+1;
+  const k=where+':'+((e&&e.message)||e); if(FAULT.seen.has(k)) return; FAULT.seen.add(k); console.error('['+where+']', e);
+  try{ if(window.reportError) window.reportError(e); else setTimeout(()=>{ throw e; }); }catch(_){} }
+function hookFault(o, e){ const ud=o.userData; ud._faults=(ud._faults||0)+1; fault('racer '+(ud.id||o.name||''), e);
+  if(ud._faults>=3){ ud.tick=null; ud.sway=null; ud.scarf=null; ud.bandido=null; ud.bosun=null; ud.salty=null; ud.flow=null; } }
 function frame(now){
+  try{ frameRun(now); }catch(e){ fault('frame', e); }
+  requestAnimationFrame(frame);
+}
+function frameRun(now){
   const _f0=performance.now();
   // the race's music (its course, your finish, the winner's results) plays in a race and on its results only:
   // the menus are reached by many doors (home, the cup's screens, change racer...), and they have their own record
   if(state==='menu'){ if(musicTimer) stopMusic(); songFor=null; }
-  if(SEL3D.vis){ last=now; SEL3D.frame(now); diagTick(now, performance.now()-_f0); requestAnimationFrame(frame); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
+  if(SEL3D.vis){ last=now; try{ SEL3D.frame(now); }catch(e){ fault('stage', e); } diagTick(now, performance.now()-_f0); return; }   // the select screen is up: its stage owns the canvas, and the course preview behind it is not drawn
   const dtWall=Math.min(0.033,(now-last)/1000), dt=(SIM.hold||SIM.manual) ? 0 : dtWall; last=now;   // (a tool is driving: this loop draws, and adds no time of its own. What a tool captures is exactly the state its last step left, however long the call took)
   if(hitStopT>0){   // brief full freeze-frame — sells the finish-line impact before the
     hitStopT-=dtWall;   // camera punch/confetti/shake kick in on the next real frame. (It runs out on the wall clock: on the held
     // clock of a tool-driven race it never ended, and every capture after a whip landed was the same stale frame.)
-    if(!(SIM.hold||SIM.manual)){ luxRender(); requestAnimationFrame(frame); return; }   // (and a tool's view is never frozen: it wants the state it left)
+    if(!(SIM.hold||SIM.manual)){ luxRender(); return; }   // (and a tool's view is never frozen: it wants the state it left)
   }
   const tsec=SIM.manual?SIM.t:now/1000;   // (manual: the clock race_drive advances — game time, not wall time)
   LUX.tsec=tsec;
-  if(SIM.busy){ requestAnimationFrame(frame); return; }   // (race.frames is stepping the game itself: stand aside)
+  if(SIM.busy) return;   // (race.frames is stepping the game itself: stand aside)
   frameStep(now, dt, tsec, _f0, state==='race' && !cupPause && !SIM.manual, true);
-  requestAnimationFrame(frame);
 }
 /* One frame of the game: the race stepped (when `sim`), the racers, the camera, the world's animation, the particles,
    and the picture drawn (when `draw`). frame() runs it on the display's clock; the MCP hook runs it on a fixed one
@@ -93152,10 +93171,11 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
   if(!hzWin && camera.aspect!==_vw/_vh){ camera.aspect=_vw/_vh; camera.updateProjectionMatrix(); }
   perfMark('setup');
   if(PERF.on && PERF.drive && sim) try{ PERF.drive(PERF.n); }catch(e){ PERF.drive=null; console.error(e); }   // (race_perf drives your kart, so the camera travels the course)
-  if(sim) raceStep(dt);   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
+  if(sim) try{ raceStep(dt); }catch(e){ fault('race', e); }   // (a cup's "leave?" question holds the race still; SIM.manual: an outside driver steps it — see raceStep)
   perfMark('sim');
   if(state==='count') countdownGlance(dt, now);
-  if(racers.length){ syncObjects(dt,tsec); draftFxTick(dt); perfMark('racers'); updateCamera(dt); if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); perfMark('camera'); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); perfMark('minimap'); }   // no minimap in the maze unless the radar toggle is on
+  if(racers.length){ try{ syncObjects(dt,tsec); draftFxTick(dt); }catch(e){ fault('racers', e); } perfMark('racers'); try{ updateCamera(dt); }catch(e){ fault('camera', e); } if(SIM.cam) simCamApply(); if(SIM.tick) SIM.tick(); perfMark('camera'); if(!MAZE) drawMap(); else if(mazeRadar) drawMazeMap(); perfMark('minimap'); }   // no minimap in the maze unless the radar toggle is on
+  try{   // (the world's animation: a course's tick that throws stops only the rest of this, see FAULT)
   // keep the skydome centred on the viewer so it can never cross the far plane
   if(skyDome) skyDome.position.copy(camera.position);
   // living-track pulse + ambient motes + particles
@@ -93314,14 +93334,17 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
     } else { const s=1+Math.sin(tsec*2.2)*0.06;
       e.scale.set(s,s*1.25,s); e.rotation.y=tsec*0.4;
       e.material.emissive.setHSL(0.06,0.9,0.45+beat*0.18); } }
+  }catch(e){ fault('world', e); }
   perfMark('world');
   if(SIM.warped) SIM.warped--;
-  updateParticles(dt);
+  try{ updateParticles(dt); }catch(e){ fault('particles', e); }
   perfMark('particles');
   if(state==='menu' && elSpeed.classList.contains('live')) elSpeed.classList.remove('live');   // (back on the home screen the disc goes; see #speed)
   const warm=PREBUILD.draw>0 && state==='menu';                           // (the boot's build: one frame drawn behind the card for each piece it adds, see PREBUILD)
   const held=state==='menu' && (PREVIEW.pending || now<PREVIEW.hold) && !warm;   // (the last picture stays up; the Horizon window has its card over it)
-  if(draw && !held && (warm || !menuLo || (++menuTick&1))){ luxTick(dt); if(hzWin && HZV.rect.w>1) hzDraw(); else luxRender(); if(warm) PREBUILD.draw--; }
+  if(draw && !held && (warm || !menuLo || (++menuTick&1))){ try{ luxTick(dt); if(hzWin && HZV.rect.w>1) hzDraw(); else luxRender(); }
+    catch(e){ fault('draw', e); if(LUX.on && FAULT.off.draw>=3){ LUX.on=false; LUX.why='a drawing fault'; } try{ renderer.setRenderTarget(null); renderer.render(scene,camera); }catch(_){} }
+    if(warm) PREBUILD.draw--; }
   if(PERF.on){ perfMark('render'); const ri=renderer.info; if(draw){ PERF.calls+=ri.render.calls; PERF.tris+=ri.render.triangles; } PERF.geos=ri.memory.geometries; PERF.texs=ri.memory.textures;
     const np=renderer.info.programs?renderer.info.programs.length:0; if(PERF.progN!=null && np!==PERF.progN && PERF.compiles.length<40) PERF.compiles.push({ frame:PERF.n, programs:np-PERF.progN, ms:+(performance.now()-PERF.f0).toFixed(1), what:renderer.info.programs.slice(Math.max(0,PERF.progN)).map(p=>p.name+(PERF.keyOf?PERF.keyOf(p):'')) }); PERF.progN=np;   // a frame that compiled shaders
     const ft=performance.now()-PERF.f0; if(PERF.ft.length<20000) PERF.ft.push(ft); if(ft>PERF.worst){ PERF.worst=ft; PERF.worstAt={ frame:PERF.n, seg:Object.assign({}, PERF.seg), prev:PERF.prevSeg }; } PERF.prevSeg=Object.assign({}, PERF.seg); }
