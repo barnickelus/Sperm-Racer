@@ -89538,6 +89538,30 @@ function lapsOf(){ const t=TRACKS[selTrack]; return (t&&t.laps)||LAPS; }
 const MAXV=142, ACCEL=77, BOOSTV=211, TURN=1.8;   // +20% pace — laps were running 100s+, too slow for arcade kart pacing
 let difficulty='medium';
 const DIFF={easy:0.86, medium:0.95, hard:1.04};   // AI skill centre per difficulty
+/* HANDLING: every character drives as its card says. Each racer in SPERM_TYPES carries stats (a faster top end, a tighter
+   turn, softer brakes, a quicker recovery from a spin...), and until now none of them reached the physics: every character
+   drove exactly alike. handlingOf turns a character's stats into multipliers on the kart's own numbers, each at a measured
+   strength (HANDLING: 1 = the stat as written, 0.35 = a third of its difference from 1), so the characters feel apart
+   without one of them running away with every race. Only a kart a person drives gets them (yours, and in a lobby every
+   other human's); the computer's karts drive on their difficulty as before.
+     top      top speed            maxV x skill (the stats' cost for a racer with big perks is a skill under 1)
+     acc      throttle response    accel
+     turn     turn rate            turn
+     brake    braking              brake (under 1: softer brakes)
+     spin     time spun out        spinResist (under 1: back on line sooner)
+     drift    drift charge rate    driftMult
+     turbo    mini-turbo length    driftCharge
+     boostV   speed on a boost     boostPower
+     boostLen length of a boost    boostLen
+     luck     item boxes he takes come back sooner   itemLuck
+   (They live in r.hs, never spread onto the racer: a stat named driftCharge used to overwrite the drift meter itself, so a
+   racer with that stat had a long mini-turbo ready the moment he first drifted.) */
+const HANDLING={top:0.35, pace:0.5, acc:0.8, turn:0.8, brake:1, spin:0.8, drift:0.8, turbo:0.6, boostV:0.2, boostLen:1, luck:1};
+function handlingOf(st){ st=st||{}; const w=(v,k)=>1+((typeof v==='number'?v:1)-1)*HANDLING[k];
+  return {top:w(st.maxV,'top')*w(st.skill,'pace'), acc:w(st.accel,'acc'), turn:w(st.turn,'turn'), brake:w(st.brake,'brake'),
+    spin:w(st.spinResist,'spin'), drift:w(st.driftMult,'drift'), turbo:w(st.driftCharge,'turbo'), boostV:w(st.boostPower,'boostV'),
+    boostLen:w(st.boostLen,'boostLen'), luck:w(st.itemLuck,'luck')}; }
+const HANDLING_FLAT=Object.freeze(handlingOf(null));
 let racers=[], items=[], hazards=[], projectiles=[];
 let state='load', tStart=0, raceTime=0;
 
@@ -89799,7 +89823,7 @@ function hazardSurfY(r,x,z){
      the boost item         the most and the longest: the whole tunnel, ribs and light at the end, and it closes slowest
    Whoever is already boosting keeps the higher degree until that boost is spent. */
 const BOOST={ driftS:{t:0.5,w:0.38}, driftL:{t:0.9,w:0.5}, land:{t:0.7,w:0.46}, sling:{t:0.7,w:0.6}, pad:{t:0.85,w:0.72}, start:{t:1.3,w:0.86}, item:{t:1.4,w:1.0} };
-function boostGive(r, secs, kind){ const w=(BOOST[kind]||BOOST.pad).w; r.wpL=r.boostT>0 ? Math.max(r.wpL||0, w) : w; r.boostT=Math.max(r.boostT, secs);
+function boostGive(r, secs, kind){ secs*=(r.hs||HANDLING_FLAT).boostLen; const w=(BOOST[kind]||BOOST.pad).w; r.wpL=r.boostT>0 ? Math.max(r.wpL||0, w) : w; r.boostT=Math.max(r.boostT, secs);
   if(r.you && kind==='item' && typeof LUX!=='undefined' && !wlRM()) LUX.flash=Math.max(LUX.flash, 0.14); }
 function useItem(r){
   if(r.you && r._roll>0) return;   // can't fire mid-roulette
@@ -89941,6 +89965,7 @@ function draftFxTick(dt){
 }
 
 function updateRacer(r,dt){
+  const H=r.hs||HANDLING_FLAT;   // this character's handling (see HANDLING)
   if(r.spectator){ specTick(r); return; }   // the spectator's hidden kart rides the one it watches (see SPEC); nothing below applies
   // A remote human's kart is authored on their machine; here it is pure playback.
   if(r.remote){ netApplySnap(r,dt); return; }
@@ -90048,7 +90073,7 @@ function updateRacer(r,dt){
   if(r.glueT>0){ r.glueT-=dt;      // glued: speed target halved below, green drip particles
     if(Math.random()<0.25) burst(r.x,r.y+1,r.z,0x7ddb4a,2,10,0.3,2); }
 
-  if(r.spinT>0){ r.spinT-=dt; r.head+=dt*16; r.spd*=Math.pow(0.2,dt);
+  if(r.spinT>0){ r.spinT-=dt/H.spin; r.head+=dt*16; r.spd*=Math.pow(0.2,dt);
     r.x+=Math.sin(r.head)*r.spd*dt; r.z+=Math.cos(r.head)*r.spd*dt;
     placeOnTrack(r,dt); return; }
 
@@ -90073,7 +90098,7 @@ function updateRacer(r,dt){
     }
   }
 
-  let target = onRoad?MAXV:MAXV*0.45;
+  let target = (onRoad?MAXV:MAXV*0.45)*H.top;
   if(!r.you) target*=r.skill;
   if(r.glueT>0) target*=0.5;       // stuck in glue — slow crawl until it wears off
   if(r.megaT>0) target*=1.12;      // mega runs a little hot on top of the ram immunity
@@ -90091,7 +90116,7 @@ function updateRacer(r,dt){
     else r.draftCharge=Math.max(0,(r.draftCharge||0)-dt*0.9); }
   // boost
   r.boostT=Math.max(0,r.boostT-dt);
-  if(r.boostT>0) target=BOOSTV;
+  if(r.boostT>0) target=BOOSTV*H.boostV;
   if(MAZE && !r.you && r._mzCap!=null) target=Math.min(target, r._mzCap);   // the maze AI slows for its corners
   if(MAZE && r._mzPiv) target=Math.min(target, MZA.PIVOT_HOLD);         // pivoting: it turns on the spot rather than drive off in a circle
 
@@ -90099,11 +90124,11 @@ function updateRacer(r,dt){
   if(MAZE && !r.you && r._mzRev) r.spd += (-45-r.spd)*Math.min(1,4*dt);          // maze AI backing off a wall
   else if(MAZE && !r.you && r.spd>target) r.spd += (target-r.spd)*Math.min(1,5*dt);   // ...and braking for a corner
   else if(MAZE && r.drift===1 && drift && Math.abs(steer)>0.6 && r.spd>20) r.spd += (20-r.spd)*Math.min(1,3*dt);   // the maze: drift at full lock is a handbrake turn
-  else if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL/Math.max(40,MAXV)*dt*3);
+  else if(gas||!r.you) r.spd += (target-r.spd)*Math.min(1, ACCEL*H.acc/Math.max(40,MAXV)*dt*3);
   else if(reverse) r.spd += ((MAZE?-72:-60)-r.spd)*Math.min(1,(MAZE?6:3)*dt);   // the maze: a quicker reverse
-  else if(brake) r.spd += (0-r.spd)*Math.min(1,4*dt);   // firm stop — doesn't creep into reverse on its own
+  else if(brake) r.spd += (0-r.spd)*Math.min(1,4*H.brake*dt);   // firm stop — doesn't creep into reverse on its own
   else r.spd += (0-r.spd)*Math.min(1,1.4*dt);
-  r.spd=Math.max(MAZE?-72:-50,Math.min(BOOSTV,r.spd));
+  r.spd=Math.max(MAZE?-72:-50,Math.min(BOOSTV*H.boostV,r.spd));
 
   // turning (speed-scaled); drift sharpens & charges
   if(MAZE) r._mzIn=steer;                  // (the driver's own steering, before a drift takes it over: the turn pads read it)
@@ -90112,7 +90137,7 @@ function updateRacer(r,dt){
   // reads: you expect to be able to point it when crawling, and you expect it to settle
   // down (not twitch) at top speed. Keep most of the authority low-down and shed a little
   // at speed instead — that reads as "it goes where I point it".
-  let turnRate=TURN*(1.02-0.24*vfrac);
+  let turnRate=TURN*(1.02-0.24*vfrac)*H.turn;
   if(MAZE) turnRate*=mzTurnK(vfrac);    // the maze: tighter the slower you go, so a corridor U-turn works
   if(MAZE) turnRate=mzPivot(r,dt,steer,turnRate);   // ...and slow with the wheel over, a swimmer pivots on the spot
   if(drift && Math.abs(r.spd)>(MAZE?18:50)){   // (the maze: a drift holds down to a crawl, so it can swing you round)
@@ -90125,12 +90150,12 @@ function updateRacer(r,dt){
       turnRate*=MAZE?1.6:1.1;
       steer = MAZE ? r.driftDir*0.7 + steer*0.45 : r.driftDir*0.32 + steer*0.28;     // committed slide + gentle trim (softer; the maze swings round)
     }
-    r.driftCharge+=dt;
+    r.driftCharge+=dt*H.drift;
     if(MAZE) r.spd*=Math.pow(Math.abs(steer)>0.6?0.3:0.7,dt);   // a maze drift bleeds speed (hard at full lock: a handbrake U-turn)
   } else {
     if(r.drift===1){                            // released → mini-turbo
-      if(r.driftCharge>1.2) boostGive(r,BOOST.driftL.t,'driftL');
-      else if(r.driftCharge>0.55) boostGive(r,BOOST.driftS.t,'driftS');
+      if(r.driftCharge>1.2) boostGive(r,BOOST.driftL.t*H.turbo,'driftL');
+      else if(r.driftCharge>0.55) boostGive(r,BOOST.driftS.t*H.turbo,'driftS');
       r.drift=0; r.driftCharge=0; r.driftDir=0;
       r.slip=0; r._grip=0.32;                    // clean, straight launch out of the drift
     }
@@ -90773,7 +90798,7 @@ function collide(){
       if(r.finished)continue;
       if(Math.hypot(r.x-it.base.x,r.z-it.base.z)<6 && !r.item){
         if(NET.on && netBoxTouch(it,r)) continue;   // networked: the host grants (see netBoxTouch)
-        giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
+        giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4/(r.hs||HANDLING_FLAT).luck;
         burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
         if(r.you){ kickShake(0.25); flashFx(0.15,'#6df2d0'); SFX.item(); }
         break;
@@ -91964,6 +91989,7 @@ function camPushOut(dt){
   _cpD.copy(raw).add(_cpC);
   if(!camClearOf(_cpD)) _camPush.copy(_cpC); else _camPush.copy(_cpK);
 }
+const PCAM={back:-23, backBoost:-22, backTube:-18, backMega:-34, up:12, upBoost:11.5, upTube:10, upMega:15, ahead:16, aim:1.2, fov:2};   // the close view on a portrait phone (see updateCameraCore)
 function updateCamera(dt){
   // a push left from last frame is only ours to strip if nothing else has moved the lens
   const pushed=_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6;
@@ -92139,6 +92165,10 @@ function updateCameraCore(dt){
     return;
   }
   const close=camMode==='close';   // the same chase, pulled in: a bigger racer on a small screen
+  // ...on a phone held upright (the close view is a portrait phone's default) the narrow frame made that racer fill two thirds
+  // of its width from a lens only 8 up: further back, higher and aimed further down the road, the racer stands a little
+  // smaller and lower and the road ahead opens up (PCAM; a landscape screen keeps the close view as it was)
+  const pc=close && camera.aspect<0.8 ? PCAM : null;
   // tube mode: inside a tunnel the camera closes in tight and low — claustrophobic,
   // and it rolls with the berm bank so wall-riding reads through the lens too
   const tube=state==='race' && TRACKS[selTrack].berm && tunnelAt(me.prog);
@@ -92156,9 +92186,9 @@ function updateCameraCore(dt){
     CAMFX.swing+=(swingT-CAMFX.swing)*Math.min(1,3.2*dt);
     if(me.air) CAMFX.wasAir=true; else if(CAMFX.wasAir){ CAMFX.wasAir=false; CAMFX.landV-=Math.min(14, 5+Math.abs(me.vy||0)*0.08); }
     CAMFX.landV=(CAMFX.landV-CAMFX.land*90*dt)*Math.exp(-9*dt); CAMFX.land+=CAMFX.landV*dt; }
-  const back=fwd.clone().multiplyScalar((close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
+  const back=fwd.clone().multiplyScalar((pc ? (mega?pc.backMega:(tube?pc.backTube:(boost?pc.backBoost:pc.back))) : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
   if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(pc ? (mega?pc.upMega:(tube?pc.upTube:(boost?pc.upBoost:pc.up))) : close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
   { const dx=me.x-(CAMFX.px??me.x), dy=me.y-CAMFX.py, dz=me.z-CAMFX.pz; CAMFX.px=me.x; CAMFX.py=me.y; CAMFX.pz=me.z;
@@ -92171,14 +92201,14 @@ function updateCameraCore(dt){
     camera.position.z += camTremor(2)*camShake*1.25;
     camShake=Math.max(0,camShake-dt*5);
   }
-  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(close?12:18)).add(new T.Vector3(0,close?0.6:4,0));
+  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(pc?pc.ahead:close?12:18)).add(new T.Vector3(0,pc?pc.aim:close?0.6:4,0));
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
   else { const rollT=state==='race' && !me.finished ? ldClamp(-CAMFX.rate*0.035, -0.055, 0.055) : 0;   // lean into the turn
     CAMFX.roll+=(rollT-CAMFX.roll)*Math.min(1,4*dt); if(Math.abs(CAMFX.roll)>1e-4) camera.rotateZ(_camRoll=CAMFX.roll); }
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
   const spN=ldClamp(Math.abs(me.spd||0)/142, 0, 1), spW=state==='race'?(1-spN)*(1-spN):0;   // a crawl narrows the lens a little; flat out is the old 64
-  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW)) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
+  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW))+(pc?pc.fov:0) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
@@ -94205,7 +94235,7 @@ function netHostBox(m){
   if(!NET.host || !NET.auth) return;
   const it=items[m.k], r=racers.find(x=>x.netId===m.from);
   if(it && it.live && r && !r.finished){
-    giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4;
+    giveItem(r); it.live=false; it.mesh.visible=false; it.respawn=4/(r.hs||HANDLING_FLAT).luck;
     burst(it.base.x,it.base.y,it.base.z,0x6df2d0,14,42,0.5,4);
     netSend({t:'boxst', k:m.k, live:0, rs:4});
     netSend({t:'item', to:m.from, item:r.item});
@@ -95550,8 +95580,8 @@ buildRacers = function(reuse){
       boostT:0, spinT:0, item:null, aiDelay:0, wob:Math.random()*9,
       finished:false, finishT:0, place:k+1, phase:Math.random()*9, _li:k,
       skill: you ? ((t.stats&&t.stats.skill)||1) : (DIFF[difficulty]-0.03+Math.random()*0.06),
-      // every human drives with their own character's stats, not just the local one
-      ...((you || (np && !np.ai && np.id!==NET.self)) ? (t.stats||{}) : {})
+      // every human drives with their own character's handling, not just the local one (see HANDLING)
+      hs: (you || (np && !np.ai && np.id!==NET.self)) ? handlingOf(t.stats) : HANDLING_FLAT
     };
   });
   // a spectator (see SPEC): the host's lineup has no slot of ours, so a hidden kart of our own rides the one we watch
