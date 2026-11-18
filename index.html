@@ -280,6 +280,20 @@
   #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     background:#05202a;color:var(--ink);letter-spacing:.3em;font-size:12px;text-transform:uppercase;}
   #loading b{color:var(--signal);}
+  /* the deck is the loading screen (see bootDeck): shown by the stylesheet alone while the game arrives; nothing answers yet */
+  body.hz.booting #loading{display:none;}
+  body.hz.booting #start.hidden{display:block!important;}
+  body.booting #ui{visibility:hidden;}
+  body.booting #start{pointer-events:none;}
+  body.booting #hzrk,body.booting #diffpick{min-height:44px;}   /* (the racers' strip and the difficulty picker are made by the game: their room is kept, so nothing moves when they arrive) */
+  body.hz #start .hz-row,body.hz #start .hz-modes,body.hz #start #startbtn,body.hz #start .hz-top .hz-slot,body.hz #start .hz-nav{transition:opacity .4s ease;}
+  body.booting #start .hz-row,body.booting #start .hz-modes,body.booting #start #startbtn,body.booting #start .hz-top .hz-slot,body.booting #start .hz-nav{opacity:.5;}
+  body.booting::after{content:"";position:fixed;left:0;right:0;top:0;height:3px;z-index:70;transform-origin:0 50%;pointer-events:none;
+    background:linear-gradient(90deg,#ffc94a,#ff7a3c);box-shadow:0 0 12px rgba(255,170,70,.7);animation:bootBar var(--boot-ms,3500ms) cubic-bezier(.12,.55,.25,1) both;}
+  @keyframes bootBar{from{transform:scaleX(0);}to{transform:scaleX(.94);}}
+  #bootfail{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:80;padding:12px 18px;border-radius:12px;border:1px solid #ffc94a;
+    background:#1a0d06;color:#ffe9c4;font:700 13px/1.3 ui-monospace,monospace;letter-spacing:.04em;box-shadow:0 6px 30px rgba(0,0,0,.6);}
+  @media (prefers-reduced-motion:reduce){ body.booting::after{animation:none;transform:scaleX(.5);} }
 
   /* ===== full-screen atmosphere overlays (pure CSS, GPU cheap) ===== */
   #diag{position:fixed;left:6px;top:6px;z-index:99;padding:3px 7px;border-radius:4px;background:rgba(0,0,0,.62);color:#9cf59c;font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;pointer-events:none;white-space:pre;}   /* frame stats (More: "Frame stats") */
@@ -2689,7 +2703,42 @@
   </div>
 </div>
 
-<script src="three.min.js"></script>
+<script>
+/* THE DECK IS THE LOADING SCREEN. The game is one large script at the end of this page, and until it had all arrived and run
+   (seconds, on a phone) the page showed a dark card that said "warming the slide". Everything above this line is already
+   here, though: the home deck's own markup and styles. So the deck is shown now, as it will stand, and the game arrives
+   underneath it: its controls are moved into the Horizon deck's slots (as setupHomeStyle does, with the same markers), the
+   window shows the still of the course it will open on, and the words the deck showed last time (sr_deck: the racer, the
+   course, its facts) are put back. Nothing answers yet (body.booting: the controls stand dimmed and a line across the top
+   runs for about as long as the last load took); the game takes the class off when it is ready. To the game's own code
+   #start is still hidden, exactly as before, until then: only the stylesheet shows it. The Classic home keeps the card. */
+(function bootDeck(){
+  var D=document, B=D.body, $=function(i){ return D.getElementById(i); };
+  if(!B.classList.contains('hz')) return;
+  try{
+    var st=$('start'), hd=$('hzdeck'); if(!st||!hd) return;
+    var SLOTS=['quick','helpbtn','racerbtn','courseno','courseprev','crwrap','coursenext','coursecap','diffpick','startbtn','quickbtn','mpbtn','circuitbtn'], marks=window.__hzMarks={};
+    for(var k=0;k<SLOTS.length;k++){ var id=SLOTS[k], el=$(id), sl=hd.querySelector('.hz-slot[data-slot="'+id+'"]'); if(!el||!sl||!el.parentNode) continue;
+      var m=D.createComment('home:'+id); el.parentNode.insertBefore(m,el); marks[id]=m; sl.appendChild(el); }
+    var snap=null; try{ snap=JSON.parse(localStorage.getItem('sr_deck')||'null'); }catch(_){}
+    if(snap && snap.v===1 && snap.t){ for(var i in snap.t){ var e=$(i); if(e && typeof snap.t[i]==='string') e.textContent=snap.t[i]; }
+      var scr=$('hzscreen'); if(scr && /^[0-9.]+px$/.test(snap.nm||'')) scr.style.setProperty('--hz-nm',snap.nm);
+      if(snap.h && snap.w===innerWidth && snap.hh===innerHeight) for(var j in snap.h){ var g=$(j); if(g && snap.h[j]>=0 && snap.h[j]<400) g.style.minHeight=snap.h[j]+'px'; } }
+    var win=$('hzwin'), tu=hd.querySelector('.hz-tune'), p='nova'; try{ p=localStorage.getItem('sr_poster')||p; }catch(_){}
+    if(win) win.classList.add('tuning');
+    if(tu && /^[a-z]+$/.test(p)){ tu.style.backgroundImage='url("posters/'+p+'.jpg")'; tu.classList.add('has-poster'); }
+    var ms=0; try{ ms=+localStorage.getItem('sr_boot_ms')||0; }catch(_){}
+    B.style.setProperty('--boot-ms', Math.max(1200,Math.min(9000,ms||3500))+'ms');
+    B.classList.add('booting');
+    var vv=window.visualViewport; window.__srVS=vv ? {w:Math.round(vv.width), h:Math.round(vv.height)} : {w:D.documentElement.clientWidth, h:D.documentElement.clientHeight};   // (the deck's first layout, done here: see BOOTING in the game)
+    // the game did not arrive (its file failed to load), or stopped while starting: say so, and offer the way out
+    var fail=function(){ if(!B.classList.contains('booting')||$('bootfail')) return; var f=D.createElement('button'); f.id='bootfail'; f.type='button';
+      f.textContent='The game did not load. Tap to try again.'; f.onclick=function(){ location.reload(); }; B.appendChild(f); };
+    addEventListener('error',function(ev){ var t=ev.target; if(t && t.tagName==='SCRIPT' && t.src) fail(); },true);
+    addEventListener('load',function(){ setTimeout(fail,1500); });
+  }catch(e){}
+})();
+</script>
 <script>
 /* The screen classes the stylesheet keys on (scr-menu, scr-start, scr-finish on <body>; hz-scr-menu on <html>), kept by
    one observer that only fires when a screen is shown or hidden or the home style changes. They stand in for :has()
@@ -2697,8 +2746,8 @@
    recalc 3.08 ms a frame, 0.14 without). */
 (function screenClasses(){
   const B=document.body, H=document.documentElement, up=id=>{ const e=document.getElementById(id); return !!e && !e.classList.contains('hidden'); };
-  const sync=()=>{ const menu=up('start')||up('select')||up('mp');
-    B.classList.toggle('scr-menu', menu); B.classList.toggle('scr-start', up('start')); B.classList.toggle('scr-finish', up('finish'));
+  const sync=()=>{ const boot=B.classList.contains('booting'), menu=boot||up('start')||up('select')||up('mp');   // (booting: the deck is up before the game is, see bootDeck)
+    B.classList.toggle('scr-menu', menu); B.classList.toggle('scr-start', boot||up('start')); B.classList.toggle('scr-finish', up('finish'));
     H.classList.toggle('hz-scr-menu', menu && B.classList.contains('hz')); };
   const mo=new MutationObserver(sync);
   for(const id of ['start','select','mp','finish']){ const e=document.getElementById(id); if(e) mo.observe(e, { attributes:true, attributeFilter:['class'] }); }
@@ -2706,6 +2755,7 @@
   sync();
 })();
 </script>
+<script src="three.min.js"></script>
 <script>
 (()=>{
 "use strict";
@@ -2722,6 +2772,13 @@ addEventListener('error', ev=>{
 });
 const isTouch=matchMedia('(pointer:coarse)').matches;
 if(isTouch)document.body.classList.add('touch');
+/* BOOTING: the deck is already on screen while this script starts (see bootDeck, above the script). Asking the page for a size
+   then (clientWidth, the visual viewport, a scroll position) makes the browser lay the deck out on the spot, in the middle of
+   this script; and with this whole script on the stack, Chrome's bookkeeping for such a forced layout re-reads the script's
+   source to find where it was (a third of a second, measured). Nothing here needs those sizes before the script has run: so
+   while BOOTING the few functions that ask (viewSize, toCard, paintStrip, updateScrollHint) use the size the boot script took,
+   or stand aside, and are run once the script has finished (see the end of the script). */
+let BOOTING=document.body.classList.contains('booting');
 /* THE CRASH GUARD. iOS Safari ends a page that runs short of memory without a word (it reloads it, or shows "A problem
    repeatedly occurred"), and it can take the page's WebGL away, leaving a black screen. The game now notices both, and runs
    lighter afterwards rather than falling over the same way again.
@@ -39313,6 +39370,7 @@ let _vw=0,_vh=0,_vsPoll=0;
 // those transitions (that stale read was what pinned the render buffer to a small box). Fall
 // back to clientWidth/Height only when visualViewport is unavailable.
 function viewSize(){
+  if(BOOTING && window.__srVS) return window.__srVS;   // (taken by the boot script: see BOOTING)
   const vv=window.visualViewport;
   return vv ? {w:Math.round(vv.width), h:Math.round(vv.height)}
             : {w:document.documentElement.clientWidth, h:document.documentElement.clientHeight};
@@ -39337,7 +39395,7 @@ if(window.visualViewport){ visualViewport.addEventListener('resize',resize); vis
 // below the fold, hidden once scrolled to the bottom or if everything already fits.
 function updateScrollHint(){
   const sc=document.getElementById('sperm-scroll'), sh=document.getElementById('scrollHint');
-  if(!sc||!sh) return;
+  if(!sc||!sh||BOOTING) return;
   const overflowing = sc.scrollHeight - sc.clientHeight > 4;
   const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4;
   const overX = sc.scrollWidth - sc.clientWidth > 4;                 // phone carousel: swipe the other way
@@ -91947,7 +92005,7 @@ function camTremor(axis){ const t=CAMFX.t, p=CAMFX.ph[axis]; return (Math.sin(t*
    steering). Remembered between visits; a first-time narrow portrait screen starts on 'close'. */
 let camMode='';
 try{ camMode=localStorage.getItem('sr_cam')||''; }catch(_){}
-if(camMode!=='chase' && camMode!=='close' && camMode!=='fp') camMode=(innerWidth<=520 && innerHeight>innerWidth) ? 'close' : 'chase';
+if(camMode!=='chase' && camMode!=='close' && camMode!=='fp'){ const vs=viewSize(); camMode=(vs.w<=520 && vs.h>vs.w) ? 'close' : 'chase'; }   // (viewSize: no layout forced while the script starts, see BOOTING)
 let _fpYaw=null, _fpRate=0, _fpRoll=0, _fpPitch=0;
 const CAM_LABEL={chase:'Chase', close:'Close chase', fp:'First person'};
 function camAim(x,y,z){ _camLook.set(x,y,z); camera.lookAt(_camLook); }
@@ -92483,7 +92541,7 @@ function previewRacerNow(){
 }
 function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=setTimeout(previewRacerNow, delay); }
 function previewSoon(delay){
-  if(PREBUILD.job && !PREBUILD.live){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too). (Once its window is open, PREBUILD.live, a pick takes it over like any other build)
+  if((PREBUILD.job || PREBUILD.due) && !PREBUILD.live){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too). (Once its window is open, PREBUILD.live, a pick takes it over like any other build)
   clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
   PREVIEW.timer=setTimeout(previewNow, delay);
 }
@@ -92518,7 +92576,14 @@ function previewNow(){
    model is not on the scene until it is seated, so the shaders compiled before the card lifts are the course's and the pick's
    only. The boot's rivals are drawn from the racers that are quick to make (BOOT_SLOW names the few that are not: each a
    tenth of a second or more of one unbroken task, which is a tap not answered); a race draws its own field from everyone. */
-const PREBUILD={job:null, cast:null, pool:{}, loop:false, n:0, draw:0, live:false};
+const PREBUILD={job:null, cast:null, pool:{}, loop:false, n:0, draw:0, live:false, due:false};   // (due: the boot's build is about to start; a build asked for meanwhile is its to do)
+/* ...and the steps wait for the player's hands: each is one unbroken piece of work (a course, a model, its shaders), and a tap or
+   a scroll that lands in one is not answered until it ends. While the page is being touched (HANDS: within the last third of a
+   second) the next step holds off, for four seconds at most, so the deck answers first and the picture behind it comes second. */
+const HANDS={at:-1e9, held:0};
+for(const ev of ['pointerdown','pointermove','touchstart','touchmove','wheel','keydown']) addEventListener(ev,()=>{ HANDS.at=performance.now(); },{passive:true,capture:true});
+function handsBusy(){ return performance.now()-HANDS.at<340; }
+function whenQuiet(fn, wait){ const t0=performance.now(); const go=()=>{ if(handsBusy() && performance.now()-t0<8000){ setTimeout(go,400); return; } fn(); }; setTimeout(go, wait||0); }
 const BOOT_SLOW={kingVox:1, mosaic:1, juan:1, kasi:1, outlaw:1};
 function previewPoolTake(id){ const o=PREBUILD.pool[id]; if(!o) return null; delete PREBUILD.pool[id]; o.visible=true; return o; }
 function previewPoolDrop(){ for(const id in PREBUILD.pool){ const o=PREBUILD.pool[id]; scene.remove(o); disposeObject(o); } PREBUILD.pool={}; PREBUILD.cast=null; PREBUILD.n=0; PREBUILD.draw=0; PREBUILD.live=false; }
@@ -92527,7 +92592,7 @@ function previewBoot(){
   const loop=()=>{ if(!PREBUILD.loop){ PREBUILD.loop=true; requestAnimationFrame(frame); } };
   const alive=()=>state==='menu' && !st.classList.contains('hidden');
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;   // (the deck's own set-up may already have asked for the build: this is it)
-  PREVIEW.pending=true; previewTune(true);
+  PREBUILD.due=false; PREVIEW.pending=true; previewTune(true);
   const steps=(function*(){
     const b0=performance.now();
     if(PREVIEW.built!==selTrack) buildTrack(selTrack);
@@ -92551,6 +92616,7 @@ function previewBoot(){
       yield; }
     DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name;
     previewNow();
+    whenQuiet(()=>{ if(state==='menu') selGrid(); }, 1500);   // the racer select's cards, made ahead once the home is quiet (see selGrid)
   })();
   PREBUILD.job=steps;
   const run=()=>{
@@ -92559,6 +92625,8 @@ function previewBoot(){
       if(PREVIEW.built<0) buildTrack(selTrack); loop();                     // (the loop never runs on a world that was not built)
       if(state!=='menu'){ PREBUILD.job=null; PREVIEW.pending=false; previewPoolDrop(); return; }   // a race is on: it built what it needs
       requestAnimationFrame(()=>setTimeout(run,0)); return; }               // another screen is over the home (the racer select, a lobby): the build waits for it
+    if(handsBusy() && HANDS.held<4000){ HANDS.held+=120; setTimeout(run,120); return; }   // the page is being touched: the deck answers first (see HANDS)
+    HANDS.held=0;
     let r; try{ r=steps.next(); }catch(e){ console.error(e); PREBUILD.job=null; previewPoolDrop(); loop(); previewNow(); return; }
     if(r.done){ if(PREBUILD.job===steps) PREBUILD.job=null; loop(); return; }
     requestAnimationFrame(()=>setTimeout(run,0));                           // a frame, then a task: the browser paints and takes input between two steps
@@ -95286,17 +95354,20 @@ function selLeave(){
   if(selReturn){ selReturn=null; $('select').classList.add('hidden'); cupOpen(); return; }
   $('select').classList.add('hidden'); $('start').classList.remove('hidden');
 }
-function setupSelect(keepPick){
-  const keep=keepPick?chosenType:null;
+/* THE GRID IS MADE WHEN IT IS FIRST WANTED. Eighty cards, each a hand-drawn portrait of some hundreds of SVG nodes: making
+   them was a third of the script's start-up (and most of the page's twelve thousand elements), every visit, for a screen that
+   may never be opened. selGrid makes them the first time the select screen is shown, or a moment after the home has settled
+   (see previewBoot's end), whichever comes first; setupSelect only settles the pick and marks the grid stale. */
+let selGridStale=true;
+function selGrid(){
+  if(!selGridStale) return; selGridStale=false;
   const grid = $('sperm-grid');
   grid.innerHTML = '';
-
   // One Piece cel-shaded portraits (hand-built SVG kit above)
   const cardVisual = OP_SVG;
 
   // `hidden:true` benches a racer: off the select grid and out of the AI/GP draw, but
   // still defined, so a lobby peer on an older build who picked them still resolves.
-  let first=null;
   selOrdered().forEach((t, idx) => {
     if(t.hidden) return;
     const locked = isLocked(t);
@@ -95319,14 +95390,21 @@ function setupSelect(keepPick){
       selMark(t); revealPick(true);
       try{ SEL3D.pick(t); }catch(e){ console.error(e); }
     };
-    if(!first && !locked) first=t;
     grid.appendChild(card);
   });
+  selMark(selPick||chosenType);
+  const sc=$('sperm-scroll'); if(sc){ sc.scrollTop=0; sc.scrollLeft=0; }
+  $('selcount').textContent=grid.children.length+' racers';
+  updateScrollHint();
+}
+function setupSelect(keepPick){
+  const keep=keepPick?chosenType:null;
+  let first=null; for(const t of selOrdered()){ if(!t.hidden && !isLocked(t)){ first=t; break; } }
+  const made=!selGridStale || !$('select').classList.contains('hidden');   // (already made, or on screen: made again now)
+  selGridStale=true; if(made) selGrid();
   // the pick: the racer you have (default: the first card, Guido), never a locked one
   if(!keep || isLocked(keep)) chosenType = first || chosenType;
   selMark(chosenType);
-  const sc=$('sperm-scroll'); if(sc){ sc.scrollTop=0; sc.scrollLeft=0; }
-  $('selcount').textContent=grid.children.length+' racers';
   paintRacer();
   updateScrollHint();
 
@@ -95757,6 +95835,7 @@ function paintSummary(){
   const el=$('picksum'); if(!el||!chosenType) return;
   const mp=TRACKS[selTrack].maze?mzPlan(TRACKS[selTrack]):null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
   el.textContent=TRACKS[selTrack].name+(mp?' #'+mp.no+(mp.mode==='six'?' · six gates':''):'')+' · '+chosenType.name+' · '+difficulty;
+  if(hzHooks && hzHooks.snap) hzHooks.snap();   // (kept for the next visit's first paint: see bootDeck)
 }
 function paintRacer(){
   const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
@@ -95788,6 +95867,7 @@ function showSelect(ret){
   selReturn=ret||null;   // 'cup': the Circuit Cup's chooser sent us, and Lock in / Back return to it
   $('start').classList.add('hidden'); $('finish').classList.add('hidden');
   $('select').classList.remove('hidden');
+  selGrid();   // (made now if it has not been: see selGrid)
   selMark(chosenType);
   updateScrollHint();
   revealPick(false); updateScrollHint();
@@ -96424,7 +96504,7 @@ function setupTrackPick(){
   // the strip's caption and best times refresh whenever the home screen comes back (a race just set a best; a maze's number moved on)
   new MutationObserver(()=>{ if(!$('start').classList.contains('hidden')){ shown=-1; mark(selTrack); paintCap(selTrack,true); refreshBest(); } })
     .observe($('start'),{attributes:true,attributeFilter:['class']});
-  function toCard(i,smooth){ const c=cards[i]; if(!c||!wrap.clientWidth) return;
+  function toCard(i,smooth){ const c=cards[i]; if(!c||BOOTING||!wrap.clientWidth) return;
     const left=c.offsetLeft+c.offsetWidth/2-anc();
     if(smooth&&wrap.scrollTo) wrap.scrollTo({left,behavior:'smooth'}); else wrap.scrollLeft=left; }
   // the home style switched (or the Horizon strip changed size): centre the pick again, before a scroll from the old position could pick another
@@ -97133,8 +97213,8 @@ window.addEventListener('pointerdown', initAudio, {once:false});
 (function setupHomeStyle(){
   const st=$('start'), hd=$('hzdeck'), hb=$('homebtn'); if(!st||!hd) return;
   const SLOTS=['quick','helpbtn','racerbtn','courseno','courseprev','crwrap','coursenext','coursecap','diffpick','startbtn','quickbtn','mpbtn','circuitbtn'];
-  const marks={};
-  for(const id of SLOTS){ const el=$(id); if(!el||!el.parentNode) continue; const m=document.createComment('home:'+id); el.parentNode.insertBefore(m,el); marks[id]=m; }
+  const marks=window.__hzMarks||{};   // (the boot script has already marked and moved the controls it found: see bootDeck)
+  for(const id of SLOTS){ if(marks[id]) continue; const el=$(id); if(!el||!el.parentNode) continue; const m=document.createComment('home:'+id); el.parentNode.insertBefore(m,el); marks[id]=m; }
   function move(h){
     for(const id of SLOTS){ const el=$(id), m=marks[id]; if(!el||!m) continue;
       if(h){ const s=hd.querySelector('.hz-slot[data-slot="'+id+'"]'); if(s&&el.parentNode!==s) s.appendChild(el); }
@@ -97202,7 +97282,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
   function paintStrip(force){
     if(!rk||!chosenType||!document.body.classList.contains('hz')) return;
     const pool=selOrdered().filter(t=>!t.hidden&&!isLocked(t));
-    const w=rk.clientWidth; if(!w) return;
+    const w=BOOTING?0:rk.clientWidth; if(!w) return;
     const tile=44+6, n=Math.max(1,Math.floor((w+6)/tile)-1);
     let i=pool.indexOf(chosenType); if(i<0) i=0;
     const p0=Math.min(Math.floor(i/n)*n,Math.max(0,pool.length-n));
@@ -97257,10 +97337,17 @@ window.addEventListener('pointerdown', initAudio, {once:false});
     const im=posterLoad(t), show=()=>{ if(TRACKS[selTrack]!==t && el.dataset.for!==t.name) return; el.style.backgroundImage='url("'+posterUrl(t)+'")'; el.classList.add('has-poster'); };
     el.dataset.for=t.name;
     try{ localStorage.setItem('sr_poster',t.name.toLowerCase()); }catch(_){}   // (the next visit fetches it from the page's head)
-    if(im.complete && im.naturalWidth) show(); else { el.classList.remove('has-poster'); el.style.backgroundImage=''; im.onload=show; im.onerror=()=>{ el.classList.remove('has-poster'); el.style.backgroundImage=''; }; }   // (until it is in: the outline, never the last course's picture)
+    const up=el.classList.contains('has-poster') && el.style.backgroundImage.indexOf(posterUrl(t))>=0;   // (already showing this very still: the boot script's)
+    if(im.complete && im.naturalWidth) show(); else { if(!up){ el.classList.remove('has-poster'); el.style.backgroundImage=''; } im.onload=show; im.onerror=()=>{ el.classList.remove('has-poster'); el.style.backgroundImage=''; }; }   // (until it is in: the outline, never the last course's picture)
     clearTimeout(poTimer); poTimer=setTimeout(()=>{ const ord=courseStripOrder(), k=ord.indexOf(i); for(const d of [1,-1,2,-2,3]){ const j=ord[k+d]; if(j!==undefined) posterLoad(TRACKS[j]); } },1200);
   }
-  hzHooks={racer:paintRacerHz, course:paintCourseHz};
+  // what the deck says is kept (sr_deck), so the next visit can show it before the game has arrived (see bootDeck)
+  let snapT=0;
+  function deckSnap(){ clearTimeout(snapT); snapT=setTimeout(()=>{ if(!on) return; const t={};
+      for(const id of ['racername','hzrcount','hzrdesc','hzpname','hzpno','hznm','hzfacts','hzfacts2','picksum']){ const e=$(id); if(e) t[id]=e.textContent; }
+      const h={}; for(const id of ['hzrk','diffpick']){ const e=$(id); if(e) h[id]=Math.round(e.getBoundingClientRect().height); }
+      try{ localStorage.setItem('sr_deck', JSON.stringify({v:1, t, nm:scr.style.getPropertyValue('--hz-nm')||'', h, w:innerWidth, hh:innerHeight})); }catch(_){} }, 600); }
+  hzHooks={racer:()=>{ paintRacerHz(); deckSnap(); }, course:i=>{ paintCourseHz(i); deckSnap(); }, snap:deckSnap};
 
   // ---- the switch ----
   let on=null;
@@ -97285,8 +97372,12 @@ window.addEventListener('pointerdown', initAudio, {once:false});
 // already started a race, the race built its own course and previewNow builds nothing.)
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
+document.body.classList.remove('booting');   // the deck was already on screen (see bootDeck): now it answers
+for(const id of ['hzrk','diffpick']){ const e=$(id); if(e) e.style.minHeight=''; }
+if(BOOTING){ BOOTING=false; queueMicrotask(()=>{ resize(); if(trackRecentre) trackRecentre(); if(hzHooks) hzHooks.racer(); }); }   // what stood aside while the script ran (see BOOTING): once it is off the stack
+try{ localStorage.setItem('sr_boot_ms', String(Math.round(performance.now()))); }catch(_){}
 state='menu';
-previewTune(true);
+previewTune(true); PREBUILD.due=true;
 if(SAFE.crashed||SAFE.ctx) setTimeout(()=>showToast(SAFE.level>=2 ? 'Running light after a crash on this device' : 'Running a little lighter after a crash'),1600);   // (see SAFE)
 requestAnimationFrame(()=>setTimeout(()=>{
   previewBoot();               // build the default circuit and its grid behind the menu, a piece at a time (and start the loop)
