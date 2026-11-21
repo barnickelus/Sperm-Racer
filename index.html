@@ -291,8 +291,12 @@
   body.booting::after{content:"";position:fixed;left:0;right:0;top:0;height:3px;z-index:70;transform-origin:0 50%;pointer-events:none;
     background:linear-gradient(90deg,#ffc94a,#ff7a3c);box-shadow:0 0 12px rgba(255,170,70,.7);animation:bootBar var(--boot-ms,3500ms) cubic-bezier(.12,.55,.25,1) both;}
   @keyframes bootBar{from{transform:scaleX(0);}to{transform:scaleX(.94);}}
-  #bootfail{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:80;padding:12px 18px;border-radius:12px;border:1px solid #ffc94a;
-    background:#1a0d06;color:#ffe9c4;font:700 13px/1.3 ui-monospace,monospace;letter-spacing:.04em;box-shadow:0 6px 30px rgba(0,0,0,.6);}
+  #bootfail{position:fixed;left:50%;bottom:max(22px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:1000;width:min(440px,calc(100vw - 28px));
+    display:flex;flex-direction:column;gap:8px;padding:16px 18px;border-radius:14px;border:1px solid #ffc94a;background:#1a0d06;color:#ffe9c4;
+    font:13px/1.45 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;text-align:left;box-shadow:0 8px 40px rgba(0,0,0,.7);pointer-events:auto;}
+  body.bootfailed::after{display:none;} body.bootfailed .hz-tl{display:none;} body.bootfailed #loading{padding:0 28px 30vh;text-align:center;line-height:1.7;}   /* (nothing is loading any more: the line and the "tuning" tag go) */
+  #bootfail b{font-size:14px;color:#fff3d8;} #bootfail span{color:#d9c3a0;}
+  #bootfail button{align-self:flex-start;margin-top:4px;padding:10px 18px;border-radius:10px;border:0;background:#ffc94a;color:#1a0b04;font:700 13px/1 ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;}
   @media (prefers-reduced-motion:reduce){ body.booting::after{animation:none;transform:scaleX(.5);} }
 
   /* ===== full-screen atmosphere overlays (pure CSS, GPU cheap) ===== */
@@ -2704,6 +2708,34 @@
 </div>
 
 <script>
+/* WHEN THE GAME CANNOT START. Three things can stop it before it is able to say so itself: its own file does not arrive, the
+   3D engine's file does not arrive, or the browser will not give the page 3D graphics (WebGL). Each used to end differently
+   (a retry button on the Horizon home only; nothing on the Classic home; an uncaught error and a red line for graphics).
+   __srFail(kind) is here before either file is asked for, and before either home style has drawn anything, so every one of
+   them ends the same way: one card that says what happened and what to do, with one button. The player decides when to
+   try again (nothing reloads by itself). A card is never put up twice, and never once the game is up (__srUp): losing
+   graphics after that is the crash guard's to handle (see SAFE in the game). */
+(function(){
+  var D=document, WORDS={
+    script:['The game did not finish loading.','Check your connection, then try again.'],
+    three:['The 3D engine did not load.','Check your connection, then try again.'],
+    webgl:['This browser could not start 3D graphics (WebGL), which racing needs.','Close other tabs and apps and try again. If it keeps happening, turn on hardware acceleration in the browser, or use another browser or device.'],
+    start:['The game stopped while it was starting.','Try again. If it keeps happening, reload once the connection is steady.'] };
+  window.__srFail=function(kind){
+    if(window.__srUp || D.getElementById('bootfail') || !D.body) return;
+    var w=WORDS[kind]||WORDS.start, c=D.createElement('div'), h=D.createElement('b'), p=D.createElement('span'), b=D.createElement('button');
+    c.id='bootfail'; c.setAttribute('role','alert'); c.setAttribute('data-kind',WORDS[kind]?kind:'start'); h.textContent=w[0]; p.textContent=w[1];
+    b.type='button'; b.textContent='Try again'; b.onclick=function(){ location.reload(); };
+    c.appendChild(h); c.appendChild(p); c.appendChild(b); D.body.appendChild(c); D.body.classList.add('bootfailed');
+  };
+  // a file of the game's that did not arrive (a record's file is not one of these: the race plays on without it)
+  addEventListener('error',function(ev){ var t=ev.target, u=t && t.tagName==='SCRIPT' && t.src || '';
+    if(/\/three\.min\.js(\?|$)/.test(u)) window.__srFail('three'); else if(/\/game\.js(\?|$)/.test(u)) window.__srFail('script'); },true);
+  // everything arrived and ran, and the game is still not up: it stopped on the way
+  addEventListener('load',function(){ setTimeout(function(){ if(!window.__srUp) window.__srFail(window.THREE?'start':'three'); },1500); });
+})();
+</script>
+<script>
 /* THE DECK IS THE LOADING SCREEN. The game is one large script at the end of this page, and until it had all arrived and run
    (seconds, on a phone) the page showed a dark card that said "warming the slide". Everything above this line is already
    here, though: the home deck's own markup and styles. So the deck is shown now, as it will stand, and the game arrives
@@ -2737,11 +2769,6 @@
     var nmE=$('hznm'), sc2=$('hzscreen');   // the course's name, at the size the game will give it for this window (fitName)
     if(nmE && sc2 && nmE.textContent){ var rr=sc2.getBoundingClientRect(), nn=Math.max(4,nmE.textContent.length), rw=Math.round(rr.width), rh=Math.round(rr.height);
       if(rw>8) sc2.style.setProperty('--hz-nm', Math.max(22,Math.min(rh*0.24,(rw-30)/(nn*0.79),92)).toFixed(1)+'px'); }
-    // the game did not arrive (its file failed to load), or stopped while starting: say so, and offer the way out
-    var fail=function(){ if(!B.classList.contains('booting')||$('bootfail')) return; var f=D.createElement('button'); f.id='bootfail'; f.type='button';
-      f.textContent='The game did not load. Tap to try again.'; f.onclick=function(){ location.reload(); }; B.appendChild(f); };
-    addEventListener('error',function(ev){ var t=ev.target; if(t && t.tagName==='SCRIPT' && t.src) fail(); },true);
-    addEventListener('load',function(){ setTimeout(fail,1500); });
   }catch(e){}
 })();
 </script>
@@ -2765,8 +2792,20 @@
 <script>
 (()=>{
 "use strict";
-const T=THREE;
-if(!T){document.getElementById('loading').textContent='three.js failed to load';return;}
+const T=window.THREE;   // (window.: a file that never arrived leaves no THREE at all, and the bare name would throw before this could say so)
+if(!T){ document.getElementById('loading').textContent='the 3D engine did not load'; if(window.__srFail) window.__srFail('three'); return; }
+/* 3D GRAPHICS ARE ASKED FOR FIRST. The browser may refuse the page WebGL (none left, switched off, a blocked GPU). The renderer
+   used to find that out thousands of lines into this script, after the page's listeners were up: three threw, the error went
+   uncaught, and what was left of the page threw again at every touch. So the canvas and its context are made here, before
+   anything else, with exactly what three would ask for (the same attributes, WebGL 2 first), and handed to the renderer
+   where it is made (GLC). Refused: one card says so (__srFail, above the script) and the script ends here, clean; the home
+   deck and its course picture stay up. */
+const GLC=(()=>{ try{
+    const c=document.createElementNS('http://www.w3.org/1999/xhtml','canvas'); c.style.display='block';
+    const a={alpha:false, depth:true, stencil:true, antialias:true, premultipliedAlpha:true, preserveDrawingBuffer:false, powerPreference:'default', failIfMajorPerformanceCaveat:false};
+    const gl=c.getContext('webgl2',a) || c.getContext('webgl',a) || c.getContext('experimental-webgl',a);
+    return gl ? {canvas:c, context:gl} : null; }catch(e){ return null; } })();
+if(!GLC){ document.getElementById('loading').textContent='3D graphics (WebGL) are not available'; if(window.__srFail) window.__srFail('webgl'); return; }
 const $=id=>document.getElementById(id);
 // surface any runtime error on-screen (so issues can be screenshotted, not invisible)
 addEventListener('error', ev=>{
@@ -4386,7 +4425,7 @@ function altsFor(id){
    wherever they last tuned. */
 function courseStyleId(){
   const tk=TRACKS[selTrack], id=tk&&tk.courseStyle, st=id&&MUSIC_STYLES[id];
-  return (st && st.course && st.engine && SONG_ENGINE.songs[st.engine]) ? id : null;
+  return (st && st.course && st.engine && songMeta(st.engine)) ? id : null;
 }
 // the station as the radio shows it: a course record is labelled with its course
 function stationLabel(st){
@@ -4559,17 +4598,35 @@ function startMusic(){ if(!actx||musicTimer||!musicOn)return;
    resumes on the next bar instead of replaying the intro; a new race starts from the top. */
 const producedStations={};
 let producedResume={};
-function startProducedStation(tk){
+/* A RECORD ON ITS WAY (songWait). The station asked for a record that has not arrived: it waits for it, silent, with
+   musicTimer holding the wait's own clock (so everything that asks "is music on?" hears yes, and stopMusic clears it).
+   When the record arrives it starts as it would have, from the top if the race had only just begun when it was asked
+   for. Anything that stops the music first (another station, another course, mute, the menus) drops the wait, so a
+   record that arrives late starts nothing. If it does not come (the request fails, or nine seconds pass) the station
+   plays the racer's own grid music instead, and the next time the station is started the record is asked for again. */
+let songWait=null;
+function songFallback(tk, w){
+  if(songWait!==w) return; songWait=null; clearTimeout(musicTimer);
+  musicStep=0; musicIvMs=(tk.tempo||210)*(curStyle.tempoMul||1); musicTimer=setInterval(musicTick, musicIvMs);
+}
+function startProducedStation(tk, late){
   const id=curStyle.engine, song=SONG_ENGINE.songs[id];
+  if(!song && SONG_ENGINE.cat[id]){
+    const w=songWait={id, fresh:state!=='race' || performance.now()-tStart<2000, bar:songBar};
+    musicTimer=setTimeout(()=>songFallback(tk,w), 9000);
+    songLoad(id).then(()=>{ if(songWait!==w) return; songWait=null; clearTimeout(musicTimer); musicTimer=null;
+        if(curStyle && curStyle.engine===id && musicOn && actx) startProducedStation(tk, w); },
+      ()=>songFallback(tk,w));
+    return; }
   if(!song){ curStyle.engine=null; musicIvMs=(tk.tempo||210); musicTimer=setInterval(musicTick,musicIvMs); return; }
   let h=producedStations[id];
   if(!h || h.ctx!==actx){                           // level 0.38 = about -20 LUFS, level with the grid stations
     h=SONG_ENGINE.produceStation(actx, masterGain, song, {lite:isTouch, level:0.38}); h.ctx=actx; producedStations[id]=h; }
   const k=((musicRoot%12)+12)%12;
   h.setKey(curStyle.course ? 0 : (k>6?k-12:k));    // a course record is already in its course's key
-  const fresh=state!=='race' || performance.now()-tStart<2000;
+  const fresh=late ? late.fresh : (state!=='race' || performance.now()-tStart<2000), bar0=late ? late.bar : songBar;
   if(fresh) producedResume={};
-  h.start({bar:songBar!=null ? songBar : fresh?0:(producedResume[id]||0)});
+  h.start({bar:bar0!=null ? bar0 : fresh?0:(producedResume[id]||0)});
   curStyle.courseSong=curStyle.songName||null;     // what the course asked for (deferred, see above)
   curStyle.songName=song.title;
   musicTimer=h.timer;                               // the engine's scheduler: truthy while it plays
@@ -4581,7 +4638,7 @@ function stopProducedStations(){
     if(h.running) producedResume[id]=h.stop()+1; }
 }
 let hbTimer=null;
-function stopMusic(){ if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
+function stopMusic(){ songWait=null; if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
   stopProducedStations();
   if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
 // final lap: kick the music faster, pulse the HUD red at the edges, AND thump a
@@ -5019,6 +5076,34 @@ const SONG_ENGINE=(function(){
   const songs={};
   return {produceStation, songs, rngOf};
 })();
+/* THE RECORDS ARRIVE WHEN THEY ARE WANTED. Every produced record below is a few thousand lines that only one course or
+   one racer ever plays, and together they were a third of what a browser had to download and read before the home
+   screen could answer. In this file they are all here, as written, and nothing below changes how they play. The
+   deploy (tools/slim-page.mjs) lifts each record that touches nothing but SONG_ENGINE out into a file of its own
+   (songs/<id>.<hash>.js) and leaves a line in its place in SONG_ENGINE.cat: its title, its course note, where it is.
+   The home theme stays in the page; so does any record that reads something of the game's (Victoria's listens to
+   where the player is).
+     songMeta(id)   a record's title and course note, whether or not it has arrived (the dial and srNet read these)
+     songLoad(id)   a promise of the record: at once if it is here, one request shared by everyone who asks if not;
+                    a request that fails is forgotten, so the next ask tries again
+     songWarm(styleId)   asks ahead of use (the home's picks, the grid of a race about to start) and expects nothing
+   startProducedStation waits for a record that is on its way (see songWait). */
+SONG_ENGINE.cat={};
+window.__srSE=SONG_ENGINE;   // (a record's file hands itself to the engine through this)
+const SONG_LOADS={};
+function songMeta(id){ return (id && (SONG_ENGINE.songs[id] || SONG_ENGINE.cat[id])) || null; }
+function songLoad(id){
+  if(SONG_ENGINE.songs[id]) return Promise.resolve(SONG_ENGINE.songs[id]);
+  const c=SONG_ENGINE.cat[id]; if(!c) return Promise.reject(new Error('no record '+id));
+  if(SONG_LOADS[id]) return SONG_LOADS[id];
+  return SONG_LOADS[id]=new Promise((res,rej)=>{
+    const el=document.createElement('script'); el.src=c.src; el.async=true;
+    const done=ok=>{ el.onload=el.onerror=null; delete SONG_LOADS[id];
+      if(ok && SONG_ENGINE.songs[id]) res(SONG_ENGINE.songs[id]); else { el.remove(); rej(new Error('record '+id+' did not load')); } };
+    el.onload=()=>done(true); el.onerror=()=>done(false); document.head.appendChild(el); });
+}
+function songWarm(styleId){ const st=styleId && MUSIC_STYLES[styleId], id=st && st.engine;
+  if(id && !SONG_ENGINE.songs[id] && SONG_ENGINE.cat[id]) songLoad(id).catch(()=>{}); }
 
 /* "SEVEN SCALES" — an original roots-reggae instrumental for the luck dragon, in A minor at
    76 bpm, written for this engine (no borrowed melody or riddim). The riddim is the song:
@@ -39342,7 +39427,9 @@ const OP_SVG={}; for(const k in OP_ART) OP_SVG[k]=opSvg(k);
 
 /* ============== SCENE ============== */
 const app=$('app');
-const renderer=new T.WebGLRenderer({antialias:true});
+// (on the canvas and context made at the top of the script: see GLC. Should three still refuse them, the same card says so.)
+const renderer=(()=>{ try{ return new T.WebGLRenderer({canvas:GLC.canvas, context:GLC.context, antialias:true}); }catch(e){ console.error(e); return null; } })();
+if(!renderer){ document.getElementById('loading').textContent='3D graphics (WebGL) are not available'; if(window.__srFail) window.__srFail('webgl'); return; }
 // three checks every shader it compiles by asking the GPU for the log at once — a stall each time a new effect first
 // shows in a race (race_perf: getShaderInfoLog/getProgramInfoLog ~1.2 s across a race on a software GPU). Players don't
 // read shader logs; the MCP and ?debug pages keep the check, so a broken shader still fails the tests.
@@ -92633,6 +92720,10 @@ function previewBoot(){
       requestAnimationFrame(()=>setTimeout(run,0)); return; }               // another screen is over the home (the racer select, a lobby): the build waits for it
     if(handsBusy() && HANDS.held<4000){ HANDS.held+=120; setTimeout(run,120); return; }   // the page is being touched: the deck answers first (see HANDS)
     HANDS.held=0;
+    // the first visit's welcome is being read: its "Got it" must answer whenever it is tapped, so the work behind it goes a piece
+    // at a time with a breath between (a fifth of a second: a tap waits for one piece at most, and most of the time for none)
+    if(wl && !wl.classList.contains('hidden') && !run.breath){ run.breath=true; setTimeout(run,200); return; }
+    run.breath=false;
     let r; try{ r=steps.next(); }catch(e){ console.error(e); PREBUILD.job=null; previewPoolDrop(); loop(); previewNow(); return; }
     if(r.done){ if(PREBUILD.job===steps) PREBUILD.job=null; loop(); return; }
     requestAnimationFrame(()=>setTimeout(run,0));                           // a frame, then a task: the browser paints and takes input between two steps
@@ -95450,12 +95541,14 @@ countdown = function(){
   const pulse=()=>{ cd.style.animation='none'; void cd.offsetWidth; cd.style.animation=''; };
   pulse();
   state='count'; let n=3; warmShaders();
+  if(chosenType){ songWarm(songFor || effectiveStyleId(chosenType.id)); songWarm(racerStyleId(chosenType.id)); }   // the record the lights will start, asked for now (see songLoad)
   const tick=()=>{ n--;
     if(n>0){cd.textContent=n;pulse();SFX.count(false);setTimeout(tick,750);}
     else if(n===0){cd.textContent='GO!';pulse();SFX.count(true);setTimeout(tick,600);}
     else{
       $('cd').classList.add('hidden'); state='race'; tStart=performance.now(); last=performance.now(); raceTime=NET.spectate?specElapsed():0;   // (a spectator joins the host's clock)
       startEngine(); lockOrient(); startMusic();
+      setTimeout(()=>{ if(state==='race') for(const r of racers) songWarm(homeStyleOf(r)); }, 2500);   // the records the race may turn to: yours for the last lap and the line, the winner's for the results
       if(sliderMode && !NET.spectate){ sliderThrottle=1; $('thknob').style.top='14%'; $('throttle').style.display='block'; document.body.classList.add('slider'); }
       // rocket start: reward holding the throttle/stick the instant the lights go
       const me=racers.find(r=>r.you);
@@ -95842,6 +95935,7 @@ function paintSummary(){
   const mp=TRACKS[selTrack].maze?mzPlan(TRACKS[selTrack]):null;   // the labyrinth: the maze you will race (its number, and six gates when it has them)
   el.textContent=TRACKS[selTrack].name+(mp?' #'+mp.no+(mp.mode==='six'?' · six gates':''):'')+' · '+chosenType.name+' · '+difficulty;
   if(hzHooks && hzHooks.snap) hzHooks.snap();   // (kept for the next visit's first paint: see bootDeck)
+  clearTimeout(paintSummary.warm); paintSummary.warm=setTimeout(()=>whenQuiet(()=>{ if(state==='menu' && chosenType) songWarm((soundtrack==='course' && courseStyleId()) || racerStyleId(chosenType.id)); }), 1200);   // the picks have settled: their record, ahead of the race
 }
 function paintRacer(){
   const t=chosenType, a=$('racerart'), n=$('racername'); if(!t||!a||!n) return;
@@ -97378,6 +97472,7 @@ window.addEventListener('pointerdown', initAudio, {once:false});
 // already started a race, the race built its own course and previewNow builds nothing.)
 $('loading').classList.add('hidden');
 $('start').classList.remove('hidden');
+window.__srUp=true;   // (from here a failure is not a start-up failure: see __srFail)
 document.body.classList.remove('booting');   // the deck was already on screen (see bootDeck): now it answers
 for(const id of ['hzrk','diffpick']){ const e=$(id); if(e) e.style.minHeight=''; }
 if(BOOTING){ BOOTING=false; queueMicrotask(()=>{ resize(); if(trackRecentre) trackRecentre(); if(hzHooks) hzHooks.racer(); }); }   // what stood aside while the script ran (see BOOTING): once it is off the stack
@@ -97385,10 +97480,17 @@ try{ localStorage.setItem('sr_boot_ms', String(Math.round(performance.now()))); 
 state='menu';
 previewTune(true); PREBUILD.due=true;
 if(SAFE.crashed||SAFE.ctx) setTimeout(()=>showToast(SAFE.level>=2 ? 'Running light after a crash on this device' : 'Running a little lighter after a crash'),1600);   // (see SAFE)
-requestAnimationFrame(()=>setTimeout(()=>{
+// (...and not at once: the course is the longest single piece of the boot (a sixth of a second on a desktop, several times that on
+// a phone), and it used to start in the very frame the deck began to answer, so the first tap on a control that had just lit up
+// waited for it. The deck now has BOOT_GRACE to itself first; a build asked for in that time is the boot's to do, see PREBUILD.due.)
+const BOOT_GRACE=450;
+{ let bootT=0; const bootGo=()=>{ if(bootT===null) return; clearTimeout(bootT); bootT=null;
   previewBoot();               // build the default circuit and its grid behind the menu, a piece at a time (and start the loop)
   setTimeout(()=>{ for(const t of TRACKS) if(t.maze) mzPrefetch(mzPlan(t)); }, 1500);   // the maze courses' next mazes, made ahead on the worker
-},0));
+  };
+  requestAnimationFrame(()=>{ if(bootT!==null) bootT=setTimeout(bootGo, BOOT_GRACE); });
+  // (leaving the home in that time, for a race or the racer select, needs the loop the boot starts: it starts now)
+  new MutationObserver(()=>{ if($('start').classList.contains('hidden')) bootGo(); }).observe($('start'),{attributes:true,attributeFilter:['class']}); }
 
 /* Read-only multiplayer diagnostics, deliberately kept in the shipped build. The WebRTC
    path can only really fail on someone else's network — a broker outage, a NAT that will
@@ -97408,13 +97510,14 @@ window.srNet={
   get music(){ if(!curStyle) return {playing:false};
     // the course's own record, when this course has one, and whether it is what is tuned
     const cs=courseStyleId(), cst=cs&&MUSIC_STYLES[cs],
-      course=cs?{style:cs, station:stationLabel(cst), song:SONG_ENGINE.songs[cst.engine].title, tuned:!!curStyle.course}:null;
+      course=cs?{style:cs, station:stationLabel(cst), song:(songMeta(cst.engine)||{}).title, tuned:!!curStyle.course}:null;
     if(curStyle.engine){ const h=producedStations[curStyle.engine];
       return {playing:!!(h&&h.running), station:stationLabel(curStyle), song:curStyle.songName,
+        waiting:!!(songWait && songWait.id===curStyle.engine), grid:!!(musicTimer && !songWait && !(h&&h.running)),   // (its record on its way; or it did not come and the racer's grid music plays: see songWait)
         engine:curStyle.engine, soundtrack, course,
         courseSong:curStyle.course ? curStyle.songName+" (the course's own record, in the course key, untransposed)"
           : course ? course.song+" (the course's own record is first on the dial; this station keeps its own tune, in the course key)"
-          : curStyle.courseSong?curStyle.courseSong+' ('+((SONG_ENGINE.songs[curStyle.engine]||{}).courseNote||'deferred: produced station keeps its own riddim, in the course key')+')':null,
+          : curStyle.courseSong?curStyle.courseSong+' ('+((songMeta(curStyle.engine)||{}).courseNote||'deferred: produced station keeps its own riddim, in the course key')+')':null,
         now:h?h.info():null}; }
     return {playing:!!musicTimer, station:curStyle.station||null, soundtrack, course,
       song:curStyle.songName||'(character tune)',
