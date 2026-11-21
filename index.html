@@ -970,6 +970,16 @@
   .hz-tune.has-poster{background-size:cover;background-position:50% 50%;} .hz-tune.has-poster .hz-ta{display:none;}
   .hz-win.tuning .hz-tune{opacity:1;transition-duration:.08s;}
   .hz-win.tuning .hz-live i{background:#6b5d50;box-shadow:none;}
+  /* the window's loading bar: how far the live picture has come (--hz-p, 0..1: see previewProg). It shows only when the wait is
+     worth a bar (the card has been up for over half a second), runs on an estimate while the game itself is still arriving
+     (body.booting: up to two fifths, over about as long as the last load took), and on the build's real steps after that. */
+  .hz-load{position:absolute;left:0;right:0;bottom:0;height:6px;background:rgba(14,8,6,.55);opacity:0;transition:opacity .25s;overflow:hidden;}
+  .hz-load i{display:block;height:100%;transform-origin:0 50%;transform:scaleX(var(--hz-p,0));background:linear-gradient(90deg,#ffc94a,#ff7a3c);box-shadow:0 0 10px rgba(255,170,70,.8);transition:transform .45s cubic-bezier(.2,.7,.3,1);}
+  .hz-win.tuning .hz-load{opacity:1;transition-delay:.55s;}
+  body.booting .hz-load i{animation:hzLoadBoot var(--boot-ms,3500ms) cubic-bezier(.12,.55,.25,1) both;}
+  @keyframes hzLoadBoot{from{transform:scaleX(.03);}to{transform:scaleX(.4);}}
+  body.bootfailed .hz-load{display:none;}
+  @media (prefers-reduced-motion:reduce){ .hz-load i{transition:none;} body.booting .hz-load i{animation:none;transform:scaleX(.3);} }
   .hz-tl{position:absolute;left:10px;top:8px;padding:2px 7px;border-radius:3px;background:rgba(14,8,6,.72);font:700 11px/1.3 var(--hz-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--hz-ink);}
   .hz-tl i{font-style:normal;} .hz-win.tuning .hz-tl i{animation:hzDots 1.2s steps(1) infinite;} .hz-tl i:nth-child(2){animation-delay:.4s;} .hz-tl i:nth-child(3){animation-delay:.8s;}
   @keyframes hzDots{0%,99%{opacity:0}50%{opacity:1}}
@@ -2232,7 +2242,7 @@
       <div class="hz-win" id="hzwin">
         <div class="hz-bar t"><span class="hz-live"><i aria-hidden="true"></i><span id="hzlive">Live</span></span><span class="hz-vibe" id="hzvibe"></span></div>
         <div class="hz-screen" id="hzscreen" aria-label="The selected course, live">
-          <div class="hz-tune" aria-hidden="true"><span class="hz-tl">Tuning<i>.</i><i>.</i><i>.</i></span><div class="hz-ta" id="hzta"></div></div>
+          <div class="hz-tune" aria-hidden="true"><span class="hz-tl">Tuning<i>.</i><i>.</i><i>.</i></span><div class="hz-ta" id="hzta"></div><div class="hz-load"><i></i></div></div>
           <div class="hz-nm" id="hznm" aria-hidden="true"></div>
           <div class="hz-pip" aria-hidden="true"><div class="hz-pa" id="hzpa"></div><div class="hz-pn"><span id="hzpno">Your racer</span><b id="hzpname"></b></div></div>
         </div>
@@ -2760,7 +2770,7 @@
       for(var q in first){ var f1=$(q); if(f1 && !f1.textContent) f1.textContent=first[q]; } }
     var ds=$('hzrdesc'); if(ds && !ds.textContent) ds.textContent='\u00a0';   // (the racer's line of description: its height is kept until the game writes it)
     var win=$('hzwin'), tu=hd.querySelector('.hz-tune'), p='nova'; try{ p=localStorage.getItem('sr_poster')||p; }catch(_){}
-    if(win) win.classList.add('tuning');
+    if(win){ win.classList.add('tuning'); win.style.setProperty('--hz-p','.4'); }   // (the window's loading bar: where its estimate ends, and the game takes it over; see .hz-load)
     if(tu && /^[a-z]+$/.test(p)){ tu.style.backgroundImage='url("posters/'+p+'.jpg")'; tu.classList.add('has-poster'); }
     var ms=0; try{ ms=+localStorage.getItem('sr_boot_ms')||0; }catch(_){}
     B.style.setProperty('--boot-ms', Math.max(1200,Math.min(9000,ms||3500))+'ms');
@@ -92625,6 +92635,9 @@ function diagTick(now, ms){
 const PREVIEW={built:-1, timer:0, hold:0, pending:false};
 function previewHold(ms){ PREVIEW.hold=Math.max(PREVIEW.hold, performance.now()+ms); }
 function previewTune(on){ const w=$('hzwin'); if(w) w.classList.toggle('tuning',on); }
+// how far the window's live picture has come, 0..1 (its loading bar: .hz-load). snap: set at once (a new build starts from the left, it does not run backwards)
+function previewProg(p, snap){ const w=$('hzwin'), b=w && w.querySelector('.hz-load i'); if(!b) return;
+  if(snap){ b.style.transition='none'; w.style.setProperty('--hz-p', p); void b.offsetWidth; b.style.transition=''; } else w.style.setProperty('--hz-p', p); }
 // THE WINDOW FOLLOWS THE PICK. A new racer takes slot 0 of the preview's line-up once the picks have been still for a moment (one
 // model built; the other five stay, see buildRacers' reuse). A course build already pending will seat the new pick itself.
 function previewRacerNow(){
@@ -92636,6 +92649,7 @@ function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=s
 function previewSoon(delay){
   if((PREBUILD.job || PREBUILD.due) && !PREBUILD.live){ previewTune(true); return; }   // the boot's build is under way: it ends on whatever course is then picked (the strip's first centring asks, too). (Once its window is open, PREBUILD.live, a pick takes it over like any other build)
   clearTimeout(PREVIEW.timer); PREVIEW.pending=true; previewTune(true); previewHold(delay+60);
+  previewProg(0.08, true); requestAnimationFrame(()=>{ if(PREVIEW.pending) previewProg(0.5); });   // (its build is one piece of work: the bar runs up to it, and home when it is drawn)
   PREVIEW.timer=setTimeout(previewNow, delay);
 }
 function previewNow(){
@@ -92646,6 +92660,7 @@ function previewNow(){
   previewPoolDrop();   // (whatever the boot made ahead and nobody took, and its cast: the line-up is the scene's from here on)
   PREVIEW.pending=false; PREVIEW.hold=0;
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
+  previewProg(1);
   let n=3; const lift=()=>{ if(PREVIEW.pending) return; if(--n>0) requestAnimationFrame(lift); else previewTune(false); }; requestAnimationFrame(lift);
 }
 /* THE BOOT'S BUILD, A PIECE AT A TIME. The first home screen used to do all of its heavy work in two blocks: the course and
@@ -92685,22 +92700,25 @@ function previewBoot(){
   const loop=()=>{ if(!PREBUILD.loop){ PREBUILD.loop=true; requestAnimationFrame(frame); } };
   const alive=()=>state==='menu' && !st.classList.contains('hidden');
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;   // (the deck's own set-up may already have asked for the build: this is it)
-  PREBUILD.due=false; PREVIEW.pending=true; previewTune(true);
+  PREBUILD.due=false; PREVIEW.pending=true; previewTune(true); previewProg(0.5);   // (the game is up and the course is next: half way)
   const steps=(function*(){
     const b0=performance.now();
     if(PREVIEW.built!==selTrack) buildTrack(selTrack);
+    previewProg(0.66);                                                      // the course is built
     loop(); yield;
     let others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden && !BOOT_SLOW[t.id]);
     if(others.length<5) others=SPERM_TYPES.filter(t=>t.id!==chosenType.id && !t.hidden);
     for(let i=others.length-1;i>0;i--){ const j=Math.random()*(i+1)|0, tmp=others[i]; others[i]=others[j]; others[j]=tmp; }
     const cast=PREBUILD.cast=[chosenType].concat(others.slice(0,5));
     const model=k=>{ const t=cast[k]; if(!PREBUILD.pool[t.id]) PREBUILD.pool[t.id]=mcpIsolate(()=>makeCell(t.hue, t.id), 10+k); };   // into the pool (not onto the scene: buildRacers seats it)
-    model(0); yield;
+    model(0); previewProg(0.74); yield;                                     // ...your racer is made
     for(let k=1;k<cast.length && wl && !wl.classList.contains('hidden');k++){ model(k); yield; }   // the first visit's welcome is being read: the rivals' models meanwhile, a short step each
     while(wl && !wl.classList.contains('hidden')) yield;                    // ...and nothing for the GPU until it closes
     PREBUILD.n=1; buildRacers(true);                                        // the pick, seated on the course
     try{ renderer.compile(scene, camera); }catch(e){ console.error(e); }
+    previewProg(0.9); yield;                                                // ...and their shaders are ready (the bar is drawn saying so before the first picture is)
     PREBUILD.draw=1; while(PREBUILD.draw>0) yield;                          // drawn once, behind the card...
+    previewProg(1);
     PREBUILD.live=true; PREVIEW.pending=false; PREVIEW.hold=0; previewTune(false);   // ...and the card lifts: the window is open on the course
     for(let k=1;k<cast.length;k++){                                         // the rivals come to the grid behind the open window
       model(k); yield;
@@ -97478,7 +97496,7 @@ for(const id of ['hzrk','diffpick']){ const e=$(id); if(e) e.style.minHeight='';
 if(BOOTING){ BOOTING=false; queueMicrotask(()=>{ resize(); if(trackRecentre) trackRecentre(); if(hzHooks) hzHooks.racer(); }); }   // what stood aside while the script ran (see BOOTING): once it is off the stack
 try{ localStorage.setItem('sr_boot_ms', String(Math.round(performance.now()))); }catch(_){}
 state='menu';
-previewTune(true); PREBUILD.due=true;
+previewTune(true); PREBUILD.due=true; previewProg(0.45);   // (the bar takes over from the boot's estimate, which the boot script left at two fifths)
 if(SAFE.crashed||SAFE.ctx) setTimeout(()=>showToast(SAFE.level>=2 ? 'Running light after a crash on this device' : 'Running a little lighter after a crash'),1600);   // (see SAFE)
 // (...and not at once: the course is the longest single piece of the boot (a sixth of a second on a desktop, several times that on
 // a phone), and it used to start in the very frame the deck began to answer, so the first tap on a control that had just lit up
