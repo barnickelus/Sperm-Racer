@@ -4960,7 +4960,10 @@ const SONG_ENGINE=(function(){
     if(!opts.defer) finish();
     const level=opts.level!=null?opts.level:0.9;
     let key=0, tempoScale=1, running=false, timer=null, gen=0, connected=false;
-    let bar=0, barT=0, sd=0.2, plan=null, idx=0, planInfo=null, disconnectTimer=null, lastPump=0, lookAhead=0.3;
+    let bar=0, barT=0, sd=0.2, plan=null, idx=0, planInfo=null, disconnectTimer=null, lastPump=0, lookAhead=0.3, sched=0, gapMax=0;
+    // LOOK: how far ahead of the speakers this station keeps itself written (opts.look; 0.3 s unless asked). starve: the times the
+    // page stood still for longer than that, so the record ran out of written notes (how often, for how long in all, the worst)
+    const LOOK=Math.max(0.3,(opts&&opts.look)||0.3), starve={n:0,sec:0,max:0,log:[]};
     const env={lite:!!opts.lite}, lag=song.lag||{};
     const hz=(n)=>220*Math.pow(2,(n+key+(song.key||0))/12);
     const stepDur=()=>60/(song.bpm*tempoScale)/4;
@@ -5004,6 +5007,8 @@ const SONG_ENGINE=(function(){
     function pump(until){
       if(!running) return;
       const now=ctx.currentTime;
+      if(sched && now>sched+0.02){ const d=now-sched; starve.n++; starve.sec+=d; if(d>starve.max) starve.max=d; starve.log.push([Math.round(performance.now()),+d.toFixed(2)]); if(starve.log.length>8) starve.log.shift(); }
+      if(until>sched) sched=until;
       for(let i=live.length-1;i>=0;i--) if(live[i][1]<now) live.splice(i,1);
       for(let guard=0;guard<4000;guard++){
         if(idx>=plan.ev.length){ const nextT=barT+16*sd; if(nextT>=until) break; barT=nextT; bar++; load(); continue; }
@@ -5021,8 +5026,8 @@ const SONG_ENGINE=(function(){
     // Lookahead adapts to how late the timer actually fires: 0.3s normally, stretching to
     // cover a janky main thread (or a hidden tab) instead of letting the music drop out.
     const look=()=>{ const now=(typeof performance!=='undefined')?performance.now():0, gap=lastPump?(now-lastPump)/1000:0.04;
-      lastPump=now;
-      lookAhead=Math.min(1.5,Math.max(0.3,lookAhead*0.9,gap*1.6+0.1));
+      lastPump=now; if(gap>gapMax) gapMax=gap;
+      lookAhead=Math.min(Math.max(1.5,LOOK*4),Math.max(LOOK,lookAhead*0.9,gap*1.6+0.1));
       return (typeof document!=='undefined'&&document.hidden)?Math.max(1.5,lookAhead):lookAhead; };
     const H={
       song, get bus(){ return bus; },
@@ -5057,9 +5062,14 @@ const SONG_ENGINE=(function(){
         if(!connected){ bus.out.connect(dest); connected=true; }
         bus.out.gain.cancelScheduledValues(t0); bus.out.gain.setValueAtTime(0,t0); bus.out.gain.linearRampToValueAtTime(level,t0+0.25);
         running=true; bar=o.bar|0; barT=t0+0.06; load();   // +0.06: bar 0's pre-downbeat mix lands after the reset
-        if(!o.manual){ lastPump=0; lookAhead=0.3; timer=setInterval(()=>pump(ctx.currentTime+look()),40); pump(t0+look()); }
+        if(!o.manual){ lastPump=0; lookAhead=LOOK; sched=0; timer=setInterval(()=>pump(ctx.currentTime+look()),40); pump(t0+look()); }
         return H; },
       pump,
+      // a long piece of work is about to hold the page (a course to build): write the next `sec` seconds of the record now, so it
+      // plays on through it. What is written stops with the station like any other note (live, resetParams).
+      ahead(sec){ if(running && timer) pump(ctx.currentTime+sec); },
+      // the longest the page has kept this station's timer waiting since this was last asked, in seconds
+      gapTake(){ const g=gapMax; gapMax=0; return g; },
       stop(){
         if(!running) return bar;
         running=false; if(timer){ clearInterval(timer); timer=null; }
@@ -5078,7 +5088,7 @@ const SONG_ENGINE=(function(){
       // included), and how far through the current beat (0..1) and bar (0..1). For anything that wants to move on the beat.
       beat(){ if(!running||!sd) return null; const st=(ctx.currentTime-barT)/sd, b=st/4; return { bpm:+(15/sd).toFixed(1), phase:((b%1)+1)%1, bar:(((st/16)%1)+1)%1, beats:b }; },
       info(){ return Object.assign({bpm:+(song.bpm*tempoScale).toFixed(1), key, voices:live.length,
-        running}, planInfo||{}); },
+        running, starve:{n:starve.n, sec:+starve.sec.toFixed(3), max:+starve.max.toFixed(3), log:starve.log.slice()}}, planInfo||{}); },
       dispose(){ H.stop(); for(const o of bus.lfos){ try{ o.stop(); }catch(e){} } try{ bus.out.disconnect(); }catch(e){} connected=false; },
     };
     return H;
@@ -36553,6 +36563,12 @@ SONG_ENGINE.songs.homeTheme=(function(){
        after each frame (the bus a few channel strips at a time, the noise, the instruments: see produceStation's
        defer), so the course strip does not hitch. It starts as soon as the bus is up, fading in over two seconds,
        and the spring tank's impulse is made behind it, a slice at a time (see springGen).
+     - It plays through the page's heavy work. A station writes its notes a third of a second ahead of the speakers, and on a
+       menu the page often stands still for longer than that: a course picked on the strip is built in one piece, so is a
+       racer. The drums then stopped while whatever was sounding rang on (a held note), and the record lurched when the
+       page came back. So this one keeps a second written (look), and whoever is about to hold the page says so first
+       (brace): the record is written far enough ahead to cover it, by how long that kind of work last took on this device
+       (took), and again after it for the first frame drawn of what was built. A race start does the same for its fade.
      - The page hidden (another app, the tab in the background): it stops at once. Shown again: it fades back in.
      - Music OFF silences it, as it does the race stations, and the switch is remembered on this device (sr_music).
    srNet.theme reports what it is doing, and what its start cost the main thread. */
@@ -36566,7 +36582,7 @@ const MENU_MUSIC=(function(){
   function build(){
     const t0=performance.now();
     fade=actx.createGain(); fade.gain.value=0; fade.connect(masterGain);
-    h=SONG_ENGINE.produceStation(actx, fade, song(), {lite:isTouch, level:LEVEL, defer:true});
+    h=SONG_ENGINE.produceStation(actx, fade, song(), {lite:isTouch, level:LEVEL, defer:true, look:1});
     cost.slices.push(+(performance.now()-t0).toFixed(2));
     building=true;
     let warm=false;
@@ -36618,13 +36634,24 @@ const MENU_MUSIC=(function(){
     clearTimeout(kickT); kickT=setTimeout(sync,250);
   }
   for(const ev of ['pointerdown','touchend','keydown']) addEventListener(ev,gesture,{capture:true,passive:true});
+  // seconds of record to write before each kind of work: a course, a racer or a line-up of them, one step of the boot's build
+  // (what it learns from: how long the work itself took, when the caller says (took), and how long the station's own timer was
+  // kept waiting after the last brace of that kind, which counts the frame drawn afterwards too: on a phone the first frame of
+  // a new course is often the longer of the two)
+  const NEED={track:3.5, cast:2, step:2}; let pend=null;
+  const learn=(k,sec)=>{ NEED[k]=Math.min(8, Math.max(1.5, NEED[k]*0.95, sec*1.4+0.5)); };
   return {
     sync,
+    brace(k){ if(!(h && h.running)) return;
+      if(pend){ learn(pend, h.gapTake()); pend=null; }
+      try{ h.ahead(typeof k==='number' ? k : NEED[k]||1.5); }catch(e){}
+      if(NEED[k]) pend=k; },
+    took(k,ms){ if(NEED[k] && ms>=0) learn(k, ms/1000); },
     get station(){ return h; },                           // its bar clock, for what moves to it (DOWNBEAT's beat)
-    leave(){ fadeOut(FADE_OUT); },                         // a race is starting: before the course is built
+    leave(){ this.brace(FADE_OUT+0.4); fadeOut(FADE_OUT); },                         // a race is starting: before the course is built
     info(){ const i=h&&h.running?h.info():null;
       return {armed, playing:!!(h&&h.running), ctx:actx?actx.state:null, gain:fade?+fade.gain.value.toFixed(3):0,
-        song:song().title, section:i?i.section:null, bar:i?i.bar:null, nextBar, built:!!h, springReady:!!h&&!building,
+        song:song().title, section:i?i.section:null, bar:i?i.bar:null, nextBar, built:!!h, starve:i?i.starve:null, need:Object.assign({},NEED), springReady:!!h&&!building,
         cost:{slices:cost.slices.length, readyAt:cost.readyAt, start:cost.start, maxSlice:cost.slices.length?Math.max(...cost.slices):0,
           total:+cost.slices.reduce((a,b)=>a+b,0).toFixed(2), all:cost.slices.slice(0,60)}}; },
   };
@@ -92643,7 +92670,7 @@ function previewProg(p, snap){ const w=$('hzwin'), b=w && w.querySelector('.hz-l
 function previewRacerNow(){
   clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=0;
   if(state!=='menu' || $('start').classList.contains('hidden') || PREVIEW.pending || !chosenType) return;
-  if(racers.length && racers[0].id!==chosenType.id) buildRacers(true);
+  if(racers.length && racers[0].id!==chosenType.id){ const b0=performance.now(); MENU_MUSIC.brace('cast'); buildRacers(true); MENU_MUSIC.took('cast', performance.now()-b0); }
 }
 function previewRacerSoon(delay){ clearTimeout(PREVIEW.rtimer); PREVIEW.rtimer=setTimeout(previewRacerNow, delay); }
 function previewSoon(delay){
@@ -92656,7 +92683,9 @@ function previewNow(){
   clearTimeout(PREVIEW.timer); PREVIEW.timer=0;
   if(state!=='menu' || $('start').classList.contains('hidden')){ PREVIEW.pending=false; previewTune(false); return; }   // the home screen has gone: whatever shows next builds what it needs
   PREBUILD.job=null; PREBUILD.n=0; PREBUILD.draw=0; PREBUILD.live=false;   // (a build asked for by a pick or a flick takes over from the boot's; it uses what the boot has made so far)
-  { const nb=PREVIEW.built!==selTrack; if(nb || racers.length<6 || (chosenType && racers[0].id!==chosenType.id)){ const b0=performance.now(); if(nb) buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; } }   // (true: the preview keeps the racers it has; only the course is new)
+  { const nb=PREVIEW.built!==selTrack; if(nb || racers.length<6 || (chosenType && racers[0].id!==chosenType.id)){ const b0=performance.now(), k=nb?'track':'cast'; MENU_MUSIC.brace(k);   // (the menus' record is written ahead through it: see MENU_MUSIC)
+      if(nb) buildTrack(selTrack); buildRacers(true); DIAG.build=performance.now()-b0; DIAG.built=TRACKS[selTrack].name; MENU_MUSIC.took(k, DIAG.build);
+      MENU_MUSIC.brace(k); } }   // ...and again: the first frame drawn of a new course (its shaders, its textures) holds the page about as long   // (true: the preview keeps the racers it has; only the course is new)
   previewPoolDrop();   // (whatever the boot made ahead and nobody took, and its cast: the line-up is the scene's from here on)
   PREVIEW.pending=false; PREVIEW.hold=0;
   // the card lifts once the new course has been drawn (the loop draws the home preview every other frame)
@@ -92742,7 +92771,9 @@ function previewBoot(){
     // at a time with a breath between (a fifth of a second: a tap waits for one piece at most, and most of the time for none)
     if(wl && !wl.classList.contains('hidden') && !run.breath){ run.breath=true; setTimeout(run,200); return; }
     run.breath=false;
+    const k=PREVIEW.built!==selTrack?'track':'step', s0=performance.now(); MENU_MUSIC.brace(k);
     let r; try{ r=steps.next(); }catch(e){ console.error(e); PREBUILD.job=null; previewPoolDrop(); loop(); previewNow(); return; }
+    MENU_MUSIC.took(k, performance.now()-s0); MENU_MUSIC.brace(k);   // (again, for the frame drawn next)
     if(r.done){ if(PREBUILD.job===steps) PREBUILD.job=null; loop(); return; }
     requestAnimationFrame(()=>setTimeout(run,0));                           // a frame, then a task: the browser paints and takes input between two steps
   };
@@ -95476,6 +95507,7 @@ function selLeave(){
 let selGridStale=true;
 function selGrid(){
   if(!selGridStale) return; selGridStale=false;
+  MENU_MUSIC.brace('step');
   const grid = $('sperm-grid');
   grid.innerHTML = '';
   // One Piece cel-shaded portraits (hand-built SVG kit above)
@@ -95985,6 +96017,7 @@ function showSelect(ret){
   selReturn=ret||null;   // 'cup': the Circuit Cup's chooser sent us, and Lock in / Back return to it
   $('start').classList.add('hidden'); $('finish').classList.add('hidden');
   $('select').classList.remove('hidden');
+  MENU_MUSIC.brace('cast');   // (the cards, the stage's model: the menus' record is written ahead through them)
   selGrid();   // (made now if it has not been: see selGrid)
   selMark(chosenType);
   updateScrollHint();
