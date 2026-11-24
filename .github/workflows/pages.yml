@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment2.outputs.page_url || steps.deployment3.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,6 +63,30 @@ jobs:
           done
           echo "not listed after 2 min; deploying anyway"
 
+      # The list above and deploy-pages do not ask the same service: the run's artifact list has shown the artifact at
+      # once while deploy-pages still found none a second later ("Found 0 artifact(s)"), three pushes running. So the
+      # deploy itself is tried up to three times, with a pause before each retry; a try that fails only fails the run
+      # if the last one does.
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Pause before a second try
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (second try)
+        id: deployment2
+        if: steps.deployment.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Pause before a third try
+        if: steps.deployment2.outcome == 'failure'
+        run: sleep 60
+
+      - name: Deploy to GitHub Pages (third try)
+        id: deployment3
+        if: steps.deployment2.outcome == 'failure'
         uses: actions/deploy-pages@v4
