@@ -669,6 +669,21 @@ await check('the warp has degrees: a drift opens it least and shortest, a boost 
   await assert.rejects(() => call('race_fx', { boost: 'nitro' }), 'an unknown boost is refused');
 });
 
+await check('Rusty Malone Jr. has a record of his own, "Two Holes in the Hat": every section plays clean and on the beat', async () => {
+  json(await call('race_setup', { course: 'Victoria', character: 'outlawJr', seed: 3 })); json(await call('race_start'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-'));
+  try {
+    // (the ride, the showdown, the saloon and its two shots, the last ride a step up, and the ending looping back)
+    for (const [bar, sec, tight] of [[8, 'ride', 0.5], [20, 'show', 0.5], [40, 'sal', 0.4], [52, 'last', 0.5], [69, 'tag', 0.4]]) {
+      const a = json(await call('race_audio', { seconds: 6, style: 'outlawJr', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis;
+      assert.equal(a.style, '91.9 TUMBLEWEED AM', 'his own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
+      assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
+      assert.ok(an.loudnessDbfs > -34 && an.loudnessDbfs < -22 && an.beat.tightness >= tight, 'bar ' + bar + ' sits at the level of the other records, on the beat: ' + an.loudnessDbfs + ' dBFS, ' + an.beat.tightness);
+    }
+    assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors from the record');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 await check('Big Shot Darius stands on his base at the line, fists on his hips, and flies level, nose first, arms swept back; a boost flashes off his base and throws his fists out ahead', async () => {
   json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
   const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
