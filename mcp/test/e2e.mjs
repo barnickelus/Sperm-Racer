@@ -685,8 +685,8 @@ await check('Rusty Malone Jr. has a record of his own, "Two Holes in the Hat": e
 });
 
 await check('Migizi\'s record, "Eagle Bass" (powwow-step): the lead, the drop, the honor beats, the final-lap cue and the tail play clean and on the beat', async () => {
-  // (the record is asked for by its station, so this check does not need Migizi on the roster)
-  json(await call('race_setup', { course: 'Victoria', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  // (Migizi is on the roster: the check races as him, and asks for the record by its station)
+  json(await call('race_setup', { course: 'Victoria', character: 'migizi', seed: 3 })); json(await call('race_start'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
   try {
     // (the drum and the voices alone, the first drop, the honor beats, the final-lap cue into the second drop, the tail looping to the top)
