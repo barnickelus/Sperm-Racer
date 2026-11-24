@@ -707,7 +707,7 @@ await check('Ray Yazzie\'s record, "Concho Moon" (rez-hop): the night road, the 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
   try {
     // (the hand drum and the voices alone, the flute's answer, the first drop, the breakdown, the final-lap cue into the second drop, the tail looping to the top)
-    for (const [bar, sec, tight] of [[1, 'night', 0.4], [10, 'flute', 0.4], [22, 'drop', 0.4], [37, 'break', 0.3], [46, 'build2', 0.4], [50, 'drop2', 0.4], [65, 'tail', 0.4]]) {
+    for (const [bar, sec, tight] of [[1, 'night', 0.35], [10, 'flute', 0.35], [22, 'drop', 0.4], [37, 'break', 0.3], [46, 'build2', 0.3], [50, 'drop2', 0.4], [65, 'tail', 0.35]]) {
       const a = json(await call('race_audio', { seconds: 6, style: 'rayBegay', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis; got[sec] = an;
       assert.equal(a.style, '88.8 HIGH DESERT AFTER DARK', 'his own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
       assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
