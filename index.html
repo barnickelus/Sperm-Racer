@@ -36247,6 +36247,52 @@ SONG_ENGINE.songs.eagleBass=(function(){
     };
   }
 
+  // ---- the record as light: what a dancer wearing it may show at bar n, `beat` (0..4) into the bar. It is written from the
+  // bars below (keep the two in step). Into `o`, so nothing allocates: lvl how lit (0.15 a glimmer, 1 full, past 1.5 a
+  // flash), ph where the colours have turned to (whole numbers: one colour on), dim (1: out, the half beat of nothing before
+  // the first drop), wave (beats since something ran down the dancer: the clap on three in a drop, an honor beat, the
+  // shout; -1 when nothing has). Migizi's beadwork reads it (mgzTick), through the station's handle (h.song.lights).
+  function lights(n, beat, o){
+    const pos=((n%TOTAL)+TOTAL)%TOTAL; let sec=FORM[0]; for(let i=0;i<FORM.length;i++) if(pos>=FORM[i].start) sec=FORM[i];
+    const b=pos-sec.start, id=sec.id, bi=Math.min(3,Math.floor(beat)), f=beat-bi, st=beat*4, f8=(beat*2)%1, f16=st%1;
+    const P=(x,k)=>Math.exp(-x*k);
+    let lvl=0.16+0.34*P(f,4)*(bi===0 ? 1.2 : 0.85), ph=0, dim=0, wave=-1;    // the drum and the voices alone: a glimmer on every beat of the drum
+    if(id==='lead'){ if(b===7 && beat>=2) lvl+=0.12*(beat-2); }
+    else if(id==='build'){
+      if(b<4) lvl=0.22+0.05*b+0.4*P(f,4)*(bi===0 ? 1.2 : 0.9);                // the machines arriving under the body
+      else { const k=b-4; ph=k;                                              // the push: the drum doubling, a colour a bar
+        if(k<2) lvl=0.35+0.12*k+0.4*P(f8,3.5);
+        else if(k===2) lvl=0.6+0.1*beat+0.5*P(f16,3);
+        else if(st<8) lvl=0.8+0.15*beat+0.6*P(f16,3);
+        else if(st<12){ const on=(st<11 ? f16 : (st*2)%1)<0.55; lvl=on ? 1.5 : 0.05; ph=3+Math.floor(st-8); }   // the lead alone, cut up: a strobe, a colour a cut
+        else { ph=7; lvl=Math.max(0, 1.2*(1-(st-12)/2.4)); if(st>=14.4){ lvl=0; dim=1; } } }                    // ...its last note falling away, and nothing
+    }
+    else if(id==='drop' || id==='drop2'){ const two=id==='drop2';
+      const stop=two && (b===7 || b===14), stop3=two && b===15;
+      if(stop || stop3){ const t=stop ? beat%2 : beat<1.5 ? beat : beat<3 ? beat-1.5 : beat-3;                  // honor beats in stop-time: a flash on each, dark between
+        lvl=0.12+2.2*P(t,3); wave=t; ph=b*8+(stop ? (beat<2 ? 0 : 1) : beat<1.5 ? 0 : beat<3 ? 1 : 2); }
+      else { lvl=(two ? 1.1 : 1.0)+(two ? 1.0 : 0.9)*P(f,3.2)+(b===0 && beat<2 ? 1.3*P(beat,2.5) : 0);         // the drum, the sub and the wobble together
+        ph=two ? b*8+Math.floor(beat*2) : b*4+bi;                           // a new colour on every beat (the second drop: on every half)
+        if(beat>=2) wave=beat-2; }                                         // the clap on three runs down him
+    }
+    else if(id==='honor'){
+      if(b===0) lvl+=0.9*P(beat,1.5);
+      if(b===4 || b===5){ const t=beat%2; lvl=0.14+2.0*P(t,2.6); wave=t; ph=(b-4)*2+(beat<2 ? 1 : 2); }           // four honor beats: a flash and a colour on each
+      else if(b>5){ lvl=0.2+0.4*P(f,4); ph=4; }
+    }
+    else if(id==='build2'){
+      if(b<2){ lvl=0.4+0.1*b+0.4*P(f8,3.5); ph=b; }
+      else if(b===2){ lvl=0.65+0.08*beat+0.5*P(f16,3); ph=2+Math.floor(st/2); }
+      else if(st<12){ lvl=0.85+0.12*beat+0.6*P(f16,3); ph=10+Math.floor(st); }
+      else { lvl=0.3+2.2*P(beat-3,3); wave=beat-3; ph=22; }                 // the shout, and the one hard stroke under it
+    }
+    else if(id==='tail'){
+      if(b===0) lvl+=0.9*P(beat,1.5);
+      lvl=b<3 ? lvl+0.3-0.1*b : 0.2+0.1*bi+0.45*P(f,4);                      // the low ending, then the drum climbing back to the top
+    }
+    o.lvl=lvl; o.ph=ph; o.dim=dim; o.wave=wave; o.sec=id; o.pos=pos; return o;
+  }
+
   function plan(n,R,env){
     const lite=!!(env && env.lite);
     const {pos,pass,sec,b}=locate(n), id=sec.id, ev=[];
@@ -36406,7 +36452,7 @@ SONG_ENGINE.songs.eagleBass=(function(){
     title:'Eagle Bass', bpm:140, key:-2, swing:0, echoSteps:3, voices,
     // the lead leans in, the group lays back a hair, as a drum group does
     lag:{lead:-0.004, grp:0.008, wmn:0.012},
-    form:FORM, bars:TOTAL, loopFrom:LOOP, plan, mix:MIX,
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan, lights, mix:MIX,
     courseNote:'deferred: produced station keeps its own tune, in the course key',
   };
 })();
@@ -91796,15 +91842,22 @@ function mgzTick(o, R, now, dt, S, C, q){
   if(P){ lvl=poseDrop ? 1.35 : poseDance ? 0.95 : cur==='dip'||cur==='pass'||cur==='relit' ? 0.75 : 0.3; if(poseHit){ lvl=0; dim=1; } D.ph=D.phT=poseDance ? 1 : 0; }
   else {
     lvl=0.14+0.24*kick*(bar1 ? 1.3 : 0.8);
-    if(celeb){ lvl=0.7+0.85*kick; const bt=Math.floor(x); if(bt!==D.phB){ D.phB=bt; D.phT+=1; } }                                 // the win: a new colour on every beat
+    // his own record on the air (any record that says what its light is: song.lights): the beadwork follows it bar by bar,
+    // a glimmer on the drum while the singers have it, the build's strobe, full neon and a colour a beat in the drops, a
+    // flash on every honor beat. A boost and a win still light him over it; a hit still trips it out
+    const sg=C.src==='station' && C.h && C.h.song && typeof C.h.song.lights==='function' ? C.h.song : null; let sph=0;
+    if(sg){ const L=sg.lights(Math.floor(x/4), b4, D.L||(D.L={lvl:0,ph:0,dim:0,wave:-1})); lvl=L.lvl; sph=L.ph; dim=L.dim; if(L.wave>=0 && L.wave/rate<0.75) wave=-2-(L.wave/rate)*28; }
+    D.sync=sg ? 1 : 0;
+    if(celeb){ lvl=Math.max(sg ? lvl : 0, 0.7+0.85*kick); dim=0; const bt=Math.floor(x); if(bt!==D.phB){ D.phB=bt; D.phT+=1; } }                                 // the win: a new colour on every beat
     if(boost){ const tb=now-D.boostT, w=Math.sin(2*Math.PI*x);
-      lvl=D.dropped ? 1.0+0.95*Math.exp(-bf*3.2)+0.2*w*w+1.5*Math.exp(-(now-D.dropT)*5) : 0.35+1.1*tb+(Math.sin(now*61)>0 ? 0.35 : 0);    // the build (a rising flicker), then the bass
+      lvl=Math.max(sg ? lvl : 0, D.dropped ? 1.0+0.95*Math.exp(-bf*3.2)+0.2*w*w+1.5*Math.exp(-(now-D.dropT)*5) : 0.35+1.1*tb+(Math.sin(now*61)>0 ? 0.35 : 0)); dim=0;    // the build (a rising flicker), then the bass
       D.phT+=dt*rate*0.5; }
     if(D.trip){ const t=now-D.hitT; lvl=t<0.42 && Math.sin(t*83)>0.1 ? 0.9*(1-t/0.42) : 0; dim=lvl>0 ? 0 : mgSm(0.04,0.3,t); }           // tripped: a flicker, and out
     else { const t=now-D.onT; if(t>=0 && t<0.6){ if(t>=0.07 && t<0.14){ lvl=0; dim=1; } else lvl=Math.max(lvl, t<0.07 ? 1.4 : 1.9*Math.exp(-(t-0.14)*5.5)); } }   // back on: a blink, then a flash settling
     const tw=now-D.waveT; if(tw>=0 && tw<0.75) wave=-2-tw*28;
     if(D.phT>300){ D.phT-=300; D.ph-=300; }
-    D.ph+=(D.phT-D.ph)*(1-Math.exp(-dt*14)); }
+    { let pd=D.phT+sph-D.ph; if(Math.abs(pd)>1.6){ pd-=3*Math.round(pd/3); D.ph=D.phT+sph-pd; }   // (the wheel has three colours: a jump in the record's count, at a section or the loop, is at most half a turn)
+      D.ph+=pd*(1-Math.exp(-dt*14)); } }
   D.GL.value.set(lvl, D.ph, dim, wave);
   if(D.glow){ const w=P ? 0 : ldClamp((lvl-0.45)/0.9,0,1)*(1-dim), k=((D.ph%3)+3)%3, a=MGZ_NEON[Math.floor(k)%3], b=MGZ_NEON[(Math.floor(k)+1)%3], f=k-Math.floor(k);   // his halo takes the beadwork's light
     D.glow.material.color.copy(D.g0).lerp(_mgC.setRGB(a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f), 0.85*w).multiplyScalar(1+0.7*w); }
