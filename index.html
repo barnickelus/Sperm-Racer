@@ -89760,9 +89760,12 @@ function ntjRobePt(FK, a, v, e, out){
   const dr=ntjSm(R.s2-0.12,1,s);
   x+=0.17*Math.sin(a*17+0.6)*dr*(0.35+0.65*v);                                               // folds down the drape, deeper toward the hem
   // the toss: the drape turned up about its shoulder (the cloth near the neck a little less)
-  const w=ntjSm(R.s1, R.s1+0.2, s), al=sg*e*1.95*w*(0.55+0.45*ntjSm(0,0.6,v));
-  if(al){ const dx=x-X1, dy=y-Y1, c=Math.cos(al), sn=Math.sin(al); x=X1+dx*c-dy*sn; y=Y1+dx*sn+dy*c; }
-  out[0]=sg*x; out[1]=y; out[2]=z; return out;
+  // (flung up about the shoulder and swept back over it, so it lies back along his shoulder rather than standing up)
+  const w=ntjSm(R.s1, R.s1+0.2, s), ev=e*(0.55+0.45*ntjSm(0,0.6,v)), al=ev*1.7*w;
+  let zz=z;
+  if(al){ const dx=x-X1, dy=y-Y1, c=Math.cos(al), sn=Math.sin(al), l=Math.hypot(dx,dy); x=X1+dx*c-dy*sn; y=Y1+dx*sn+dy*c;
+    const k=Math.min(1,ev)*w*ntjSm(0,6,l); zz-=3.4*k; y-=0.9*k*k; x-=0.6*k; }
+  out[0]=sg*x; out[1]=y; out[2]=zz; return out;
 }
 function ntjRobeBuild(FK){
   const R=NTJ_ROBE, NU=R.NU, NV=R.NV, n=(NU+1)*(NV+1), pos=new Float32Array(n*3), uv=new Float32Array(n*2), aq=new Float32Array(n*4), A=new Float32Array(n), Vv=new Float32Array(n), idx=[], p=[0,0,0];
@@ -89870,8 +89873,24 @@ function ntjArmGeo(skin, sx){ return tonyKeep(sx<0?'ntjArmR':'ntjArmL', ()=>{
 // the shoulders (where each arm comes out from under the robe, his right first), and the hand and the elbow's pull from there
 // for each pose, his right side (x mirrored for the left)
 const NTJ_A0=[[-2.5, HEAD_CY-0.6, -2.75],[2.5, HEAD_CY-0.6, -2.75]];
-const NTJ_POSE={ low:[[-1.3,-1.7,2.0],[-1.7,-0.7,0.9]], top:[[-0.9,4.4,-2.0],[-2.9,1.7,0.4]], wide:[[-4.6,2.5,1.0],[-2.8,0.3,0.7]],
+const NTJ_POSE={ low:[[-1.3,-1.7,2.0],[-1.7,-0.7,0.9]], top:[[-2.0,4.9,-1.2],[-3.2,1.6,0.6]], wide:[[-4.6,2.5,1.0],[-2.8,0.3,0.7]],
   high:[[-1.6,6.0,0.8],[-3.0,2.3,0.5]], pump:[[-3.3,2.2,1.6],[-2.5,0.2,0.7]] };
+// the arm's shader: Tony's bend (TONY_PROP_VS's, for a hose), and the sleeve's bell hanging: below the forearm it falls away
+// (down in the body's own space, wherever the arm points) and over it it lies close, so the sleeve hangs as cloth does
+const NTJ_ARM_VS=`
+attribute float aT; uniform vec3 uA0, uA1, uA2, uAn; uniform float uAr, uAq;
+varying vec3 vNv, vV, vC; varying vec2 vU;
+#include <fog_pars_vertex>
+void main(){
+  float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
+  vec3 r=n1*position.x+tg*position.y+n2*position.z, n=n1*normal.x+tg*normal.y+n2*normal.z, p;
+  if(t>0.99) p=c+r*uAr;
+  else { float rl=length(r.xz)+abs(r.y), hang=smoothstep(0.3,0.9,t)*step(1.3,rl);
+    vec3 rd=normalize(r+vec3(0.0,1e-4,0.0)); float below=clamp(-rd.y+0.25,0.0,1.25), above=clamp(rd.y,0.0,1.0);
+    p=c+r*uAr*(1.0-0.45*hang*above); p.y-=hang*below*uAr*2.6*(rl-1.0)/1.8; p+=tg*hang*below*uAr*0.6; }
+  vC=color; vU=uv; vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
+  #include <fog_vertex>
+}`;
 const _ntV=new T.Vector3(), _ntW=new T.Vector3(), _ntU=new T.Vector3(), _ntQ=new T.Quaternion(), _ntE=new T.Euler(), _ntM=new T.Matrix4(), _ntM2=new T.Matrix4();
 function ntjArmPose(U, a0, e, hand, elbow){ const e1=Math.min(1,e);
   U.uA0.value.set(a0[0],a0[1],a0[2]); U.uA2.value.set(a0[0]+hand[0]*e1, a0[1]+hand[1]*e1, a0[2]+hand[2]*e1); U.uA1.value.set(a0[0]+elbow[0]*e1, a0[1]+elbow[1]*e1, a0[2]+elbow[2]*e1);
@@ -89940,7 +89959,7 @@ function ntjDress(g, K, X){
   const L=tonyChainPath(FK, NTJ_BEADS[1]), LA=tonyChainPath(FK, Object.assign({}, NTJ_BEADS[1], NTJ_BEADS[1].alt));
   const tag=new T.Group(); tag.add(new T.Mesh(ntjTagGeo(), tonyPropMat({TONY_GLINT:''}))); tag.name='ntj-tag'; rigB.add(tag);
   // the arms, in their sleeves
-  const arms=[-1,1].map((sx,i)=>{ const AU=kitArmUniforms(), m=new T.Mesh(ntjArmGeo(skin, sx), tonyPropMat({TONY_BEND:''}, AU)); m.material.side=T.DoubleSide;
+  const arms=[-1,1].map((sx,i)=>{ const AU=kitArmUniforms(), m=new T.Mesh(ntjArmGeo(skin, sx), dbShader(NTJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} })); m.material.side=T.DoubleSide;
     m.name=sx<0?'ntj-arm-r':'ntj-arm-l'; m.frustumCulled=false; m.visible=false; rigB.add(m); const hand=new T.Object3D(); rigB.add(hand);
     return { m, AU, hand, sx, a0:NTJ_A0[i], e:0, eV:0, hp:[0,0,0], ep:[0,0,0], on:false }; });
   // the notes, for the spray
@@ -90011,7 +90030,7 @@ function ntjTick(o, R, now, dt, S, C, q){
   const want=[0,0], arm=[null,null], G=D.G;
   let face=null;
   if(P){
-    if(cur==='toss'){ want[0]=1; arm[0]=['top',1]; }
+    if(cur==='toss'){ want[0]=1; arm[0]=['toss',1]; }
     else if(cur==='lead'){ want[0]=want[1]=1.05; arm[0]=arm[1]=['wide',1]; }
     else if(cur==='spray' || cur==='win'){ want[0]=1.05; want[1]=0.55; arm[0]=['high',1]; arm[1]=['pump',1]; }
   }
