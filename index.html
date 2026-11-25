@@ -96052,6 +96052,10 @@ vec3 khGold(float k, float hr, float nv, float fl){
 vec3 khGLine(vec3 c, float m, float k, float hr, float nv, float fl, float on){
   float b=clamp(khHeat()*on+fl,0.0,1.0)*(1.0-uKhGl.z); vec3 g=khGold(k,hr,nv,0.0);
   g=mix(g, mix(KH_GL,KH_WH,b)*(1.0+0.9*b), b); return mix(c, g, m); }
+vec3 khRed(float k, float hr, float nv, float fl){
+  float sh=smoothstep(0.55,0.93,hr)*(0.45+0.55*k), edge=1.0-smoothstep(0.08,0.5,nv), h=khHeat();
+  vec3 c=mix(KH_CRD, KH_CR, k); c=mix(c, KH_RH, 0.35*sh); c+=KH_CR*0.2*edge*k; c+=KH_GL*(0.18*h*sh+0.3*fl)*(1.0-uKhGl.z);
+  return khNight(c); }
 vec3 khSilk(float k, float hr, float nv, float fl, vec3 dk, vec3 lt){
   float sh=smoothstep(0.5,0.92,hr)*(0.45+0.55*k), edge=1.0-smoothstep(0.08,0.5,nv), h=khHeat();
   vec3 c=mix(dk, lt, k);
@@ -96113,7 +96117,7 @@ const KHN_SKIN_FX=(()=>{ const V=tonyV3, RZ=HEAD_RZ.toFixed(3), RZ2=(HEAD_RZ*HEA
       float ov=(length(gr/vec2(ga,gb))-1.0)*gb, dt=length(khN.xy-vec2(-0.14,0.6))-ga*0.24, gg=max(1.0-smoothstep(-gw,gw,ov), 1.0-smoothstep(-gw,gw,dt));
       totalEmissiveRadiance+=${V('#f0b078')}*0.32*gg*smoothstep(0.2,0.4,khN.z); } }` }; })();
 // the moustache: neat and thin, riding the upper lip (it follows the mouth), its ends dropping a little
-const KHN_FACE_FS=kitFaceFS({ mst:{w:0.9, th:0.075, droop:0.24} });
+const KHN_FACE_FS=kitFaceFS({ mst:{w:0.9, th:0.1, droop:0.24} });
 
 /* ---- THE HAT, from the base of its crown (y up, z to the front, x to his left), set back on the crown and tipped back so
    its brim lies on the head clear of the brows (it is buried in the forehead where the head is fuller than the brim). THE
@@ -96121,8 +96125,8 @@ const KHN_FACE_FS=kitFaceFS({ mst:{w:0.9, th:0.075, droop:0.24} });
    it leaves the head, out, up to its lip and down inside it to the crown), tufted along its lip and its foot. THE CROWN: a
    dome of brocade rising out of it. THE KNOT: a gold disc on the top, the knot on it, and a little drop of a finial over
    that. Kinds (aK): 0 fur, 1 brocade, 2 gold. uv: round (u) and across the cuff or up the crown (v). */
-const KH_HAT={ p:[0, HEAD_CY+2.1, -0.78], rx:-0.13, a:2.3, ez:1.3, top:3.2 };
-const KH_BRIM=[[1.0,-0.52],[1.1,-0.66],[1.26,-0.44],[1.38,0.16],[1.46,0.8],[1.5,1.18],[1.46,1.42],[1.34,1.44],[1.21,1.2],[1.11,0.86],[1.04,0.58]];
+const KH_HAT={ p:[0, HEAD_CY+2.1, -0.78], rx:-0.13, a:2.36, ez:1.3, top:3.55 };
+const KH_BRIM=[[1.0,-0.52],[1.12,-0.68],[1.3,-0.42],[1.44,0.2],[1.54,0.9],[1.6,1.42],[1.56,1.7],[1.43,1.76],[1.28,1.5],[1.14,1.04],[1.05,0.66]];
 const KH_RIB=[[-0.62, 0.3],[0.62, 0.3]];   // the ribbons' roots on the back of the brim: [x, y] (z: on the cuff)
 function khGrid(NU, NV, f){ const pos=[], uv=[], idx=[];
   for(let i=0;i<=NV;i++) for(let j=0;j<=NU;j++){ const u=j/NU, v=i/NV, p=f(u,v); pos.push(p[0],p[1],p[2]); uv.push(p[3]==null?u:p[3], p[4]==null?v:p[4]); }
@@ -96134,13 +96138,13 @@ function khCurve(P){ const seg=[], L=[0]; const cr=(a,b,c,d,t)=>0.5*(2*b+(-a+c)*
   for(let i=0;i<n-1;i++) for(let k=0;k<12;k++) seg.push(pt(i,k/12)); seg.push(P[n-1]);
   for(let i=1;i<seg.length;i++) L.push(L[i-1]+Math.hypot(seg[i][0]-seg[i-1][0], seg[i][1]-seg[i-1][1]));
   return v=>{ const s=Math.max(0,Math.min(1,v))*L[L.length-1]; let i=1; while(i<L.length-1 && L[i]<s) i++; const f=(s-L[i-1])/Math.max(1e-6,L[i]-L[i-1]); return [seg[i-1][0]+(seg[i][0]-seg[i-1][0])*f, seg[i-1][1]+(seg[i][1]-seg[i-1][1])*f]; }; }
-const khRibRoot=sd=>{ const H=KH_HAT, r=KH_RIB[sd>0?1:0], a=Math.PI+r[0]/(H.a*1.3), q=1.32*H.a;   // a point on the back of the cuff
+const khRibRoot=sd=>{ const H=KH_HAT, r=KH_RIB[sd>0?1:0], a=Math.PI-r[0]/(H.a*1.3), q=1.32*H.a;   // a point on the back of the cuff
   return [Math.sin(a)*q, r[1], Math.cos(a)*q*H.ez]; };
 function khnHatGeo(){ return tonyKeep('khnHat', ()=>{
   const H=KH_HAT, items=[], fur=dbLin('#2a1c14'), red=dbLin('#a8162c'), gold=dbLin('#cf9424'), brim=khCurve(KH_BRIM);
-  const tuft=(a,v)=>0.5+0.5*Math.sin(a*23+v*7)*Math.sin(a*14-v*5+1.3);
+  const tuft=(a,v)=>0.5+0.22*Math.sin(a*61+v*9)+0.18*Math.sin(a*97-v*13+1.7)+0.1*Math.sin(a*173+v*3);
   items.push([khGrid(144, 22, (u,v)=>{ const a=u*Math.PI*2, q=brim(v), t=tuft(a,v), lip=khSm(0.34,0.5,v)*(1-khSm(0.64,0.82,v)), foot=1-khSm(0.0,0.14,v);
-    const r=H.a*q[0]+0.05*t*Math.sin(Math.PI*v)+0.12*t*lip+0.1*t*foot, y=q[1]+0.1*t*lip-0.06*t*foot;   // its lip and its foot tufted
+    const r=H.a*q[0]+0.04*t*Math.sin(Math.PI*v)+0.09*t*lip+0.07*t*foot, y=q[1]+0.09*t*lip-0.05*t*foot;   // its lip and its foot tufted
     return [Math.sin(a)*r, y, Math.cos(a)*r*H.ez]; }), null, fur, 0]);
   // the crown: a dome out of the cuff, a little fuller above its foot
   items.push([khGrid(96, 16, (u,v)=>{ const a=u*Math.PI*2, th=v*Math.PI/2, r=H.a*1.06*Math.cos(th)*(1+0.07*Math.sin(2*th)), y=0.56+(H.top-0.56)*Math.sin(th);
@@ -96171,19 +96175,20 @@ void main(){
   vec3 n=normalize(vNv), Vd=normalize(vV); bool fr=gl_FrontFacing; if(!fr) n=-n;
   float d=dot(n,DB_L)-0.06, fw=fwidth(d)*0.7+1e-4, k=smoothstep(-fw,fw,d), ks=smoothstep(-0.35,0.45,d), hr=dot(n,normalize(DB_L+Vd)), nv=abs(dot(n,Vd)), rf=fwidth(nv)+1e-4, lit=1.0-uKhGl.z;
   float fl=0.9*khSw(4.0+0.4*vP.y), rk=0.2; vec3 c;
-  if(vK<0.5){   // THE FUR: thick, soft, dark at the root and pale at the tips; strokes lying up the cuff in shaggy layers
-    float v=vU.y, rr=v*9.0+0.25*sin(vU.x*71.3)+0.25*sin(vU.x*133.7+1.7)+0.15*sin(vU.x*271.1+0.6), ri=floor(rr), rq=fract(rr);
-    float q=vU.x*340.0+ri*3.7+1.8*sin(rq*2.4+vU.x*50.3), st=sin(q), fade=1.0-smoothstep(0.5,1.6,fwidth(q));
-    float tipBand=0.35+0.65*smoothstep(0.2,0.5,v)*(1.0-smoothstep(0.78,0.95,v));          // the tips show most along the lip
-    c=mix(${V('#24170f')}, ${V('#4d3626')}, 0.5+0.5*st*fade);
-    c=mix(c, ${V('#eadcc4')}, tipBand*(0.55+0.4*smoothstep(0.0,0.9,st)*fade)*(1.0-smoothstep(0.0,0.55,rq)));   // a layer's tips: pale
-    c=mix(c, ${V('#170e09')}, 0.5*smoothstep(0.62,1.0,rq)+0.25*smoothstep(0.3,0.95,-st)*fade);              // under the layer above: dark
-    c=mix(c*0.5+vec3(0.006,0.008,0.02), c, ks);                                                            // (a soft shade: fur has no hard edge)
-    c+=${V('#fff2d8')}*0.12*smoothstep(0.55,0.95,hr)*tipBand;                                              // a soft sheen on the tips
-    c=khNight(c); if(!fr) c*=0.55; rk=0.14; }
+  if(vK<0.5){   // THE FUR: thick and soft: dark at the root, a warm brown in the body, pale at the tips along the lip; fine
+    // irregular streaks lying up the cuff, a soft shade (fur has no hard edge) and a light fuzz where it turns from the eye
+    float v=vU.y, u=vU.x, q=u*430.0+7.0*sin(u*37.0+v*5.0)+3.0*sin(u*113.0-v*9.0), fade=1.0-smoothstep(0.35,1.0,fwidth(q));
+    float st=0.5+0.5*sin(q), cl=0.5+0.5*sin(u*96.0+2.5*sin(u*23.0)+v*3.0);
+    float lip=smoothstep(0.42,0.6,v)*(1.0-smoothstep(0.74,0.88,v)), inner=smoothstep(0.78,0.95,v);
+    c=mix(${V('#140c08')}, ${V('#4f301c')}, smoothstep(0.0,0.4,v)*(1.0-0.6*inner));
+    c*=0.78+0.4*mix(0.5,st,fade)*(0.7+0.3*cl);
+    c=mix(c, ${V('#ecdcc0')}, lip*(0.25+0.6*mix(0.5,st,fade))*(0.5+0.5*cl));
+    c=mix(c*0.55+vec3(0.006,0.008,0.02), c, ks);
+    c=mix(c, ${V('#b89a76')}, 0.3*(1.0-smoothstep(0.06,0.35,nv))*(0.3+0.7*ks)*(0.3+0.7*lip));
+    c=khNight(c); if(!fr) c*=0.55; rk=0.09; }
   else if(vK<1.5){   // THE CROWN: red brocade, gold cloud scrolls, eight gold seams up to the knot
     float a=vU.x, v=vU.y;
-    c=khSilk(k,hr,nv,fl,KH_CRD,KH_CR);
+    c=khRed(k,hr,nv,fl);
     vec2 p=vec2(a*10.0, v*2.6+0.15); float cl=khCloud(p, 0.055)*(1.0-smoothstep(0.82,0.9,v));
     float g=uRun.y*exp(-pow((fract(a-uRun.x+0.5)-0.5)*7.0,2.0));
     c=khGLine(c, cl, k, hr, nv, fl+g, 0.6+0.4*step(abs(mod(floor(p.y)-floor(uKhGl.y+0.5)+20.0,2.0)),0.5));
@@ -96212,8 +96217,8 @@ function khnStrandGeo(){ return tonyKeep('khnStrands', ()=>{
   for(const sd of [0,1]){ const NR=10, NS=56, g=new T.CylinderGeometry(1,1,1,NR,NS,true), p=g.attributes.position, n=g.attributes.normal, v0=pos.length/3;
     for(let i=0;i<p.count;i++){ const t=p.getY(i)+0.5, x=p.getX(i), z=p.getZ(i), a=Math.atan2(z,x); let r, k=0;
       const ring=Math.abs(t-0.3)<0.035 || Math.abs(t-0.7)<0.035;
-      if(ring){ r=0.56; c.copy(gold); k=1; }
-      else { const q=Math.abs(Math.cos(Math.PI*(t*30+(Math.sin(a)>0?0.5:0)))); r=0.42*(0.8+0.22*q)*(t<0.04 ? 0.7+0.3*t/0.04 : 1)*(t>0.96 ? 0.7+0.3*(1-t)/0.04 : 1); c.copy(hair).lerp(hair2, 0.75*q*q); }
+      if(ring){ r=0.5; c.copy(gold); k=1; }
+      else { const q=Math.abs(Math.cos(Math.PI*(t*34+(Math.sin(a)>0?0.5:0)))); r=0.34*(0.8+0.24*q)*(t<0.04 ? 0.7+0.3*t/0.04 : 1)*(t>0.96 ? 0.7+0.3*(1-t)/0.04 : 1); c.copy(hair).lerp(hair2, 0.75*q*q); }
       pos.push(x*r, 0, z*r); nor.push(n.getX(i), 0, n.getZ(i)); col.push(c.r, c.g, c.b); aT.push(t); aS.push(sd); aK.push(k); aW.push(0); }
     for(let i=0;i<g.index.count;i++) idx.push(g.index.getX(i)+v0); g.dispose(); }
   for(const sd of [2,3]){ const NW=4, NS=48, v0=pos.length/3;
@@ -96283,7 +96288,7 @@ function khnClothBuild(FK){
     for(let j=0;j<NV;j++) for(let i=0;i<NU;i++){ const a=v0+j*(NU+1)+i, b=a+1, c=a+NU+1, d=c+1; idx.push(a,b,c, b,d,c); } };
   ring(KHC.r0, KHC.r1, 56, 14, khRobeOff, 0);
   ring(KHC.b0, KHC.b1, 56, 3, (v,A)=>0.6+0.05*Math.sin(Math.PI*v), 1);
-  ring(KHC.s0, KHC.s1, 64, 10, (v,A)=>0.52+1.55*Math.pow(v,0.9)+0.14*Math.pow(v,1.2)*Math.sin(A*8), 2);
+  ring(KHC.s0, KHC.s1, 64, 10, (v,A)=>0.5+0.85*Math.pow(v,0.9)+0.1*Math.pow(v,1.2)*Math.sin(A*8), 2);
   { const v0=pos.length/3, NU=46, NV=14;   // the mantle: over the top, from the nape, shorter at the sides
     for(let j=0;j<=NV;j++) for(let i=0;i<=NU;i++){ const u=i/NU, v=j/NV, A=-2.3+4.6*u, s=A/2.3, z=KHC.m0+(KHC.m1+1.9*s*s-KHC.m0)*v, r=flowR(z,FK);
       const vr=Math.max(0,Math.min(1,(z-KHC.r0)/(KHC.r1-KHC.r0))), o=khRobeOff(vr,A)+0.26+0.08*v;
@@ -96350,7 +96355,7 @@ void main(){
     float gl=max(max(khL(v-0.58,0.012,vw), khL(v-0.88,0.012,vw)), khL(v-0.955,0.022,vw));
     c=khGLine(c, gl, k, hr, nv, fl, 1.0);
     ink=1.0-smoothstep(0.0, vw*2.0+0.01, 1.0-v);
-    if(!fr) c=khNight(KH_SKD*0.55); rk=0.14; }
+    if(!fr) c=khSilk(1.0-k,hr,nv,fl,KH_SKD,KH_SK)*0.8; rk=0.14; }
   else {   // THE LAMELLAR: rows of small plates of dark red lacquer edged in gold, each row overlapping the next like tiles
     float u=vQ.x, uw=fwidth(u)*0.75+1e-4; vec2 p=vec2(u*${NC}, v*(${NR}+0.24));
     float r=floor(p.y), fy=fract(p.y);
@@ -96434,7 +96439,7 @@ function khParts(items){ const g=kitMerge(items.map(it=>[it[0], it[1], it[2], it
   g.setAttribute('aA', new T.Float32BufferAttribute(aA,2)); return g; }
 const khM=(p,r,s)=>new T.Matrix4().compose(new T.Vector3(...p), new T.Quaternion().setFromEuler(new T.Euler(...(r||[0,0,0]))), new T.Vector3(...(s||[1,1,1])));
 const khSeg=(r0, r1, a, b, seg)=>{ const A=new T.Vector3(...a), B=new T.Vector3(...b), L=A.distanceTo(B), g=new T.CylinderGeometry(r1, r0, L, seg||8, 1);
-  g.applyQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), B.clone().sub(A).normalize())); g.translate((A.x+B.x)/2, (A.y+B.y)/2, (A.z+B.z)/2); return g; };
+  g.applyMatrix4(new T.Matrix4().makeRotationFromQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), B.clone().sub(A).normalize()))); g.translate((A.x+B.x)/2, (A.y+B.y)/2, (A.z+B.z)/2); return g; };
 const khBallR=(p, s, r)=>{ const g=new T.SphereGeometry(1,12,8); g.scale(...s); g.applyMatrix4(new T.Matrix4().makeRotationFromEuler(new T.Euler(...r))); g.translate(...p); return g; };
 const khBall=(p, s, seg)=>{ const g=new T.SphereGeometry(1, seg||12, Math.max(6,(seg||12)*0.7|0)); g.scale(...s); g.translate(...p); return g; };
 
@@ -96448,7 +96453,7 @@ function khnFiddleGeo(){ return tonyKeep('khnFiddle', ()=>{
   { const b=new T.BoxGeometry(1,1,1,1,1,1), p=b.attributes.position; for(let i=0;i<p.count;i++){ const y=p.getY(i)+0.5; p.setXYZ(i, p.getX(i)*(1.95+(1.5-1.95)*y), -3.6+2.6*y, p.getZ(i)*0.74); } b.computeVertexNormals();
     it.push([b, null, wood, 0]); }
   it.push([new T.PlaneGeometry(1.5,2.2).applyMatrix4(khM([0,-2.35,0.385],[0,0,0],[1.05,1,1])), null, face, 6]);      // the painted face
-  it.push([khSeg(0.17,0.15,[0,-1.0,0],[0,2.35,0],10), null, dark, 1]);
+  it.push([khSeg(0.22,0.19,[0,-1.0,0],[0,2.35,0],10), null, wood, 0]);
   it.push([new T.BoxGeometry(0.62,0.16,0.18).applyMatrix4(khM([0,-2.95,0.46])), null, dark, 1]);                   // the bridge
   for(const [y,sx] of [[1.62,1],[1.98,-1]]){ it.push([khSeg(0.07,0.07,[0,y,0],[sx*0.62,y,0],6), null, dark, 1]); it.push([khBall([sx*0.66,y,0],[0.13,0.16,0.13],8), null, dark, 1]); }
   for(const sx of [-1,1]) it.push([khSeg(0.028,0.028,[sx*0.13,-2.95,0.56],[sx*0.08,1.8,0.2],5), null, str, 4]);   // the strings
@@ -96545,7 +96550,7 @@ const KHN_POSE=(()=>{ const Y=HEAD_CY; return {
   strokeR:{ h:[-0.35,Y-1.45,5.8], e:[-4.1,Y-2.2,2.0] },
   play:  { c:[3.55,Y-0.75,3.3], n:[-0.35,0.05,0.94], u:[-0.2,1,-0.12], e:[4.6,Y-1.6,0.6], eR:[-3.6,Y-2.6,2.2] },
   draw:  { c:[4.3,Y-1.3,6.3], u:[0.35,1,0.0], f:[0.04,0,1], e:[4.6,Y-1.9,1.4], eR:[-1.4,Y-3.2,2.6] } }; })();
-const KHN_SL={ p:[3.45, HEAD_CY+0.85, -5.3], r:[0, Math.PI/2, -0.36] };   // the fiddle's place at his left side (on the spine)
+const KHN_SL={ p:[3.55, HEAD_CY+0.7, -4.7], r:[0, Math.PI/2, -0.3] };   // the fiddle's place at his left side (on the spine)
 const _khV=new T.Vector3(), _khW=new T.Vector3(), _khU=new T.Vector3(), _khX=new T.Vector3(), _khQ=new T.Quaternion(), _khM=new T.Matrix4(), _khN=new T.Matrix4(), _khC=new T.Color(), _khE=new T.Euler();
 function khnArmPose(U, a0, e, hand, elbow){ const e1=Math.min(1,e);
   U.uA0.value.set(a0[0],a0[1],a0[2]); U.uA2.value.set(a0[0]+(hand[0]-a0[0])*e1, a0[1]+(hand[1]-a0[1])*e1, a0[2]+(hand[2]-a0[2])*e1); U.uA1.value.set(a0[0]+(elbow[0]-a0[0])*e1, a0[1]+(elbow[1]-a0[1])*e1, a0[2]+(elbow[2]-a0[2])*e1);
@@ -96584,7 +96589,7 @@ function khnDress(g, K, X){
   const HU={ uInk:INK, uKhGl:GL, uFw:{value:new T.Vector4()}, uKnot:{value:0}, uRun:{value:new T.Vector4()} };
   const hm=new T.Mesh(khnHatGeo(), dbShader(KHN_HAT_VS, KHN_HAT_FS, HU, { side:T.DoubleSide })); hm.name='khn-hat-fur'; hm.frustumCulled=false; hat.add(hm);
   // the braids and the ribbons: their roots go round with the face (and the hat), their curves are worked out in the body rig
-  const V3=()=>new T.Vector3(), A4=()=>[V3(),V3(),V3(),V3()], SU={ uInk:INK, uKhGl:GL, uC0:{value:A4()}, uC1:{value:A4()}, uC2:{value:A4()}, uC3:{value:A4()}, uCn:{value:A4()}, uSr:{value:new T.Vector4(1,0.48,0,0)} };
+  const V3=()=>new T.Vector3(), A4=()=>[V3(),V3(),V3(),V3()], SU={ uInk:INK, uKhGl:GL, uC0:{value:A4()}, uC1:{value:A4()}, uC2:{value:A4()}, uC3:{value:A4()}, uCn:{value:A4()}, uSr:{value:new T.Vector4(1,0.36,0,0)} };
   const strands=new T.Mesh(khnStrandGeo(), dbShader(KHN_STRAND_VS, KHN_STRAND_FS, SU, { vertexColors:true, side:T.DoubleSide })); strands.name='khn-strands'; strands.frustumCulled=false; rigB.add(strands);
   // the deel, the belt, the skirt and the lamellar: a body part, bound to the skin by flowKeep
   const CU={ uInk:INK, uKhGl:GL, uT:{value:0}, uFl:{value:0.1}, uBl:{value:0}, uPl:{value:new T.Vector4()} };
@@ -96752,10 +96757,10 @@ function khnTick(o, R, now, dt, S, C, q){
   D.rig.updateMatrix(); D.rigB.updateMatrix(); D.hat.updateMatrix(); D.r2b.copy(D.rigB.matrix).invert().multiply(D.rig.matrix); _khN.copy(D.r2b).multiply(D.hat.matrix);
   const SU=D.SU, lookStart=looking && !D.pLook; D.pLook=looking;
   if(lookStart){ const i=phi>=0 ? 1 : 0; D.bv[i].x+=(i ? 1 : -1)*7; D.bv[i].y+=4; }
-  for(let i=0;i<2;i++){ const sg=i ? 1 : -1, az=1.8, u=az+sg*phi, over=khSm(2.2,2.75,u), fx=-sg*Math.tanh((u-Math.PI)/0.24), af=Math.abs(fx), L=2.7;
+  for(let i=0;i<2;i++){ const sg=i ? 1 : -1, az=1.8, u=az+sg*phi, over=khSm(2.2,2.75,u), fx=-sg*Math.tanh((u-Math.PI)/0.24), af=Math.abs(fx), L=3.5;
     const hp=kitHeadPt(sg*az, 0.18+0.5*over, 0.1), P0=SU.uC0.value[i].set(hp[0],hp[1],hp[2]).applyMatrix4(D.r2b);
     const ol=Math.hypot(P0.x,P0.z)||1, ox=P0.x/ol, oz=P0.z/ol, P1=SU.uC1.value[i], P2=SU.uC2.value[i], P3=SU.uC3.value[i];
-    P1.set(P0.x+ox*0.5, P0.y-L, P0.z+oz*0.5+0.75); P2.set(P0.x+ox*0.75, P0.y-L, P0.z+oz*0.75-0.95); P3.set(P0.x+ox*0.2, P0.y-0.5, P0.z+oz*0.2-0.7);
+    P1.set(P0.x+ox*0.45, P0.y-L, P0.z+oz*0.45+1.25); P2.set(P0.x+ox*0.7, P0.y-L, P0.z+oz*0.7-1.35); P3.set(P0.x+ox*0.25, P0.y-0.6, P0.z+oz*0.25-0.85);
     if(over>0){ P1.lerp(_khW.set(fx*2.7, Y+1.4, -4.4), over); P2.lerp(_khW.set(fx*3.0, Y+0.9, -6.0), over); P3.lerp(_khW.set(fx*2.5, Y+2.2, -5.2), over); }
     const A=sg*az+phi, lag=3.0*(D.yl-phi), tgt=_khU;
     if(P) tgt.set(pBlind ? sg*1.4 : 0, pBlind ? 2.2 : pGallop ? 1.8 : 0, pGallop ? -2.8 : 0);
@@ -96767,14 +96772,14 @@ function khnTick(o, R, now, dt, S, C, q){
     SU.uCn.value[i].set(ox, 0, oz); }
   for(let j=0;j<2;j++){ const i=2+j, sd=j ? 1 : -1, rr=khRibRoot(sd), P0=SU.uC0.value[i].set(rr[0], rr[1], rr[2]).applyMatrix4(_khN), P1=SU.uC1.value[i], P2=SU.uC2.value[i], P3=SU.uC3.value[i];
     SU.uCn.value[i].set(1,0,0).transformDirection(_khN);
-    const tgt=_khU, ox=sd*0.35;
+    const tgt=_khU;
     if(P) tgt.set(0, pGallop ? 3.0 : 0, pGallop ? -2.5 : 0);
     else tgt.set(-3.6*swT+sd*0.4*Math.sin(D.t*3.1+j), 1.4*sp+3.0*gw+(spin ? 2.5 : 0)-4*sqH, -(1.6*sp+2.4*gw));
     if(newBeat && !spin && !P) D.bv[i].y-=1.2;
     if(P){ D.bs[i].copy(tgt); D.bv[i].set(0,0,0); } else khnSpringV(D.bs[i], D.bv[i], tgt, 7.5, 0.3, dt);
     const bs=D.bs[i]; if(bs.lengthSq()>36) bs.setLength(6);
-    P1.set(P0.x+ox*0.5, P0.y+0.1, P0.z-2.3).addScaledVector(bs, 0.3); P2.set(P0.x+ox*1.1, P0.y-0.6, P0.z-4.6).addScaledVector(bs, 0.65); P3.set(P0.x+ox*1.6, P0.y-1.9, P0.z-6.8).addScaledVector(bs, 1.0); }
-  SU.uSr.value.set(1, 0.48, P ? 0 : 0.12+0.5*sp+0.7*gw, D.t);
+    P1.set(P0.x+sd*0.7, P0.y+0.5, P0.z-1.8).addScaledVector(bs, 0.3); P2.set(P0.x+sd*1.45, P0.y-0.5, P0.z-3.7).addScaledVector(bs, 0.65); P3.set(P0.x+sd*1.8, P0.y-2.4, P0.z-6.0).addScaledVector(bs, 1.0); }
+  SU.uSr.value.set(1, 0.36, P ? 0 : 0.12+0.5*sp+0.7*gw, D.t);
   // ---- the cloth: the skirt ripples with speed and flares in a gallop
   D.CU.uT.value=D.t; D.CU.uFl.value=P ? 0 : 0.08+0.24*Math.min(1,spd/140); D.CU.uBl.value=gw;
   // ---- the arms, the fiddle and the bow. Each gag says where the hands are, where the fiddle is held, where the bow is
