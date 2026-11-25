@@ -38625,7 +38625,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
         const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k; }
       return buf; };
     const rIn=F('highpass',180,0.7), rPre=ctx.createDelay(0.1), conv=ctx.createConvolver(), rLP=F('lowpass',5200,0.6), rRet=G(MIX.roomRet);
-    rPre.delayTime.value=0.022; conv.normalize=false; conv.buffer=steppeIR(lite ? 1.4 : 2.4);
+    rPre.delayTime.value=0.022; conv.normalize=false; conv.buffer=steppeIR(lite ? 1.1 : 1.8);
     try{ bus.springIn.disconnect(); }catch(e){}
     bus.springIn.connect(rIn); rIn.connect(rPre); rPre.connect(conv); conv.connect(rLP); rLP.connect(rRet); rRet.connect(bus.mix);
     // shared filters: a fixed filter is the same for one stroke or a hundred, so each family of strokes gets one
@@ -38651,14 +38651,13 @@ SONG_ENGINE.songs.thousandHooves=(function(){
        held the drone: no scoop, no breath), tail (its release, s), to 'L'/'R'. */
     function thr(t,p,sd,hz){ const K=TK[p.st], ns=p.ns||[]; if(!K) return;
       const s0=p.s0!=null ? p.s0 : ns.length ? ns[0][0] : 0, at=AT(t,s0,sd), Z=ns[ns.length-1], eS=p.e!=null ? p.e : Z ? Z[0]+Z[2] : s0+8;
-      const tail=p.tail!=null ? p.tail : 0.3, endA=at(eS), end=endA+tail+0.1, v=p.v||1, f0=hz(p.d!=null ? p.d : K.d), ch=C[K.ch], gate=!!p.gate;
+      const tail=p.tail!=null ? p.tail : 0.3, endA=at(eS), end=endA+tail+0.02, v=p.v||1, f0=hz(p.d!=null ? p.d : K.d), ch=C[K.ch], gate=!!p.gate;
       const src=G(1), g=G(0), P=g.gain;
       const o=O(W.press,f0,t,end,src); let mo=null;
       if(K.am){ const amN=G(1-K.am*0.5), mg=G(K.am*0.5); o.disconnect(); o.connect(amN); amN.connect(src);
         mo=O('sine',f0/2,t,end,mg); mg.connect(amN.gain);
         if(!lite){ const jg=G(42); LFO(3.1+Math.random()*1.4,t,end,jg,'triangle'); jg.connect(mo.detune); jg.connect(o.detune);   // the false folds are never quite regular (and drag the drone with them)
           const sg=G(K.sub); O(W.press,f0/2,t,end,sg,7); sg.connect(src); } }
-      else if(!lite){ const dg=G(4); LFO(0.4+Math.random()*0.5,t,end,dg); dg.connect(o.detune); }   // nobody holds a note dead still
       // the body: the vowel formants under the whistle
       const body=lite ? K.body.slice(0,2) : K.body, bodyF=[];
       for(const [fq,q,lv] of body){ const bp=F('bandpass',fq,q), bg=G(lv); src.connect(bp); bp.connect(bg); bg.connect(g); bodyF.push(bp.frequency); }
@@ -38666,7 +38665,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
       const w1=F('bandpass',f0*8*K.sr,K.wq*(lite && !K.one ? 1.4 : 1)), wG=G(0), WP=wG.gain; src.connect(w1); let wl=w1, w2=null;
       if(!lite && !K.one){ w2=F('bandpass',f0*8*K.sr,K.wq); w1.connect(w2); wl=w2; }
       wl.connect(wG); wG.connect(g); WP.setValueAtTime(0,t);
-      if(K.sh){ const shg=G(K.sh); LFO(5.6+Math.random()*1.2,t,end,shg); shg.connect(w1.detune); if(w2) shg.connect(w2.detune); }
+      if(K.sh && !lite){ const shg=G(K.sh); LFO(5.6+Math.random()*1.2,t,end,shg); shg.connect(w1.detune); if(w2) shg.connect(w2.detune); }
       g.connect(p.to==='L' ? ch.L : p.to==='R' ? ch.R : ch.in); sends(g,p,ch);
       // the drone: scooped into and breathed (unless it carries on from the bar before), held, let go
       const pk=K.pk*v*(lite ? 1.2 : 1);
@@ -38696,7 +38695,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
        (a fast fall of an octave and more, shaking), 'v' a long note with the wide slow vibrato early. p.dr: the open
        string under it (a note), p.up: transpose. */
     function fid(t,p,sd,hz){ const ns=p.ns; if(!ns || !ns.length) return;
-      const at=AT(t,ns[0][0],sd), Z=ns[ns.length-1], end=at(Z[0]+Z[2])+0.4, v=p.v||1, up=p.up||0, ch=C.fid;
+      const at=AT(t,ns[0][0],sd), Z=ns[ns.length-1], end=at(Z[0]+Z[2])+0.16, v=p.v||1, up=p.up||0, ch=C.fid;
       const src=G(1), trem=G(1), g=G(0), P=g.gain, f0=hz(ns[0][1]+up);
       const oscs=(lite ? [0] : [-5,6]).map(d=>O(W.bow,f0,t,end,src,d));
       if(p.dr!=null && !lite){ const dg=G(0.16); O(W.bow,hz(p.dr+up),t,end,dg); dg.connect(src); }
@@ -38750,7 +38749,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
           tw.gain.setTargetAtTime(0.35*a,th,0.0005); tw.gain.setTargetAtTime(0,th+0.002,0.006); }); },
       /* THE WAR DRUM, a bar of it: [step, level, 'x' a hard stroke that rings / 'e' the edge]. One hide struck again and
          again: its fundamental (dropping into pitch), its second mode, the skin and the beater's slap. */
-      drm(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.9, v=p.v||1, F0=p.f||86;
+      drm(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+(H[H.length-1][2]==='x' ? 0.9 : 0.55), v=p.v||1, F0=p.f||86;
         const g=G(0), P=g.gain, o=O('sine',F0,t,endT,g); g.connect(C.drum.in); P.setValueAtTime(0,t); sends(g,p,C.drum);
         const gm=G(0), Pm=gm.gain, om=O('sine',F0*1.59,t,endT,gm); gm.connect(C.drum.in); Pm.setValueAtTime(0,t);
         const nz=G(1), sk=G(0), Q=sk.gain, sl=G(0), Qs=sl.gain; N(t,endT-t,nz); nz.connect(sk); nz.connect(sl); sk.connect(FX.skin); sl.connect(FX.slap); Q.setValueAtTime(0,t); Qs.setValueAtTime(0,t);
@@ -38762,7 +38761,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
           Q.setTargetAtTime((edge ? 0.6 : 2.2)*a,th,0.0008); Q.setTargetAtTime(0,th+0.004,edge ? 0.012 : 0.02);
           Qs.setTargetAtTime((edge ? 1.6 : hard ? 1.3 : 0.7)*a,th,0.0006); Qs.setTargetAtTime(0,th+0.003,edge ? 0.025 : 0.018); } },
       // the hooves, a bar of them: [step, level, side 0 left / 1 right]. Wood knocks, and the ground under them
-      hof(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.2, v=p.v||1, near=p.near!=null ? p.near : 1;
+      hof(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.1, v=p.v||1, near=p.near!=null ? p.near : 1;
         const nz=G(1), L=G(0), R=lite ? L : G(0), E0=G(0); N(t,endT-t,nz); nz.connect(L); L.connect(FX.hfL); if(!lite){ nz.connect(R); R.connect(FX.hfR); }
         nz.connect(E0); E0.connect(FX.earth); L.gain.setValueAtTime(0,t); if(R!==L) R.gain.setValueAtTime(0,t); E0.gain.setValueAtTime(0,t);
         for(const [s,lv,side] of H){ const th=at(s)+Math.random()*0.006, a=v*(lv||1), Pg=(side && !lite ? R : L).gain;
@@ -38773,7 +38772,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
         o.frequency.exponentialRampToValueAtTime(52,t+0.05); o.frequency.exponentialRampToValueAtTime(43,t+0.3);
         AD(g,t,0.002,0.95*v,0.3); g.connect(C.kick.in);
         const kn=G(0), o2=O('triangle',320,t,t+0.08,kn); o2.frequency.exponentialRampToValueAtTime(105,t+0.04); AD(kn,t,0.001,0.45*v,0.05); kn.connect(C.kick.in);
-        const b=G(0); N(t,0.02,b); AD(b,t,0.0008,0.5*v,0.012); b.connect(FX.click); },
+        if(lite) return; const b=G(0); N(t,0.02,b); AD(b,t,0.0008,0.5*v,0.012); b.connect(FX.click); },
       // the sub: a line ([step, note, length, level, 'g' glide]) on one sine, kept between 36 and 73 Hz whatever the key
       sub(t,p,sd,hz){ const L=p.ns, at=AT(t,L[0][0],sd), Z=L[L.length-1], endT=at(Z[0]+Z[2])+0.3, g=G(0), P=g.gain, v=p.v||1;
         const fo=(n)=>{ let f=hz(n-24); while(f<36.7) f*=2; while(f>=73.4) f/=2; return f; };
@@ -38795,7 +38794,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
       roll(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), zT=at(H[H.length-1][0]), g=G(0), P=g.gain, v=p.v||1; N(t,zT-t+0.25,g); P.setValueAtTime(0,t);
         for(const [s,vv] of H){ const th=at(s); P.setTargetAtTime(0.32*v*(vv||1),th,0.001); P.setTargetAtTime(0.02*v,th+0.005,0.017); }
         P.setTargetAtTime(0,zT+0.03,0.03); g.connect(FX.wires); const g2=G(0.5); g.connect(g2); g2.connect(FX.clap); },
-      hats(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), g=G(0), P=g.gain, v=p.v||1; N(t,at(H[H.length-1][0])-t+0.4,g); P.setValueAtTime(0,t);
+      hats(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), g=G(0), P=g.gain, v=p.v||1; N(t,at(H[H.length-1][0])-t+0.17,g); P.setValueAtTime(0,t);
         for(const [s,vv,o] of H){ const th=at(s); P.setTargetAtTime((o?0.24:0.3)*v*(vv||1),th,0.0008); P.setTargetAtTime(0,th+(o?0.02:0.004),o?0.07:0.011); }
         g.connect(FX.hat); },
       crash(t,p){ const v=p.v||1, g=G(0); N(t,1.9,g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.2*v,t+0.002); g.gain.exponentialRampToValueAtTime(0.0001,t+1.85); g.connect(FX.crash); },
@@ -38803,7 +38802,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
          and the kargyraa: two saws and a square through a mouth (two formant band-passes walking through the vowels it
          says: "uau" is wow, "ioi" is yoy) over a low-pass for its weight. Its growl is the kargyraa's: the sound
          amplitude-modulated at half its own rate. */
-      tb(t,p,sd,hz){ const S=p.s; if(!S || !S.length) return; const at=AT(t,S[0][0],sd), Z=S[S.length-1], endT=at(Z[0]+Z[1])+0.1, v=p.v||1;
+      tb(t,p,sd,hz){ const S=p.s; if(!S || !S.length) return; const at=AT(t,S[0][0],sd), Z=S[S.length-1], endT=at(Z[0]+Z[1])+0.03, v=p.v||1;
         const wf=(n)=>{ let f=hz(n-24); while(f<50) f*=2; while(f>=100) f/=2; return f; };
         const pre=G(1), f0=wf(S[0][2]), sq=G(0.5); sq.connect(pre);
         const os=[O('sawtooth',f0,t,endT,pre,-9),O('square',f0,t,endT,sq,4)]; if(!lite) os.push(O('sawtooth',f0,t,endT,pre,10));
@@ -38938,12 +38937,12 @@ SONG_ENGINE.songs.thousandHooves=(function(){
     if(id==='dawn'){
       winds(1);
       // the kargyraa, alone, then under the whistle (a breath at the end of each bar)
-      kar(steps(KAR[b%2]),b<2 ? 1 : 0.8,{s0:0,e:15.4,tail:0.35});
+      kar(steps(KAR[b%2]),b<2 ? 1.4 : 1.2,{s0:0,e:15.4,tail:0.35});
       if(b>=2 && b<6) sing('sy',tuneH(TUNE[b-2]),0.9,{s0:0,cont:b>2,tail:b===5 ? 0.4 : 0.05,e:b===5 ? 15.6 : 16,throw:b===5 ? 0.35 : 0.08,spr:0.45});
       // a far fiddle: the tune's last two bars, slow, behind everything
-      if(b===4 || b===5) fid(tuneF(TUNE[b-4],0,false),0.5,{spr:0.6,dr:-12});                 // (a canon: the whistle's first two bars, two bars late)
-      if(b===6) fid([[0,0,PS(6),'s'],[PS(6),4,PS(3)],[PS(9),2,PS(3)]],0.6,{spr:0.5,dr:-12});
-      if(b===7){ fid([[0,0,PS(5),'v'],[PS(6),24,PS(3),'w'],[PS(9),12,PS(3)]],0.7,{spr:0.45,throw:0.25}); }
+      if(b===4 || b===5) fid(tuneF(TUNE[b-4],0,false),0.32,{spr:0.7,dr:-12});                 // (a canon: the whistle's first two bars, two bars late)
+      if(b===6) fid([[0,0,PS(6),'s'],[PS(6),4,PS(3)],[PS(9),2,PS(3)]],0.4,{spr:0.6,dr:-12});
+      if(b===7){ fid([[0,0,PS(5),'v'],[PS(6),24,PS(3),'w'],[PS(9),12,PS(3)]],0.55,{spr:0.5,throw:0.25}); }
       if(b>=6){ hooves(0.35+0.35*(b-6),0.6+0.2*(b-6)); }
       if(b===7){ drum([[PS(6),0.5],[PS(7),0.4,'e'],[PS(8),0.5,'e'],[PS(9),0.7],[PS(10),0.55,'e'],[PS(11),0.7,'e']],1); E(8,'rev',{l:8,v:0.6}); }
     }
@@ -38955,7 +38954,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
       if(half===0) fid(tuneF(TUNE[k],0,true),0.7,{spr:0.18,dr:k===3 ? -5 : -12});
       else if(half===1) fid(tuneF(TUNE2[k],0,true),0.7,{spr:0.18,dr:-12});
       else { riff(r,0.7); sing('kh',tuneH(TUNE[k]),1,{s0:0,cont:k>0,e:16,tail:k===3 ? 0.35 : 0.05,spr:0.3,throw:k===3 ? 0.25 : 0.05});
-        kar([[0,4,16]],0.55,{d:r-12,s0:0,e:16,cont:k>0,tail:k===3 ? 0.3 : 0.06}); }
+        if(!lite) kar([[0,4,16]],0.55,{d:r-12,s0:0,e:16,cont:k>0,tail:k===3 ? 0.3 : 0.06}); }
       if(half>=1){ kick(k%2 ? [0,PS(6)] : [0],0.85); sub(r,0.7); }
       if(half===2) hats(0.7,{roll:k===3});
       if(b===11) E(8,'rev',{l:8,v:0.7});
@@ -38975,7 +38974,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
       // the whistle climbing a harmonic a bar, held and pulsed on the beats
       const climb=two ? [[10,12],[12,13],[13,16]] : [[8,9],[10,12],[12,13]];
       if(b<3) sing('sy',[[0,climb[b][0],PS(6)],[PS(6),climb[b][1],PS(6)]],0.95,{s0:0,e:16,cont:b>0,tail:0.05,spr:0.35});
-      if(b<3) kar([[0,4,8],[8,6,8]],0.6,{d:r-12,s0:0,e:16,cont:b>0,tail:0.05});
+      if(b<3 && !lite) kar([[0,4,8],[8,6,8]],0.6,{d:r-12,s0:0,e:16,cont:b>0,tail:0.05});
       if(b===3){ // the whistle stuttered in sixths, the shout, the dark
         const hh=two ? 13 : 12; sing('sy',Array.from({length:9},(_,k)=>[k*2/3,k<6 ? hh : hh+(two ? 3 : 1),2/3*0.7,'c']),1.05,{s0:0,e:6,gate:true,tail:0.02,spr:0.3});
         A(8,{a:'hp',f:20,tc:0.003});
@@ -38994,7 +38993,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
         sing('sy',byStep(C),1.05,{s0:0,e:16,gate:true,tail:0.03,spr:0.25,to:k%2 ? 'R' : 'L'});
         if(k%2===0) shout([[PS(9),12,PS(0.7),'hey'],[PS(10),12,PS(0.7),'hey'],[PS(11),14,PS(0.9),'ha']],0.9,{to:'L'});
         else shout([[PS(6),19,PS(2),'hoo']],0.8,{to:'R'}); }
-      else sing('sy',tuneH(TUNE2[k]),1.05,{s0:0,cont:k>0,e:16,tail:k===3 ? 0.4 : 0.04,spr:0.32,throw:k===3 ? 0.35 : 0.06});
+      else sing('sy',tuneH(TUNE2[k]),1.05,{s0:0,cont:k>0,e:16,tail:k===3 && !lite ? 0.4 : 0.04,spr:0.32,throw:k===3 ? 0.35 : 0.06});
       if(b===11){ E(8,'rev',{l:8,v:0.85}); }
     }
     else if(id==='sky'){
@@ -39021,7 +39020,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
         dropBar(k,r,{tov:true,gr:b>=4,kv:1.5,bv:1.05});
         if(b<4){ sing('kh',tuneH(TUNE[k]),1,{s0:0,cont:k>0,e:16,tail:0.05,spr:0.25,to:'L'});                  // three singers: the tune in the middle,
           sing('sy',steps(DESC[k]),0.9,{s0:0,cont:k>0,e:16,tail:0.05,spr:0.35,to:'R'}); }                       // the descant over it, the growl under it
-        else if(b<8){ sing('sy',tuneH(TUNE2[k]),1.08,{s0:0,cont:k>0,e:16,tail:k===3 ? 0.4 : 0.04,spr:0.32,throw:k===3 ? 0.35 : 0.06});
+        else if(b<8){ sing('sy',tuneH(TUNE2[k]),1.08,{s0:0,cont:k>0,e:16,tail:k===3 && !lite ? 0.4 : 0.04,spr:0.32,throw:k===3 ? 0.35 : 0.06});
           if(!lite) sing('kh',[[0,k===3 ? 6 : 8,16]],0.55,{s0:0,cont:k>0,e:16,tail:0.05,spr:0.3,to:'L'}); }
         else { const T=TUNE2[(k+2)%4], Ch=[]; for(const [p0,h,l] of T) for(let q=0;q<Math.min(l,3);q++) Ch.push([PS(p0+q),h,PS(0.7),'c']);
           sing('sy',Ch,1.05,{s0:0,e:16,gate:true,tail:0.03,spr:0.25,to:k%2 ? 'R' : 'L'});
@@ -39053,7 +39052,7 @@ SONG_ENGINE.songs.thousandHooves=(function(){
       thrK:  {level:1.6,  pan:0,     echo:0.04, spring:0.3,  chain:[['hp',40],['peak',330,1.5,1],['lp',4200]]},
       thrM:  {level:1.4,  pan:-0.12, echo:0.08, spring:0.35, chain:[['hp',80],['lp',7000]]},
       thrS:  {level:1.2,  pan:0.1,   echo:0.06, spring:0.4,  chain:[['hp',300],['peak',3400,-3,1.2],['lp',6000]]},
-      fid:   {level:1.7,  pan:-0.18, echo:0.06, spring:0.3,  chain:[['hp',110],['peak',290,4,1.1],['peak',1350,4.5,1.8],['lp',3800]]},
+      fid:   {level:1.3,  pan:-0.18, echo:0.06, spring:0.3,  chain:[['hp',110],['peak',290,4,1.1],['peak',1350,4.5,1.8],['lp',3800]]},
       tov:   {level:1.6,  pan:0.3,   echo:0.02, spring:0.16, chain:[['hp',120],['peak',900,3,1.5],['lp',5500]]},
       khm:   {level:1.5,  pan:-0.3,  echo:0.05, spring:0.16, chain:[['hp',85],['lp',5000]]},
       sh:    {level:1.4,  pan:0, spread:0.45, echo:0.12, spring:0.3, chain:[['hp',230],['peak',2400,2,1],['lp',8000]]},
