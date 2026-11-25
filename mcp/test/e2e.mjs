@@ -720,8 +720,8 @@ await check('Ray Yazzie\'s record, "Concho Moon" (rez-hop): the night road, the 
 });
 
 await check('Ankhamun\'s record, "Lapis Sunrise" (temple-step): the sunrise, the procession, the drop, the inner court, the final-lap cue and the tail play clean and on the beat', async () => {
-  // (the record is asked for by its station, so this check does not need Ankhamun on the roster)
-  json(await call('race_setup', { course: 'Victoria', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  // (Ankhamun is on the roster: the check races as him, and asks for the record by its station)
+  json(await call('race_setup', { course: 'Victoria', character: 'pharaoh', seed: 3 })); json(await call('race_start'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
   try {
     // (the sistrum, the clappers and one singer, the pipes over the frame drum, the first drop, the harp and the voices, the final-lap cue into the second drop, the tail looping to the top)
