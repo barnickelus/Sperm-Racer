@@ -755,6 +755,25 @@ await check('Nikandros\'s record, "Hot Gates" (phalanx-step): the far pipes, the
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+await check('Bataar Khan\'s record, "Thousand Hooves" (gallop-step): the dawn, the ride, the first drop, the open sky, the final-lap cue, the second drop and the tail play clean and on the beat', async () => {
+  // (until Bataar Khan is on the roster the check races as Tony Guido and asks for the record by its station's style; once he is, race as 'khan')
+  json(await call('race_setup', { course: 'Victoria', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
+  try {
+    // (the kargyraa and the whistle alone, the fiddle over the gallop, the first drop, the fiddle under the open sky, the final-lap cue into the second drop, the tail looping to the top)
+    // (12/8: two of every three pulses fall between the clock's sixteenths, so a record in four would score higher; the drum's beats carry it)
+    for (const [bar, sec, tight] of [[2, 'dawn', 0.2], [9, 'ride', 0.3], [26, 'drop', 0.3], [37, 'sky', 0.2], [46, 'build2', 0.3], [50, 'drop2', 0.3], [61, 'tail', 0.2]]) {
+      const a = json(await call('race_audio', { seconds: 6, style: 'khan', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis; got[sec] = an;
+      assert.equal(a.style, '83.2 OVERTONE GALLOP', 'his own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
+      assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
+      assert.ok(an.loudnessDbfs > -36 && an.loudnessDbfs < -22 && an.beat.tightness >= tight, 'bar ' + bar + ' sits at the level of the other records, on the beat: ' + an.loudnessDbfs + ' dBFS, ' + an.beat.tightness);
+    }
+    // the drop is a drop: louder than the kargyraa and the whistle alone, and with more of its weight in the bass
+    assert.ok(got.drop.loudnessDbfs > got.dawn.loudnessDbfs && got.drop.tone.low > got.dawn.tone.low + 0.05, 'the sub arrives with the drop: ' + JSON.stringify([got.dawn.loudnessDbfs, got.dawn.tone, got.drop.loudnessDbfs, got.drop.tone]));
+    assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors from the record');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 await check('Big Shot Darius stands on his base at the line, fists on his hips, and flies level, nose first, arms swept back; a boost flashes off his base and throws his fists out ahead', async () => {
   json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
   const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
