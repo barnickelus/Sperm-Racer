@@ -756,8 +756,7 @@ await check('Nikandros\'s record, "Hot Gates" (phalanx-step): the far pipes, the
 });
 
 await check('Bataar Khan\'s record, "Thousand Hooves" (gallop-step): the dawn, the ride, the first drop, the open sky, the final-lap cue, the second drop and the tail play clean and on the beat', async () => {
-  // (until Bataar Khan is on the roster the check races as Tony Guido and asks for the record by its station's style; once he is, race as 'khan')
-  json(await call('race_setup', { course: 'Victoria', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  json(await call('race_setup', { course: 'Victoria', character: 'khan', seed: 3 })); json(await call('race_start'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
   try {
     // (the kargyraa and the whistle alone, the fiddle over the gallop, the first drop, the fiddle under the open sky, the final-lap cue into the second drop, the tail looping to the top)
