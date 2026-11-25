@@ -719,6 +719,24 @@ await check('Ray Yazzie\'s record, "Concho Moon" (rez-hop): the night road, the 
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+await check('Ankhamun\'s record, "Lapis Sunrise" (temple-step): the sunrise, the procession, the drop, the inner court, the final-lap cue and the tail play clean and on the beat', async () => {
+  // (the record is asked for by its station, so this check does not need Ankhamun on the roster)
+  json(await call('race_setup', { course: 'Victoria', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
+  try {
+    // (the sistrum, the clappers and one singer, the pipes over the frame drum, the first drop, the harp and the voices, the final-lap cue into the second drop, the tail looping to the top)
+    for (const [bar, sec, tight] of [[0, 'sun', 0.3], [9, 'proc', 0.35], [22, 'drop', 0.4], [33, 'court', 0.3], [42, 'build2', 0.3], [46, 'drop2', 0.4], [61, 'tail', 0.3]]) {
+      const a = json(await call('race_audio', { seconds: 6, style: 'pharaoh', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis; got[sec] = an;
+      assert.equal(a.style, '96.3 SISTRUM & SUB', 'his own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
+      assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
+      assert.ok(an.loudnessDbfs > -34 && an.loudnessDbfs < -22 && an.beat.tightness >= tight, 'bar ' + bar + ' sits at the level of the other records, on the beat: ' + an.loudnessDbfs + ' dBFS, ' + an.beat.tightness);
+    }
+    // the drop is a drop: louder than the sistrum, the clappers and the singer alone, and with more of its weight in the bass
+    assert.ok(got.drop.loudnessDbfs > got.sun.loudnessDbfs && got.drop.tone.low > got.sun.tone.low + 0.05, 'the sub arrives with the drop: ' + JSON.stringify([got.sun.loudnessDbfs, got.sun.tone, got.drop.loudnessDbfs, got.drop.tone]));
+    assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors from the record');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 await check('Big Shot Darius stands on his base at the line, fists on his hips, and flies level, nose first, arms swept back; a boost flashes off his base and throws his fists out ahead', async () => {
   json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
   const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
