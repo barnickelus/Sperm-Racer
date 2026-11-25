@@ -91011,7 +91011,8 @@ function rbjHatGeo(){ return tonyKeep('rbjHat', ()=>{
   const G=kitMerge(items);
   // the felt's sheen, baked: a cool lift where it turns to the key light
   { const N=G.attributes.normal, C=G.attributes.color, K=G.attributes.aK, L=new T.Vector3(-0.4,0.85,0.5).normalize(), hi=dbLin('#5c5874'), c=new T.Color(), n=new T.Vector3();
-    for(let i=0;i<N.count;i++){ const k=K.getX(i); if(k>=2 && k<3.5) continue; n.set(N.getX(i),N.getY(i),N.getZ(i)); const s=Math.pow(Math.max(0,n.dot(L)),7);
+    for(let i=0;i<N.count;i++){ const k=K.getX(i); if(k>=0.5) continue;   // (the crown's felt only: on the near-flat brim the sheen came on along a straight line, and read as a seam)
+      n.set(N.getX(i),N.getY(i),N.getZ(i)); const s=Math.pow(Math.max(0,n.dot(L)),7);
       c.setRGB(C.getX(i),C.getY(i),C.getZ(i)).lerp(hi, 0.42*s); C.setXYZ(i,c.r,c.g,c.b); } }
   return G; }); }
 /* ---- HIS BELT AND SHIRT TAIL, at the shirt's hem (z along his body, from the hem; it rides the spine there): a dark
@@ -91228,22 +91229,82 @@ void main(){
   gl_FragColor=linearToOutputTexel(gl_FragColor);
 }`;
 // his item's little dust devil, for the flourish: a funnel of three twisting skins, on his fingertips
-function rbjDevilGeo(){ return tonyKeep('rbjDevil', ()=>{ const items=[], cols=['#e2b684','#c4875a','#f0d2a4'].map(dbLin);
-  for(let k=0;k<3;k++){ const g=new T.LatheGeometry([[0.05,0],[0.2,0.5],[0.34,1.0],[0.56,1.6],[0.9,2.2],[1.35,2.7]].map(p=>new T.Vector2(p[0]*(1-0.2*k),p[1]*(1-0.12*k))), 12, k*2.1, Math.PI*1.25), p=g.attributes.position;
-      for(let i=0;i<p.count;i++){ const y=p.getY(i), a=y*1.4, x=p.getX(i), z=p.getZ(i); p.setX(i, x*Math.cos(a)-z*Math.sin(a)); p.setZ(i, x*Math.sin(a)+z*Math.cos(a)); }
-      g.computeVertexNormals(); items.push([g, new T.Matrix4(), cols[k]]); }
+/* ---- THE DUST DEVIL (his flourish on two fingers, and his item down the road): a column of desert dust, not a cone. Four
+   nested shells of one funnel, narrow at the ground and opening upward, each a spiral of sand-coloured streaks that run up
+   and round it (the shader turns them with time), the column leaning and snaking as it goes, wisps thinning to nothing at
+   the top and the ground; at its foot a ring of cartoon dust puffs, rolling round it. Two draws. Its own clock: game time when
+   a film steps the race, else the page's. */
+const RBJ_TW_VS=`
+attribute float aS; uniform float uT, uH;
+varying float vY, vA, vS, vE;
+void main(){
+  float y=uv.y, a=uv.x*6.28318+aS*1.7, t=uT*(1.0+0.15*aS);
+  float r=(0.24+1.05*pow(y,1.25))*(1.0-0.2*aS)*(1.0+0.07*sin(a*3.0+t*7.0+y*8.0))*1.55;
+  vec2 c=vec2(sin(uT*2.1+y*2.7), cos(uT*1.7+y*2.2))*0.45*y*y+vec2(sin(uT*6.3+y*9.0), cos(uT*5.1+y*7.0))*0.06*y;
+  vec3 p=vec3(c.x+cos(a)*r, y*uH, c.y+sin(a)*r);
+  vec3 nv=normalize(normalMatrix*vec3(cos(a),0.0,sin(a)));
+  vY=y; vA=a; vS=aS; vE=1.0-abs(nv.z);                       // how edge-on this part of the shell is: dust is thickest along the column's sides
+  gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);
+}`;
+const RBJ_TW_FS=`
+uniform float uT, uO; uniform vec3 uLo, uHi, uLn;
+varying float vY, vA, vS, vE;
+void main(){
+  float s=fract(vA/6.28318*2.0+vY*1.6-uT*(1.7+0.3*vS)+vS*0.37);
+  float band=smoothstep(0.0,0.3,s)*(1.0-smoothstep(0.45,0.9,s));                            // two broad swirls of thicker dust round each shell
+  float fw=fwidth(s)*0.8+1e-4, ln=(1.0-smoothstep(0.05-fw,0.05+fw,abs(s-0.62)))*step(vS,1.5);   // an inked spiral line on the two outer shells, as a cartoon whirl is drawn
+  float body=0.16+0.38*band+0.34*pow(vE,1.5);
+  float a=(body*(1.0-0.16*vS)+ln*0.5)*smoothstep(0.0,0.1,vY)*(1.0-smoothstep(0.7,1.0,vY))*uO;
+  vec3 c=mix(uLo,uHi,clamp(0.35+0.45*band+0.3*vY-0.15*vS+0.15*vE,0.0,1.0)); c=mix(c,uLn,ln*0.75);
+  if(a<0.01) discard;
+  gl_FragColor=vec4(c,a);
+}`;
+function rbjTwisterGeo(){ return tonyKeep('rbjTwister', ()=>{
+  const pos=[], uv=[], sh=[], idx=[]; let off=0;
+  for(let k=0;k<4;k++){ const g=new T.CylinderGeometry(1,1,1,28,14,true), P=g.attributes.position, U=g.attributes.uv, I=g.index;
+    for(let i=0;i<P.count;i++){ pos.push(P.getX(i),P.getY(i),P.getZ(i)); uv.push(U.getX(i),U.getY(i)); sh.push(k); }
+    for(let i=0;i<I.count;i++) idx.push(I.getX(i)+off); off+=P.count; g.dispose(); }
+  const G=new T.BufferGeometry(); G.setAttribute('position',new T.Float32BufferAttribute(pos,3)); G.setAttribute('uv',new T.Float32BufferAttribute(uv,2));
+  G.setAttribute('aS',new T.Float32BufferAttribute(sh,1)); G.setIndex(idx); G.boundingSphere=new T.Sphere(new T.Vector3(0,1.9,0),3.6); return G; }); }
+function rbjPuffGeo(){ return tonyKeep('rbjPuff', ()=>{ const items=[], cols=['#f2dcb2','#e6c595','#f8ead0'].map(dbLin);
+  for(let i=0;i<8;i++){ const a=i/8*Math.PI*2, r=0.75+0.15*(i%2), s=0.5+0.14*((i*5)%3)/2;
+    items.push([new T.IcosahedronGeometry(1,1), new T.Matrix4().compose(new T.Vector3(Math.cos(a)*r, 0.12+0.05*(i%3), Math.sin(a)*r), new T.Quaternion(), new T.Vector3(s,s*0.72,s)), cols[i%3]]); }
   return kingMerge(items); }); }
+function rbjTwister(){
+  const g=new T.Group(); g.name='rbj-devil';
+  const U={ uT:{value:0}, uH:{value:3.8}, uO:{value:1}, uLo:{value:dbLin('#c08a56')}, uHi:{value:dbLin('#f8e4bd')}, uLn:{value:dbLin('#8a5530')} };
+  const col=new T.Mesh(rbjTwisterGeo(), new T.ShaderMaterial({ uniforms:U, vertexShader:RBJ_TW_VS, fragmentShader:RBJ_TW_FS, transparent:true, depthWrite:false, side:T.DoubleSide,
+    extensions:{derivatives:true} }));
+  col.frustumCulled=false; col.renderOrder=2;
+  const puff=new T.Mesh(rbjPuffGeo(), tonyPropMat({})); puff.frustumCulled=false;
+  col.onBeforeRender=()=>{ const t=(typeof SIM!=='undefined' && SIM.manual) ? SIM.t : performance.now()/1000; U.uT.value=t%1000; puff.rotation.y=-t*3.1; };
+  g.add(col, puff); g.userData.tw=U; return g; }
 const _rbA=new T.Vector3(), _rbB=new T.Vector3(), _rbC=new T.Vector3(), _rbD=new T.Vector3(), _rbQ=new T.Quaternion(), _rbE2=new T.Euler(), _rbM=new T.Matrix4(), _rbF=new T.Vector3(), _rbG=new T.Vector3();
 function rbjSpringV(D, k, kv, tgt, w, z, dt){ const p=D[k], v=D[kv], n=Math.max(1,Math.ceil(dt*60-1e-6)), h=dt/n;
   for(let i=0;i<n;i++){ v.x+=(w*w*(tgt.x-p.x)-2*z*w*v.x)*h; v.y+=(w*w*(tgt.y-p.y)-2*z*w*v.y)*h; v.z+=(w*w*(tgt.z-p.z)-2*z*w*v.z)*h; p.addScaledVector(v,h); } }
 function rbjFaceCam(m){ if(typeof camera==='undefined' || !camera || !m.parent) return; m.parent.updateWorldMatrix(true,false); m.parent.getWorldQuaternion(_rbQ); m.quaternion.copy(_rbQ.invert()).multiply(camera.quaternion); }
 // his signature item's flight: a dust devil, spinning and leaning as it goes
-function rbjDustFly(m){ let a=0; m.onBeforeRender=()=>{ a+=0.4; m.rotation.set(0.18*Math.sin(a*0.37), a, 0.18*Math.cos(a*0.29)); }; }
+const _rbTw=new T.Vector3();
+function rbjDustFly(m){   // the item's own mesh stays as the shot (its hit and its halo); what is seen is the dust devil, standing on the road, leaning and kicking up dust as it goes
+  m.material.visible=false; const tw=rbjTwister(); tw.scale.setScalar(1.75); tw.position.y=-2.9; m.add(tw);
+  const col=tw.children[0], f=col.onBeforeRender; let n=0;
+  col.onBeforeRender=(...a)=>{ f(...a); const t=tw.userData.tw.uT.value; m.rotation.set(0.12*Math.sin(t*2.3), 0, 0.12*Math.cos(t*1.9));
+    if(typeof emit==='function' && (n++%3)===0){ m.updateWorldMatrix(true,false); const q=m.localToWorld(_rbTw.set(0,-2.6,0));
+      emit(q.x, q.y, q.z, {color:(n&1)?0xd9a066:0xc4875a, life:0.6, vx:(Math.random()-0.5)*7, vy:1.6, vz:(Math.random()-0.5)*7, s0:1.4, s1:3.4, grav:-1, op:0.45}); } }; }
 
 function rbjDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, skin=X.skin.clone().convertSRGBToLinear(), GL=X.cel.uRbGl, FK=ud.flow ? ud.flow.K : null, RR=z=>FK ? flowR(z,FK)[0] : flowTailR(z);
   const gear=()=>dbShader(RBJ_HAT_VS, RBJ_HAT_FS, { uInk:{value:dbLin(DB_INK)}, uFlap:{value:new T.Vector3()}, uGl:{value:0}, uRbGl:GL, uRbRun:{value:new T.Vector4()} }, { vertexColors:true, side:T.DoubleSide });
-  if(ud.glow) ud.glow.material.color.multiplyScalar(0.75);
+  if(ud.glow){ ud.glow.material.color.multiplyScalar(0.75);
+    // his brim is wider than the halo is deep: a flat sprite at his centre cut the brim along a straight line and lit the
+    // half behind it, which read as a seam in the felt. Drawn from further back, at the same size on screen, it lies behind
+    // the whole hat (every other racer's halo is untouched)
+    const gl=ud.glow, _p=new T.Vector3(), _c=new T.Vector3();
+    gl.onBeforeRender=(r, sc, cam)=>{ const m=gl.matrixWorld.elements, sx=Math.hypot(m[0],m[1],m[2]);
+      _p.set(m[12],m[13],m[14]); _c.setFromMatrixPosition(cam.matrixWorld); const d=_p.distanceTo(_c); if(!(d>1e-3)) return;
+      const k=(d+0.62*sx)/d; _p.sub(_c).multiplyScalar(k).add(_c);
+      for(let j=0;j<11;j++) if(j%4!==3) m[j]*=k;
+      m[12]=_p.x; m[13]=_p.y; m[14]=_p.z; }; }
   // the bun lies along his neck: it rides the spine there, not the face rig (see THE BUN); the yarn's ends with it
   let ties=null, waist=null;
   { const tuft=rig.getObjectByName('neo-tuft');
@@ -91264,7 +91325,7 @@ function rbjDress(g, K, X){
   const AU=Object.assign(kitArmUniforms(), { uHX:{value:new T.Vector3(1,0,0)}, uHY:{value:new T.Vector3(0,1,0)}, uHZ:{value:new T.Vector3(0,0,1)}, uHs:{value:1.35} });
   const arm=new T.Mesh(rbjArmGeo(skin), dbShader(RBJ_ARM_VS, RBJ_ARM_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true }));
   arm.name='rbj-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
-  const dev=new T.Mesh(rbjDevilGeo(), tonyPropMat({})); dev.material.side=T.DoubleSide; dev.name='rbj-devil'; dev.visible=false; dev.frustumCulled=false; rigB.add(dev);
+  const dev=rbjTwister(); dev.visible=false; rigB.add(dev);
   const hand=new T.Object3D(); rigB.add(hand); ud.motionProbes.push(['hat',hat,'pos'],['shades',sh,'pos'],['hand',hand,'pos']);
   S.rbj={ g, rig, rigB, turnU:X.cel.uRbTurn, hat, hm, sh, shm, ting, arm, AU, hand, dev, r2b:new T.Matrix4(), b2r:new T.Matrix4(),
     // his light: the uniform every piece of silver and turquoise reads, the hat's, the belt's and the ties' own, the lenses' sky
