@@ -762,7 +762,7 @@ await check('Bataar Khan\'s record, "Thousand Hooves" (gallop-step): the dawn, t
   try {
     // (the kargyraa and the whistle alone, the fiddle over the gallop, the first drop, the fiddle under the open sky, the final-lap cue into the second drop, the tail looping to the top)
     // (12/8: two of every three pulses fall between the clock's sixteenths, so a record in four would score higher; the drum's beats carry it)
-    for (const [bar, sec, tight] of [[2, 'dawn', 0.2], [9, 'ride', 0.3], [26, 'drop', 0.3], [37, 'sky', 0.2], [46, 'build2', 0.3], [50, 'drop2', 0.3], [61, 'tail', 0.2]]) {
+    for (const [bar, sec, tight] of [[2, 'dawn', 0.3], [9, 'ride', 0.35], [26, 'drop', 0.33], [37, 'sky', 0.3], [46, 'build2', 0.3], [50, 'drop2', 0.3], [61, 'tail', 0.3]]) {
       const a = json(await call('race_audio', { seconds: 6, style: 'khan', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis; got[sec] = an;
       assert.equal(a.style, '83.2 OVERTONE GALLOP', 'his own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
       assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
