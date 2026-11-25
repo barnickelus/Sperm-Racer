@@ -37871,7 +37871,7 @@ SONG_ENGINE.songs.hotGates=(function(){
   let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
   const TOTAL=acc, LOOP=0;
   function locate(n){ const pos=((n%TOTAL)+TOTAL)%TOTAL, pass=Math.floor(n/TOTAL), sec=FORM.find(s=>pos>=s.start && pos<s.start+s.bars); return {pos,pass,sec,b:pos-sec.start}; }
-  const ENERGY={far:1.2, march:0.98, build:1.0, drop:1.18, camp:1.05, build2:1.02, drop2:1.2, tail:1.06};
+  const ENERGY={far:1.4, march:1.0, build:1.04, drop:1.32, camp:1.25, build2:1.06, drop2:1.36, tail:1.12};
 
   function voices(ctx,bus,noise,live,lite){
     const C=bus.ch;
@@ -37926,7 +37926,8 @@ SONG_ENGINE.songs.hotGates=(function(){
       krL:SF('bandpass',1750,5,C.krot.L), krR:SF('bandpass',2350,5,C.krot.R),
       click:SF('highpass',1500,0.7,C.kick.in), crack:SF('bandpass',2000,0.9,C.snare.in), wires:SF('highpass',2700,0.7,C.snare.in),
       clap:SF('bandpass',1150,1.0,C.clap.in), hat:SF('highpass',7600,0.8,C.hats.in), crash:SF('highpass',4000,0.6,C.hats.in),
-      lyre:SF('lowpass',5600,0.6,C.lyre.in)};
+      lyre:SF('lowpass',5600,0.6,C.lyre.in), lyreW:SF('lowpass',5600,0.6,C.lyre.in)};
+    { const s=G(0.3); FX.lyreW.connect(s); s.connect(C.lyre.thrS); }                               // (the lyre alone, in the quiet sections: more of the hillside on it)
     // the vowels' first three formants (Hz, a man shouting: the jaw down, the first formant up), the tongue of an "l", and
     // the vocables: the consonant, the vowel, and where the vowel closes to
     const VOW={a:[790,1230,2600], e:[530,1800,2500], i:[310,2150,2900], o:[550,900,2450], u:[340,820,2300], l:[380,1250,2650]};
@@ -38008,12 +38009,12 @@ SONG_ENGINE.songs.hotGates=(function(){
       stp(t,p,sd,hz){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.4, v=p.v||1, near=p.near!=null ? p.near : 1;
         let fb=hz(7-24); while(fb<82) fb*=2; while(fb>=123) fb/=2;
         const src=G(1), tg=G(0), Pd=tg.gain; N(t,endT-t,src); src.connect(tg); tg.connect(FX.thud); Pd.setValueAtTime(0,t);
-        const bg=G(0), Pb=bg.gain, o=O('sine',fb,t,endT,bg); bg.connect(C.stamp.in); sends(bg,p,C.stamp); Pb.setValueAtTime(0,t);
+        let Pb=null, o=null; if(!lite){ const bg=G(0); Pb=bg.gain; o=O('sine',fb,t,endT,bg); bg.connect(C.stamp.in); sends(bg,p,C.stamp); Pb.setValueAtTime(0,t); }
         let PL=null, PR=null; if(near>0.3){ const gl=G(0), gr=G(0); src.connect(gl); src.connect(gr); gl.connect(FX.grL); gr.connect(FX.grR); PL=gl.gain; PR=gr.gain; PL.setValueAtTime(0,t); PR.setValueAtTime(0,t); }
         for(const [s,lv] of H){ const ts=at(s), a=v*(lv||1);
-          o.frequency.setValueAtTime(fb*1.5,ts); o.frequency.exponentialRampToValueAtTime(fb,ts+0.03); o.frequency.setTargetAtTime(fb*0.9,ts+0.03,0.1);
-          Pb.setTargetAtTime(0.7*a,ts,0.003); Pb.setTargetAtTime(0,ts+0.015,0.055);
-          for(const [off,x] of [[0,1],[0.011,0.7],[0.024,0.5]]){ Pd.setTargetAtTime(3*a*x,ts+off,0.001); Pd.setTargetAtTime(0,ts+off+0.004,0.022); }
+          if(o){ o.frequency.setValueAtTime(fb*1.5,ts); o.frequency.exponentialRampToValueAtTime(fb,ts+0.03); o.frequency.setTargetAtTime(fb*0.9,ts+0.03,0.1);
+            Pb.setTargetAtTime(0.7*a,ts,0.003); Pb.setTargetAtTime(0,ts+0.015,0.055); }
+          for(const [off,x] of [[0,1],[0.011,0.7],[0.024,0.5]]){ Pd.setTargetAtTime((lite ? 4.2 : 3)*a*x,ts+off,0.001); Pd.setTargetAtTime(0,ts+off+0.004,0.022); }
           if(PL){ const gv=0.8*a*near*near; PL.setTargetAtTime(gv,ts+0.004,0.002); PL.setTargetAtTime(gv*0.25,ts+0.012,0.02); PL.setTargetAtTime(0,ts+0.05,0.03);
             PR.setTargetAtTime(gv*0.9,ts+0.013,0.002); PR.setTargetAtTime(gv*0.3,ts+0.022,0.025); PR.setTargetAtTime(0,ts+0.07,0.035); } } },
       /* THE TYMPANON, a bar of it: [step, level, stroke]: 'D' the open head (its own note: the tonic, between 123 and
@@ -38038,10 +38039,10 @@ SONG_ENGINE.songs.hotGates=(function(){
       /* THE LYRE, a figure of it: [step, note, level]. A string to each note: the plectrum's moment (a bright set of
          harmonics, gone in a twentieth of a second) over the string ringing on (a round one), each ringing over the
          next; the shell's resonance is in the strip. Notes on the same step are strummed, low string first. */
-      lyr(t,p,sd,hz){ const ns=p.ns; if(!ns || !ns.length) return; const at=AT(t,ns[0][0],sd), v=p.v||1, out=G(1), up=p.up||0, st=p.strum!=null ? p.strum : 0.012, ring=p.ring||1; out.connect(FX.lyre); sends(out,p,C.lyre);
+      lyr(t,p,sd,hz){ const ns=p.ns; if(!ns || !ns.length) return; const at=AT(t,ns[0][0],sd), v=p.v||1, out=p.wet ? FX.lyreW : FX.lyre, up=p.up||0, st=p.strum!=null ? p.strum : 0.012, ring=p.ring||1;
         let prevS=null, k=0;
         for(const [s,n,lv] of ns){ k=s===prevS ? k+1 : 0; prevS=s;
-          const a=at(s)+k*st+(s===ns[0][0] && !k ? 0 : Math.random()*0.003), f=hz(n+up), tc=Math.min(0.3,0.17*Math.pow(330/f,0.4))*ring, D=tc*3, pk=0.32*v*(lv||1)*Math.pow(Math.min(3,Math.max(0.5,f/330)),-0.35), end=a+0.04+D+0.03;
+          const a=at(s)+k*st+(s===ns[0][0] && !k ? 0 : Math.random()*0.003), f=hz(n+up), tc=Math.min(0.3,0.17*Math.pow(330/f,0.4))*ring, D=tc*(lite ? 2.5 : 3), pk=0.32*v*(lv||1)*Math.pow(Math.min(3,Math.max(0.5,f/330)),-0.35), end=a+0.04+D+0.03;
           const g=G(0), o=O(lite ? W.lyrM : W.lyrR,f*1.009,a,end,g); o.frequency.exponentialRampToValueAtTime(f,a+0.025);
           g.gain.setValueAtTime(0,a); g.gain.linearRampToValueAtTime(pk*(lite?1.35:1),a+0.002); g.gain.exponentialRampToValueAtTime(pk*(lite?0.6:0.72),a+0.04); g.gain.exponentialRampToValueAtTime(pk*0.02,a+0.04+D); g.gain.linearRampToValueAtTime(0,a+0.04+D+0.015); g.connect(out);
           if(lite) continue;
@@ -38208,7 +38209,7 @@ SONG_ENGINE.songs.hotGates=(function(){
     // ---- the chorus, the lyre, the trumpet, the pipes
     const sing=(who,L,v,o)=>{ if(L && L.length) E(L[0][0],who,Object.assign({ns:L,v:v||1},o||{})); };
     // (an event to each onset: its strings are made as it is played, not a bar ahead)
-    const lyre=(L,v,o)=>{ for(let i=0,j;i<L.length;i=j){ j=i; while(j<L.length && L[j][0]===L[i][0]) j++; E(L[i][0],'lyr',Object.assign({ns:L.slice(i,j),v:v||1,spr:0.18},o||{})); } };
+    const lyre=(L,v,o)=>{ for(let i=0,j;i<L.length;i=j){ j=i; while(j<L.length && L[j][0]===L[i][0]) j++; E(L[i][0],'lyr',Object.assign({ns:L.slice(i,j),v:v||1},o||{})); } };
     const fifths=(s,n0,l,wide)=>{ const c=[[s,n0,l],[s,n0+7,l*0.9],[s,n0+12,l*0.9]]; if(wide) c.push([s,n0+19,l*0.8]); return c; };
     // the tune on the lyre: an octave over the chant, and the octave over that (a phone: the one octave)
     const tuneOn=(T,v,o)=>lyre(lite ? T.map(([s,nn])=>[s,nn+24,1]) : T.flatMap(([s,nn])=>[[s,nn+12,1],[s,nn+24,0.62]]),v,Object.assign({strum:0.003},o||{}));
@@ -38261,21 +38262,21 @@ SONG_ENGINE.songs.hotGates=(function(){
         shields([0,2,4,6,8,10,12,14].map((s,i)=>[s,s%8===0 ? 0.9 : 0.4+0.02*i,s%8===0 ? 0 : 't']),0.9); kick([0,8],0.9);
         snare([0,2,4,6,8,10,12,14].map((s,i)=>[s,s%4===0 ? 0.6 : 0.36+0.02*i,s%4===0 ? 'f' : 'r']),0.9);
         sub([[0,0,15.6,1]],0.6); horn([[0,16,0,{w:1}]],0.42,{c:220});
-        lyre([0,4,8,12].flatMap(s=>[[s,0,0.9],[s,7,0.8]]),0.8,{ring:0.6});
+        lyre([0,4,8,12].flatMap(s=>lite ? [[s,7,0.9]] : [[s,0,0.9],[s,7,0.8]]),0.8,{ring:0.6});
         sing('men',[[0,7,13,'a','p']],0.95,{throw:0.1}); if(two) sing('ldr',[[0,12,13,'e','p']],0.7);
         signal(1,false);
       } else if(b===1){
         shields([0,2,4,6,8,10,12,14].map((s,i)=>[s,s%4===0 ? 0.9 : 0.46+0.02*i,s%4===0 ? 0 : 't']),0.95); kick([0,8],0.9);
         snare(Array.from({length:16},(_,s)=>[s,s%4===0 ? 0.7 : 0.3+0.015*s,s%4===0 ? 'f' : 'r']),0.95);
         sub([[0,0,15.6,1]],0.6); horn([[0,16,0,{w:1}]],0.5,{c:280});
-        lyre([0,2,4,6,8,10,12,14].flatMap(s=>[[s,0,s%4 ? 0.7 : 0.95],[s,7,s%4 ? 0.6 : 0.85]]),0.8,{ring:0.5});
+        lyre([0,2,4,6,8,10,12,14].flatMap(s=>lite ? [[s,7,s%4 ? 0.7 : 0.95]] : [[s,0,s%4 ? 0.7 : 0.95],[s,7,s%4 ? 0.6 : 0.85]]),0.8,{ring:0.5});
         sing('men',[[0,8,13,'a','p']],1,{throw:0.1}); if(two) sing('ldr',[[0,13,13,'e','p']],0.7);
         signal(1,two);
       } else if(b===2){
         shields(Array.from({length:16},(_,s)=>[s,s%4===0 ? 0.95 : 0.4+0.015*s,s%4===0 ? 0 : 't']),1); kick([0,4,8,12],0.9); claps([[4,0.8],[12,0.9]],1);
         snare(Array.from({length:16},(_,s)=>[s,s%4===0 ? 0.8 : 0.36+0.02*s,s%4===0 ? 'f' : 'r']).concat([[12.5,0.6,'r'],[13.5,0.65,'r'],[14.5,0.7,'r'],[15.5,0.75,'r']]),1);
         horn([[0,16,0,{w:1}]],0.6,{c:340});
-        lyre([0,2,4,6,8,10,12,14].flatMap(s=>[[s,12,s%4 ? 0.7 : 0.95],[s,19,s%4 ? 0.6 : 0.85]]),0.85,{ring:0.5});
+        lyre([0,2,4,6,8,10,12,14].flatMap(s=>lite ? [[s,19,s%4 ? 0.7 : 0.95]] : [[s,12,s%4 ? 0.7 : 0.95],[s,19,s%4 ? 0.6 : 0.85]]),0.85,{ring:0.5});
         if(two){ E(0,'chop',{ns:[0,2,4,6].map(s=>[s,7,1,'la']).concat([8,9,10,11].map(s=>[s,8,1,'la']),[12,13,14,15].map(s=>[s,12,1,'la',0,1.08])),v:0.95,throw:0.5}); A(0,{a:'fb',v:0.5,tc:0.03}); signal(1.05,true); }
         else sing('men',[[0,12,14,'a','p']],1.05,{throw:0.1});
         if(two && !lite) sing('men',[[0,0,14,'o','p']],0.7);
@@ -38283,7 +38284,7 @@ SONG_ENGINE.songs.hotGates=(function(){
         stamps(1,1,[[0,1],[2,0.8],[4,1],[6,0.9],[8,1.25]]); kick([0,2,4,6],0.9);
         snare(Array.from({length:16},(_,i)=>[i*0.5,0.5+0.035*i,'r']).concat(two ? [[8,1,'f'],[10,1,'f'],[12,1.1,'d']] : [[8,1.1,'f']]),1);
         horn([[0,8,0,{w:1}]],0.75,{c:480}); pipes(8,1.1,{n:0,rel:0.03,orn:[[0,1,2],[4,1,2]]});
-        lyre([0,1,2,3,4,5,6,7].flatMap(s=>[[s,12,0.6+0.05*s],[s,19,0.5+0.05*s]]),0.9,{ring:0.4});
+        lyre([0,1,2,3,4,5,6,7].flatMap(s=>lite ? [[s,19,0.6+0.05*s]] : [[s,12,0.6+0.05*s],[s,19,0.5+0.05*s]]),0.9,{ring:0.4});
         if(two) E(0,'chop',{ns:[0,1,2,3].map(s=>[s,12,1,'la',0,1.08]).concat(Array.from({length:8},(_,i)=>[4+i*0.5,i>3 ? 19 : 15,0.5,'la',0,1.16])),v:0.95});
         else sing('men',[[0,13,7.5,'a','p']],1.05);
         A(8,{a:'hp',f:20,tc:0.003}); A(8,{a:'fb',v:0.52,tc:0.01});
@@ -38298,17 +38299,18 @@ SONG_ENGINE.songs.hotGates=(function(){
 
     if(id==='far'){
       const near=b/8;
-      if(b%4===0) pipes(64,0.6+0.1*b,{near:0.12+0.07*b,near1:0.4+0.07*b,atk:b ? 0.3 : 1.2,spr:0.3});
+      if(b%4===0) pipes(64,1.1+0.1*b,{near:0.16+0.07*b,near1:0.44+0.07*b,atk:b ? 0.3 : 1.2,spr:0.3});
       if(b>=1) stamps(0.14+0.11*b,near*0.9,null,{spr:0.5*(1-near)});
-      if(b===0) lyre(fifths(0,0,1).concat([[8,19,0.8],[10,20,0.7],[12,19,0.85]]),0.85);
-      else if(b===1) lyre([[0,17,0.85],[2,15,0.75],[4,13,0.9],[8,7,0.75],[8,12,0.9],[12,0,0.6]],0.85);
-      else if(b===2 || b===6) lyre(fifths(0,0,0.85),0.75);
-      else if(b===3) lyre(fifths(0,0,0.8).concat([[12,7,0.6],[14,12,0.65]]),0.75);
-      else if(b===4) lyre([[0,12,1],[0,19,0.8],[4,19,0.8],[6,20,0.8],[8,22,1],[12,20,0.8],[14,19,0.8]],0.95);
-      else if(b===5) lyre([[0,17,1],[4,15,0.8],[6,13,0.8],[8,0,0.8],[8,7,0.8],[8,12,1]],0.95);
-      else lyre(fifths(0,0,0.85).concat([[8,7,0.7],[8,12,0.7]]),0.8);
-      if(b===2 || b===3) sing('ldr',TUNE[b-2],1,{throw:b===3 ? 0.5 : 0.12,spr:0.3});
-      if(b===6 || b===7) sing('ldr',TUNE2[b-6],1.05,{throw:b===7 ? 0.5 : 0.12,spr:0.3});
+      const W_={wet:1};
+      if(b===0) lyre(fifths(0,0,1).concat([[8,19,0.8],[10,20,0.7],[12,19,0.85]]),1.25,W_);
+      else if(b===1) lyre([[0,17,0.85],[2,15,0.75],[4,13,0.9],[8,7,0.75],[8,12,0.9],[12,0,0.6]],1.25,W_);
+      else if(b===2 || b===6) lyre(fifths(0,0,0.85).concat([[8,0,0.6],[8,7,0.6]]),1,W_);
+      else if(b===3) lyre(fifths(0,0,0.8).concat([[12,7,0.6],[14,12,0.65]]),1,W_);
+      else if(b===4) lyre([[0,12,1],[0,19,0.8],[4,19,0.8],[6,20,0.8],[8,22,1],[12,20,0.8],[14,19,0.8]],1.2,W_);
+      else if(b===5) lyre([[0,17,1],[4,15,0.8],[6,13,0.8],[8,0,0.8],[8,7,0.8],[8,12,1]],1.2,W_);
+      else lyre(fifths(0,0,0.85).concat([[8,7,0.7],[8,12,0.7]]),1,W_);
+      if(b===2 || b===3) sing('ldr',TUNE[b-2],1.15,{throw:b===3 ? 0.5 : 0.12,spr:0.3});
+      if(b===6 || b===7) sing('ldr',TUNE2[b-6],1.2,{throw:b===7 ? 0.5 : 0.12,spr:0.3});
       if(b>=4) tymp(b%2 ? [[0,0.8,'D'],[6,0.5,'t'],[8,0.7,'D'],[12,0.5,'t'],[14,0.4,'k']] : [[0,0.8,'D'],[6,0.5,'t'],[8,0.7,'D'],[12,0.5,'t']],0.7+0.06*(b-4));
       if(b===7){ shields([[12,0.5,'t'],[14,0.6,'t']],0.9); E(8,'rev',{l:8,v:0.5}); }
     }
@@ -38345,7 +38347,7 @@ SONG_ENGINE.songs.hotGates=(function(){
       const k=b%4;
       if(b===0){ E(0,'boom',{v:0.9,d:1.8}); E(0,'crash',{v:0.5}); }
       if(k===0) pipes(64,b ? 0.7 : 0.55,{near:b ? 0.5 : 0.3,near1:b ? 0.8 : 0.5,atk:0.8,spr:0.3});
-      lyre(CAMP[k],b<4 ? 1 : 0.85,{spr:0.3});
+      lyre(CAMP[k],b<4 ? 1.05 : 0.9,{wet:1});
       krot(b<2 ? [[4,0.7,'l'],[12,0.8,'r']] : [[4,0.8,'l'],[10,0.5,'r'],[12,0.8,'r']].concat(R()<0.5 ? [[14,0.5,'l'],[15,0.6,'r']] : []),0.85);
       if(b===2 || b===3) sing('ldr',TUNE2[b-2],0.95,{throw:b===3 ? 0.45 : 0.1,spr:0.3});
       if(b>=4){ tymp(k%2 ? [[0,1,'D'],[3,0.5,'k'],[6,0.7,'t'],[8,0.9,'D'],[10,0.5,'k'],[12,0.7,'t'],[14,0.5,'k']] : [[0,1,'D'],[3,0.5,'k'],[6,0.7,'t'],[8,0.9,'D'],[12,0.7,'t']],1);
@@ -38400,7 +38402,7 @@ SONG_ENGINE.songs.hotGates=(function(){
       if(b===0){ E(0,'boom',{v:0.9,d:1.8}); E(0,'crash',{v:0.5}); pipes(64,0.85,{near:0.8,near1:0.2,spr:0.3}); }
       stamps(0.95*far,far,null,{spr:0.4*(1-far)});
       if(b<2){ ana(0.8-0.25*b,false); sing('men',TUNE2[b+2],1,{throw:b ? 0.3 : 0.05}); sub(b ? [[0,0,4,1],[4,1,4,1,'g'],[8,0,7,1,'g']] : [[0,0,15.6,1]],0.6); lyre(OST[b ? 3 : 2],0.75); }
-      else { lyre(b===2 ? CAMP[0] : CAMP[3],0.85,{spr:0.3}); tymp([[0,0.7,'D'],[6,0.45,'t'],[8,0.6,'D'],[12,0.45,'t']],0.75); if(b===3) E(8,'rev',{l:8,v:0.35}); }
+      else { lyre(b===2 ? CAMP[0] : CAMP[3],0.9,{wet:1}); tymp([[0,0.7,'D'],[6,0.45,'t'],[8,0.6,'D'],[12,0.45,'t']],0.75); if(b===3) E(8,'rev',{l:8,v:0.35}); }
     }
     A(-0.1,{a:'fb',v:FB,tc:0.03});
     A(-0.2,{a:'mix',m:M,tc:0.008});
@@ -38412,15 +38414,15 @@ SONG_ENGINE.songs.hotGates=(function(){
       shld:  {level:1.2,  pan:0, spread:0.55, echo:0.02, spring:0.14, chain:[['hp',300],['peak',1300,2,1],['lp',7000]]},
       tymp:  {level:1.2,  pan:-0.2,  echo:0.02, spring:0.14, chain:[['hp',90]]},
       krot:  {level:1.0,  pan:0, spread:0.45, echo:0.02, spring:0.1,  chain:[['hp',900]]},
-      kick:  {level:2.5,  pan:0,     echo:0,    spring:0,    chain:[['hp',30],['drive',1.5],['trim',0.8],['peak',58,2,1.1],['lp',6000]]},
+      kick:  {level:2.2,  pan:0,     echo:0,    spring:0,    chain:[['hp',30],['drive',1.5],['trim',0.8],['peak',58,2,1.1],['lp',6000]]},
       sub:   {level:0.68, pan:0,     echo:0,    spring:0,    chain:[['hp',34],['drive',2.4],['trim',0.33],['lp',900]]},
-      snare: {level:0.85, pan:0.06,  echo:0.02, spring:0.12, chain:[['hp',200],['peak',2100,2,1],['lp',9000]]},
+      snare: {level:0.85, pan:0.06,  echo:0.02, spring:0.12, chain:[['hp',200],['peak',2100,2,1],['lp',11000]]},
       clap:  {level:0.8,  pan:-0.1,  echo:0.02, spring:0.14, chain:[['hp',500]]},
       hats:  {level:1.0,  pan:0.2,   echo:0,    spring:0.02, chain:[['hp',5000]]},
       bass:  {level:1.0,  pan:0,     echo:0,    spring:0,    chain:[['hp',75],['drive',2.6],['trim',0.8],['peak',850,3,1],['lp',4500]]},
       lyre:  {level:2.0,  pan:-0.14, echo:0.05, spring:0.2,  chain:[['hp',150],['peak',340,1.5,2.2],['peak',2300,4,1]]},
       salp:  {level:1.1,  pan:0.16,  echo:0.05, spring:0.2,  chain:[['hp',450],['peak',1700,5,2],['peak',3100,2,1.5],['lp',6500]]},
-      aulos: {level:0.9,  pan:0.1,   echo:0.02, spring:0.14, chain:[['hp',240],['peak',1300,4,1.4],['lp',5500]]},
+      aulos: {level:0.62, pan:0.1,   echo:0.02, spring:0.14, chain:[['hp',240],['peak',1300,4,1.4],['lp',3600]]},
       ldr:   {level:1.9,  pan:-0.06, echo:0.06, spring:0.16, chain:[['hp',140],['peak',2600,4,1.2],['lp',8000]]},
       men:   {level:1.9,  pan:0, spread:0.34, echo:0.04, spring:0.16, chain:[['hp',150],['peak',2500,4,1.2],['lp',8000]]},
       shout: {level:1.5,  pan:0, spread:0.5,  echo:0.06, spring:0.14, chain:[['hp',200],['peak',2300,3,1],['lp',8500]]},
