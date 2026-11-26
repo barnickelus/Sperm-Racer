@@ -91754,7 +91754,7 @@ void main(){ if(vA<0.01) discard; vec3 n=normalize(vNv); if(!gl_FrontFacing) n=-
    cuff, and his weathered hands: a fist, or the four fingers out flat together (aF 1: uFg.x) for the salute and the
    squeeze-box, the thumb (aF 4: uFg.z). The hand is placed by its own frame at the wrist (uHX; uHY the way the fingers
    point; uHZ the back of the hand), so it can aim whatever the hose is doing. Out only for a gag. */
-function sjArmGeo(skin){ return tonyKeep('sjArm', ()=>{
+function sjArmGeo(skin, sx){ return tonyKeep(sx<0 ? 'sjArmL' : 'sjArm', ()=>{   // (sx -1: his left hand)
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], aF=[], aFb=[], navy=dbLin('#26345f'), gold=dbLin('#f2c64a');
   const add=(geo,m,c,t,f,fb)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++){ aT.push(typeof t==='function'?t(i):t); aF.push(f||0); aFb.push(...(fb||[0,0,0])); } };
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
@@ -91763,11 +91763,16 @@ function sjArmGeo(skin){ return tonyKeep('sjArm', ()=>{
   // the cuff: navy, turned back, two rings of gold braid
   add(new T.CylinderGeometry(1.3,1.22,0.9,16,1,true), sjM4(0,0.2,0), navy, 1);
   for(const y of [-0.05,0.4]){ const rg=new T.TorusGeometry(1.3,0.11,5,18); rg.rotateX(Math.PI/2); add(rg, sjM4(0,y,0), gold, 1); }
-  // the hand: a palm (a fist when the fingers are in), the knuckles, four fingers together and a thumb
-  add(ball, new T.Matrix4().compose(V(0,1.85,0), new T.Quaternion(), V(1.15,1.2,0.82)), skin, 1);
-  for(const x of [-0.72,-0.24,0.24,0.72]) add(ball, new T.Matrix4().compose(V(x,2.75,0.25), new T.Quaternion(), V(0.38,0.4,0.44)), skin, 1);
-  for(const [x,l] of [[0.66,1.8],[0.22,2.1],[-0.22,2.0],[-0.66,1.65]]) E(skin, [x,2.6,0.0], [x*1.05,2.6+l,0.0], 0.33, 1);
-  E(skin, [1.0,1.6,0.3], [2.1,2.55,0.42], 0.34, 4);
+  // the hand: the shared cartoon hand (toonHand), its back to +z (turned round: the gags lay the back of the hand on uHZ). The
+  // four fingers out flat together (aF 1) and the thumb (aF 4), each grown from its own knuckle; and the fist they make when
+  // they are in, the curled fingers (aF 5) and the thumb across (aF 7), which his arm shader shrinks as their fingers come out
+  { const turn=new T.Matrix4().makeRotationY(Math.PI);
+    const put=(h, flags, palm)=>{ let f=0, fb=null; for(const [g,part] of h.parts){ g.applyMatrix4(turn);
+      if(part==='palm'){ if(palm) add(g, null, skin, 1); continue; }
+      if(part!=='ink'){ f=flags[part]; fb=h.base[part].clone().applyMatrix4(turn).toArray(); }
+      add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1, f, fb); } };
+    put(toonHand(Object.assign({ sx:sx||1 }, SJ_HAND.flat)), { index:1, middle:1, ring:1, pinky:1, thumb:4 }, true);
+    put(toonHand(Object.assign({ sx:sx||1 }, SJ_HAND.fist)), { index:5, middle:5, ring:5, pinky:5, thumb:7 }, false); }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aF', new T.Float32BufferAttribute(aF,1)); g.setAttribute('aFb', new T.Float32BufferAttribute(aFb,3));
   g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const SJ_ARM_VS=`
@@ -91777,15 +91782,17 @@ varying vec3 vNv, vV, vC; varying vec2 vU;
 void main(){
   vec3 p, n;
   if(aT>0.99){ vec3 q=position, m=normal;
-    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : uFg.z; s=clamp(s,0.0,1.2);
-      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0)
+    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : aF<4.5 ? uFg.z : 1.0-1.6*(aF<5.5 ? uFg.x : aF<6.5 ? uFg.y : uFg.z); s=clamp(s,0.0,1.2);
+      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0); the fist's own curled fingers (aF 5..7) the other way
     p=uA2+(uHX*q.x+uHY*q.y+uHZ*q.z)*uAr*uHs; n=uHX*m.x+uHY*m.y+uHZ*m.z; }
   else { float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
     p=c+(n1*position.x+tg*position.y+n2*position.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
   vC=color; vU=vec2(0.0); vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-const SJ_FINGER=4.4;   // the fingertips along the hand's y, in hose radii
+// the hand's two shapes (toonHand): the four fingers out flat together, the thumb out; and the fist, the thumb across
+const SJ_HAND={ flat:{ pose:'flat', thumb:'out' }, fist:{ pose:'fist' } };
+const SJ_FINGER=(()=>{ const h=toonHand(Object.assign({ creases:false }, SJ_HAND.flat)); return h.tip.middle.y+0.35; })();   // the fingertips along the hand's y, in hose radii
 const SJ_A0=[TONY_ARM.a0, [-TONY_ARM.a0[0], TONY_ARM.a0[1], TONY_ARM.a0[2]]];   // the shoulders: his right, his left
 const _sjA=new T.Vector3(), _sjB=new T.Vector3(), _sjC=new T.Vector3(), _sjD=new T.Vector3(), _sjQ=new T.Quaternion(), _sjE=new T.Euler(), _sjUp=new T.Vector3(0,1,0), _sjM=new T.Matrix4(), _sjT=new T.Vector3(), _sjQ2=new T.Quaternion();
 function sjSpringV(D, k, kv, tgt, w, z, dt){ const p=D[k], v=D[kv], n=Math.max(1,Math.ceil(dt*60-1e-6)), h=dt/n;
@@ -91797,7 +91804,7 @@ function sjArmPose(U, e, a0, hand, elbow){ const e1=Math.min(1,e);
 function sjArm(side, skin, rigB){
   const AU=Object.assign(kitArmUniforms(), { uHX:{value:new T.Vector3(1,0,0)}, uHY:{value:new T.Vector3(0,1,0)}, uHZ:{value:new T.Vector3(0,0,1)}, uHs:{value:1.3}, uFg:{value:new T.Vector4()} });
   AU.uA0.value.set(...SJ_A0[side]); AU.uA1.value.set(...SJ_A0[side]); AU.uA2.value.set(...SJ_A0[side]);
-  const m=new T.Mesh(sjArmGeo(skin), dbShader(SJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
+  const m=new T.Mesh(sjArmGeo(skin, side ? -1 : 1), dbShader(SJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
   m.name=side?'sj-arm-left':'sj-arm-right'; m.frustumCulled=false; m.visible=false; rigB.add(m);
   const hand=new T.Object3D(); rigB.add(hand);
   return { m, AU, hand, side, e:0, eV:0, on:false, hp:new T.Vector3(), hpV:new T.Vector3(), ep:new T.Vector3(), epV:new T.Vector3(), ay:new T.Vector3(0,1,0), ayV:new T.Vector3(), ax:new T.Vector3(1,0,0), axV:new T.Vector3(), fg:new T.Vector4(), fgV:new T.Vector4() };
