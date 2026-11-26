@@ -101838,7 +101838,61 @@ function camPushOut(dt){
   _cpD.copy(raw).add(_cpC);
   if(!camClearOf(_cpD)) _camPush.copy(_cpC); else _camPush.copy(_cpK);
 }
-const PCAM={back:-23, backBoost:-22, backTube:-18, backMega:-34, up:12, upBoost:11.5, upTube:10, upMega:15, ahead:16, aim:1.2, fov:2};   // the close view on a portrait phone (see updateCameraCore)
+/* THE PORTRAIT PHONE'S VIEW (the close view on a phone held upright; see updateCameraCore). An upright phone sees only
+   35 degrees across, so a racer who is a fair size on a tablet stood across two thirds of the glass, and from a lens
+   barely higher than a tall hat or a helmet's crest the whole road ahead was behind him. So this view ADAPTS (camSee):
+     · it stands further back and well up, and how far up is worked out from the racer: high enough that the road `see`
+       units ahead of him shows over the top of his own head, whatever he wears (a low cap sits lower than a crest);
+     · it reads the ROAD: where the course drops away ahead the lens rises to keep that stretch in sight, and where it
+       climbs it comes down again;
+     · it looks INTO a bend: the aim leans toward where the road goes, so the racer slides to the outside of the frame
+       and the inside of the corner opens up;
+     · it keeps closer behind him through a turn (a quicker follow, a smaller drift swing), so he is not turned broadside
+       across a narrow screen.
+   In a tunnel the old low view is kept (there is a roof); a maze has no road line to read and keeps fixed numbers. */
+const PCAM={back:-34, backBoost:-33, backTube:-18, backMega:-46, up:19, upBoost:18.5, upTube:10, upMega:28, ahead:28, aim:2, fov:6, fovTube:2,
+  see:36, upMin:16, upMax:27, upMaxMega:38, drop:0.2, follow:5.5, swing:0.45, lean:0.3, leanMax:4, far:1.18, frame:0.11};
+// how tall the racer stands in their own frame (hat, crest and all), measured once a model from its meshes' own bounds
+// (lights, glows and shadows are left out): what the portrait view must see over
+const _ctB=new T.Box3(), _ctT=new T.Box3(), _ctM=new T.Matrix4(), _ctI=new T.Matrix4(), _ctS=new T.Vector3();
+function camTopOf(me){
+  const o=me.obj; if(!o) return 9; const ud=o.userData; if(ud._camTop!=null) return ud._camTop;
+  let top=9;
+  try{ o.updateMatrixWorld(true); _ctI.copy(o.matrixWorld).invert(); _ctB.makeEmpty();
+    o.traverse(c=>{ if(!c.isMesh || !c.geometry || !c.geometry.attributes || !c.geometry.attributes.position) return;
+      for(let q=c;q && q!==o.parent;q=q.parent) if(!q.visible) return;
+      const mt=Array.isArray(c.material) ? c.material[0] : c.material; if(mt && (mt.blending===T.AdditiveBlending || (mt.transparent && mt.depthWrite===false))) return;
+      if(!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+      _ctT.copy(c.geometry.boundingBox).applyMatrix4(_ctM.multiplyMatrices(_ctI,c.matrixWorld)); _ctT.getSize(_ctS);
+      if(_ctS.x>40 || _ctS.y>40 || !isFinite(_ctS.y)) return; _ctB.union(_ctT); });
+    if(!_ctB.isEmpty() && isFinite(_ctB.max.y)) top=_ctB.max.y;
+  }catch(_){}
+  return ud._camTop=ldClamp(top, 7, 13.5);
+}
+// the road `dist` ahead of the racer along the course's own line: how much higher (or lower) it is than the road under
+// them, and how far it has bent to the side of the way the road runs where they are (the bend itself: a racer facing the
+// wrong way after a spin does not count as one)
+const _csQ={dy:0, lat:0};
+function camRoadAhead(me, dist){
+  const N=SAMP.length; let i=((Math.round(me.idx||0)%N)+N)%N, acc=0, tx=0, tz=0; const p0=SAMP[i].p; let p=p0;
+  for(let k=0;k<120 && acc<dist;k++){ let j=i+1; if(j>=N){ if(!trackLoop) break; j=0; } const q=SAMP[j].p; acc+=Math.hypot(q.x-p.x,q.z-p.z);
+    if(!k){ tx=q.x-p.x; tz=q.z-p.z; const l=Math.hypot(tx,tz)||1; tx/=l; tz/=l; } p=q; i=j; }
+  _csQ.dy=p.y-p0.y; _csQ.lat=(p.x-p0.x)*tz-(p.z-p0.z)*tx; return _csQ;
+}
+// the portrait view's numbers for this frame: how far up the lens goes, how far ahead and how far to the side it aims
+const _csO={up:0, ahead:0, lat:0};
+function camSee(me, head, back, mega, hold, dt){
+  const P=PCAM, d=-back, sc=Math.max(1,me.obj && me.obj.scale.y||1), t=camTopOf(me)*sc, Q=camRoadAhead(me, P.see);
+  // the line from the lens over the top of his head must come down on the road no further than `see` ahead of him
+  const dy=me.air ? 0 : ldClamp(Q.dy,-14,14), need=ldClamp(t+(t-dy)*d/P.see, P.upMin, mega ? P.upMaxMega : P.upMax);
+  if(CAMFX.pcUp==null || me._camSnap){ CAMFX.pcUp=need; CAMFX.pcLat=0; }
+  CAMFX.pcUp+=(need-CAMFX.pcUp)*Math.min(1,(need>CAMFX.pcUp ? 3 : 1.6)*dt);                    // up briskly, down gently
+  const latT=state==='race' && !me.finished ? ldClamp(Q.lat*P.lean, -P.leanMax, P.leanMax) : 0;
+  CAMFX.pcLat+=(latT-CAMFX.pcLat)*Math.min(1,2.2*dt);
+  // the aim: he sits `drop` below the middle of the glass, so the road ahead has the upper half of it
+  const up=CAMFX.pcUp+6*hold, dd=d+6*hold, pitch=Math.max(0.1, Math.atan2(up-t*0.45, dd)-P.drop);
+  _csO.up=CAMFX.pcUp; _csO.ahead=ldClamp((up-P.aim)/Math.tan(pitch)-dd, 14, 60); _csO.lat=CAMFX.pcLat; return _csO;
+}
 function updateCamera(dt){
   // a push left from last frame is only ours to strip if nothing else has moved the lens
   const pushed=_camPushOn && camera.position.distanceToSquared(_camPushed)<1e-6;
@@ -101879,7 +101933,18 @@ function updateCameraCore(dt){
   const fp=camMode==='fp' && state==='race' && !me.finished && !me.spectator;
   if(me.obj) me.obj.visible=!fp && !me.spectator;   // first person: you are the eyes, not the body (a spectator's kart is never drawn)
   if(!fp) _fpYaw=null;
-  const fwd=new T.Vector3(Math.sin(me.head),0,Math.cos(me.head));
+  // A SPIN-OUT turns the racer two and a half times a second. The chase lens stood behind wherever they faced, so it went
+  // round with them, and easing after a spot that circles them brought it in over their head: the racer filled the glass
+  // side-on (worst on a phone held upright). The lens keeps the heading it had until the spin is over
+  // (and when it ends they face some new way: the lens comes round to it at a rate, as it does after any sudden turn about, off
+  // a wall or out of a knock, so it swings round the racer at its distance with them in the frame. Six radians a second is
+  // quicker than any steering, so driving is as it was)
+  let camHead=me.head;
+  if(state!=='race' || me.finished || me._camSnap || CAMFX.headHold==null) CAMFX.headHold=me.head;
+  else { if(!(me.spinT>0)){ let dh=(me.head-CAMFX.headHold)%6.283185; if(dh>Math.PI) dh-=6.283185; else if(dh<-Math.PI) dh+=6.283185;
+      CAMFX.headHold+=ldClamp(dh,-6*dt,6*dt); }
+    camHead=CAMFX.headHold; }
+  const fwd=new T.Vector3(Math.sin(camHead),0,Math.cos(camHead));
   // Grid intro: HOLD ON THE FACE, then pull back to the driving view.
   // The old version orbited on a WORLD-axis circle of radius 34 — because it ignored the
   // racer's heading it spent most of the countdown behind the head, and at that distance
@@ -102017,7 +102082,9 @@ function updateCameraCore(dt){
   // ...on a phone held upright (the close view is a portrait phone's default) the narrow frame made that racer fill two thirds
   // of its width from a lens only 8 up: further back, higher and aimed further down the road, the racer stands a little
   // smaller and lower and the road ahead opens up (PCAM; a landscape screen keeps the close view as it was)
-  const pc=close && camera.aspect<0.8 ? PCAM : null;
+  // (the plain chase on a phone held upright adapts the same way, from a little further off: its lens was only 13 up)
+  const pcFar=!close && camera.aspect<0.8 && innerWidth<=520;
+  const pc=(close || pcFar) && camera.aspect<0.8 ? PCAM : null;
   // tube mode: inside a tunnel the camera closes in tight and low — claustrophobic,
   // and it rolls with the berm bank so wall-riding reads through the lens too
   const tube=state==='race' && TRACKS[selTrack].berm && tunnelAt(me.prog);
@@ -102029,35 +102096,48 @@ function updateCameraCore(dt){
   // the tail tip would be at the glass
   // the camera work (CAMFX): the drift swing turns `back` round the kart; the landing dip and the lean come after the aim
   CAMFX.t+=dt;
-  { let dh=CAMFX.prevHead==null?0:me.head-CAMFX.prevHead; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; CAMFX.prevHead=me.head;
+  { let dh=CAMFX.prevHead==null?0:camHead-CAMFX.prevHead; while(dh>Math.PI) dh-=6.2832; while(dh<-Math.PI) dh+=6.2832; CAMFX.prevHead=camHead;
     const rate=dt>0?ldClamp(dh/dt,-3,3):0; CAMFX.rate+=(rate-CAMFX.rate)*Math.min(1,5*dt);
-    const swingT=state==='race' && !me.finished ? ldClamp(-(me.slip||0)*0.75, -0.42, 0.42) : 0;
+    const swingT=state==='race' && !me.finished ? ldClamp(-(me.slip||0)*0.75, -0.42, 0.42)*(pc ? pc.swing : 1) : 0;
     CAMFX.swing+=(swingT-CAMFX.swing)*Math.min(1,3.2*dt);
     if(me.air) CAMFX.wasAir=true; else if(CAMFX.wasAir){ CAMFX.wasAir=false; CAMFX.landV-=Math.min(14, 5+Math.abs(me.vy||0)*0.08); }
     CAMFX.landV=(CAMFX.landV-CAMFX.land*90*dt)*Math.exp(-9*dt); CAMFX.land+=CAMFX.landV*dt; }
-  const back=fwd.clone().multiplyScalar((pc ? (mega?pc.backMega:(tube?pc.backTube:(boost?pc.backBoost:pc.back))) : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
+  const pcBack=pc ? (mega?pc.backMega:(tube?(pcFar?-19:pc.backTube):(boost?pc.backBoost:pc.back)))*(pcFar && !tube ? pc.far : 1) : 0;
+  const see=pc && !tube && !MAZE ? camSee(me, camHead, pcBack, mega, hold, dt) : null;   // the portrait view adapts to the racer and the road (PCAM)
+  if(!see) CAMFX.pcUp=null;
+  const back=fwd.clone().multiplyScalar((pc ? pcBack : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
   if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
-  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(pc ? (mega?pc.upMega:(tube?pc.upTube:(boost?pc.upBoost:pc.up))) : close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
+  const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(see ? see.up : pc ? (mega?pc.upMega:(tube?pc.upTube:(boost?pc.upBoost:pc.up))) : close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
   // (the menu, or thirty units of road away) would sweep it through the scenery
   { const dx=me.x-(CAMFX.px??me.x), dy=me.y-CAMFX.py, dz=me.z-CAMFX.pz; CAMFX.px=me.x; CAMFX.py=me.y; CAMFX.pz=me.z;
     if(!me._camSnap && dx*dx+dy*dy+dz*dz<1600) camera.position.x+=dx*0.85, camera.position.y+=dy*0.85, camera.position.z+=dz*0.85; }   // ride along (not across a respawn)
   if(me._camSnap){ camera.position.copy(want); me._camSnap=false; }
-  else camera.position.lerp(want, Math.min(1,4*dt));
+  else camera.position.lerp(want, Math.min(1,(see ? pc.follow : 4)*dt));
+  // ...and it never cuts the corner across the racer: when they turn about faster than the lens can go round (off a wall,
+  // out of a respawn), easing straight to the new spot passes close over them. It is held out at most of its distance
+  if(!tube && state==='race' && raceTime>2.5 && !me.finished){ const dx=camera.position.x-me.x, dz=camera.position.z-me.z, r=Math.hypot(dx,dz), rMin=0.62*Math.hypot(back.x,back.z);
+    if(r<rMin){ const k=r>0.01 ? rMin/r : 0; if(k){ camera.position.x=me.x+dx*k; camera.position.z=me.z+dz*k; } else { camera.position.x=me.x+back.x; camera.position.z=me.z+back.z; } } }
   if(camShake>0){
     camera.position.x += camTremor(0)*camShake*1.25;
     camera.position.y += camTremor(1)*camShake*1.25;
     camera.position.z += camTremor(2)*camShake*1.25;
     camShake=Math.max(0,camShake-dt*5);
   }
-  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(pc?pc.ahead:close?12:18)).add(new T.Vector3(0,pc?pc.aim:close?0.6:4,0));
+  const look=new T.Vector3(me.x,me.y,me.z).add(fwd.clone().multiplyScalar(see?see.ahead:pc?(tube?16:pc.ahead):close?12:18)).add(new T.Vector3(0,pc?(tube?1.2:pc.aim):close?0.6:4,0));
+  if(see && see.lat){ look.x+=Math.cos(camHead)*see.lat; look.z-=Math.sin(camHead)*see.lat; }   // into the bend
+  // ...but never so far that they leave the frame: a narrow screen has only 17 degrees either side of the middle, and a
+  // drift's swing, a bend and a sudden stop can add up. The aim is turned back until they are within `frame` of it
+  if(see){ const cx=camera.position.x, cz=camera.position.z, lx=look.x-cx, lz=look.z-cz; let dl=Math.atan2(lx,lz)-Math.atan2(me.x-cx,me.z-cz);
+    if(dl>Math.PI) dl-=6.283185; else if(dl<-Math.PI) dl+=6.283185;
+    if(Math.abs(dl)>pc.frame){ const rot=(dl>0 ? pc.frame : -pc.frame)-dl, c=Math.cos(rot), sn=Math.sin(rot); look.x=cx+lx*c+lz*sn; look.z=cz+lz*c-lx*sn; } }
   camAim(look.x,look.y,look.z);
   if(tube && me._bank) camera.rotateZ(_camRoll=-me._bank*0.28);   // lens rolls with the berm bank
   else { const rollT=state==='race' && !me.finished ? ldClamp(-CAMFX.rate*0.035, -0.055, 0.055) : 0;   // lean into the turn
     CAMFX.roll+=(rollT-CAMFX.roll)*Math.min(1,4*dt); if(Math.abs(CAMFX.roll)>1e-4) camera.rotateZ(_camRoll=CAMFX.roll); }
   if(finishPunchT>0) finishPunchT=Math.max(0,finishPunchT-dt);
   const spN=ldClamp(Math.abs(me.spd||0)/142, 0, 1), spW=state==='race'?(1-spN)*(1-spN):0;   // a crawl narrows the lens a little; flat out is the old 64
-  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW))+(pc?pc.fov:0) : (tube?70:(boost?74:64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
+  const fovWant = finishPunchT>0 ? 98 : close ? (tube?66:(boost?64:54-4*spW))+(pc?(tube?pc.fovTube:pc.fov):0) : (tube?70:(boost?(pcFar?70:74):64-6*spW));   // finish punch > tube squeeze > boost (close: a longer lens)
   camera.fov += (fovWant-camera.fov)*Math.min(1,(finishPunchT>0?9:5)*dt);   // snaps out fast, settles slower
   camera.updateProjectionMatrix();
 }
