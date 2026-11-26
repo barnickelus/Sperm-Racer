@@ -90479,15 +90479,16 @@ function spjArmGeo(skin){ return tonyKeep('spjArm2', ()=>{
   add(new T.CylinderGeometry(1.32,1.32,1.0,16,1,true), spjM4(0,0.25,0), lea, 1);
   for(const y of [-0.25,0.75]){ const rg=new T.TorusGeometry(1.32,0.12,5,18); rg.rotateX(Math.PI/2); add(rg, spjM4(0,y,0), lea, 1); }
   for(let i=0;i<8;i++){ const a=i/8*Math.PI*2; add(new T.SphereGeometry(0.2,8,6), spjM4(Math.sin(a)*1.36,0.25,Math.cos(a)*1.36), silver, 1); }
-  // the hand: a fist, the knuckles, and the fingers that come out of it
-  add(ball, new T.Matrix4().compose(V(0,1.95,0), new T.Quaternion(), V(1.18,1.2,1.0)), skin, 1);
-  for(const x of [-0.78,-0.27,0.27,0.78]) add(ball, new T.Matrix4().compose(V(x,2.85,0.32), new T.Quaternion(), V(0.4,0.42,0.48)), skin, 1);
-  E(skin, [0.62,2.7,0.05], [1.5,4.7,0.0], 0.37, 1);                // the fingers, fanned: index,
-  E(skin, [0.2,2.8,0.05], [0.52,5.2,0.0], 0.38, 3);                 // middle,
-  E(skin, [-0.24,2.75,0.05], [-0.55,5.0,0.0], 0.37, 1);             // ring
-  E(skin, [-0.66,2.6,0.05], [-1.45,4.45,0.0], 0.34, 3);             // and little
-  E(skin, [1.0,1.75,0.4], [2.45,2.05,0.5], 0.36, 4);                // the thumb, out wide
-  { const pk=new T.ConeGeometry(0.62,0.9,3); pk.rotateZ(Math.PI); pk.scale(1,1,0.18); add(pk, new T.Matrix4().compose(V(0.95,2.55,0.95), new T.Quaternion().setFromEuler(new T.Euler(0.3,0,-0.5)), V(1,1,1)), pick, 1, 2, [0.6,2.2,0.6]); }   // the plectrum, pinched between thumb and finger
+  // the hand: the shared cartoon hand (toonHand). The fingers fanned out (index and ring aF 1, middle and little aF 3, the thumb
+  // aF 4, each grown from its own knuckle), and the fist they make when they are in: the curled fingers and the thumb across
+  // (aF 5, 6, 7: each shrinks into its knuckle as its pair comes out)
+  { const put=(h, flags, palm)=>{ let f=0, fb=null; for(const [g,part] of h.parts){
+      if(part==='palm'){ if(palm) add(g, null, skin, 1); continue; }
+      if(part!=='ink'){ f=flags[part]; fb=h.base[part].toArray(); }
+      add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1, f, fb); } };
+    put(toonHand(SPJ_HAND.fan), { index:1, ring:1, middle:3, pinky:3, thumb:4 }, true);
+    put(toonHand(SPJ_HAND.fist), { index:5, ring:5, middle:6, pinky:6, thumb:7 }, false); }
+  { const pk=new T.ConeGeometry(0.62,0.9,3); pk.rotateZ(Math.PI); pk.scale(1,1,0.18); add(pk, new T.Matrix4().compose(V(1.25,2.35,1.55), new T.Quaternion().setFromEuler(new T.Euler(0.3,0,-0.5)), V(1,1,1)), pick, 1, 2, [0.9,2.0,1.2]); }   // the plectrum, pinched between thumb and finger (out in front of the curled forefinger)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aF', new T.Float32BufferAttribute(aF,1)); g.setAttribute('aFb', new T.Float32BufferAttribute(aFb,3));
   g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const SPJ_ARM_VS=`
@@ -90497,15 +90498,18 @@ varying vec3 vNv, vV, vC; varying vec2 vU;
 void main(){
   vec3 p, n;
   if(aT>0.99){ vec3 q=position, m=normal;
-    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : uFg.z; s=clamp(s,0.0,1.2);
-      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0)
+    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : aF<4.5 ? uFg.z : 1.0-1.6*(aF<5.5 ? uFg.x : aF<6.5 ? uFg.y : uFg.z); s=clamp(s,0.0,1.2);
+      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0); the fist's own curled fingers (aF 5..7) the other way
     p=uA2+(uHX*q.x+uHY*q.y+uHZ*q.z)*uAr*uHs; n=uHX*m.x+uHY*m.y+uHZ*m.z; }
   else { float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
     p=c+(n1*position.x+tg*position.y+n2*position.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
   vC=color; vU=vec2(0.0); vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-const SPJ_FINGER=5.0;   // the fingertips along the hand's y, in hose radii
+// the hand's two shapes (toonHand): fanned out, and the fist (the thumb across, the plectrum pinched against the forefinger).
+// The thumb out is laid nearly flat to the side, so the snook can put its tip in his nose
+const SPJ_HAND={ fan:{ pose:'spread', thumbPath:{ d1:[0.86,0.42,0.2], d2:[0.97,0.2,0.1] } }, fist:{ pose:'fist' } };
+const SPJ_FINGER=(()=>{ const h=toonHand(Object.assign({ creases:false }, SPJ_HAND.fan)); return h.tip.middle.y+0.4; })();   // the fingertips along the hand's y, in hose radii
 const SPJ_A0=[TONY_ARM.a0, [-TONY_ARM.a0[0], TONY_ARM.a0[1], TONY_ARM.a0[2]]];   // the shoulders: his right, his left
 const _spA=new T.Vector3(), _spB=new T.Vector3(), _spC=new T.Vector3(), _spD=new T.Vector3(), _spQ=new T.Quaternion(), _spE=new T.Euler(), _spUp=new T.Vector3(0,1,0), _spM=new T.Matrix4(), _spM2=new T.Matrix4();
 function spjArm(D, side, skin, rigB){
@@ -90558,7 +90562,7 @@ function spjSpr(a, v, i, tgt, w, zt, dt){ const n=Math.max(1,Math.ceil(dt*60-1e-
 // the record: which part of Two Chords and a Grudge is playing (for the player, with his own record on), else null
 function spjSection(R){ if(!R || !R.you || typeof producedStations==='undefined' || typeof musicOn==='undefined' || !musicOn) return null;
   const h=producedStations.grudge; return h && h.running && typeof actx!=='undefined' && h.ctx===actx ? h.sectionId : null; }
-const SPJ_MY=DB_MOUTH.y+0.22, SPJ_NOSE=-0.7, SPJ_THUMB=[2.67,2.09,0.52];   // (the snook: where his nose would be on the face, the thumb's tip in the hand's frame)
+const SPJ_MY=DB_MOUTH.y+0.22, SPJ_NOSE=-0.7, SPJ_THUMB=(()=>{ const h=toonHand(Object.assign({ creases:false }, SPJ_HAND.fan)), d=new T.Vector3(...SPJ_HAND.fan.thumbPath.d2).normalize(); return h.tip.thumb.clone().addScaledVector(d, 0.36).toArray(); })();   // (the snook: where his nose would be on the face, the thumb's tip in the hand's frame)
 const _spSn=0;   // (his mouth sits a little higher on the face than Dash's, so a frown's corners stay in sight)
 function spjTick(o, R, now, dt, S, C, q){
   const D=S.spj; if(!D) return;
