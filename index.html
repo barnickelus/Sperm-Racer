@@ -84549,6 +84549,102 @@ function kitBeardFx(key, o){ return { key,
       float dB=min(dC,dS), aw=fwidth(dB)*0.75+0.003;
       diffuseColor.rgb=mix(diffuseColor.rgb, uKitHair*diffuse, 1.0-smoothstep(-aw,aw,dB)); }
     ${o.extra||''} }` }; }
+/* ============== TOON HANDS: one cartoon hand for every racer's arm ============== *
+ * After the owner's reference (a tattoo-flash peace sign): a squarish palm, four chunky fingers that taper a little to round
+ * tips and stand apart, a thick thumb on a fleshy heel, and the joints drawn: a finger curls at its knuckles, so a fist is
+ * a row of rounded knuckles over a stack of curled fingers, each with a crease across its joint, and the pen (the arms'
+ * own rim ink) draws round every finger. Built in the hand's own frame, in the arms' units (hose radii): the wrist at the
+ * origin, the fingers up +y, the palm facing +z (the fingers curl toward +z), the thumb on the +x side (sx:-1 puts it on
+ * -x). Every kit keeps its own frame, shader, colours and finger animation; only the hand's shape comes from here.
+ *   toonHand(o) -> { parts:[[geometry, part]], base:{part:Vector3}, tip:{part:Vector3} }; part is 'palm', 'thumb', 'index',
+ *   'middle', 'ring', 'pinky' or 'ink' (the creases, to be coloured with the ink). Options:
+ *     pose     a preset: 'fist', 'open' (together, thumb out), 'spread', 'wave', 'point', 'gun' (index out, thumb up),
+ *              'peace', 'shaka', 'thumbs' (a fist, thumb up), 'pinch' (thumb to forefinger), 'grip' (round a handle of
+ *              radius o.gr along x), 'rest' (relaxed, a little curled), 'claw', 'flat' (fingers together, thumb tucked)
+ *     curl     [index, middle, ring, pinky] 0 straight .. 1 a tight fist (overrides the preset's); spread the same, radians
+ *     thumb    'out' | 'up' | 'across' | 'tip' | 'tuck' | 'side'   (overrides the preset's)
+ *     fingers  4 (or 3: the classic cartoon glove)          sx  the thumb's side (+1 / -1)     size  scale (1)
+ *     creases  true (the joint lines on curled fingers)   fat  finger thickness (1)   long  finger length (1)
+ *     thumbPath {base:[x,y,z], d1:[x,y,z], d2:[x,y,z], L:[a,b]} a thumb of one's own (its root and its two segments' ways,
+ *              in the hand's frame for a right-way-round hand: x is mirrored with sx), for a pose no preset covers
+ *     joints   [[k,m,t],...] per finger: the bend at each joint as a share of a full curl, in place of curl's even one */
+const TH={ W:2.42, H:2.05, D:1.22, Y0:0.62, KY:2.66, KZ:0.12,
+  fx:[0.84,0.28,-0.28,-0.84], fr:[0.41,0.43,0.41,0.37], fl:[[0.9,0.62,0.52],[0.98,0.7,0.55],[0.92,0.64,0.52],[0.74,0.52,0.44]],
+  jt:[1.5,1.62,1.02] };   // (a full curl at each joint, radians: knuckle, middle, tip)
+const TH_POSE={
+  fist:  {c:[1,1,1,1], s:[0,0,0,0], th:'across'},
+  open:  {c:[0.06,0.04,0.06,0.1], s:[0.05,0.0,-0.04,-0.1], th:'out'},
+  wave:  {c:[0.02,0,0.03,0.06], s:[0.2,0.06,-0.08,-0.24], th:'out'},
+  spread:{c:[0.04,0.02,0.04,0.08], s:[0.3,0.1,-0.12,-0.36], th:'out'},
+  point: {c:[0,1,1,1], s:[0.02,0,0,0], th:'across'},
+  gun:   {c:[0,1,1,1], s:[0,0,0,0], th:'up'},
+  peace: {c:[0,0,1,1], s:[0.17,-0.14,0,0], th:'across'},
+  shaka: {c:[1,1,1,0], s:[0,0,0,-0.42], th:'out'},
+  thumbs:{c:[1,1,1,1], s:[0,0,0,0], th:'up'},
+  pinch: {c:[0.5,0.62,0.72,0.82], s:[0.04,0,-0.05,-0.12], th:'tip'},
+  grip:  {c:[0.78,0.8,0.82,0.85], s:[0,0,0,0], th:'across'},
+  rest:  {c:[0.22,0.3,0.36,0.44], s:[0.05,0,-0.05,-0.12], th:'side'},
+  claw:  {c:[0.55,0.55,0.55,0.55], s:[0.16,0.05,-0.06,-0.2], th:'out'},
+  flat:  {c:[0,0,0,0], s:[0.02,0,-0.02,-0.05], th:'tuck'} };
+const TH_NAMES=['index','middle','ring','pinky'];
+// a tube swept along points (the radius r(t) along it), a round cap at the far end, the near end open inside the palm
+function thSweep(pts, r, segs, rad){
+  const cv=new T.CatmullRomCurve3(pts, false, 'centripetal', 0.5), N=segs||22, R=rad||12, fr=cv.computeFrenetFrames(N,false);
+  const pos=[], nor=[], idx=[], ring=(C, Nn, Bb, rr, nOff)=>{ for(let j=0;j<R;j++){ const a=j/R*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+      const nx=Nn.x*ca+Bb.x*sa, ny=Nn.y*ca+Bb.y*sa, nz=Nn.z*ca+Bb.z*sa; pos.push(C.x+nx*rr, C.y+ny*rr, C.z+nz*rr);
+      const t=nOff||null; if(t){ const k=Math.hypot(nx*t[1]+t[0].x*t[2], ny*t[1]+t[0].y*t[2], nz*t[1]+t[0].z*t[2])||1; nor.push((nx*t[1]+t[0].x*t[2])/k, (ny*t[1]+t[0].y*t[2])/k, (nz*t[1]+t[0].z*t[2])/k); } else nor.push(nx,ny,nz); } };
+  for(let i=0;i<=N;i++){ const t=i/N; ring(cv.getPointAt(t), fr.normals[i], fr.binormals[i], r(t)); }
+  const C=cv.getPointAt(1), Tn=fr.tangents[N], rt=r(1), CAP=5;
+  for(let k=1;k<=CAP;k++){ const f=k/CAP*Math.PI/2, c=C.clone().addScaledVector(Tn, rt*Math.sin(f)); ring(c, fr.normals[N], fr.binormals[N], Math.max(1e-3, rt*Math.cos(f)), [Tn, Math.cos(f), Math.sin(f)]); }
+  const rows=N+1+CAP;
+  for(let i=0;i<rows-1;i++) for(let j=0;j<R;j++){ const a=i*R+j, b=i*R+(j+1)%R, c=a+R, d=b+R; idx.push(a,b,c, b,d,c); }
+  const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal', new T.Float32BufferAttribute(nor,3));
+  g.setAttribute('uv', new T.Float32BufferAttribute(new Array(pos.length/3*2).fill(0),2)); g.setIndex(idx); return g; }
+// the joint chain of a finger from its knuckle: the points, with each joint's way in and way out (for the creases)
+function thChain(K, d0, ax, L, ang){ const pts=[K.clone().addScaledVector(d0,-0.62), K.clone()], q=new T.Quaternion(), d=d0.clone(), joints=[]; let p=K.clone(), a=0;
+  for(let i=0;i<3;i++){ a+=ang[i]; q.setFromAxisAngle(ax, a); const dn=d0.clone().applyQuaternion(q); if(i>0) joints.push([p.clone(), d.clone(), dn.clone()]); else joints.push([p.clone(), d0.clone(), dn.clone()]);
+    p=p.clone().addScaledVector(dn, L[i]); pts.push(p); d.copy(dn); }
+  return {pts, joints, tip:p}; }
+function toonHand(o){
+  o=o||{}; const P=TH_POSE[o.pose||'open']||TH_POSE.open, sx=o.sx||1, sz=o.size||1, fat=o.fat||1, nf=o.fingers===3 ? 3 : 4;
+  const curl=o.curl||P.c, spr=o.spread||P.s, th=o.thumb||P.th, parts=[], base={}, tip={}, V=(x,y,z)=>new T.Vector3(x*sx,y,z);
+  // the palm: a rounded block, a touch narrower at the wrist, the back a little domed, the knuckle line rounded over
+  { const g=new T.SphereGeometry(1,18,14), p=g.attributes.position, f=t=>Math.sign(t)*Math.pow(Math.abs(t),0.62);
+    for(let i=0;i<p.count;i++){ const x=p.getX(i), y=p.getY(i), z=p.getZ(i), yy=(y+1)/2;
+      p.setXYZ(i, f(x)*TH.W/2*(0.86+0.14*yy)*(nf===3?1.04:1), TH.Y0+yy*TH.H, f(z)*TH.D/2*(z<0 ? 1.08 : 0.92)+0.04*(1-x*x)*(z<0?-1:0)); }
+    g.computeVertexNormals(); parts.push([g,'palm']); }
+  // the heel of the thumb: the fleshy pad it grows from
+  { const g=new T.SphereGeometry(1,14,10); g.scale(0.62,0.82,0.6); g.translate(0.86*sx,1.25,0.34); parts.push([g,'palm']); }
+  // the fingers
+  const fx=nf===3 ? [0.74,0,-0.74] : TH.fx;
+  for(let f=0;f<nf;f++){ const F=nf===3 ? [0,1,3][f] : f, name=nf===3 ? ['index','middle','pinky'][f] : TH_NAMES[f], c=Math.max(0,Math.min(1.1,curl[F]??0)), sp=spr[F]??0;
+    const fr=TH.fr[F]*fat*(nf===3?1.18:1), L=TH.fl[F].map(l=>l*(nf===3?1.05:1)*(o.long||1)), jj=o.joints && o.joints[F];
+    const ky=TH.KY-(F===3?0.14:F===0?0.04:0), K=V(fx[f], ky, TH.KZ), d0=new T.Vector3(Math.sin(sp)*sx, Math.cos(sp), 0), ax=new T.Vector3(Math.cos(sp),-Math.sin(sp)*sx,0).normalize();
+    const ch=thChain(K, d0, ax, L, TH.jt.map((j,i)=>j*(jj ? jj[i] : c)));
+    const g=thSweep(ch.pts, t=>fr*(1.04-0.14*t), 26, 12); parts.push([g,name]); base[name]=K.clone(); tip[name]=ch.tip.clone();
+    // the creases: an ink line round the outside of each bent joint
+    if(o.creases!==false && c>0.45) for(const [J, din, dout] of ch.joints.slice(1)){
+      const out=din.clone().sub(dout); if(out.lengthSq()<0.02) continue; out.normalize();
+      const tg=din.clone().add(dout).normalize(), cr=new T.TorusGeometry(fr*1.0, 0.045, 4, 10, Math.PI*0.7);
+      cr.rotateZ(-Math.PI*0.35);   // (the arc centred on +x)
+      const m=new T.Matrix4().makeBasis(out, tg.clone().cross(out).normalize(), tg); m.setPosition(J); cr.applyMatrix4(m); parts.push([cr,'ink']); } }
+  // the thumb: two fat segments off the heel
+  { const B=V(0.98,1.32,0.42), tw=V(1,0,0); let d1, d2, L=[0.86,0.76];
+    if(o.thumbPath){ const q=o.thumbPath; if(q.base) B.set(q.base[0]*sx, q.base[1], q.base[2]); d1=V(...q.d1).normalize(); d2=V(...q.d2).normalize(); if(q.L) L=q.L.slice(); }
+    else if(th==='out'){ d1=V(0.78,0.58,0.24).normalize(); d2=V(0.42,0.88,0.22).normalize(); }
+    else if(th==='up'){ d1=V(0.22,0.96,0.2).normalize(); d2=V(0.02,1,0.08).normalize(); L=[0.9,0.8]; }
+    else if(th==='side'){ d1=V(0.55,0.7,0.45).normalize(); d2=V(0.2,0.85,0.5).normalize(); }
+    else if(th==='tuck'){ d1=V(-0.3,0.75,0.6).normalize(); d2=V(-0.75,0.45,0.48).normalize(); }
+    else if(th==='tip'){ const T0=(tip.index||V(0.9,4.2,1.4)).clone(), a=B.clone().addScaledVector(V(0.25,0.7,0.65).normalize(),0.86); d1=a.clone().sub(B).normalize(); d2=T0.clone().sub(a).normalize(); L=[0.86, Math.max(0.5, Math.min(1.1, T0.distanceTo(a)-0.3))]; }
+    else { d1=V(-0.12,0.62,0.78).normalize(); d2=V(-0.92,0.18,0.36).normalize(); L=[0.82,0.86]; }   // across the curled fingers
+    const p1=B.clone().addScaledVector(d1,L[0]), p2=p1.clone().addScaledVector(d2,L[1]), r0=0.44*fat;
+    const g=thSweep([B.clone().addScaledVector(d1,-0.5), B, p1, p2], t=>r0*(1.03-0.12*t), 18, 12); parts.push([g,'thumb']); base.thumb=B.clone(); tip.thumb=p2.clone();
+    if(o.creases!==false){ const out=d1.clone().sub(d2); if(out.lengthSq()>0.05){ out.normalize(); const tg=d1.clone().add(d2).normalize(), cr=new T.TorusGeometry(r0*0.95,0.045,4,10,Math.PI*0.7); cr.rotateZ(-Math.PI*0.35);
+      const m=new T.Matrix4().makeBasis(out, tg.clone().cross(out).normalize(), tg); m.setPosition(p1); cr.applyMatrix4(m); parts.push([cr,'ink']); } } }
+  if(sz!==1){ for(const [g] of parts) g.scale(sz,sz,sz); for(const k in base) base[k].multiplyScalar(sz); for(const k in tip) tip[k].multiplyScalar(sz); }
+  return {parts, base, tip}; }
+// the hand as items for a kit's add(): add(geo, matrix, colour, part) for each piece; ink pieces get the ink colour
+function toonHandAdd(add, o, skin, ink, xf){ const h=toonHand(o), m=xf||new T.Matrix4(); for(const [g,part] of h.parts) add(g, m, part==='ink' ? (ink||dbLin(DB_INK)) : skin, part); return h; }
 // the arm: a hose (as Tony's), a cuff, and a hand: 'shaka' (thumb and little finger out), 'wave' (the palm open)
 function kitArmGeo(skin, key, hand, cuff){ return tonyKeep(key, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], cuffC=dbLin(cuff||'#ffc935');
