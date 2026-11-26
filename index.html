@@ -86809,6 +86809,11 @@ function rvjTasselGeo(){ return tonyKeep('rvjTassel', ()=>{
 /* THE ARMS: a rubber hose (Tony's bend) in a royal-blue kurta sleeve with a gold zari cuff, and his hand (a size up: a
    cartoon hand): 'point' (the index finger out), 'open' (palm open, fingers together, thumb out), 'comb' (a fist round a
    black pocket comb that carries on past the fingers, its teeth down along the hand's -z) */
+// the hands (toonHand, a size up): the point and the comb with the thumb on -x, the open hand with it on +x, as they were
+const RVJ_HAND={ s:1.3, y:0.6-0.62*1.3, point:{ pose:'point', sx:-1, long:1.15 }, open:{ pose:'open', sx:1 }, comb:{ pose:'fist', sx:-1 } };
+function rvjHandO(hand){ return Object.assign({ size:RVJ_HAND.s }, RVJ_HAND[hand]); }
+let RVJ_TIPL=null;   // how far up the hand the pointing fingertip's end is (hose radii): the finger on the aviators' bridge
+function rvjTipL(){ if(RVJ_TIPL==null){ const h=toonHand(rvjHandO('point')); RVJ_TIPL=h.tip.index.y+RVJ_HAND.y; for(const [g] of h.parts) g.dispose(); } return RVJ_TIPL; }
 function rvjArmGeo(hand){ return tonyKeep('rvjArm-'+hand, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], silk=dbLin('#2348a8'), gold=dbLin('#ffc935'), skin=dbLin('#c98654'), comb=dbLin('#1a1424');
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -86816,20 +86821,9 @@ function rvjArmGeo(hand){ return tonyKeep('rvjArm-'+hand, ()=>{
   add(tube, null, silk, i=>ty[i]);
   const cuff=new T.CylinderGeometry(1.32,1.12,0.8,14,1,true); cuff.translate(0,0.05,0); add(cuff, null, gold, 1);
   const rim=new T.TorusGeometry(1.3,0.16,6,16); rim.rotateX(Math.PI/2); rim.translate(0,0.45,0); add(rim, null, gold, 1);
-  const hs=1.25, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m), ball=new T.SphereGeometry(1,12,9), E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, HM(new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r))), c, 1); };
-  if(hand==='point'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.1), new T.Quaternion(), V(1.6,1.45,1.4))), skin, 1);
-    for(const x of [-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.75), new T.Quaternion(), V(0.5,0.55,0.6))), skin, 1);
-    E(skin, [-0.75,2.6,0.3], [-0.85,5.3,0.35], 0.48);
-    E(skin, [-1.25,1.6,0.9], [-0.6,2.55,1.5], 0.42); }
-  else if(hand==='open'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.8,0), new T.Quaternion(), V(1.45,1.5,0.62))), skin, 1);
-    for(const [x,l] of [[-0.78,1.9],[-0.26,2.3],[0.26,2.3],[0.78,1.95]]) E(skin, [x,2.9,0], [x*1.08,2.9+l,0], 0.42);
-    E(skin, [1.1,1.3,0.15], [2.4,2.3,0.25], 0.44); }
-  else {
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.05), new T.Quaternion(), V(1.55,1.45,1.35))), skin, 1);
-    for(const x of [-0.75,-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.7), new T.Quaternion(), V(0.48,0.55,0.6))), skin, 1);
-    E(skin, [-1.25,1.6,0.9], [-0.55,2.5,1.45], 0.42);
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, in the cuff
+  toonHandAdd((g,m,c)=>add(g,m,c,1), rvjHandO(hand), skin, null, new T.Matrix4().makeTranslation(0,RVJ_HAND.y,0));   // the hand (a toon hand)
+  if(hand==='comb'){ const hs=1.25, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m);
     const sp=new T.BoxGeometry(0.42,3.6,0.3); add(sp, HM(new T.Matrix4().makeTranslation(0.1,4.4,0.0)), comb, 1);
     for(let i=0;i<11;i++){ const t=new T.BoxGeometry(0.16,0.12,0.55); add(t, HM(new T.Matrix4().makeTranslation(0.1,2.85+i*0.3,-0.4)), comb, 1); } }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
@@ -87005,7 +86999,7 @@ function rvjTick(o, R, now, dt, S, C, q){
       _rvA.copy(U.uA2.value).sub(U.uA1.value).normalize(); U.uAn.value.set(0,0,1).addScaledVector(_rvA, -_rvA.z).normalize(); }
     else if(AR.hand==='point'){   // the finger on the bridge, wherever the aviators are (the face's rig turned into this one)
       _rvB.copy(D.avi.position); _rvB.y+=0.32; rvjFromRig(_rvA, _rvB, S);
-      _rvC.set(0.25,0.92,-0.3).normalize(); _rvH.copy(_rvA).addScaledVector(_rvC, -5.3*1.25*TONY_ARM.r*0.95); _rvH.z+=0.55;
+      _rvC.set(0.25,0.92,-0.3).normalize(); _rvH.copy(_rvA).addScaledVector(_rvC, -rvjTipL()*TONY_ARM.r*0.95); _rvH.z+=0.55;
       rvjArmSet(U, AR.e, _rvH, _rvL.set(-4.6, HEAD_CY-1.6, 2.2), _rvP.set(0,0,1)); }
     else rvjDance(U, AR.e, x, D.dw, 1); }
   if(AL.e>0.02) rvjDance(AL.U, AL.e, x, D.dw, -1);
