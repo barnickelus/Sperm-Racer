@@ -3139,6 +3139,13 @@ try{ if(localStorage.getItem('sr_soundtrack')==='racer') soundtrack='racer'; }ca
    laps. Nothing else writes it, and it is cleared as each race starts (vicListenReset), so a stale set never leaks
    into the next race; the record reads a missing or unknown set as the home front. */
 const VIC_LISTEN={set:null,k:-1,next:null,toCut:Infinity,speed:0,lap:0,laps:0};
+/* WHERE THE LISTENER IS ON NOVA, for its course record ("T-Minus", MUSIC_STYLES.courseNova), which follows the run in to
+   the star. The course writes it on every frame of a race on Nova that moves (novaListen, NOVA KIT), for the racer the
+   music is about (yours, or the one being spectated): t (performance.now() at the write), u (progress along the road,
+   0..1), v (how fast u is climbing, per second), next (the number on the next hoop to pass, 10 to 1, or 0 once all are
+   passed) and done (that racer has finished). Nothing else writes it. The record reads anything older than 0.7 s as no
+   listener at all (the menus, another course, a race held still) and plays its written form by time. */
+const NOVA_LISTEN={t:0,u:0,v:0,next:10,done:false};
 function vicListenReset(){ VIC_LISTEN.set=null; VIC_LISTEN.k=-1; VIC_LISTEN.next=null; VIC_LISTEN.toCut=Infinity; VIC_LISTEN.speed=0; VIC_LISTEN.lap=0; VIC_LISTEN.laps=0; }
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
@@ -3374,6 +3381,19 @@ const MUSIC_STYLES={
               hihat:2, beatGroup:4, tempoMul:0.6,
               mel: [7,null,0,12,   12,null,11,9,  7,null,9,null,  5,null,null,null],
               melB:[7,null,0,12,   11,null,8,4,   9,null,11,12,   14,null,12,null] },
+  /* Nova's COURSE station — PRODUCED (see "T-Minus" in the SONG_ENGINE): the course's own song, a launch-day anthem in C
+     major (the course's key) at 128 bpm, played untransposed, that climbs the scale part by part down the run in to the
+     star, follows the listener there (NOVA_LISTEN, declared just above MUSIC_STYLES) and counts the ten hoops down.
+     `course` marks it as a course song (TRACKS Nova's courseStyle points here). The grid fields are for the shared code
+     that reads every style: the hook (a leap of a fourth into three steps up, each bar a step higher: G-C-D-E, A-D-E-F,
+     B-E-F-G, C-F-G-A) over its I-ii-iii-IV climb, and the countdown's climb to the top C as the high answer; a four-on-
+     the-floor with the clap on two and four; the victory fanfare climbs out of the hook on a brass voice. */
+  courseNova:{ engine:'tMinus', station:'T-MINUS', course:true,
+              inst:'brass', melWave:'sawtooth', bassWave:'triangle', bassInst:'pluck',
+              drums:{kick:[0,4,8,12],snare:[4,12]}, bass:[0,2,4,5],
+              hihat:2, beatGroup:4, tempoMul:0.6,
+              mel: [-5,0,2,4,    -3,2,4,5,      -1,4,5,7,      0,5,7,9],
+              melB:[7,null,9,null, 11,null,12,null, 14,null,16,null, 17,null,19,null] },
   /* Cleetus's HOME station is now produced: "Copper Coil Breakdown" (see SONG_ENGINE), a
      bluegrass breakdown for a string band in a room. The grid fields are only for the shared
      code that reads every style (the victory fanfare plays the opening of its A part). */
@@ -39069,6 +39089,454 @@ SONG_ENGINE.songs.thousandHooves=(function(){
     courseNote:'deferred: produced station keeps its own tune, in the course key',
   };
 })();
+/* "T-MINUS" — Nova's course record (MUSIC_STYLES.courseNova). (header to come) */
+SONG_ENGINE.songs.tMinus=(function(){
+  const BPM=128;
+  // ---- THE RUN, part by part: the course's own order (TRACKS Nova); deg is the step of the scale the part rests on
+  const FORM=[
+    {id:'lift',  name:'Lift-Off',       bars:8, deg:0},
+    {id:'star',  name:'Round the Star', bars:6, deg:1},
+    {id:'over',  name:'Over the Top',   bars:6, deg:2},
+    {id:'dive',  name:'Second Dive',    bars:4, deg:3},
+    {id:'near',  name:'Nearer',         bars:4, deg:4},
+    {id:'final', name:'Final Approach', bars:4, deg:5},
+    {id:'count', name:'T-Minus',        bars:5, deg:6},
+    {id:'nova',  name:'Nova',           bars:8, deg:7}];
+  let acc=0; for(const s of FORM){ s.start=acc; acc+=s.bars; }
+  const TOTAL=acc, LOOP=FORM[1].start, CNT=6, NOVA=7;
+  // where each part begins on the road (progress 0..1: the launch straight, the swing round the star and out to the jump,
+  // the jump and the wide turn, the dive in, the swing nearer, out and the last bend, the hoops, the star), and the hoops
+  // themselves (10 at 0.872 ... 1 at 0.985, which is the star and the line: NOVA KIT)
+  const PART_U=[0,0.226,0.40,0.57,0.695,0.77,0.872,0.985];
+  const HOOP_U=(k)=>0.872+(0.985-0.872)*(10-k)/9;
+  function locate(n){ const pos=n<TOTAL ? Math.max(0,n) : LOOP+(n-TOTAL)%(TOTAL-LOOP), pass=n<TOTAL ? 0 : 1+Math.floor((n-TOTAL)/(TOTAL-LOOP));
+    let k=0; for(let i=0;i<FORM.length;i++) if(pos>=FORM[i].start) k=i;
+    return {pos, pass, k, b:pos-FORM[k].start, hb:k===NOVA ? (pos-FORM[k].start)&3 : pos&3}; }
+  const partOf=(u)=>{ let p=0; for(let i=0;i<CNT+1;i++) if(u>=PART_U[i]) p=i; return p; };
+  // ---- the listener, when the course is telling (NOVA_LISTEN, beside VIC_LISTEN): fresh, or not at all
+  const listener=()=>{ if(typeof NOVA_LISTEN!=='object' || !NOVA_LISTEN || typeof performance==='undefined') return null;
+    const L=NOVA_LISTEN; return (L.t>0 && performance.now()-L.t<700 && isFinite(L.u) && isFinite(L.v)) ? L : null; };
+
+  // ---- THE HARMONY. Every part sings the same four bars over C, Dm, Em and a fourth chord that holds its resting note
+  //      (R): C over F, D over G, E over Am, F over Dm, G over C, A over F; the countdown is G; the nova C over F, then G
+  const CH={C:[0,'M'], Dm:[2,'m'], Em:[4,'m'], F:[5,'M'], G:[7,'M'], Am:[9,'m']};
+  const PADV={C:[12,16,19], Dm:[14,17,21], Em:[16,19,23], F:[17,21,24], G:[14,19,23], Am:[16,21,24]};   // close triads round middle C: they climb too
+  const XK=['F','G','Am','Dm','C','F','G','F'], RK=[24,26,28,29,31,33,35,36];
+  const chordName=(k,hb,b)=>k===CNT ? 'G' : hb===0 ? 'C' : hb===1 ? 'Dm' : hb===2 ? 'Em' : (k===NOVA ? (b<4 ? 'F' : 'G') : XK[k]);
+  // a third below in C major (the brass's harmony)
+  const SC=[0,2,4,5,7,9,11];
+  const third=(n)=>{ const o=Math.floor(n/12), pc=((n%12)+12)%12; let d=SC.indexOf(pc); if(d<0) d=SC.findIndex(x=>x>pc)-1; const d2=d-2; return o*12+(d2<0 ? SC[d2+7]-12 : SC[d2]); };
+  /* THE HOOK, a bar of it (hb 0..3) as [step, note, length]: a leap of a fourth into three steps up and a held note,
+     each bar a step higher (sol-DO re MI, la-RE mi FA, ti-MI fa SOL), the fourth bar climbing on (do-FA sol LA) and
+     leaping to the part's resting note R. The pickup into the next bar is the bar's last eighth (none if `end`). */
+  function hook(hb,R,end){
+    const H=hb===0 ? [[0,12,3],[3,14,3],[6,16,6],[14,9,2]] : hb===1 ? [[0,14,3],[3,16,3],[6,17,6],[14,11,2]]
+      : hb===2 ? [[0,16,3],[3,17,3],[6,19,6],[14,12,2]] : [[0,17,3],[3,19,3],[6,21,2],[8,R,5],[14,7,2]];
+    return end ? H.slice(0,-1) : H; }
+  // the counts: ten steps up the scale, 10 on G to 1 on B, and the nova on the top C
+  const CNT_N=[0,35,33,31,29,28,26,24,23,21,19];
+
+  function voices(ctx,bus,noise,live,lite){
+    const C=bus.ch;
+    const G=(v)=>{ const n=ctx.createGain(); n.gain.value=v; return n; };
+    const F=(type,f,q)=>{ const n=ctx.createBiquadFilter(); n.type=type; n.frequency.value=f; if(q!=null) n.Q.value=q; return n; };
+    function O(w,f,t,end,to,det){ const o=ctx.createOscillator();
+      if(typeof w==='string') o.type=w; else o.setPeriodicWave(w);
+      o.frequency.setValueAtTime(f,t); if(det) o.detune.setValueAtTime(det,t);
+      o.connect(to); o.start(t); o.stop(end); live.push([o,end]); return o; }
+    function N(t,dur,to){ const s=ctx.createBufferSource(); s.buffer=noise; s.connect(to);
+      if(dur>noise.duration-0.3){ s.loop=true; s.start(t,Math.random()*(noise.duration-0.1)); s.stop(t+dur+0.02); }
+      else s.start(t,Math.random()*(noise.duration-dur-0.1),dur+0.02);
+      live.push([s,t+dur+0.03]); return s; }
+    const LFO=(f,t,end,to,type)=>{ const l=ctx.createOscillator(); if(type) l.type=type; l.frequency.value=f; l.connect(to); l.start(t); l.stop(end); live.push([l,end]); return l; };
+    const AD=(g,t,a,pk,d)=>{ g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002,pk),t+a);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+a+d); };
+    const sends=(node,p,c)=>{ if(p.throw){ const s=G(p.throw); node.connect(s); s.connect(c.thr); }
+      if(p.spr){ const s=G(p.spr); node.connect(s); s.connect(c.thrS); } };
+    const AT=(t,s0,sd)=>{ const z=t-s0*sd; return (s)=>z+s*sd; };
+    const pw=(amps)=>{ const re=new Float32Array(amps.length+1), im=new Float32Array(amps.length+1); amps.forEach((a,i)=>{ im[i+1]=a; }); return ctx.createPeriodicWave(re,im); };
+    const W={ thm:pw([1,0.16,0.1,0.04,0.02]),                                                        // the theremin: nearly a sine, a little reed in it
+      brass:pw(Array.from({length:30},(_,i)=>{ const h=i+1; return Math.pow(h,-0.9)*(h<=6 ? 1 : Math.pow(6/h,0.7)); })) };   // a warm horn: strong low harmonics
+    /* THE DARK ROUND THE STAR. The engine's spring tank is a surf guitar's; this record is played in the open dark, so
+       every channel's spring send goes into a wide, smooth, bright space instead: no walls to speak of, a soft onset
+       and a long tail that darkens as it goes, different at each ear. Unit energy. */
+    const spaceIR=(sec)=>{ const sr=ctx.sampleRate, len=Math.floor(sr*sec), buf=ctx.createBuffer(2,len,sr), Rn=SONG_ENGINE.rngOf(1957);
+      for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch); let y=0, y2=0, al=0, e=0;
+        for(let i=0;i<len;i++){ const tm=i/sr; if((i&63)===0) al=1-Math.exp(-2*Math.PI*(1100+6500*Math.exp(-tm*1.4))/sr);
+          y+=al*((Rn()*2-1)-y); y2+=al*(y-y2); d[i]=y2*Math.exp(-tm*6.9/sec)*(1-Math.exp(-tm/0.05)); }
+        for(let i=0;i<len;i++) e+=d[i]*d[i];
+        const k=1/Math.sqrt(e); for(let i=0;i<len;i++) d[i]*=k; }
+      return buf; };
+    const rIn=F('highpass',220,0.7), rPre=ctx.createDelay(0.1), conv=ctx.createConvolver(), rLP=F('lowpass',7000,0.6), rRet=G(MIX.roomRet);
+    rPre.delayTime.value=0.03; conv.normalize=false; conv.buffer=spaceIR(lite ? 1.8 : 2.8);
+    try{ bus.springIn.disconnect(); }catch(e){}
+    bus.springIn.connect(rIn); rIn.connect(rPre); rPre.connect(conv); conv.connect(rLP); rLP.connect(rRet); rRet.connect(bus.mix);
+    // the pump: the bass, the sub and the pad duck under every kick (one gain each, ridden by the 'pump' event)
+    const DK={bass:G(1), sub:G(1), pad:G(1), arp:G(1)}; DK.bass.connect(C.bass.in); DK.sub.connect(C.sub.in); DK.pad.connect(C.pad.in); DK.arp.connect(C.arp.in);
+    // shared filters: a fixed filter serves every stroke of its family
+    const SF=(type,f,q,to)=>{ const n=F(type,f,q); n.connect(to); return n; };
+    const FX={hat:SF('highpass',7200,0.8,C.hats.in), ohat:SF('highpass',5600,0.7,C.hats.in), clap:SF('bandpass',1250,1.0,C.clap.in), wires:SF('highpass',2200,0.7,C.clap.in),
+      tick:SF('bandpass',2300,5,C.tick.in), click:SF('highpass',3000,0.7,C.kick.in), crash:SF('highpass',3800,0.6,C.fx.in), skin:SF('lowpass',900,0.7,C.tim.in)};
+    // a line on one synth: [step, note, length, level]; each note re-strikes the filter and the gain (a pluck), and
+    // touching notes are not glided. cfg: waves, detune, the filter's floor/peak (multiples of the note), its decay, the gain's
+    function mono(t,p,sd,hz,to,cfg){ const ns=p.ns; if(!ns || !ns.length) return; const at=AT(t,ns[0][0],sd), Z=ns[ns.length-1], end=at(Z[0]+Z[2])+cfg.rel+0.05, v=p.v||1, up=p.up||0;
+      const lp=F('lowpass',hz(ns[0][1]+up)*cfg.lo,cfg.q||1), g=G(0), P=g.gain, os=[];
+      (lite ? cfg.w.slice(0,1) : cfg.w).forEach((w,i)=>{ const o=O(w,hz(ns[0][1]+up),t,end,lp,cfg.det ? (i ? cfg.det : -cfg.det) : 0); os.push(o); });
+      lp.connect(g); g.connect(to); sends(g,p,cfg.ch); P.setValueAtTime(0,t);
+      const cut=p.cut||1;
+      ns.forEach(([s,n,l,lv],i)=>{ const a=at(s), nx=ns[i+1], nxA=nx ? at(nx[0]) : Infinity, e=Math.min(at(s+l),nxA-0.003), f=hz(n+up), pk=cfg.pk*v*(lv||1)*(lite ? 1.25 : 1);
+        for(const o of os) o.frequency.setValueAtTime(f,a);
+        const fl=lp.frequency, hi=Math.min(15000,f*cfg.hi*cut), lo=Math.min(12000,f*cfg.lo*cut);
+        fl.setValueAtTime(lo,a); fl.linearRampToValueAtTime(hi,a+0.004); fl.setTargetAtTime(lo,a+0.004,cfg.fd);
+        P.setValueAtTime(0.0001,a); P.linearRampToValueAtTime(pk,a+0.003);
+        const sus=Math.max(a+0.004,e-0.01), rel=Math.max(0.008,Math.min(cfg.rel,nxA-sus-0.004));
+        if(cfg.gd) P.setTargetAtTime(pk*cfg.sus,a+0.003,cfg.gd);
+        P.setValueAtTime(cfg.gd ? pk*cfg.sus*0.9 : pk,sus); P.linearRampToValueAtTime(0.0001,sus+rel); }); }
+    return {
+      // ---- the kit: a four-on-the-floor kick with real weight (a sine falling 160 to 45 Hz, a knock, a click)
+      kick(t,p){ const v=p.v||1, g=G(0), o=O('sine',165,t,t+0.42,g);
+        o.frequency.exponentialRampToValueAtTime(56,t+0.045); o.frequency.exponentialRampToValueAtTime(45,t+0.34);
+        AD(g,t,0.002,0.95*v,0.36); g.connect(C.kick.in);
+        const kn=G(0), o2=O('triangle',300,t,t+0.07,kn); o2.frequency.exponentialRampToValueAtTime(110,t+0.04); AD(kn,t,0.001,0.4*v,0.045); kn.connect(C.kick.in);
+        if(lite) return; const b=G(0); N(t,0.02,b); AD(b,t,0.0008,0.45*v,0.012); b.connect(FX.click); },
+      // the pump: each listed step dips the bass, the sub, the pad and the arp and lets them back up (d: how deep)
+      pump(t,p,sd){ const d=p.d||0.5, at=AT(t,0,sd);
+        for(const k in DK){ const gp=DK[k].gain, dd=k==='arp' ? d*0.45 : k==='pad' ? d*0.8 : d; gp.cancelScheduledValues(t); gp.setValueAtTime(gp.value,t);
+          for(const s of p.at){ const a=at(s); gp.setTargetAtTime(1-dd,a,0.003); gp.setTargetAtTime(1,a+0.03,0.07); } } },
+      // the sub: one sine on the root, held ([step, note, length, level]), kept between 38 and 78 Hz
+      sub(t,p,sd,hz){ const L=p.ns, at=AT(t,L[0][0],sd), Z=L[L.length-1], end=at(Z[0]+Z[2])+0.2, g=G(0), P=g.gain, v=p.v||1;
+        const fo=(n)=>{ let f=hz(n-24); while(f<38) f*=2; while(f>=78) f/=2; return f; };
+        const o=O('sine',fo(L[0][1]),t,end,g); P.setValueAtTime(0,t);
+        L.forEach(([s,n,l,lv],i)=>{ const a=at(s), e=at(s+l), nx=L[i+1], pk=0.85*v*(lv||1);
+          o.frequency.setValueAtTime(fo(n),a); P.setTargetAtTime(pk,a,0.006);
+          if(!nx || at(nx[0])-e>0.01) P.setTargetAtTime(0,e-0.02,0.025); });
+        g.connect(DK.sub); },
+      // the bass: a saw and a square through a filter that snaps open on every note (offbeat eighths, the house way)
+      bas(t,p,sd,hz){ mono(t,p,sd,hz,DK.bass,{ch:C.bass, w:['sawtooth','square'], det:6, lo:2.2, hi:9, q:1.6, fd:0.05, pk:0.42, rel:0.05}); },
+      // the arp: sixteenths on a bright pluck, every beat starting a chord tone higher than the last (it only climbs)
+      arp(t,p,sd,hz){ mono(t,p,sd,hz,DK.arp,{ch:C.arp, w:['sawtooth','square'], det:7, lo:1.3, hi:6, q:2.2, fd:0.045, gd:0.06, sus:0.15, pk:0.2, rel:0.04}); },
+      // the pluck lead: the hook on a glassy square pluck
+      plk(t,p,sd,hz){ mono(t,p,sd,hz,C.plk.in,{ch:C.plk, w:['square','triangle'], det:4, lo:1.6, hi:7, q:1.2, fd:0.09, gd:0.18, sus:0.35, pk:0.22, rel:0.12}); },
+      /* THE THEREMIN: one hand, one tone that never re-attacks while the notes touch: every note is glided into, a wide
+         vibrato arrives late on the held ones; a rest lifts the hand away (the tone drops out and comes back where it
+         should be, never sliding down). [step, note, length] */
+      thm(t,p,sd,hz){ const ns=p.ns; if(!ns || !ns.length) return; const at=AT(t,ns[0][0],sd), Z=ns[ns.length-1], end=at(Z[0]+Z[2])+0.3, v=p.v||1, up=p.up||0;
+        const g=G(0), P=g.gain, o=O(W.thm,hz(ns[0][1]+up),t,end,g), vg=G(0); LFO(5.3+Math.random()*0.5,t,end,vg); vg.connect(o.detune); vg.gain.setValueAtTime(0,t);
+        let o2=null; if(!lite){ const g2=G(0.22); o2=O('sine',hz(ns[0][1]+up)*2,t,end,g2,4); g2.connect(g); vg.connect(o2.detune); }
+        g.connect(C.lead.in); sends(g,p,C.lead); P.setValueAtTime(0,t);
+        let pf=null, pe=-9;
+        ns.forEach(([s,n,l],i)=>{ const a=at(s), e=at(s+l), f=hz(n+up), nx=ns[i+1], nxA=nx ? at(nx[0]) : Infinity, tie=nxA-e<0.02, touch=pf && a-pe<0.02, pk=0.3*v*(lite ? 1.15 : 1);
+          for(const [os,m] of [[o,1],[o2,2]]){ if(!os) continue; const q=os.frequency;
+            if(touch){ q.setValueAtTime(pf*m,a); q.exponentialRampToValueAtTime(f*m,a+Math.min(0.1,(e-a)*0.45)); } else q.setValueAtTime(f*m,a); }
+          if(!touch){ P.setValueAtTime(0,a); P.linearRampToValueAtTime(pk,a+0.05); }
+          if(e-a>0.38){ vg.gain.setValueAtTime(0,a+0.12); vg.gain.linearRampToValueAtTime(24,a+Math.min(e-a-0.02,0.55)); vg.gain.setValueAtTime(24,Math.max(a+0.13,e-0.02)); vg.gain.linearRampToValueAtTime(0,e); }
+          if(!tie){ const rel=Math.max(0.01,Math.min(0.14,nxA-e-0.006)); P.setValueAtTime(pk,Math.max(a+0.055,e-0.02)); P.linearRampToValueAtTime(0,e+rel); }
+          pf=f; pe=e; }); },
+      /* THE BRASS: a section (the tune, its third below, the octave below on p.oct) playing legato on one breath a voice:
+         a horn wave through a filter that blooms on each note and settles, a little scoop up into it, a swell on the long
+         ones. [step, note, length] */
+      brs(t,p,sd,hz){ const ns=p.ns; if(!ns || !ns.length) return; const at=AT(t,ns[0][0],sd), Z=ns[ns.length-1], end=at(Z[0]+Z[2])+0.15, v=p.v||1;
+        const parts=[[0,0.2,-0.4]]; if(p.h) parts.push([1,0.15,0.4]); if(p.oct && !lite) parts.push([2,0.14,0]);
+        for(const [kind,lvl,pan] of parts){ const tone=(n)=>kind===0 ? n : kind===1 ? third(n) : n-12;
+          const lp=F('lowpass',800,0.9), g=G(0), P=g.gain, os=[];
+          for(const d of (lite || kind ? [0] : [-6,6])) os.push(O(W.brass,hz(tone(ns[0][1])),t,end,lp,d));
+          lp.connect(g); g.connect(pan<0 ? C.brass.L : pan>0 ? C.brass.R : C.brass.in); sends(g,p,C.brass); P.setValueAtTime(0,t);
+          let pe=-9;
+          ns.forEach(([s,n,l],i)=>{ const a=at(s), e=at(s+l), f=hz(tone(n)), nx=ns[i+1], nxA=nx ? at(nx[0]) : Infinity, pk=lvl*v*(lite ? 1.3 : 1), touch=a-pe<0.02;
+            for(const o of os){ o.frequency.setValueAtTime(f*0.985,a); o.frequency.exponentialRampToValueAtTime(f,a+0.04); }
+            const fl=lp.frequency; fl.setValueAtTime(Math.min(9000,f*1.4),a); fl.exponentialRampToValueAtTime(Math.min(9000,f*7),a+0.05); fl.exponentialRampToValueAtTime(Math.min(7000,f*(e-a>0.4 ? 4.5 : 3.2)),a+0.22);
+            if(touch){ P.setValueAtTime(pk*0.75,a); P.linearRampToValueAtTime(pk,a+0.03); } else { P.setValueAtTime(0,a); P.linearRampToValueAtTime(pk,a+0.03); }
+            if(e-a>0.5){ P.setValueAtTime(pk,a+0.1); P.linearRampToValueAtTime(pk*1.15,e-0.05); }
+            if(!(nxA-e<0.02)){ const rel=Math.max(0.01,Math.min(0.12,nxA-e-0.006)); P.setValueAtTime(e-a>0.5 ? pk*1.15 : pk,Math.max(a+0.035,e-0.02)); P.linearRampToValueAtTime(0,e+rel); }
+            pe=e; }); } },
+      /* THE CHOIR: wordless voices on a chord (ns, held for l steps), two to a note a little apart, a shared slow
+         vibrato, through the formants of an open "ah" (or "oo"): it swells in and lets go slowly */
+      chr(t,p,sd,hz){ const v=p.v||1, dur=p.l*sd, end=t+dur+0.5, VW=p.o ? [[420,1.3,1],[800,1.6,0.5],[2600,3,0.1]] : [[760,1.4,1],[1150,1.8,0.6],[2700,3.5,0.18]];
+        const src=G(1), g=G(0), P=g.gain, vg=G(11); LFO(4.7,t,end,vg);
+        for(const n of p.ns) for(const d of (lite ? [0] : [-8,8])){ const o=O('sawtooth',hz(n),t,end,src,d); vg.connect(o.detune); }
+        for(const [fq,q,lv] of (lite ? VW.slice(0,2) : VW)){ const bp=F('bandpass',fq,q), bg=G(lv); src.connect(bp); bp.connect(bg); bg.connect(g); }
+        g.connect(C.choir.in); sends(g,p,C.choir);
+        const pk=0.1*v/Math.sqrt(p.ns.length)*(lite ? 1.4 : 1), a=Math.min(p.a||0.35,dur*0.5);
+        P.setValueAtTime(0,t); P.linearRampToValueAtTime(pk,t+a); P.setValueAtTime(pk,t+Math.max(a,dur-0.05)); P.linearRampToValueAtTime(0,t+dur+0.42); },
+      // the pad: a supersaw chord (two saws a note, lite one), its filter opening as it swells; held for l steps
+      pad(t,p,sd,hz){ const v=p.v||1, dur=p.l*sd, end=t+dur+0.3, lp=F('lowpass',500,0.7), g=G(0), P=g.gain;
+        for(const n of p.ns) for(const d of (lite ? [0] : [-11,11])) O('sawtooth',hz(n),t,end,lp,d);
+        lp.frequency.setValueAtTime(500,t); lp.frequency.exponentialRampToValueAtTime(p.cut||2400,t+Math.min(0.5,dur*0.5));
+        lp.connect(g); g.connect(DK.pad); const pk=0.075*v/Math.sqrt(p.ns.length)*(lite ? 1.4 : 1);
+        P.setValueAtTime(0,t); P.linearRampToValueAtTime(pk,t+0.08); P.setValueAtTime(pk,t+Math.max(0.09,dur-0.04)); P.linearRampToValueAtTime(0,t+dur+0.25); },
+      /* THE CLIMB THAT NEVER ENDS (a Risset glissando): sines an octave apart all gliding up together, each loudest in the
+         middle of the range and silent at its ends, so as one fades out at the top another fades in at the bottom. p.x is
+         where the climb is (in octaves; only its fraction matters), p.r how fast it climbs (octaves a second), p.l steps */
+      shep(t,p,sd){ const NO=lite ? 5 : 6, f0=lite ? 70 : 55, dur=p.l*sd, r=p.r, x=p.x-Math.floor(p.x), v=p.v||1, c=NO/2, w=NO/4.6, K=9;
+        const amp=(a)=>a<=0 || a>=NO ? 0 : Math.exp(-0.5*((a-c)/w)*((a-c)/w))*Math.min(1,a/0.6,(NO-a)/0.6);
+        for(let k=-1;k<NO;k++){ const a0=k+x, a1=a0+r*dur; if(a1<=0 || a0>=NO) continue;
+          const cv=new Float32Array(K); let mx=0; for(let i=0;i<K;i++){ cv[i]=0.07*v*amp(a0+(a1-a0)*(0.06/dur+(1-0.06/dur)*i/(K-1))); if(cv[i]>mx) mx=cv[i]; }
+          if(mx<0.004*v) continue;                                                           // (a partial at the very ends of the range: silent, not started)
+          const g=G(0), P=g.gain, o=O('sine',f0*Math.pow(2,a0),t,t+dur+0.12,g);
+          o.frequency.exponentialRampToValueAtTime(f0*Math.pow(2,a1),t+dur);
+          P.setValueAtTime(0,t); P.linearRampToValueAtTime(cv[0],t+0.06); P.setValueCurveAtTime(cv,t+0.061,dur-0.062); P.linearRampToValueAtTime(0,t+dur+0.1);
+          g.connect(C.shep.in); } },
+      // ---- the clap (three bursts and a tail over a snare's body), on two and four
+      clap(t,p){ const v=p.v||1, g=G(0), P=g.gain; N(t,0.3,g); P.setValueAtTime(0,t);
+        for(const [o,a] of [[0,0.7],[0.01,0.8],[0.021,1]]){ P.setTargetAtTime(4.6*v*a,t+o,0.0006); P.setTargetAtTime(0.7*v,t+o+0.003,0.004); }
+        P.setTargetAtTime(0,t+0.03,0.08); g.connect(FX.clap);
+        const n2=G(0); N(t,0.2,n2); AD(n2,t,0.001,1.1*v,0.15); n2.connect(FX.wires);
+        const b=G(0), o=O('triangle',200,t,t+0.14,b); o.frequency.exponentialRampToValueAtTime(162,t+0.08); AD(b,t,0.001,1.6*v,0.11); b.connect(C.clap.in); sends(b,p,C.clap); },
+      // a snare roll ([step, level]) on one noise source
+      roll(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), zT=at(H[H.length-1][0]), g=G(0), P=g.gain, v=p.v||1; N(t,zT-t+0.25,g); P.setValueAtTime(0,t);
+        for(const [s,vv] of H){ const th=at(s); P.setTargetAtTime(0.5*v*(vv||1),th,0.001); P.setTargetAtTime(0.02*v,th+0.005,0.018); }
+        P.setTargetAtTime(0,zT+0.03,0.04); g.connect(FX.wires); const g2=G(0.6); g.connect(g2); g2.connect(FX.clap); },
+      // the hats, a bar of them ([step, level, open]) on one noise source, each choked by the next
+      hats(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), g=G(0), P=g.gain, v=p.v||1, go=G(0), Po=go.gain; const nz=G(1); N(t,at(H[H.length-1][0])-t+0.3,nz);
+        nz.connect(g); nz.connect(go); g.connect(FX.hat); go.connect(FX.ohat); P.setValueAtTime(0,t); Po.setValueAtTime(0,t);
+        H.forEach(([s,vv,o],i)=>{ const th=at(s); Po.setTargetAtTime(0,th,0.004);
+          if(o){ Po.setTargetAtTime(0.22*v*(vv||1),th,0.0008); Po.setTargetAtTime(0,th+0.02,0.06); } else { P.setTargetAtTime(0.3*v*(vv||1),th,0.0008); P.setTargetAtTime(0,th+0.004,0.012); } }); },
+      // THE CLOCK: a tick and a tock on a little woodblock ([step, level, tock])
+      tick(t,p,sd){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.08, v=p.v||1, g=G(0), P=g.gain, o=O('sine',1900,t,endT,g), ng=G(0), Q=ng.gain;
+        N(t,endT-t,ng); ng.connect(FX.tick); g.connect(C.tick.in); P.setValueAtTime(0,t); Q.setValueAtTime(0,t);
+        for(const [s,vv,tk] of H){ const th=at(s), a=v*(vv||1); o.frequency.setValueAtTime(tk ? 1420 : 1900,th);
+          P.setTargetAtTime(0.16*a,th,0.0005); P.setTargetAtTime(0,th+0.002,0.009); Q.setTargetAtTime(0.9*a,th,0.0004); Q.setTargetAtTime(0,th+0.0015,0.005); } },
+      crash(t,p){ const v=p.v||1, g=G(0); N(t,2.2,g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.22*v,t+0.002); g.gain.exponentialRampToValueAtTime(0.0001,t+2.1); g.connect(FX.crash); sends(g,{spr:0.5},C.fx); },
+      boom(t,p){ const v=p.v||1, d=p.d||1.4, g=G(0), o=O('sine',95,t,t+d+0.4,g); o.frequency.exponentialRampToValueAtTime(36,t+0.6); AD(g,t,0.004,0.9*v,d+0.2); g.connect(C.sub.in); },
+      // a riser: noise swept up through a band-pass over l steps, swelling
+      rise(t,p,sd){ const v=p.v||1, dur=p.l*sd, g=G(0), bp=F('bandpass',400,2.2); N(t,dur+0.05,bp); bp.connect(g); g.connect(C.fx.in); sends(g,{spr:0.4},C.fx);
+        bp.frequency.setValueAtTime(400,t); bp.frequency.exponentialRampToValueAtTime(p.f||7000,t+dur);
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.16*v,t+dur); g.gain.linearRampToValueAtTime(0,t+dur+0.04); },
+      // a cymbal backwards, sucking in to the next downbeat
+      rev(t,p,sd){ const v=p.v||1, dur=p.l*sd, g=G(0), hp=F('highpass',2500,0.7); N(t,dur+0.02,hp); hp.connect(g); g.connect(C.fx.in);
+        hp.frequency.setValueAtTime(2500,t); hp.frequency.exponentialRampToValueAtTime(7000,t+dur);
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.2*v,t+dur-0.01); g.gain.linearRampToValueAtTime(0,t+dur+0.01); },
+      /* MISSION CONTROL. The Quindar tone: the short pure beep that keyed a capsule's radio (2525 Hz in, 2475 out), with a
+         breath of static; and telemetry, high sine blips on the scale ([step, note]) */
+      qnd(t,p){ const v=p.v||1, f=p.out ? 2475 : 2525, g=G(0), o=O('sine',f,t,t+0.3,g); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.05*v,t+0.006); g.gain.setValueAtTime(0.05*v,t+0.24); g.gain.linearRampToValueAtTime(0,t+0.25); g.connect(C.bell.in);
+        const s=G(0), bp=F('bandpass',1700,0.9); N(t,0.22,bp); bp.connect(s); s.gain.setValueAtTime(0,t); s.gain.linearRampToValueAtTime(0.06*v,t+0.01); s.gain.linearRampToValueAtTime(0,t+0.2); s.connect(C.bell.in); },
+      blp(t,p,sd,hz){ const H=p.h, at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+0.1, v=p.v||1, g=G(0), P=g.gain, o=O('sine',hz(H[0][1]),t,endT,g); g.connect(C.bell.in); sends(g,{throw:0.35},C.bell); P.setValueAtTime(0,t);
+        for(const [s,n] of H){ const th=at(s); o.frequency.setValueAtTime(hz(n),th); P.setValueAtTime(0,th); P.linearRampToValueAtTime(0.07*v,th+0.003); P.setValueAtTime(0.07*v,th+0.035); P.linearRampToValueAtTime(0,th+0.042); } },
+      // a struck chime (the counts): a sine and two bell partials, and a tick of the hammer
+      chm(t,p,sd,hz){ const v=p.v||1, f=hz(p.n), g=G(0);
+        for(const [m,a,d] of (lite ? [[1,1,1.5],[2.76,0.3,0.4]] : [[1,1,1.6],[2.76,0.32,0.45],[5.4,0.12,0.18],[2,0.2,0.8]])){ const pg=G(0); O('sine',f*m,t,t+d+0.05,pg); AD(pg,t,0.002,0.2*a*v,d); pg.connect(g); }
+        g.connect(C.bell.in); sends(g,p,C.bell); },
+      // the timpani: a kettle's note dropping into pitch, its second mode, the skin; p.h a roll ([step, level])
+      tim(t,p,sd,hz){ const v=p.v||1, f=hz(p.n-12), H=p.h||[[0,1]], at=AT(t,H[0][0],sd), endT=at(H[H.length-1][0])+1.4;
+        const g=G(0), P=g.gain, o=O('sine',f,t,endT,g), gm=G(0), Pm=gm.gain, om=O('sine',f*1.505,t,endT,gm), nz=G(0), Q=nz.gain; N(t,endT-t,nz); nz.connect(FX.skin);
+        g.connect(C.tim.in); gm.connect(C.tim.in); sends(g,p,C.tim); P.setValueAtTime(0,t); Pm.setValueAtTime(0,t); Q.setValueAtTime(0,t);
+        for(const [s,lv] of H){ const th=at(s), a=v*(lv||1); o.frequency.setValueAtTime(f*1.05,th); o.frequency.exponentialRampToValueAtTime(f,th+0.06);
+          P.setTargetAtTime(0.8*a,th,0.002); P.setTargetAtTime(0,th+0.01,H.length>1 ? 0.12 : 0.45); Pm.setTargetAtTime(0.3*a,th,0.002); Pm.setTargetAtTime(0,th+0.01,0.18);
+          Q.setTargetAtTime(1.2*a,th,0.001); Q.setTargetAtTime(0,th+0.004,0.03); } },
+    };
+  }
+
+  // ---- THE LIGHT, bar by bar: what the planner decided for each bar it planned (so the light is what is sounding,
+  //      wherever the listener has moved the form), kept in a ring; a bar it has not planned reads the written form
+  const RING=Array.from({length:16},()=>({n:-1, k:0, b:0, entry:0, pre:0, nc:0, cs:new Int8Array(10), ck:new Int8Array(10), dark:16}));
+  const SCR={n:-1, k:0, b:0, entry:0, pre:0, nc:0, cs:new Int8Array(10), ck:new Int8Array(10), dark:16};
+  function lights(n, beat, o){
+    let q=RING[((n%16)+16)%16];
+    if(q.n!==n){ const loc=locate(n); q=SCR; q.k=loc.k; q.b=loc.b; q.entry=loc.b===0 ? 1 : 0; q.pre=(loc.k<CNT && loc.b===FORM[loc.k].bars-1) || (loc.k===NOVA && loc.b===FORM[NOVA].bars-1) ? 1 : 0; q.nc=0; q.dark=16;
+      if(loc.k===CNT) for(let s=0;s<16;s+=8){ const c=10-2*loc.b-(s ? 1 : 0); if(c>=1){ q.cs[q.nc]=s; q.ck[q.nc]=c; q.nc++; if(c===1) q.dark=s+4; } } }
+    const k=q.k, b=q.b, bi=Math.min(3,Math.floor(beat)), f=beat-bi, s=beat*4, Pk=Math.exp(-f*4.5), id=FORM[k].id;
+    let lvl=0.15, ph=b*4+bi, dim=0, wave=-1;
+    const fill=q.pre && beat>=2 ? (beat-2)/2 : 0;                                                        // the fill into the next part: a rising strobe
+    if(k===0){ const bb=Math.min(b,8); lvl=0.3+0.06*bb+(0.32+0.03*bb)*Pk; if(b===0){ lvl+=1.9*Math.exp(-beat*1.3); wave=beat; } else if(b%4===0 && bi===0) wave=f; }
+    else if(k===1){ lvl=0.95+0.38*Pk+(q.entry && beat<2 ? 0.9*Math.exp(-beat*2) : 0); ph=40+b*4+bi; if(bi===0 && (b&1)===0) wave=f; }
+    else if(k===2){ if(q.entry && b===0){ lvl=0.28+0.12*Math.sin(beat*Math.PI/4); ph=80+bi; }              // over the jump: hanging in the air
+      else { lvl=0.72+0.3*(bi===2 ? Math.exp(-f*3) : 0)+0.18*Pk+(b===1 && beat<2 ? 1.2*Math.exp(-beat*1.6) : 0); ph=80+b*2+(bi>>1); if(bi===2) wave=f; } }
+    else if(k===3){ lvl=0.85+0.06*Math.min(b,4)+0.4*Pk; ph=120+b*4+bi; if(bi===0) wave=f; }
+    else if(k===4){ lvl=1.15+0.5*Pk+(q.entry && beat<2 ? 1.0*Math.exp(-beat*1.8) : 0); ph=160+b*4+bi; wave=f; }
+    else if(k===5){ const st=Math.floor(s)%2; lvl=0.8+0.08*Math.min(b,4)+0.3*Pk+0.08*(st ? 0 : 1); ph=200+b*8+Math.floor(beat*2); if(bi===0) wave=f; }
+    else if(k===CNT){ lvl=0.16+0.05*Math.exp(-((s%2))*3); ph=240; let last=-1;
+      for(let j=0;j<q.nc;j++) if(q.cs[j]<=s) last=j;
+      if(last>=0){ const x=(s-q.cs[last])/4, c=q.ck[last]; lvl=Math.max(lvl,0.2+(1.5+0.09*(10-c))*Math.exp(-x*2.4)); wave=x; ph=240+(10-c)+1; }
+      if(s>=q.dark){ lvl=0.02+0.05*(s-q.dark)/Math.max(1,16-q.dark); dim=1; wave=-1; } }
+    else { lvl=1.3+0.55*Pk+(b===0 ? 2.2*Math.exp(-beat*0.8) : 0); ph=280+b*4+bi; wave=b===0 ? beat : f; }
+    if(fill>0 && k!==CNT){ lvl+=0.3*fill*Math.exp(-((s*2)%1)*3); }
+    o.lvl=lvl; o.ph=ph; o.dim=dim; o.wave=wave; o.sec=id; o.pos=FORM[k].start+Math.min(b,FORM[k].bars-1); return o;
+  }
+
+  const CHANNELS=['kick','sub','bass','clap','hats','tick','arp','pad','shep','lead','plk','brass','choir','bell','tim','fx'];
+  // each part's balance (a multiplier on the strips) and its level on the master
+  const PMIX={
+    lift: {kick:1, sub:1, bass:0.9, clap:1, hats:0.9, tick:1, arp:1, pad:0.7, shep:0.8, lead:1, plk:1, brass:0, choir:0, bell:1, tim:1, fx:1},
+    star: {kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:0.9, pad:1, shep:0.7, lead:1, plk:0.8, brass:0.9, choir:0.8, bell:1, tim:1, fx:1},
+    over: {kick:0.95, sub:1, bass:0.85, clap:1, hats:0.9, tick:1, arp:0.8, pad:1, shep:0.9, lead:1, plk:0.8, brass:0.8, choir:0.9, bell:1, tim:1, fx:1},
+    dive: {kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:0.9, pad:1, shep:0.8, lead:0.95, plk:0.8, brass:1, choir:1, bell:1, tim:1, fx:1},
+    near: {kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:0.85, pad:1, shep:0.7, lead:0.9, plk:0.8, brass:1, choir:1, bell:1, tim:1, fx:1},
+    final:{kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:0.9, pad:1, shep:1, lead:0.95, plk:0.8, brass:1, choir:1, bell:1, tim:1, fx:1},
+    count:{kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:1, pad:1, shep:1, lead:1, plk:1, brass:1, choir:1, bell:1, tim:1, fx:1},
+    nova: {kick:1, sub:1, bass:1, clap:1, hats:1, tick:1, arp:0.85, pad:1, shep:0.6, lead:0.9, plk:0.8, brass:1, choir:1, bell:1, tim:1, fx:1}};
+  const ENERGY={lift:0.97, star:1.0, over:0.96, dive:1.0, near:1.05, final:1.0, count:0.95, nova:1.08};
+  const SHEP_R={lift:1/32, star:1/32, over:1/24, dive:1/16, near:1/24, final:1/9, count:1/5, nova:1/40};   // how fast the climb under it all goes (octaves a second)
+
+  /* THE PLANNER. env.nova is this station's memory: the part it is in (k), how many bars into it (b), the hook's bar
+     (hb: it runs on across the parts, so a change never breaks the tune), the count it is waiting to play (cnt), and
+     whether it is still following the listener (free once the nova has gone). Each bar is planned a moment before it
+     sounds (env.ahead), so where the course is telling it predicts when the listener will reach the next part and
+     changes on the bar line nearest (from 0.45 of a bar early to 0.55 late), with a fill in the bar before it; it never
+     goes back (a spin or a respawn behind only holds the part). In the countdown it places each count on the eighth
+     nearest to when the listener will pass its hoop; a count whose hoop is passed is played at once, two hoops gone by
+     put the clock on the right number, and nothing is ever counted twice. */
+  function plan(n,R,env){
+    const lite=!!(env && env.lite), sd=(env && env.sd) || 60/BPM/4, H=16*sd, barT=env && env.barT!=null ? env.barT : 0, ahead=env && env.ahead!=null ? env.ahead : 0.3;
+    const L=listener(); let st=env.nova;
+    const cont=!!st && st.n===n-1 && Math.abs(barT-(st.t+16*st.sd))<0.08;
+    let entry=false, pre=false, quiet=false;
+    if(!cont){ const loc=locate(n);
+      st=env.nova={n, t:barT, sd, k:loc.k, b:loc.b, hb:loc.hb, cnt:loc.k===CNT ? 10-2*loc.b : 10, free:loc.k===NOVA || (loc.pass>0), pass:loc.pass, shX:st ? st.shX : 0, follow:false, log:st ? st.log : []};
+      if(n>0 && L && !L.done && !st.free){ const p=partOf(L.u); if(p!==st.k){ st.k=p; st.b=0; } if(p===CNT) st.cnt=Math.max(1,Math.min(10,(L.next|0)||1)); }   // tuned in mid-run: where the listener is
+      entry=n===0 || st.b===0; quiet=n>0;
+    } else {
+      let k=st.k, b=st.b+1;
+      const follow=!!L && !st.free && !L.done && k<CNT;
+      if(k===CNT){ if(st.cnt<1){ k=NOVA; b=0; st.free=true; } }                          // count 1 has gone: the nova
+      else if(k===NOVA){ if(b>=FORM[NOVA].bars){ k=1; b=0; st.pass++; } }                  // ...and round again, still climbing
+      else if(follow){ const p=Math.min(CNT,partOf(L.u)), tB=(L.v>1e-4 && p<CNT) ? (PART_U[p+1]-L.u)/L.v-ahead : Infinity;
+        if(p>k){ k=p; b=0; }                                                                // the listener is in a later part already
+        else if(p===k && tB<0.45*H){ k=k+1; b=0; }                                          // the change is on this bar line
+        else if(p===k && tB<1.45*H) pre=true; }                                             // it comes during this bar: the fill
+      else if(b>=FORM[k].bars){ k++; b=0; }                                                 // the written form
+      if(!follow && k<CNT && b===FORM[k].bars-1) pre=true;
+      if(!follow && k===NOVA && b===FORM[NOVA].bars-1) pre=true;
+      if(k!==st.k){ entry=true; if(k===CNT) st.cnt=10; }
+      st.hb=k===NOVA && b===0 ? 0 : (st.hb+1)&3; st.k=k; st.b=b; st.follow=follow;
+    }
+    st.n=n; st.t=barT; st.sd=sd;
+    const k=st.k, b=st.b, hb=st.hb, id=FORM[k].id;
+
+    // ---- the countdown's counts in this bar: [step, number]
+    const counts=[]; let dark=16;
+    if(k===CNT){ let last=-2;
+      if(L && !st.free){ const nx=L.done ? 0 : (L.next|0), v=L.v;
+        while(st.cnt>=1){ const c=st.cnt, due=nx<c;
+          if(due && c>nx+1 && c>1){ st.cnt--; continue; }                                  // two hoops gone by since: the clock jumps to the right number
+          let s;
+          if(due) s=Math.max(0,last+2);
+          else if(v>1e-4){ s=Math.round(((HOOP_U(c)-L.u)/v-ahead)/sd/2)*2; s=Math.max(0,last+2,s); }
+          else break;
+          if(s>14) break;
+          counts.push([s,c]); last=s; st.cnt--; } }
+      else for(const s of [0,8]) if(st.cnt>=1 && s>last){ counts.push([s,st.cnt]); last=s; st.cnt--; }
+      if(st.cnt<1 && counts.length){ const s1=counts[counts.length-1][0]; dark=s1<12 ? s1+4 : Math.min(15,s1+2); } }
+
+    // ---- remember it for the light
+    { const q=RING[((n%16)+16)%16]; q.n=n; q.k=k; q.b=b; q.entry=entry && !quiet ? 1 : 0; q.pre=pre ? 1 : 0; q.nc=Math.min(10,counts.length); q.dark=dark;
+      for(let j=0;j<q.nc;j++){ q.cs[j]=counts[j][0]; q.ck[j]=counts[j][1]; } }
+
+    const ev=[], E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
+    const hum=(x)=>x*(0.92+R()*0.16);
+    const cn=chordName(k,hb,b), [root]=CH[cn], PV=PADV[cn], RN=RK[k];
+    const bassN=root-12, T=[PV[0],PV[1],PV[2],PV[0]+12,PV[1]+12,PV[2]+12,PV[0]+24];
+    const nextIsHook=!(pre && k===CNT-1) && k!==CNT;
+    const tune=k===CNT ? [] : hook(hb,RN,hb===3 && !nextIsHook);
+    // ---- the parts' building blocks
+    const kick4=(v,steps)=>{ for(const s of (steps||[0,4,8,12])) E(s,'kick',{v:(s===0 ? 1 : 0.9)*(v||1)}); E(0,'pump',{at:steps||[0,4,8,12], d:0.55}); };
+    const clap24=(v)=>{ E(4,'clap',{v:hum(v||1)}); E(12,'clap',{v:hum(v||1),spr:0.15}); };
+    const hats8=(v)=>E(2,'hats',{h:[[2,1,0],[6,0.9,0],[10,1,0],[14,0.9,0]].map(([s,l,o])=>[s,hum(l),o]),v:v||1});
+    const hats16=(v,open)=>{ const h=[]; for(let s=0;s<16;s++){ const ob=s%4===2; if(ob && open) h.push([s,0.9,1]); else h.push([s,(s%4===0 ? 0.55 : ob ? 0.85 : 0.4)*(0.85+R()*0.3),0]); } E(0,'hats',{h,v:v||1}); };
+    const sub=(v,l)=>E(0,'sub',{ns:[[0,root,l||16]],v:v||1});
+    const bass8=(v,busy)=>{ const ns=[]; for(const s of [2,6,10,14]) ns.push([s,bassN+(busy && s===14 && R()<0.5 ? 12 : 0),2,hum(1)]); if(busy && R()<0.6) ns.splice(1,0,[3,bassN+12,1,0.6]); ns.sort((a,b)=>a[0]-b[0]); E(ns[0][0],'bas',{ns,v:v||1}); };
+    const bass16=(v)=>{ const ns=[]; for(let s=0;s<16;s++) if(s%4!==0) ns.push([s,bassN+(s%4===2 ? 12 : 0),1,s%4===2 ? 1 : 0.7]); E(1,'bas',{ns,v:v||1}); };
+    const arp=(v,cut,eighths)=>{ const ns=[]; for(let s=0;s<16;s+=(eighths ? 2 : 1)){ const j=Math.floor(s/4), i=Math.min(6,j+(s%4)); ns.push([s,T[eighths ? Math.min(6,j+((s%4)>>1)) : i],eighths ? 2 : 1,s%4===0 ? 1 : 0.7]); } E(0,'arp',{ns,v:v||1,cut:cut||1,throw:0.12}); };
+    const pad=(v,cut)=>E(0,'pad',{ns:PV,l:16,v:v||1,cut:cut||2400});
+    const choir=(v,o)=>E(0,'chr',{ns:PV,l:16,v:v||1,o:!!o,a:0.4});
+    const thm=(v,up)=>{ if(tune.length) E(tune[0][0],'thm',{ns:tune,v:v||1,up:up||0,throw:0.18,spr:0.25}); };
+    const plk=(v,up)=>{ if(tune.length) E(tune[0][0],'plk',{ns:tune.map(([s,nn,l])=>[s,nn,l,1]),v:v||1,up:up||0,throw:0.2}); };
+    const brs=(v,full,h,oct)=>{ const ns=full ? tune.filter(x=>x[0]<14) : (hb===3 ? tune.filter(x=>x[0]>=6 && x[0]<14) : []); if(ns.length) E(ns[0][0],'brs',{ns,v:v||1,h:!!h,oct:!!oct,spr:0.12}); };
+    const chimeR=(v)=>{ if(hb===3 && k!==CNT) E(8,'chm',{n:RN+12,v:v||0.7,throw:0.25,spr:0.3}); };
+    const fill=(heavy)=>{ const h=[]; for(let s=8;s<16;s+=(heavy ? 1 : 2)) h.push([s,0.4+0.6*(s-8)/8]); if(heavy) for(let s=12;s<16;s+=0.5) h.push([s,0.7+0.3*(s-12)/4]); h.sort((a,b)=>a[0]-b[0]); E(8,'roll',{h,v:heavy ? 1 : 0.8}); E(8,'rev',{l:8,v:heavy ? 1 : 0.7}); };
+    // ---- the climb under everything: a stretch of the Risset glissando every two bars
+    const shR=SHEP_R[id]; if((n&1)===0 || !cont){ const l=(n&1)===0 ? 32 : 16; E(0,'shep',{x:st.shX,r:shR,l,v:k===CNT ? 1.25 : k===5 ? 1.1 : 0.8}); st.shX=(st.shX+shR*l*sd)%1; }
+
+    // ---- the parts
+    if(id==='lift'){
+      kick4(1); sub(0.95); bass8(b<4 ? 0.85 : 1, b>=4); arp(b<4 ? 0.8 : 1, 0.55+0.1*Math.min(b,7));
+      if(b<4){ hats8(0.75); E(0,'tick',{h:[0,2,4,6,8,10,12,14].map(s=>[s,s%4 ? 0.6 : 1,s%4===2 ? 1 : 0]),v:0.8}); plk(1);
+        if(b>=1 && R()<0.8) E(R()<0.5 ? 9 : 5,'blp',{h:[[0,36+[0,4,7,12][Math.floor(R()*4)]],[1,43],[2,48]]}); }
+      else { hats16(0.9,true); clap24(1); thm(1); plk(0.55,12); pad(0.6,1800); chimeR(0.6); }
+      if(b===0 && !quiet){ E(0,'boom',{v:0.9,d:1.6}); E(0,'crash',{v:0.6}); E(0,'qnd',{}); E(6,'qnd',{out:1}); E(0,'tim',{n:0,v:0.8,spr:0.3}); }
+      if(b===4){ E(0,'crash',{v:0.5}); E(0,'qnd',{}); }
+    }
+    else if(id==='star'){
+      kick4(1); sub(1); bass8(1,true); hats16(1,true); clap24(1); arp(0.9,1); pad(0.9,2600); thm(1); brs(0.8); chimeR(0.7);
+      if(hb===2 || hb===3) choir(0.55,true);
+      if(entry && !quiet){ E(0,'crash',{v:0.7}); E(0,'qnd',{}); }
+    }
+    else if(id==='over'){
+      const air=entry && b===0 && !quiet;                                                   // over the jump: in the air for a bar
+      if(air){ sub(0.6); pad(1,1500); thm(1,12); E(0,'rise',{l:16,f:5000,v:0.8}); E(0,'qnd',{}); E(0,'boom',{v:0.6,d:1}); }
+      else { kick4(0.95); sub(1); bass8(0.9); hats8(0.9); if(R()<0.5) E(15,'hats',{h:[[15,0.6,0]]}); E(8,'clap',{v:hum(1.05),spr:0.25}); if(b%2) E(14,'clap',{v:0.35});
+        arp(0.8,0.8,true); pad(1,2200); thm(1,12); choir(0.7,true); brs(0.7); chimeR(0.8);
+        if(b===1 || (entry && quiet)){ E(0,'crash',{v:0.75}); E(0,'tim',{n:root,v:0.8,spr:0.3}); } }
+    }
+    else if(id==='dive'){
+      kick4(1); sub(1); bass8(1,true); hats16(1,b>=2); clap24(1); if(b>=2) E(14,'clap',{v:0.4});
+      arp(0.95,1.1); pad(1,2800); thm(0.95); brs(1,true,true); choir(0.8); chimeR(0.6);
+      if(entry && !quiet){ E(0,'crash',{v:0.7}); E(0,'tim',{n:root,v:0.9,spr:0.3}); }
+    }
+    else if(id==='near'){
+      kick4(1.05); sub(1.05); bass8(1,true); hats16(1.05,true); clap24(1.05); arp(1,1.3); pad(1.05,3200); thm(0.9,12); plk(0.5,12);
+      brs(1.05,true,true,true); choir(1); chimeR(0.8);
+      if(hb===0){ E(0,'tim',{n:root,v:1,spr:0.3}); E(0,'crash',{v:entry && !quiet ? 0.85 : 0.45}); }
+    }
+    else if(id==='final'){
+      kick4(1); sub(1); bass16(0.95); hats16(1,true); clap24(1); arp(0.95,1.2); pad(1,2800); thm(0.95); brs(1,true,true); choir(0.75+0.07*Math.min(b,3));
+      E(0,'tick',{h:Array.from({length:16},(_,s)=>[s,s%4 ? 0.45 : 0.9,s%2]),v:0.6});
+      if(b>=2 || pre) E(8,'tim',{n:root,h:[[8,0.5],[10,0.6],[12,0.7],[13,0.75],[14,0.85],[15,0.95]],v:0.8});
+      if(entry && !quiet){ E(0,'crash',{v:0.6}); E(0,'qnd',{}); }
+    }
+    else if(id==='count'){
+      // the band stripped back: the clock, the pedal G under it, the climb rising fast; each count a chime a step higher,
+      // the kettle drum, and the choir's third under it; after "one", a breath of dark, sucking in
+      const tk=[]; for(let s=0;s<Math.min(16,dark);s+=2) tk.push([s,s%4 ? 0.65 : 1,s%4===2 ? 1 : 0]);
+      if(tk.length) E(0,'tick',{h:tk,v:1});
+      E(0,'sub',{ns:[[0,7,Math.min(16,dark)]],v:0.7}); E(0,'pad',{ns:PADV.G,l:Math.min(16,dark),v:0.55,cut:1600});
+      if(entry && !quiet){ E(0,'boom',{v:0.6,d:1.2}); E(0,'qnd',{}); }
+      for(const [s,c] of counts){ const nn=CNT_N[c];
+        E(s,'chm',{n:nn+12,v:0.9+0.03*(10-c),throw:0.3,spr:0.35}); E(s,'tim',{n:c%2 ? 7 : 2,v:0.6+0.05*(10-c),spr:0.3});
+        E(s,'chr',{ns:[third(nn),nn],l:c===1 ? Math.max(2,dark-s) : 8,v:0.55+0.05*(10-c),a:0.06}); if(c<=3) E(s,'kick',{v:0.7}); }
+      if(dark<16){ const m={}; for(const c of CHANNELS) m[c]=c==='fx' ? 1 : c==='bell' ? 0.6 : 0; A(dark-0.1,{a:'mix',m,tc:0.02}); E(dark,'rev',{l:16-dark,v:1.1}); E(dark,'qnd',{out:1}); }
+      else if(counts.length===0 && R()<0.5) E(8,'blp',{h:[[0,43],[1,48]],v:0.7});
+    }
+    else { // the nova: everything at once, white-hot, on the top C
+      kick4(1.05); sub(1.1); bass8(1.05,true); hats16(1.05,true); clap24(1.1); arp(1,1.5); pad(1.05,3600); thm(0.9,12); plk(0.6,12);
+      brs(1.1,true,true,true); choir(1.1); chimeR(1);
+      if(b===0){ E(0,'crash',{v:1}); E(0,'boom',{v:1,d:2}); E(0,'tim',{n:0,v:1.1,spr:0.4}); E(0,'chm',{n:48,v:1,throw:0.3,spr:0.4}); E(0,'qnd',{}); }
+      if(b===4) E(0,'crash',{v:0.7});
+    }
+    if(pre && id!=='count') fill(k>=4);
+    // the balance for this bar (the countdown's dark is laid over it, above)
+    const m={}, pm=PMIX[id]; for(const c of CHANNELS) m[c]=pm[c]!=null ? pm[c] : 1;
+    A(-0.2,{a:'mix',m,tc:0.01});
+    if(id==='count' && dark<16) ev.sort((a,b)=>a.s-b.s);
+    const info={n, k:id, b, hb, follow:st.follow, cnt:st.cnt, counts:counts.map(x=>x.join('@')).join(' '), u:L ? +L.u.toFixed(3) : null, next:L ? L.next : null};
+    st.log.push(info); if(st.log.length>64) st.log.shift();
+    return {ev, label:FORM[k].name, sec:id, pos:FORM[k].start+Math.min(b,FORM[k].bars-1), pass:st.pass, energy:ENERGY[id], nova:info};
+  }
+  const MIX={ makeup:0.45, lowMid:-1.5, air:2.5, echoFb:0.3, echoRet:0.5, springRet:0.5, roomRet:0.65,
+    channels:{
+      kick:  {level:1.45, pan:0,     echo:0,    spring:0,    chain:[['hp',28],['peak',55,2.5,1.1],['peak',300,-2,1],['lp',7000]]},
+      sub:   {level:0.6,  pan:0,     echo:0,    spring:0,    chain:[['hp',30],['drive',2.0],['trim',0.4],['lp',600]]},
+      bass:  {level:1.0,  pan:0,     echo:0,    spring:0.02, chain:[['hp',45],['peak',120,2,1],['peak',320,-3,1],['lp',3500]]},
+      clap:  {level:1.2,  pan:0,     echo:0.03, spring:0.25, chain:[['hp',180],['peak',1600,1.5,1],['hshelf',6000,-2]]},
+      hats:  {level:1.0,  pan:0.2,   echo:0,    spring:0.06, chain:[['hp',5000],['hshelf',9000,-2]]},
+      tick:  {level:0.8,  pan:-0.25, echo:0.12, spring:0.15, chain:[['hp',700],['peak',2300,-3,1.2]]},
+      arp:   {level:1.0,  pan:0.15,  echo:0.18, spring:0.18, chain:[['hp',220],['peak',2600,-2.5,1],['lp',8000]]},
+      pad:   {level:1.0,  pan:0, spread:0.55, echo:0, spring:0.3, chain:[['hp',150],['peak',400,-2,1],['peak',2800,-2,1]]},
+      shep:  {level:0.9,  pan:0, spread:0.4, echo:0.05, spring:0.4, chain:[['hp',60],['lp',5000]]},
+      lead:  {level:1.15, pan:0,     echo:0.12, spring:0.3,  chain:[['hp',180],['peak',2800,-1.5,1.2]]},
+      plk:   {level:0.8,  pan:-0.2,  echo:0.2,  spring:0.25, chain:[['hp',300],['peak',3000,-3,1],['lp',9000]]},
+      brass: {level:1.1,  pan:0, spread:0.3, echo:0.04, spring:0.25, chain:[['hp',120],['peak',300,-2,1],['peak',1200,1.5,1],['peak',3000,-2.5,1.2],['lp',7500]]},
+      choir: {level:1.3,  pan:0, spread:0.5, echo:0.04, spring:0.45, chain:[['hp',160],['peak',2500,-2,1.2],['lp',7000]]},
+      bell:  {level:1.0,  pan:0.1,   echo:0.12, spring:0.35, chain:[['hp',300]]},
+      tim:   {level:1.2,  pan:0,     echo:0,    spring:0.3,  chain:[['hp',40],['peak',90,2,1],['lp',5000]]},
+      fx:    {level:0.9,  pan:0,     echo:0.05, spring:0.3,  chain:[['hp',40]]},
+    } };
+  return {
+    title:'T-Minus', bpm:BPM, key:-9, swing:0, echoSteps:3, voices,
+    lag:{thm:0.004, brs:0.006, chr:0.01},
+    form:FORM, bars:TOTAL, loopFrom:LOOP, plan, lights, mix:MIX, parts:PART_U,
+    courseNote:'the course song itself, produced, in the course key; it follows the listener down the run to the star',
+  };
+})();
 /* "THE SHUTTLE" — Felicity's own record, and the first course record (see courseStyleId): an
    original loom-driven folktronica instrumental in A-flat at 126 bpm, written for this engine and
    grown from her course sketch (TRACKS, "The Shuttle": the rocking E-flat/C figure, the climb out
@@ -44188,7 +44656,7 @@ const TRACKS=[
      (a launch straight and a row of boost pads: go fast), swing round it close (steer), fly back out and over a jump,
      come round a wide turn (drift) and dive in again nearer, and once more: the last dive is the countdown, ten hoops
      10 to 1, up a ramp and into the star. The grid song climbs a major scale by steps and never comes back down. */
-  {name:'Nova', nova:true, raw:true, loop:false, steps:1147, key:0, tempo:176, sky:0x06141c,
+  {name:'Nova', nova:true, raw:true, loop:false, steps:1147, key:0, tempo:176, sky:0x06141c, courseStyle:'courseNova',
    // THE STAR'S LIGHT, IN THE AIR. Far from it, a cold vapour lies on the dark ground and the star is a point; the nearer
    // you come the more of the air it fills, gold, toward it (aerSun: the air lights up in the star's direction), the
    // vapour burns off, and the racers go from the cold of the dark to the star's own colour
@@ -44439,7 +44907,17 @@ function novaTick(P, t){
   // the count: each hoop beats faster than the one before, and the one you are about to pass burns
   for(const h of P.hoops){ const beat=0.5+0.5*Math.sin(t*(3+(10-h.k)*1.5)), nr=Math.max(0,1-Math.abs(h.u-u-0.012)/0.03);
     h.mat.color.copy(h.col).multiplyScalar(0.7+0.4*beat+0.9*nr); h.num.opacity=0.75+0.25*beat; }
+  novaListen(P, me, t);
 }
+// FOR THE COURSE RECORD: where the listener is (you, or the kart you are watching), on every frame the race moves. A frame
+// that stands still (a race held by a tool) writes nothing, so the record hears no listener rather than a frozen one
+function novaListen(P, me, t){
+  if(typeof NOVA_LISTEN!=='object' || !NOVA_LISTEN || state!=='race') return;
+  const r=me && me.spectator && me._specT ? me._specT : me; if(!r || !isFinite(r.prog) || t===P.lt) return;
+  const L=NOVA_LISTEN, dt=P.lt==null ? 0 : t-P.lt, du=r.prog-L.u; P.lt=t;
+  L.v=(dt>0 && dt<0.5 && Math.abs(du)<0.02) ? L.v+(Math.max(0,du/dt)-L.v)*Math.min(1,dt*6) : 0;   // (a respawn or a new race starts it again)
+  let nx=0; if(!r.finished) for(const h of P.hoops) if(r.prog<h.u){ nx=h.k; break; }
+  L.u=r.prog; L.next=nx; L.done=!!r.finished; L.t=performance.now(); }
 /* ============== LUCY KIT: the Jersey shore at dusk, as a 1930s cartoon ============== *
  * The boardwalks of Atlantic City and the Jersey shore, drawn the way the Neo Proto racers are: as a 1930s cartoon.
  * Five rules hold everything here.
