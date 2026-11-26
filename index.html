@@ -3388,7 +3388,7 @@ const MUSIC_STYLES={
      that reads every style: the hook (a leap of a fourth into three steps up, each bar a step higher: G-C-D-E, A-D-E-F,
      B-E-F-G, C-F-G-A) over its I-ii-iii-IV climb, and the countdown's climb to the top C as the high answer; a four-on-
      the-floor with the clap on two and four; the victory fanfare climbs out of the hook on a brass voice. */
-  courseNova:{ engine:'tMinus', station:'T-MINUS', course:true,
+  courseNova:{ engine:'tMinus', station:'T-MINUS', course:true, finale:true,
               inst:'brass', melWave:'sawtooth', bassWave:'triangle', bassInst:'pluck',
               drums:{kick:[0,4,8,12],snare:[4,12]}, bass:[0,2,4,5],
               hihat:2, beatGroup:4, tempoMul:0.6,
@@ -4589,8 +4589,14 @@ FINAL_LAP_CUE.rayBegay=46;                                  // the Second Build'
 FINAL_LAP_CUE.pharaoh=42;                                   // the Second Build's last two bars (the frame drum in sixteenths, the sistrum rolling, the riser, "ha" cut shorter and higher, everybody's "hey!", the harp running up, a breath of dark) → Full Sun, the second drop
 FINAL_LAP_CUE.spartan=50;                                   // the Second Build's last two bars (the snare's roll, the riser, the trumpet's signal, "la" cut shorter and higher, everybody's "e-le-LEU!" on two taps and a clang, the dark) → Hot Gates, the second drop
 FINAL_LAP_CUE.khan=46;                                       // the Second Build's last two bars (the drum in sixths, the roll, the riser, the whistle stuttered higher, "hey! hey! HOO!", the dark) → Thunder, the second drop
+/* A COURSE RECORD WITH ITS OWN FINALE. A course record whose style says `finale` is written to the end of its run and
+   follows the driver there (Nova's "T-Minus": the countdown on the ten hoops, the nova at the star). While it is the
+   record on the air it keeps the air: no hand-over to the racer's station at the banner or at the line, no heartbeat
+   and no tempo bump over its own count. The results still play the winner's song. A player tuned to their own station
+   on that course gets the usual final lap. */
+function courseFinale(){ const cs=onCourseSong && !songFor && musicTimer && courseStyleId(); return !!(cs && MUSIC_STYLES[cs].finale); }
 function finalLapSong(me){
-  if(!me || me.spectator || !chosenType) return;
+  if(!me || me.spectator || !chosenType || courseFinale()) return;
   const s=homeStyleOf(me), st=s && MUSIC_STYLES[s]; if(!st) return;
   if(st.engine) switchSong(s, FINAL_LAP_CUE[s]);
   else switchSong(s, null, true);
@@ -4741,7 +4747,7 @@ function stopMusic(){ songWait=null; if(musicTimer){ clearInterval(musicTimer); 
 // own red-pink palette, but a heartbeat is unmistakable on any track
 function rampFinalLap(){
   document.body.classList.add('final-lap');
-  if(actx && !hbTimer) hbTimer=setInterval(()=>{
+  if(actx && !hbTimer && !courseFinale()) hbTimer=setInterval(()=>{
     if(state!=='race'){ clearInterval(hbTimer); hbTimer=null; return; }
     beep(52,0.1,'sine',0.4); setTimeout(()=>beep(46,0.08,'sine',0.3),150);   // lub-dub
   }, 850);
@@ -4750,6 +4756,7 @@ function rampFinalLap(){
 // once only half a lap (or, on point-to-point tracks, roughly the last tenth of the run)
 // remains, not from the moment the final lap starts.
 function speedUpFinalStretch(){
+  if(courseFinale()) return;                                 // (a record with its own finale keeps its own time: see courseFinale)
   if(musicTimer && curStyle && curStyle.engine){             // a produced station speeds its own clock
     const h=producedStations[curStyle.engine]; if(h) h.setTempoScale(1.15); return; }
   if(musicTimer && curStyle){
@@ -100175,7 +100182,7 @@ function placeFinish(r){
       finishPunchT=1.2;                          // camera zoom-punch, bigger than a boost kick
       r.celebT=6;                                // celebration pose: grin, bounce, spinning star eyes
       showBanner(trackLoop ? ord(r.place)+'!' : ((TRACKS[selTrack].finish||{}).done||'Fertilized!')); kickShake(1.3); SFX.finish(); stopEngine(); buzz(HAPTIC.finish);
-      if(!r.spectator) switchSong(homeStyleOf(r));   // the hero shot is yours: so is the song (see WHOSE SONG)
+      if(!r.spectator && !courseFinale()) switchSong(homeStyleOf(r));   // the hero shot is yours: so is the song (see WHOSE SONG; a course record with its own finale plays it out, see courseFinale)
       flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
       playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
