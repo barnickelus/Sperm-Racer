@@ -84105,16 +84105,16 @@ function tonyHornGeo(){ return tonyKeep('horn', ()=>{
   return kingMerge([[horn,new T.Matrix4(),dbLin('#e2412f')],[new T.SphereGeometry(0.34,10,8),new T.Matrix4().makeTranslation(0,-0.3,0.05),dbLin('#ffc935')],[new T.TorusGeometry(0.17,0.06,6,10),new T.Matrix4().makeTranslation(0,-0.02,0.03),dbLin('#ffc935')]]); }); }
 function tonyPickGeo(){ return tonyKeep('pick', ()=>{ const c=new T.CylinderGeometry(0.05,0.085,1.7,6); c.translate(0,0.76,0); return kingMerge([[c,new T.Matrix4(),dbLin('#f3e0b0')]]); }); }
 // the arm, in its own space: x and z across the hose (in hose radii), y along it; aT says where along the curve a vertex rides
-function tonyArmGeo(tan, key){ return tonyKeep(key||'arm', ()=>{
+// (hand: the toon hand's options and where its wrist sits; a fist by default)
+function tonyArmGeo(tan, key, hand){ return tonyKeep(key||'arm', ()=>{
   const M=(x,y,z,sx,sy,sz)=>new T.Matrix4().compose(new T.Vector3(x,y,z), new T.Quaternion(), new T.Vector3(sx,sy,sz)), gold=dbLin('#ffc935'), items=[], aT=[];
   const add=(geo,m,c,t)=>{ items.push([geo,m,c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
   add(tube, new T.Matrix4(), tan, i=>ty[i]);
   const ring=new T.TorusGeometry(1.14,0.34,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), gold, 0.8);
-  const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.35,0, 2.05,1.75,1.95), tan, 1);                                                   // the fist
-  for(const x of [-1.2,-0.4,0.4,1.2]) add(ball, M(x,2.5,0.7, 0.6,0.7,0.74), tan, 1);                // four knuckles
-  add(ball, M(0.2,1.25,1.82, 1.3,0.56,0.56), tan, 1);                                                // the thumb, wrapped across
+  add(new T.SphereGeometry(1,12,9), M(0,0.12,0, 0.98,0.8,0.9), tan, 1);                             // the wrist, rounding off the hose
+  const H=hand||{ o:{pose:'fist', size:1.6}, at:[0,0.2-0.62*1.6,0] };
+  toonHandAdd((g,m,c)=>add(g,m,c,1), H.o, tan, null, M(...H.at, 1,1,1));                             // the fist (a toon hand)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 // the pump: [shoulder], the elbow and the fist at the bottom of a pump and at the top of it (in the rig, his right side)
 const TONY_ARM={ a0:[-2.9,HEAD_CY-0.35,-1.2], r:0.5,
@@ -84369,6 +84369,8 @@ function dkjBottleGeo(){ return tonyKeep('dkjBottle', ()=>{
 function dkjCorkGeo(){ return tonyKeep('dkjCork', ()=>{ const c=new T.CylinderGeometry(0.26,0.22,0.42,8); return kingMerge([[c,new T.Matrix4(),dbLin('#d9b27a')]]); }); }
 // the arm's two poses from the shoulder: the bottle held up (the fist, the elbow's pull), and its shake each beat
 const DKJ_ARM={ up:[-2.3,6.9,1.5], el:[-3.3,2.6,0.4], shake:0.6 };
+// the hand round the bottle: its fingers wrap the glass from the front, the back of the hand behind it (the bottle rides on the forearm's line)
+const DKJ_HAND={ o:{ pose:'grip', size:1.75, curl:[0.6,0.62,0.64,0.66] }, at:[0,-1.85,-1.25] };
 function dkjDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, FK=ud.flow ? ud.flow.K : { neck:FLOW.NECK, k:FLOW.K }, skin=X.skin.clone().convertSRGBToLinear();
   if(ud.glow) ud.glow.material.color.multiplyScalar(0.8);
@@ -84387,7 +84389,7 @@ function dkjDress(g, K, X){
   const medal=new T.Group(); medal.add(new T.Mesh(dkjMedalGeo(), tonyPropMat())); medal.name='dkj-medal'; rigB.add(medal);
   // the champagne arm: a rubber hose (Tony's), a bottle in the fist, a cork that flies
   const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0}, uAq:{value:0} };
-  const arm=new T.Mesh(tonyArmGeo(skin, 'dkjArm'), tonyPropMat({TONY_BEND:''}, AU)); arm.name='dkj-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
+  const arm=new T.Mesh(tonyArmGeo(skin, 'dkjArm', DKJ_HAND), tonyPropMat({TONY_BEND:''}, AU)); arm.name='dkj-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
   const bottle=new T.Group(); bottle.name='dkj-bottle'; bottle.visible=false; rigB.add(bottle); const bm=new T.Mesh(dkjBottleGeo(), tonyPropMat({TONY_GLINT:''})); bottle.add(bm);
   const cork=new T.Mesh(dkjCorkGeo(), tonyPropMat()); cork.position.set(0,2.72,0); bottle.add(cork);
   const ting=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); ting.name='dkj-ting'; ting.visible=false; ting.renderOrder=2; rig.add(ting);
@@ -84652,18 +84654,10 @@ function kitArmGeo(skin, key, hand, cuff){ return tonyKeep(key, ()=>{
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
   add(tube, new T.Matrix4(), skin, i=>ty[i]);
   const ring=new T.TorusGeometry(1.14,0.36,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), cuffC, 0.82);
-  const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{   // an ellipsoid from a to b, r across
-    const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
-    add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  if(hand==='shaka'){
-    add(ball, new T.Matrix4().compose(V(0,1.35,0), new T.Quaternion(), V(1.7,1.55,1.15)), skin, 1);          // the palm, the fingers curled into it
-    for(const x of [-0.55,0.05,0.62]) add(ball, new T.Matrix4().compose(V(x,2.25,0.75), new T.Quaternion(), V(0.5,0.55,0.62)), skin, 1);
-    E(skin, [1.2,1.3,0.3], [2.6,2.3,0.2], 0.5);                                                                   // the thumb, out
-    E(skin, [-1.1,2.3,0.0], [-2.3,3.6,0.1], 0.46); }                                                             // the little finger, out
-  else {
-    add(ball, new T.Matrix4().compose(V(0,1.45,0), new T.Quaternion(), V(1.65,1.6,0.85)), skin, 1);          // the palm, open
-    for(const [x,l] of [[-1.05,1.3],[-0.36,1.65],[0.34,1.75],[1.02,1.5]]) E(skin, [x,2.6,0.1], [x*1.12,2.6+l,0.15], 0.42);
-    E(skin, [1.3,1.3,0.2], [2.5,2.2,0.3], 0.44); }
+  // the hand (a toon hand): the shaka (the thumb and the little finger out, the rest curled), or the open palm of a wave
+  const sz=hand==='shaka' ? 1.3 : 1.18;
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, rounding off the hose
+  toonHandAdd((g,m,c)=>add(g,m,c,1), hand==='shaka' ? {pose:'shaka', size:sz} : {pose:'wave', size:sz}, skin, null, new T.Matrix4().makeTranslation(0,0.2-0.62*sz,0));
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 function kitArmUniforms(){ return { uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0}, uAq:{value:0} }; }
 const _kaV=new T.Vector3(), _kaW=new T.Vector3();
