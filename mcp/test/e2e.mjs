@@ -773,6 +773,27 @@ await check('Bataar Khan\'s record, "Thousand Hooves" (gallop-step): the dawn, t
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+await check('Nova\'s course record, "T-Minus" (launch-day anthem): a race on Nova starts on it; the launch, round the star, the jump, the chorus, the countdown and the nova play clean', async () => {
+  json(await call('race_setup', { course: 'Nova', character: 'tonyGuido', seed: 3 })); json(await call('race_start'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-song-')), got = {};
+  try {
+    // the race starts on the course's own record, from the top (the race is held still, so the record plays its written form)
+    const a0 = json(await call('race_audio', { seconds: 6, file: path.join(dir, 'start.webm') })), an0 = a0.analysis; got.lift = an0;
+    assert.equal(a0.style, 'T-MINUS', 'a race on Nova starts on its course record: ' + a0.style); assert.equal(a0.section, 'lift', 'from the top: ' + a0.section);
+    assert.ok(a0.bytes > 20000 && an0.clippedSamples === 0 && an0.gaps.length === 0 && an0.loudnessDbfs > -36 && an0.loudnessDbfs < -22, 'the launch plays clean: ' + JSON.stringify(an0).slice(0, 300));
+    // (round the star, over the jump, the chorus, the countdown, the nova)
+    for (const [bar, sec, tight] of [[9, 'star', 0.35], [15, 'over', 0.3], [24, 'near', 0.35], [32, 'count', 0.25], [38, 'nova', 0.35]]) {
+      const a = json(await call('race_audio', { seconds: 6, style: 'courseNova', bar, file: path.join(dir, bar + '.webm') })), an = a.analysis; got[sec] = an;
+      assert.equal(a.style, 'T-MINUS', 'its own station: ' + a.style); assert.equal(a.section, sec, 'bar ' + bar + ' is in ' + sec + ': ' + a.section);
+      assert.ok(a.bytes > 20000 && an.clippedSamples === 0 && an.gaps.length === 0, 'bar ' + bar + ' plays without a gap or a clipped sample: ' + JSON.stringify(an).slice(0, 300));
+      assert.ok(an.loudnessDbfs > -36 && an.loudnessDbfs < -22 && an.beat.tightness >= tight, 'bar ' + bar + ' sits at the level of the other records, on the beat: ' + an.loudnessDbfs + ' dBFS, ' + an.beat.tightness);
+    }
+    // the nova is the arrival: louder than the launch, and with more of its weight in the bass
+    assert.ok(got.nova.loudnessDbfs > got.lift.loudnessDbfs && got.nova.tone.low > got.lift.tone.low + 0.05, 'the nova lands: ' + JSON.stringify([got.lift.loudnessDbfs, got.lift.tone, got.nova.loudnessDbfs, got.nova.tone]));
+    assert.equal(json(await call('page_logs', { level: 'error' })).entries.length, 0, 'no page errors from the record');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 await check('Big Shot Darius stands on his base at the line, fists on his hips, and flies level, nose first, arms swept back; a boost flashes off his base and throws his fists out ahead', async () => {
   json(await call('race_setup', { course: 'Victoria', character: 'kingShot', seed: 3 })); json(await call('race_start'));
   const round = json(await call('scene_graph', { root: 'ksh-round', depth: 3, maxNodes: 400 })).root, names = [];
