@@ -85127,6 +85127,12 @@ void main(){
 }`;
 /* THE ARM: a rubber hose (Tony's bend) in a sequin sleeve, a gold-rimmed bell cuff and his hand: 'point' (the index finger
    out, the disco point) or 'nyah' (the palm to the front, the fingers spread up, the thumb out sideways: into his ear) */
+// the glove (toonHand, the thumb on -x): the point (the index out, a little long, the thumb across), the nyah (the palm to
+// the front, the fingers spread, the thumb straight out sideways so its tip lands where the tick puts his ear)
+const RKJ_HAND={ s:1.45, y:0.72-0.62*1.45, point:{ pose:'point', long:1.12 }, nyah:{ pose:'spread', thumbPath:{ base:[0.98,0.95,0.2], d1:[0.85,0.5,0], d2:[1,0.12,0], L:[0.86,0.6] } } };
+function rkjHandO(hand){ return Object.assign({ sx:-1, size:RKJ_HAND.s }, RKJ_HAND[hand]); }
+let RKJ_TIPL=null;   // how far up the hand the pointing fingertip is (hose radii): where the burst comes off it
+function rkjTipL(){ if(RKJ_TIPL==null){ const h=toonHand(rkjHandO('point')); RKJ_TIPL=h.tip.index.y+RKJ_HAND.y+0.37*RKJ_HAND.s; for(const [g] of h.parts) g.dispose(); } return RKJ_TIPL; }
 function rkjArmGeo(hand){ return tonyKeep('rkjArm-'+hand, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], seq=dbLin('#c81eb4'), gold=dbLin('#ffc935'), skin=dbLin('#f6f3ea');   // (white gloves: the 1930s hand)
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -85134,16 +85140,8 @@ function rkjArmGeo(hand){ return tonyKeep('rkjArm-'+hand, ()=>{
   add(tube, null, seq, i=>ty[i]);
   const bell=new T.CylinderGeometry(1.65,1.02,1.1,16,1,true); bell.translate(0,0.1,0); add(bell, null, seq, 1);
   const rim=new T.TorusGeometry(1.64,0.22,6,18); rim.rotateX(Math.PI/2); rim.translate(0,0.65,0); add(rim, null, gold, 1);
-  const hs=1.3, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m), ball=new T.SphereGeometry(1,12,9), E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, HM(new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r))), c, 1); };   // (the glove a size up: a cartoon hand)
-  if(hand==='point'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.1), new T.Quaternion(), V(1.6,1.45,1.4))), skin, 1);                // the fist
-    for(const x of [-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.75), new T.Quaternion(), V(0.5,0.55,0.6))), skin, 1);   // three fingers curled in
-    E(skin, [-0.75,2.6,0.3], [-0.85,5.4,0.35], 0.48);                                                                   // the index finger, pointing
-    E(skin, [-1.25,1.6,0.9], [-0.6,2.55,1.5], 0.42); }                                                                  // the thumb, across
-  else {
-    add(ball, HM(new T.Matrix4().compose(V(0,1.8,0), new T.Quaternion(), V(1.45,1.45,0.72))), skin, 1);                 // the palm, to the front
-    E(skin, [-1.0,1.45,0], [-2.55,1.6,0], 0.47);                                                                       // the thumb, out sideways (into his ear)
-    for(const [a,l] of [[-0.5,2.0],[-0.17,2.5],[0.17,2.5],[0.5,2.1]]) E(skin, [Math.sin(a)*0.85, 1.8+Math.cos(a)*0.85, 0], [Math.sin(a)*(0.85+l), 1.8+Math.cos(a)*(0.85+l), 0], 0.44); }   // the fingers, spread   // the fingers, fanned
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, in the bell
+  toonHandAdd((g,m,c)=>add(g,m,c,1), rkjHandO(hand), skin, null, new T.Matrix4().makeTranslation(0,RKJ_HAND.y,0));   // the white glove (a toon hand, a size up)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); return g; }); }
 // the arm's poses from the shoulder (TONY_ARM.a0, his right side; a mirror takes it to his left): the hand and the elbow's pull
 const RKJ_ARM={ up:[-3.5,4.5,1.0], upE:[-1.9,2.1,0.4], dn:[3.0,-3.2,4.0], dnE:[-1.2,-1.4,2.6] };
@@ -85309,7 +85307,7 @@ function rkjTick(o, R, now, dt, S, C, q){
   // the burst: as a point reaches the top on its first beat, and on every one of a Hustle: glitter off the fingertip, a star
   if(armOn && D.mode!=='nyah' && !P){ const top=D.h>0.85 && ph<0.2 && (D.mode==='point' ? now-D.ptT>0.12 && D.burstB==null : b4<1);
     if(top && beat!==D.pB){ D.pB=beat; if(D.mode==='point') D.burstB=beat;
-      const U=D.AU; _rkjB.copy(U.uA2.value).sub(U.uA1.value).normalize(); D.popP.copy(U.uA2.value).addScaledVector(_rkjB, 7.4*U.uAr.value); D.popS=now;
+      const U=D.AU; _rkjB.copy(U.uA2.value).sub(U.uA1.value).normalize(); D.popP.copy(U.uA2.value).addScaledVector(_rkjB, rkjTipL()*U.uAr.value); D.popS=now;
       if(real){ D.armG.parent.updateWorldMatrix(true, false); const w=D.armG.parent.localToWorld(_rkjA.copy(D.popP));
         for(let i=0;i<12;i++){ const a=i*2.39996, el=0.3+0.6*((i*7)%10)/10, s=9+dbRnd(S)*7; emit(w.x, w.y, w.z, {color:[0xffc000,0xff2ad0,0x40c8ff,0xfff0a0][i%4], life:0.8, vx:Math.cos(a)*Math.cos(el)*s, vy:Math.sin(el)*s+4, vz:Math.sin(a)*Math.cos(el)*s, s0:2.8, s1:0.3, grav:18, op:0.95}); }
         if(R.you && typeof luxRipple==='function') luxRipple(w, 0.3, 1.3); } } }
