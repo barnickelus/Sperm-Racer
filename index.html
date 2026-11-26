@@ -88988,12 +88988,16 @@ function rmjHairPaint(geo){ const col=geo.attributes.color, fx=geo.attributes.aF
    rounding as it rises; the crown creased down the middle and pinched at the front, knocked about; a band; a brim rolled
    up hard at the sides, dipped front and back, waved and notched at the edge. Kinds (aK) for its shader: 0 felt, 1 the
    brim (it lifts and flutters), 2 the band, 3 brass, 4 the brim's bound edge (with the brim). */
-const RMJ_HAT={ p:[0.05, HEAD_CY+2.32, -0.25], rx:-0.09, rz:0.1, s:1.05, ez:1.5, ezT:1.22, ezB:1.16, rIn:2.24, rOut:4.8,
+// (eb: the back half of the hat is that much longer, so the back of his long head sits inside it and never comes up through
+// the brim beside the band; pv: how far back of the crown's centre the hat tips about, the back of the brim on the back of
+// his head, so tipping it back lifts the front instead of sinking the back into him)
+const RMJ_HAT={ p:[0.05, HEAD_CY+2.32, -0.25], rx:-0.09, rz:0.1, s:1.05, ez:1.5, ezT:1.22, ezB:1.16, rIn:2.24, rOut:4.8, eb:0.13, pv:3.7,
   crownHole:[-0.72, 1.8, 0.4], brimHole:[2.78, 0.6, 0.46] };   // [azimuth, height (or v along the brim), radius]
 const rmjM4=(x,y,z)=>new T.Matrix4().makeTranslation(x,y,z);
 const rmjSm=x=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
+const rmjBack=(c)=>1+RMJ_HAT.eb*Math.max(0,-c)*Math.max(0,-c)*(3-2*Math.max(0,-c));   // the back half longer (c: cos of the azimuth)
 function rmjCrownAt(x, y, z){   // the crown's deformation of a point on its lathe
-  const H=RMJ_HAT, y0=y; z*=H.ez+(H.ezT-H.ez)*rmjSm(y0/2.8);
+  const H=RMJ_HAT, y0=y, r0=Math.hypot(x,z); z*=(H.ez+(H.ezT-H.ez)*rmjSm(y0/2.8))*(r0>1e-6 ? rmjBack(z/r0)*(1-rmjSm((y0-0.4)/2.2))+rmjSm((y0-0.4)/2.2) : 1);
   x*=1-0.24*rmjSm((z/3.3+0.15)/1.1)*rmjSm((y0-1.1)/1.4);                                 // pinched at the front
   y-=0.72*Math.exp(-x*x/0.4)*rmjSm((y0-1.55)/1.2)*(0.7+0.3*rmjSm((z+2.6)/5.2));          // the crease, deeper in front
   const a=Math.atan2(x,z), dent=0.3*Math.exp(-((a-2.35)**2)/0.12-((y0-1.9)**2)/0.35);    // knocked in at the back, his left
@@ -89003,7 +89007,7 @@ function rmjBrimPt(a, v){
   const notch=1-0.075*Math.exp(-(((w-2.05)/0.07)**2))-0.05*Math.exp(-(((w+0.95)/0.05)**2));   // frayed: a bite out of it, a nick
   const r=H.rIn+(H.rOut-H.rIn)*v*notch, ez=H.ez+(H.ezB-H.ez)*rmjSm(v/0.7), s=Math.sin(w), c=Math.cos(w);
   const y=-0.3+1.3*Math.pow(v,2.2)*Math.pow(Math.abs(s),1.5)-0.38*Math.pow(v,1.5)*Math.pow(Math.max(c,0),2)+0.42*Math.pow(v,1.5)*Math.pow(Math.max(-c,0),2)+0.09*v*Math.sin(3*w+0.7);   // (rolled up hard at the sides, dipped in front, the back turned up off the long head)
-  return [s*r, y, c*r*ez]; }
+  return [s*r, y, c*r*ez*rmjBack(c)]; }
 const RMJ_CROWN=[[2.22,-0.35],[2.24,0.5],[2.18,1.3],[2.0,2.0],[1.7,2.5],[1.2,2.8],[0.6,2.9],[0.01,2.84]];
 function rmjHatHoles(){   // the holes' centres in the hat's space (and their radii)
   const H=RMJ_HAT, [ca,cy,cr]=H.crownHole, P=RMJ_CROWN; let rr=P[0][0];
@@ -89016,7 +89020,7 @@ function rmjHatGeo(){ return tonyKeep('rmjHat', ()=>{
   { const p=crown.attributes.position; for(let i=0;i<p.count;i++){ const q=rmjCrownAt(p.getX(i), p.getY(i), p.getZ(i)); p.setXYZ(i, q[0], q[1], q[2]); } crown.computeVertexNormals(); }
   items.push([crown, null, felt, 0]);
   const band=new T.CylinderGeometry(2.27, 2.29, 0.62, 48, 1, true); band.translate(0,0.06,0);
-  { const p=band.attributes.position; for(let i=0;i<p.count;i++) p.setZ(i, p.getZ(i)*H.ez); band.computeVertexNormals(); }
+  { const p=band.attributes.position; for(let i=0;i<p.count;i++){ const x=p.getX(i), z=p.getZ(i), r=Math.hypot(x,z)||1; p.setZ(i, z*H.ez*rmjBack(z/r)); } band.computeVertexNormals(); }
   items.push([band, null, lea, 2]);
   // the brim (u round, v out), its bound edge
   { const NU=84, NV=9, pos=[], uv=[], idx=[];
@@ -89032,7 +89036,7 @@ function rmjHatGeo(){ return tonyKeep('rmjHat', ()=>{
   const ca=0.52;
   for(let i=0;i<16;i++){ const a=i/16*Math.PI*2; if(Math.abs(((a-ca+Math.PI)%(2*Math.PI))-Math.PI)<0.3) continue;
     const st=new T.SphereGeometry(0.13,8,5,0,Math.PI*2,0,Math.PI/2), n=new T.Vector3(Math.sin(a),0,Math.cos(a)/H.ez).normalize();
-    items.push([st, new T.Matrix4().compose(new T.Vector3(Math.sin(a)*2.29, 0.08, Math.cos(a)*2.29*H.ez), new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), n), new T.Vector3(1,1,1)), brass, 3]); }
+    items.push([st, new T.Matrix4().compose(new T.Vector3(Math.sin(a)*2.29, 0.08, Math.cos(a)*2.29*H.ez*rmjBack(Math.cos(a))), new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0), n), new T.Vector3(1,1,1)), brass, 3]); }
   { const n=new T.Vector3(Math.sin(ca),0,Math.cos(ca)/H.ez).normalize(), q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,0,1), n), at=new T.Vector3(Math.sin(ca)*2.3, 0.08, Math.cos(ca)*2.3*H.ez);
     const disc=new T.CylinderGeometry(0.46,0.48,0.1,22); disc.rotateX(Math.PI/2);
     items.push([disc, new T.Matrix4().compose(at, q, new T.Vector3(1,1,1)), brass, 3]);
@@ -89342,7 +89346,9 @@ function rmjTick(o, R, now, dt, S, C, q){
     if(jt>=0 && jt<1){ const y=4.2*4*jt*(1-jt); h.position.set(H.p[0]+0.5*Math.sin(Math.PI*jt), H.p[1]+y*1.0+D.hy, H.p[2]+D.hz); h.rotation.set(H.rx-0.4*Math.sin(Math.PI*jt), 2*Math.PI*rmjSm(jt), H.rz+0.3*Math.sin(2*Math.PI*jt));
       if(jt>0.9 && !D.landed){ D.landed=true; D.hsqV+=7; D.crk=(dbRnd(S)<0.5?-1:1)*0.26; } }
     else { if(jt>=1) D.landed=false;
-      h.position.set(H.p[0], H.p[1]+D.hy, H.p[2]+D.hz); h.rotation.set(H.rx+D.hrx, ldClamp(D.yl-phi,-0.38,0.38), H.rz+D.crk); }
+      // (tipped back, it turns about the back of its brim on the back of his head: the front lifts, the back stays put)
+      const tb=Math.min(0,D.hrx), pv=H.pv*H.s;
+      h.position.set(H.p[0], H.p[1]+D.hy-pv*Math.sin(tb), H.p[2]+D.hz-pv*(1-Math.cos(tb))); h.rotation.set(H.rx+D.hrx, ldClamp(D.yl-phi,-0.38,0.38), H.rz+D.crk); }
     const s=H.s, sq=ldClamp(D.hsq,-0.2,0.25); h.scale.set(s*(1+0.5*sq), s*(1-sq), s*(1+0.5*sq)); }
   // the brim: the front lifts with speed, a boost and the look back; it flutters on a boost
   dbSpring(D,'fl','flV', P ? 0 : Math.min(0.55, 0.14*Math.min(1,spd/130)+(boost?0.38:0)+0.25*rd), 9, 0.5, dt); if(P) D.fl=0;
