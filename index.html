@@ -101841,17 +101841,19 @@ function camPushOut(dt){
 /* THE PORTRAIT PHONE'S VIEW (the close view on a phone held upright; see updateCameraCore). An upright phone sees only
    35 degrees across, so a racer who is a fair size on a tablet stood across two thirds of the glass, and from a lens
    barely higher than a tall hat or a helmet's crest the whole road ahead was behind him. So this view ADAPTS (camSee):
-     · it stands further back and well up, and how far up is worked out from the racer: high enough that the road `see`
-       units ahead of him shows over the top of his own head, whatever he wears (a low cap sits lower than a crest);
-     · it reads the ROAD: where the course drops away ahead the lens rises to keep that stretch in sight, and where it
-       climbs it comes down again;
+     · it stands a little further back than it did and just over the top of the racer's own head, worked out from how
+       tall they stand (a low cap sits lower than a crest), and it STAYS LOW while there is room: a low lens is what
+       makes the road rush, and the racer rides a little below the middle of the glass, clear of the thumbs and buttons;
+     · it reads the ROAD and goes up only where the road asks: where the course drops away ahead (by as much as keeps
+       that stretch in sight) and into a sharp bend, then comes down again;
      · it looks INTO a bend: the aim leans toward where the road goes, so the racer slides to the outside of the frame
        and the inside of the corner opens up;
      · it keeps closer behind him through a turn (a quicker follow, a smaller drift swing), so he is not turned broadside
        across a narrow screen.
    In a tunnel the old low view is kept (there is a roof); a maze has no road line to read and keeps fixed numbers. */
-const PCAM={back:-34, backBoost:-33, backTube:-18, backMega:-46, up:19, upBoost:18.5, upTube:10, upMega:28, ahead:28, aim:2, fov:6, fovTube:2,
-  see:36, upMin:16, upMax:27, upMaxMega:38, drop:0.2, follow:5.5, swing:0.45, lean:0.3, leanMax:4, far:1.18, frame:0.11};
+const PCAM={back:-30, backBoost:-29, backTube:-18, backMega:-40, up:14, upBoost:13.5, upTube:10, upMega:21, ahead:22, aim:2, fov:4, fovTube:2,
+  see:40, over:3, lowMin:11.5, lowMax:16, dropUp:9, bendUp:5.5, bend0:6, bend1:20, riseMax:10, megaUp:1.5, pull:0.45,
+  drop:0.075, follow:5.5, swing:0.45, lean:0.3, leanMax:4, far:1.18, frame:0.11};
 // how tall the racer stands in their own frame (hat, crest and all), measured once a model from its meshes' own bounds
 // (lights, glows and shadows are left out): what the portrait view must see over
 const _ctB=new T.Box3(), _ctT=new T.Box3(), _ctM=new T.Matrix4(), _ctI=new T.Matrix4(), _ctS=new T.Vector3();
@@ -101880,18 +101882,24 @@ function camRoadAhead(me, dist){
   _csQ.dy=p.y-p0.y; _csQ.lat=(p.x-p0.x)*tz-(p.z-p0.z)*tx; return _csQ;
 }
 // the portrait view's numbers for this frame: how far up the lens goes, how far ahead and how far to the side it aims
-const _csO={up:0, ahead:0, lat:0};
+const _csO={up:0, ahead:0, lat:0, pull:0};
 function camSee(me, head, back, mega, hold, dt){
   const P=PCAM, d=-back, sc=Math.max(1,me.obj && me.obj.scale.y||1), t=camTopOf(me)*sc, Q=camRoadAhead(me, P.see);
-  // the line from the lens over the top of his head must come down on the road no further than `see` ahead of him
-  const dy=me.air ? 0 : ldClamp(Q.dy,-14,14), need=ldClamp(t+(t-dy)*d/P.see, P.upMin, mega ? P.upMaxMega : P.upMax);
+  // LOW WHILE THERE IS ROOM: just over the top of his own head (a low lens is what makes the road rush). It goes up only
+  // where the road asks for it: where it drops away ahead (by as much as keeps that stretch in sight) and into a bend
+  // sharp enough that he would stand in front of the way through it
+  const dy=me.air ? 0 : ldClamp(Q.dy,-14,14), bl=Math.abs(Q.lat), bk=ldClamp((bl-P.bend0)/(P.bend1-P.bend0),0,1),
+    low=ldClamp(t+P.over, P.lowMin, P.lowMax)*(mega ? P.megaUp : 1),
+    need=low+Math.min(P.riseMax, ldClamp(-dy*d/P.see, 0, P.dropUp)+P.bendUp*bk*bk*(3-2*bk));
   if(CAMFX.pcUp==null || me._camSnap){ CAMFX.pcUp=need; CAMFX.pcLat=0; }
   CAMFX.pcUp+=(need-CAMFX.pcUp)*Math.min(1,(need>CAMFX.pcUp ? 3 : 1.6)*dt);                    // up briskly, down gently
   const latT=state==='race' && !me.finished ? ldClamp(Q.lat*P.lean, -P.leanMax, P.leanMax) : 0;
   CAMFX.pcLat+=(latT-CAMFX.pcLat)*Math.min(1,2.2*dt);
-  // the aim: he sits `drop` below the middle of the glass, so the road ahead has the upper half of it
-  const up=CAMFX.pcUp+6*hold, dd=d+6*hold, pitch=Math.max(0.1, Math.atan2(up-t*0.45, dd)-P.drop);
-  _csO.up=CAMFX.pcUp; _csO.ahead=ldClamp((up-P.aim)/Math.tan(pitch)-dd, 14, 60); _csO.lat=CAMFX.pcLat; return _csO;
+  // the aim: he sits a little below the middle of the glass (`drop`), clear of the thumbs and the buttons at the foot of
+  // it, and stays there as the lens goes up and down
+  // (as it goes up it draws back a little too, as a crane does: turned across a bend the racer is at their widest)
+  const pull=P.pull*Math.max(0,CAMFX.pcUp-low), up=CAMFX.pcUp+6*hold, dd=d+pull+6*hold, pitch=Math.max(0.08, Math.atan2(up-t*0.45, dd)-P.drop);
+  _csO.pull=pull; _csO.up=CAMFX.pcUp; _csO.ahead=ldClamp((up-P.aim)/Math.tan(pitch)-dd, 14, 90); _csO.lat=CAMFX.pcLat; return _csO;
 }
 function updateCamera(dt){
   // a push left from last frame is only ours to strip if nothing else has moved the lens
@@ -102105,7 +102113,7 @@ function updateCameraCore(dt){
   const pcBack=pc ? (mega?pc.backMega:(tube?(pcFar?-19:pc.backTube):(boost?pc.backBoost:pc.back)))*(pcFar && !tube ? pc.far : 1) : 0;
   const see=pc && !tube && !MAZE ? camSee(me, camHead, pcBack, mega, hold, dt) : null;   // the portrait view adapts to the racer and the road (PCAM)
   if(!see) CAMFX.pcUp=null;
-  const back=fwd.clone().multiplyScalar((pc ? pcBack : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
+  const back=fwd.clone().multiplyScalar((pc ? pcBack-(see ? see.pull : 0) : close ? (mega?-28:(tube?-15:(boost?-16:-17))) : (mega?-42:(tube?-19:(boost?-27:-30))))-6*hold);
   if(CAMFX.swing) back.applyAxisAngle(_vY, CAMFX.swing);
   const want=new T.Vector3(me.x,me.y,me.z).add(back).add(new T.Vector3(0,(see ? see.up : pc ? (mega?pc.upMega:(tube?pc.upTube:(boost?pc.upBoost:pc.up))) : close ? (mega?12:(tube?8.5:(boost?8.5:8))) : (mega?18:(tube?8.5:(boost?11.5:13))))+6*hold+CAMFX.land*1.4,0));
   // a spectator's first frame, and each kart it switches to, is a cut: a lerp from wherever the lens sat
