@@ -84126,16 +84126,16 @@ function tonyHornGeo(){ return tonyKeep('horn', ()=>{
   return kingMerge([[horn,new T.Matrix4(),dbLin('#e2412f')],[new T.SphereGeometry(0.34,10,8),new T.Matrix4().makeTranslation(0,-0.3,0.05),dbLin('#ffc935')],[new T.TorusGeometry(0.17,0.06,6,10),new T.Matrix4().makeTranslation(0,-0.02,0.03),dbLin('#ffc935')]]); }); }
 function tonyPickGeo(){ return tonyKeep('pick', ()=>{ const c=new T.CylinderGeometry(0.05,0.085,1.7,6); c.translate(0,0.76,0); return kingMerge([[c,new T.Matrix4(),dbLin('#f3e0b0')]]); }); }
 // the arm, in its own space: x and z across the hose (in hose radii), y along it; aT says where along the curve a vertex rides
-function tonyArmGeo(tan, key){ return tonyKeep(key||'arm', ()=>{
+// (hand: the toon hand's options and where its wrist sits; a fist by default)
+function tonyArmGeo(tan, key, hand){ return tonyKeep(key||'arm', ()=>{
   const M=(x,y,z,sx,sy,sz)=>new T.Matrix4().compose(new T.Vector3(x,y,z), new T.Quaternion(), new T.Vector3(sx,sy,sz)), gold=dbLin('#ffc935'), items=[], aT=[];
   const add=(geo,m,c,t)=>{ items.push([geo,m,c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
   add(tube, new T.Matrix4(), tan, i=>ty[i]);
   const ring=new T.TorusGeometry(1.14,0.34,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), gold, 0.8);
-  const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.35,0, 2.05,1.75,1.95), tan, 1);                                                   // the fist
-  for(const x of [-1.2,-0.4,0.4,1.2]) add(ball, M(x,2.5,0.7, 0.6,0.7,0.74), tan, 1);                // four knuckles
-  add(ball, M(0.2,1.25,1.82, 1.3,0.56,0.56), tan, 1);                                                // the thumb, wrapped across
+  add(new T.SphereGeometry(1,12,9), M(0,0.12,0, 0.98,0.8,0.9), tan, 1);                             // the wrist, rounding off the hose
+  const H=hand||{ o:{pose:'fist', size:1.6}, at:[0,0.2-0.62*1.6,0] };
+  toonHandAdd((g,m,c)=>add(g,m,c,1), H.o, tan, null, M(...H.at, 1,1,1));                             // the fist (a toon hand)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 // the pump: [shoulder], the elbow and the fist at the bottom of a pump and at the top of it (in the rig, his right side)
 const TONY_ARM={ a0:[-2.9,HEAD_CY-0.35,-1.2], r:0.5,
@@ -84390,6 +84390,8 @@ function dkjBottleGeo(){ return tonyKeep('dkjBottle', ()=>{
 function dkjCorkGeo(){ return tonyKeep('dkjCork', ()=>{ const c=new T.CylinderGeometry(0.26,0.22,0.42,8); return kingMerge([[c,new T.Matrix4(),dbLin('#d9b27a')]]); }); }
 // the arm's two poses from the shoulder: the bottle held up (the fist, the elbow's pull), and its shake each beat
 const DKJ_ARM={ up:[-2.3,6.9,1.5], el:[-3.3,2.6,0.4], shake:0.6 };
+// the hand round the bottle: its fingers wrap the glass from the front, the back of the hand behind it (the bottle rides on the forearm's line)
+const DKJ_HAND={ o:{ pose:'grip', size:1.75, curl:[0.6,0.62,0.64,0.66] }, at:[0,-1.85,-1.25] };
 function dkjDress(g, K, X){
   const ud=g.userData, rig=X.rig, S=X.S, FK=ud.flow ? ud.flow.K : { neck:FLOW.NECK, k:FLOW.K }, skin=X.skin.clone().convertSRGBToLinear();
   if(ud.glow) ud.glow.material.color.multiplyScalar(0.8);
@@ -84408,7 +84410,7 @@ function dkjDress(g, K, X){
   const medal=new T.Group(); medal.add(new T.Mesh(dkjMedalGeo(), tonyPropMat())); medal.name='dkj-medal'; rigB.add(medal);
   // the champagne arm: a rubber hose (Tony's), a bottle in the fist, a cork that flies
   const AU={ uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0}, uAq:{value:0} };
-  const arm=new T.Mesh(tonyArmGeo(skin, 'dkjArm'), tonyPropMat({TONY_BEND:''}, AU)); arm.name='dkj-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
+  const arm=new T.Mesh(tonyArmGeo(skin, 'dkjArm', DKJ_HAND), tonyPropMat({TONY_BEND:''}, AU)); arm.name='dkj-arm'; arm.frustumCulled=false; arm.visible=false; rigB.add(arm);
   const bottle=new T.Group(); bottle.name='dkj-bottle'; bottle.visible=false; rigB.add(bottle); const bm=new T.Mesh(dkjBottleGeo(), tonyPropMat({TONY_GLINT:''})); bottle.add(bm);
   const cork=new T.Mesh(dkjCorkGeo(), tonyPropMat()); cork.position.set(0,2.72,0); bottle.add(cork);
   const ting=new T.Mesh(tonyKeep('ting', ()=>new T.PlaneGeometry(1,1)), tonyTingMat()); ting.name='dkj-ting'; ting.visible=false; ting.renderOrder=2; rig.add(ting);
@@ -84570,6 +84572,102 @@ function kitBeardFx(key, o){ return { key,
       float dB=min(dC,dS), aw=fwidth(dB)*0.75+0.003;
       diffuseColor.rgb=mix(diffuseColor.rgb, uKitHair*diffuse, 1.0-smoothstep(-aw,aw,dB)); }
     ${o.extra||''} }` }; }
+/* ============== TOON HANDS: one cartoon hand for every racer's arm ============== *
+ * After the owner's reference (a tattoo-flash peace sign): a squarish palm, four chunky fingers that taper a little to round
+ * tips and stand apart, a thick thumb on a fleshy heel, and the joints drawn: a finger curls at its knuckles, so a fist is
+ * a row of rounded knuckles over a stack of curled fingers, each with a crease across its joint, and the pen (the arms'
+ * own rim ink) draws round every finger. Built in the hand's own frame, in the arms' units (hose radii): the wrist at the
+ * origin, the fingers up +y, the palm facing +z (the fingers curl toward +z), the thumb on the +x side (sx:-1 puts it on
+ * -x). Every kit keeps its own frame, shader, colours and finger animation; only the hand's shape comes from here.
+ *   toonHand(o) -> { parts:[[geometry, part]], base:{part:Vector3}, tip:{part:Vector3} }; part is 'palm', 'thumb', 'index',
+ *   'middle', 'ring', 'pinky' or 'ink' (the creases, to be coloured with the ink). Options:
+ *     pose     a preset: 'fist', 'open' (together, thumb out), 'spread', 'wave', 'point', 'gun' (index out, thumb up),
+ *              'peace', 'shaka', 'thumbs' (a fist, thumb up), 'pinch' (thumb to forefinger), 'grip' (round a handle of
+ *              radius o.gr along x), 'rest' (relaxed, a little curled), 'claw', 'flat' (fingers together, thumb tucked)
+ *     curl     [index, middle, ring, pinky] 0 straight .. 1 a tight fist (overrides the preset's); spread the same, radians
+ *     thumb    'out' | 'up' | 'across' | 'tip' | 'tuck' | 'side'   (overrides the preset's)
+ *     fingers  4 (or 3: the classic cartoon glove)          sx  the thumb's side (+1 / -1)     size  scale (1)
+ *     creases  true (the joint lines on curled fingers)   fat  finger thickness (1)   long  finger length (1)
+ *     thumbPath {base:[x,y,z], d1:[x,y,z], d2:[x,y,z], L:[a,b]} a thumb of one's own (its root and its two segments' ways,
+ *              in the hand's frame for a right-way-round hand: x is mirrored with sx), for a pose no preset covers
+ *     joints   [[k,m,t],...] per finger: the bend at each joint as a share of a full curl, in place of curl's even one */
+const TH={ W:2.42, H:2.05, D:1.22, Y0:0.62, KY:2.66, KZ:0.12,
+  fx:[0.84,0.28,-0.28,-0.84], fr:[0.41,0.43,0.41,0.37], fl:[[0.9,0.62,0.52],[0.98,0.7,0.55],[0.92,0.64,0.52],[0.74,0.52,0.44]],
+  jt:[1.5,1.62,1.02] };   // (a full curl at each joint, radians: knuckle, middle, tip)
+const TH_POSE={
+  fist:  {c:[1,1,1,1], s:[0,0,0,0], th:'across'},
+  open:  {c:[0.06,0.04,0.06,0.1], s:[0.05,0.0,-0.04,-0.1], th:'out'},
+  wave:  {c:[0.02,0,0.03,0.06], s:[0.2,0.06,-0.08,-0.24], th:'out'},
+  spread:{c:[0.04,0.02,0.04,0.08], s:[0.3,0.1,-0.12,-0.36], th:'out'},
+  point: {c:[0,1,1,1], s:[0.02,0,0,0], th:'across'},
+  gun:   {c:[0,1,1,1], s:[0,0,0,0], th:'up'},
+  peace: {c:[0,0,1,1], s:[0.17,-0.14,0,0], th:'across'},
+  shaka: {c:[1,1,1,0], s:[0,0,0,-0.42], th:'out'},
+  thumbs:{c:[1,1,1,1], s:[0,0,0,0], th:'up'},
+  pinch: {c:[0.5,0.62,0.72,0.82], s:[0.04,0,-0.05,-0.12], th:'tip'},
+  grip:  {c:[0.78,0.8,0.82,0.85], s:[0,0,0,0], th:'across'},
+  rest:  {c:[0.22,0.3,0.36,0.44], s:[0.05,0,-0.05,-0.12], th:'side'},
+  claw:  {c:[0.55,0.55,0.55,0.55], s:[0.16,0.05,-0.06,-0.2], th:'out'},
+  flat:  {c:[0,0,0,0], s:[0.02,0,-0.02,-0.05], th:'tuck'} };
+const TH_NAMES=['index','middle','ring','pinky'];
+// a tube swept along points (the radius r(t) along it), a round cap at the far end, the near end open inside the palm
+function thSweep(pts, r, segs, rad){
+  const cv=new T.CatmullRomCurve3(pts, false, 'centripetal', 0.5), N=segs||22, R=rad||12, fr=cv.computeFrenetFrames(N,false);
+  const pos=[], nor=[], idx=[], ring=(C, Nn, Bb, rr, nOff)=>{ for(let j=0;j<R;j++){ const a=j/R*Math.PI*2, ca=Math.cos(a), sa=Math.sin(a);
+      const nx=Nn.x*ca+Bb.x*sa, ny=Nn.y*ca+Bb.y*sa, nz=Nn.z*ca+Bb.z*sa; pos.push(C.x+nx*rr, C.y+ny*rr, C.z+nz*rr);
+      const t=nOff||null; if(t){ const k=Math.hypot(nx*t[1]+t[0].x*t[2], ny*t[1]+t[0].y*t[2], nz*t[1]+t[0].z*t[2])||1; nor.push((nx*t[1]+t[0].x*t[2])/k, (ny*t[1]+t[0].y*t[2])/k, (nz*t[1]+t[0].z*t[2])/k); } else nor.push(nx,ny,nz); } };
+  for(let i=0;i<=N;i++){ const t=i/N; ring(cv.getPointAt(t), fr.normals[i], fr.binormals[i], r(t)); }
+  const C=cv.getPointAt(1), Tn=fr.tangents[N], rt=r(1), CAP=5;
+  for(let k=1;k<=CAP;k++){ const f=k/CAP*Math.PI/2, c=C.clone().addScaledVector(Tn, rt*Math.sin(f)); ring(c, fr.normals[N], fr.binormals[N], Math.max(1e-3, rt*Math.cos(f)), [Tn, Math.cos(f), Math.sin(f)]); }
+  const rows=N+1+CAP;
+  for(let i=0;i<rows-1;i++) for(let j=0;j<R;j++){ const a=i*R+j, b=i*R+(j+1)%R, c=a+R, d=b+R; idx.push(a,b,c, b,d,c); }
+  const g=new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute(pos,3)); g.setAttribute('normal', new T.Float32BufferAttribute(nor,3));
+  g.setAttribute('uv', new T.Float32BufferAttribute(new Array(pos.length/3*2).fill(0),2)); g.setIndex(idx); return g; }
+// the joint chain of a finger from its knuckle: the points, with each joint's way in and way out (for the creases)
+function thChain(K, d0, ax, L, ang){ const pts=[K.clone().addScaledVector(d0,-0.62), K.clone()], q=new T.Quaternion(), d=d0.clone(), joints=[]; let p=K.clone(), a=0;
+  for(let i=0;i<3;i++){ a+=ang[i]; q.setFromAxisAngle(ax, a); const dn=d0.clone().applyQuaternion(q); if(i>0) joints.push([p.clone(), d.clone(), dn.clone()]); else joints.push([p.clone(), d0.clone(), dn.clone()]);
+    p=p.clone().addScaledVector(dn, L[i]); pts.push(p); d.copy(dn); }
+  return {pts, joints, tip:p}; }
+function toonHand(o){
+  o=o||{}; const P=TH_POSE[o.pose||'open']||TH_POSE.open, sx=o.sx||1, sz=o.size||1, fat=o.fat||1, nf=o.fingers===3 ? 3 : 4;
+  const curl=o.curl||P.c, spr=o.spread||P.s, th=o.thumb||P.th, parts=[], base={}, tip={}, V=(x,y,z)=>new T.Vector3(x*sx,y,z);
+  // the palm: a rounded block, a touch narrower at the wrist, the back a little domed, the knuckle line rounded over
+  { const g=new T.SphereGeometry(1,18,14), p=g.attributes.position, f=t=>Math.sign(t)*Math.pow(Math.abs(t),0.62);
+    for(let i=0;i<p.count;i++){ const x=p.getX(i), y=p.getY(i), z=p.getZ(i), yy=(y+1)/2;
+      p.setXYZ(i, f(x)*TH.W/2*(0.86+0.14*yy)*(nf===3?1.04:1), TH.Y0+yy*TH.H, f(z)*TH.D/2*(z<0 ? 1.08 : 0.92)+0.04*(1-x*x)*(z<0?-1:0)); }
+    g.computeVertexNormals(); parts.push([g,'palm']); }
+  // the heel of the thumb: the fleshy pad it grows from
+  { const g=new T.SphereGeometry(1,14,10); g.scale(0.62,0.82,0.6); g.translate(0.86*sx,1.25,0.34); parts.push([g,'palm']); }
+  // the fingers
+  const fx=nf===3 ? [0.74,0,-0.74] : TH.fx;
+  for(let f=0;f<nf;f++){ const F=nf===3 ? [0,1,3][f] : f, name=nf===3 ? ['index','middle','pinky'][f] : TH_NAMES[f], c=Math.max(0,Math.min(1.1,curl[F]??0)), sp=spr[F]??0;
+    const fr=TH.fr[F]*fat*(nf===3?1.18:1), L=TH.fl[F].map(l=>l*(nf===3?1.05:1)*(o.long||1)), jj=o.joints && o.joints[F];
+    const ky=TH.KY-(F===3?0.14:F===0?0.04:0), K=V(fx[f], ky, TH.KZ), d0=new T.Vector3(Math.sin(sp)*sx, Math.cos(sp), 0), ax=new T.Vector3(Math.cos(sp),-Math.sin(sp)*sx,0).normalize();
+    const ch=thChain(K, d0, ax, L, TH.jt.map((j,i)=>j*(jj ? jj[i] : c)));
+    const g=thSweep(ch.pts, t=>fr*(1.04-0.14*t), 26, 12); parts.push([g,name]); base[name]=K.clone(); tip[name]=ch.tip.clone();
+    // the creases: an ink line round the outside of each bent joint
+    if(o.creases!==false && c>0.45) for(const [J, din, dout] of ch.joints.slice(1)){
+      const out=din.clone().sub(dout); if(out.lengthSq()<0.02) continue; out.normalize();
+      const tg=din.clone().add(dout).normalize(), cr=new T.TorusGeometry(fr*1.0, 0.045, 4, 10, Math.PI*0.7);
+      cr.rotateZ(-Math.PI*0.35);   // (the arc centred on +x)
+      const m=new T.Matrix4().makeBasis(out, tg.clone().cross(out).normalize(), tg); m.setPosition(J); cr.applyMatrix4(m); parts.push([cr,'ink']); } }
+  // the thumb: two fat segments off the heel
+  { const B=V(0.98,1.32,0.42), tw=V(1,0,0); let d1, d2, L=[0.86,0.76];
+    if(o.thumbPath){ const q=o.thumbPath; if(q.base) B.set(q.base[0]*sx, q.base[1], q.base[2]); d1=V(...q.d1).normalize(); d2=V(...q.d2).normalize(); if(q.L) L=q.L.slice(); }
+    else if(th==='out'){ d1=V(0.78,0.58,0.24).normalize(); d2=V(0.42,0.88,0.22).normalize(); }
+    else if(th==='up'){ d1=V(0.22,0.96,0.2).normalize(); d2=V(0.02,1,0.08).normalize(); L=[0.9,0.8]; }
+    else if(th==='side'){ d1=V(0.55,0.7,0.45).normalize(); d2=V(0.2,0.85,0.5).normalize(); }
+    else if(th==='tuck'){ d1=V(-0.3,0.75,0.6).normalize(); d2=V(-0.75,0.45,0.48).normalize(); }
+    else if(th==='tip'){ const T0=(tip.index||V(0.9,4.2,1.4)).clone(), a=B.clone().addScaledVector(V(0.25,0.7,0.65).normalize(),0.86); d1=a.clone().sub(B).normalize(); d2=T0.clone().sub(a).normalize(); L=[0.86, Math.max(0.5, Math.min(1.1, T0.distanceTo(a)-0.3))]; }
+    else { d1=V(-0.12,0.62,0.78).normalize(); d2=V(-0.92,0.18,0.36).normalize(); L=[0.82,0.86]; }   // across the curled fingers
+    const p1=B.clone().addScaledVector(d1,L[0]), p2=p1.clone().addScaledVector(d2,L[1]), r0=0.44*fat;
+    const g=thSweep([B.clone().addScaledVector(d1,-0.5), B, p1, p2], t=>r0*(1.03-0.12*t), 18, 12); parts.push([g,'thumb']); base.thumb=B.clone(); tip.thumb=p2.clone();
+    if(o.creases!==false){ const out=d1.clone().sub(d2); if(out.lengthSq()>0.05){ out.normalize(); const tg=d1.clone().add(d2).normalize(), cr=new T.TorusGeometry(r0*0.95,0.045,4,10,Math.PI*0.7); cr.rotateZ(-Math.PI*0.35);
+      const m=new T.Matrix4().makeBasis(out, tg.clone().cross(out).normalize(), tg); m.setPosition(p1); cr.applyMatrix4(m); parts.push([cr,'ink']); } } }
+  if(sz!==1){ for(const [g] of parts) g.scale(sz,sz,sz); for(const k in base) base[k].multiplyScalar(sz); for(const k in tip) tip[k].multiplyScalar(sz); }
+  return {parts, base, tip}; }
+// the hand as items for a kit's add(): add(geo, matrix, colour, part) for each piece; ink pieces get the ink colour
+function toonHandAdd(add, o, skin, ink, xf){ const h=toonHand(o), m=xf||new T.Matrix4(); for(const [g,part] of h.parts) add(g, m, part==='ink' ? (ink||dbLin(DB_INK)) : skin, part); return h; }
 // the arm: a hose (as Tony's), a cuff, and a hand: 'shaka' (thumb and little finger out), 'wave' (the palm open)
 function kitArmGeo(skin, key, hand, cuff){ return tonyKeep(key, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], cuffC=dbLin(cuff||'#ffc935');
@@ -84577,18 +84675,10 @@ function kitArmGeo(skin, key, hand, cuff){ return tonyKeep(key, ()=>{
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
   add(tube, new T.Matrix4(), skin, i=>ty[i]);
   const ring=new T.TorusGeometry(1.14,0.36,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), cuffC, 0.82);
-  const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{   // an ellipsoid from a to b, r across
-    const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
-    add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  if(hand==='shaka'){
-    add(ball, new T.Matrix4().compose(V(0,1.35,0), new T.Quaternion(), V(1.7,1.55,1.15)), skin, 1);          // the palm, the fingers curled into it
-    for(const x of [-0.55,0.05,0.62]) add(ball, new T.Matrix4().compose(V(x,2.25,0.75), new T.Quaternion(), V(0.5,0.55,0.62)), skin, 1);
-    E(skin, [1.2,1.3,0.3], [2.6,2.3,0.2], 0.5);                                                                   // the thumb, out
-    E(skin, [-1.1,2.3,0.0], [-2.3,3.6,0.1], 0.46); }                                                             // the little finger, out
-  else {
-    add(ball, new T.Matrix4().compose(V(0,1.45,0), new T.Quaternion(), V(1.65,1.6,0.85)), skin, 1);          // the palm, open
-    for(const [x,l] of [[-1.05,1.3],[-0.36,1.65],[0.34,1.75],[1.02,1.5]]) E(skin, [x,2.6,0.1], [x*1.12,2.6+l,0.15], 0.42);
-    E(skin, [1.3,1.3,0.2], [2.5,2.2,0.3], 0.44); }
+  // the hand (a toon hand): the shaka (the thumb and the little finger out, the rest curled), or the open palm of a wave
+  const sz=hand==='shaka' ? 1.3 : 1.06;
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, rounding off the hose
+  toonHandAdd((g,m,c)=>add(g,m,c,1), hand==='shaka' ? {pose:'shaka', size:sz, spread:[0,0,0,-0.72], thumbPath:{ d1:[0.9,0.35,0.2], d2:[0.82,0.55,0.12] }} : {pose:'wave', size:sz}, skin, null, new T.Matrix4().makeTranslation(0,0.2-0.62*sz,0));
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 function kitArmUniforms(){ return { uA0:{value:new T.Vector3(...TONY_ARM.a0)}, uA1:{value:new T.Vector3(...TONY_ARM.a0)}, uA2:{value:new T.Vector3(...TONY_ARM.a0)}, uAn:{value:new T.Vector3(0,0,1)}, uAr:{value:0}, uAq:{value:0} }; }
 const _kaV=new T.Vector3(), _kaW=new T.Vector3();
@@ -85058,6 +85148,12 @@ void main(){
 }`;
 /* THE ARM: a rubber hose (Tony's bend) in a sequin sleeve, a gold-rimmed bell cuff and his hand: 'point' (the index finger
    out, the disco point) or 'nyah' (the palm to the front, the fingers spread up, the thumb out sideways: into his ear) */
+// the glove (toonHand, the thumb on -x): the point (the index out, a little long, the thumb across), the nyah (the palm to
+// the front, the fingers spread, the thumb straight out sideways so its tip lands where the tick puts his ear)
+const RKJ_HAND={ s:1.45, y:0.72-0.62*1.45, point:{ pose:'point', long:1.12 }, nyah:{ pose:'spread', thumbPath:{ base:[0.98,0.95,0.2], d1:[0.85,0.5,0], d2:[1,0.12,0], L:[0.86,0.6] } } };
+function rkjHandO(hand){ return Object.assign({ sx:-1, size:RKJ_HAND.s }, RKJ_HAND[hand]); }
+let RKJ_TIPL=null;   // how far up the hand the pointing fingertip is (hose radii): where the burst comes off it
+function rkjTipL(){ if(RKJ_TIPL==null){ const h=toonHand(rkjHandO('point')); RKJ_TIPL=h.tip.index.y+RKJ_HAND.y+0.37*RKJ_HAND.s; for(const [g] of h.parts) g.dispose(); } return RKJ_TIPL; }
 function rkjArmGeo(hand){ return tonyKeep('rkjArm-'+hand, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], seq=dbLin('#c81eb4'), gold=dbLin('#ffc935'), skin=dbLin('#f6f3ea');   // (white gloves: the 1930s hand)
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -85065,16 +85161,8 @@ function rkjArmGeo(hand){ return tonyKeep('rkjArm-'+hand, ()=>{
   add(tube, null, seq, i=>ty[i]);
   const bell=new T.CylinderGeometry(1.65,1.02,1.1,16,1,true); bell.translate(0,0.1,0); add(bell, null, seq, 1);
   const rim=new T.TorusGeometry(1.64,0.22,6,18); rim.rotateX(Math.PI/2); rim.translate(0,0.65,0); add(rim, null, gold, 1);
-  const hs=1.3, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m), ball=new T.SphereGeometry(1,12,9), E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, HM(new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r))), c, 1); };   // (the glove a size up: a cartoon hand)
-  if(hand==='point'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.1), new T.Quaternion(), V(1.6,1.45,1.4))), skin, 1);                // the fist
-    for(const x of [-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.75), new T.Quaternion(), V(0.5,0.55,0.6))), skin, 1);   // three fingers curled in
-    E(skin, [-0.75,2.6,0.3], [-0.85,5.4,0.35], 0.48);                                                                   // the index finger, pointing
-    E(skin, [-1.25,1.6,0.9], [-0.6,2.55,1.5], 0.42); }                                                                  // the thumb, across
-  else {
-    add(ball, HM(new T.Matrix4().compose(V(0,1.8,0), new T.Quaternion(), V(1.45,1.45,0.72))), skin, 1);                 // the palm, to the front
-    E(skin, [-1.0,1.45,0], [-2.55,1.6,0], 0.47);                                                                       // the thumb, out sideways (into his ear)
-    for(const [a,l] of [[-0.5,2.0],[-0.17,2.5],[0.17,2.5],[0.5,2.1]]) E(skin, [Math.sin(a)*0.85, 1.8+Math.cos(a)*0.85, 0], [Math.sin(a)*(0.85+l), 1.8+Math.cos(a)*(0.85+l), 0], 0.44); }   // the fingers, spread   // the fingers, fanned
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, in the bell
+  toonHandAdd((g,m,c)=>add(g,m,c,1), rkjHandO(hand), skin, null, new T.Matrix4().makeTranslation(0,RKJ_HAND.y,0));   // the white glove (a toon hand, a size up)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); return g; }); }
 // the arm's poses from the shoulder (TONY_ARM.a0, his right side; a mirror takes it to his left): the hand and the elbow's pull
 const RKJ_ARM={ up:[-3.5,4.5,1.0], upE:[-1.9,2.1,0.4], dn:[3.0,-3.2,4.0], dnE:[-1.2,-1.4,2.6] };
@@ -85240,7 +85328,7 @@ function rkjTick(o, R, now, dt, S, C, q){
   // the burst: as a point reaches the top on its first beat, and on every one of a Hustle: glitter off the fingertip, a star
   if(armOn && D.mode!=='nyah' && !P){ const top=D.h>0.85 && ph<0.2 && (D.mode==='point' ? now-D.ptT>0.12 && D.burstB==null : b4<1);
     if(top && beat!==D.pB){ D.pB=beat; if(D.mode==='point') D.burstB=beat;
-      const U=D.AU; _rkjB.copy(U.uA2.value).sub(U.uA1.value).normalize(); D.popP.copy(U.uA2.value).addScaledVector(_rkjB, 7.4*U.uAr.value); D.popS=now;
+      const U=D.AU; _rkjB.copy(U.uA2.value).sub(U.uA1.value).normalize(); D.popP.copy(U.uA2.value).addScaledVector(_rkjB, rkjTipL()*U.uAr.value); D.popS=now;
       if(real){ D.armG.parent.updateWorldMatrix(true, false); const w=D.armG.parent.localToWorld(_rkjA.copy(D.popP));
         for(let i=0;i<12;i++){ const a=i*2.39996, el=0.3+0.6*((i*7)%10)/10, s=9+dbRnd(S)*7; emit(w.x, w.y, w.z, {color:[0xffc000,0xff2ad0,0x40c8ff,0xfff0a0][i%4], life:0.8, vx:Math.cos(a)*Math.cos(el)*s, vy:Math.sin(el)*s+4, vz:Math.sin(a)*Math.cos(el)*s, s0:2.8, s1:0.3, grav:18, op:0.95}); }
         if(R.you && typeof luxRipple==='function') luxRipple(w, 0.3, 1.3); } } }
@@ -85484,11 +85572,9 @@ function jjArmGeo(skin){ return tonyKeep('jjArm', ()=>{
   add(tube, new T.Matrix4(), skin, i=>ty[i]);
   const cuff=new T.CylinderGeometry(1.9,1.2,1.25,14,1,true); add(cuff, new T.Matrix4().makeTranslation(0,0.55,0), wht, 1);
   const st=new T.TorusGeometry(1.75,0.2,6,16); st.rotateX(Math.PI/2); add(st, new T.Matrix4().makeTranslation(0,0.98,0), red, 1);
-  const ball=new T.SphereGeometry(1,12,9), E=(a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
-    add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), wht, 1); };
-  add(ball, new T.Matrix4().compose(V(0,2.05,0), new T.Quaternion(), V(1.75,1.55,0.95)), wht, 1);                      // the palm
-  for(const [x,l] of [[-1.1,1.25],[-0.38,1.6],[0.38,1.65],[1.1,1.35]]) E([x,3.0,0.05], [x*1.18,3.0+l,0.1], 0.5);           // four puffy fingers
-  E([1.45,1.8,0.25], [2.6,2.8,0.45], 0.5);                                                                                     // the thumb
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.3,0), new T.Quaternion(), V(1.05,0.9,0.95)), wht, 1);   // the wrist, in the cuff
+  // the glove (a toon hand): open, the fingers a little easy so it can take a brim or a moustache tip, a touch puffy
+  toonHandAdd((g,m,c)=>add(g,m,c,1), { pose:'open', size:1.08, fat:1.15, long:0.88, curl:[0.14,0.12,0.15,0.2] }, wht, null, new T.Matrix4().makeTranslation(0,0.72-0.62*1.08,0));
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); return g; }); }
 // where the glove goes, in the face rig: the wrist and the elbow for each gag (the shoulder is TONY_ARM.a0)
 const JJ_ARM={ reachE:[-5.1,3.9,0.3], raise:[-3.5,9.4,1.7], raiseE:[-5.2,5.8,0.7], tada:[-5.6,8.4,2.6], tadaE:[-5.4,4.9,1.0],
@@ -85816,13 +85902,13 @@ function pjArmGeo(skin){ return tonyKeep('pjArm', ()=>{
   const ring=new T.TorusGeometry(1.16,0.42,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), dbLin('#2e4f80'), 0.8);
   const ring2=new T.TorusGeometry(1.2,0.16,5,14); ring2.rotateX(Math.PI/2); add(ring2, new T.Matrix4().makeTranslation(0,0.05,0), dbLin('#8cbcea'), 0.8);
   const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.3,0, 1.95,1.6,1.8), skin, 1);                                                     // the fist
-  for(const x of [-1.1,-0.37,0.37,1.1]) add(ball, M(x,2.0,0.95, 0.55,0.62,0.6), skin, 1);            // its knuckles, round the box
+  add(ball, M(0,0.12,0, 0.98,0.8,0.9), skin, 1);                                                    // the wrist, rounding off the hose
   const box=new T.BoxGeometry(2.3,3.0,1.35,2,2,2); add(box, M(0,3.0,0.05, 1,1,1), dbLin('#d5dce4'), 1);   // the chrome switch box
   add(new T.BoxGeometry(1.8,2.1,0.12), M(0,3.3,0.73, 1,1,1), dbLin('#262a33'), 1);                     // its face
   for(const [x,c] of [[-0.45,'#e2412f'],[0.45,'#f6f2ea']]){ add(new T.CylinderGeometry(0.13,0.15,0.8,7), M(x,3.55,1.05, 1,1,1, 1.1), dbLin('#c9d0d8'), 1);
     add(ball, M(x,3.85,1.38, 0.24,0.24,0.24), dbLin(c), 1); }                                        // two toggles
-  add(ball, M(0.95,2.55,1.2, 0.55,1.05,0.55), skin, 1);                                              // the thumb, up on a switch
+  // the fist round the foot of the box (a toon hand), the thumb up its face onto the white toggle
+  toonHandAdd((g,m,c)=>add(g,m,c,1), { pose:'fist', size:1.35, thumbPath:{ base:[0.98,1.9,0.5], d1:[-0.1,0.9,0.4], d2:[-0.56,0.85,0.33], L:[0.9,0.95] } }, skin, null, M(0,-1.3,-0.3, 1,1,1));
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 const PJ_ARM={ up:[-1.45,3.85,2.45], el:[-3.0,1.1,0.4] };
 const PJ_CHAINS=[{ zb:-4.5, zf:2.0, upH:-0.62, low:0.4, fwd:1.0, n:84, sc:[0.09,0.14,0.06], seg:[5,4], alt:{ zb:-4.6, zf:-2.1, upH:-0.6, low:0.8, fwd:0.45 } }];
@@ -86285,6 +86371,8 @@ function vkjGogPose(o, s, tilt){
   o.position.copy(_vkjV).sub(_vkjW.copy(G.c0).applyQuaternion(o.quaternion));
 }
 // the arm, Tony's hose with a leather bracer studded in brass where his bracelet was, and his fist
+// (the fist a grip, its fingers round the front of the horn and the back of the hand behind it: the horn rides through it)
+const VKJ_HAND={ o:{ pose:'grip', size:1.42, curl:[0.66,0.68,0.7,0.72] }, at:[0,-0.95,-0.7] };
 function vkjArmGeo(skin){ return tonyKeep('vkjArm', ()=>{
   const M=(x,y,z,sx,sy,sz)=>new T.Matrix4().compose(new T.Vector3(x,y,z), new T.Quaternion(), new T.Vector3(sx,sy,sz)), lea=dbLin('#6b3f22'), brass=dbLin('#e0b048'), items=[], aT=[];
   const add=(geo,m,c,t)=>{ items.push([geo,m,c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -86293,10 +86381,8 @@ function vkjArmGeo(skin){ return tonyKeep('vkjArm', ()=>{
   const br=new T.CylinderGeometry(1.32,1.32,1,14,6,true), by=Array.from(br.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<br.attributes.position.count;i++) br.attributes.position.setY(i,0);
   add(br, new T.Matrix4(), lea, i=>0.6+0.3*by[i]);
   for(const t of [0.64,0.86]) for(let k=0;k<8;k++){ const a=k/8*Math.PI*2; add(new T.SphereGeometry(0.26,6,4), M(Math.cos(a)*1.34,0,Math.sin(a)*1.34,1,1,1), brass, t); }
-  const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.35,0, 2.05,1.75,1.95), skin, 1);
-  for(const x of [-1.2,-0.4,0.4,1.2]) add(ball, M(x,2.5,0.7, 0.6,0.7,0.74), skin, 1);
-  add(ball, M(0.2,1.25,1.82, 1.3,0.56,0.56), skin, 1);
+  add(new T.SphereGeometry(1,12,9), M(0,0.12,0, 0.98,0.8,0.9), skin, 1);                           // the wrist, rounding off the hose
+  toonHandAdd((g,m,c)=>add(g,m,c,1), VKJ_HAND.o, skin, null, M(...VKJ_HAND.at, 1,1,1));            // his fist round the horn (a toon hand)
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
 // the drinking horn, from where the fist holds it: ivory, brass at the rim, the middle and the tip, a head of foam
 function vkjHornGeo(){ return tonyKeep('vkjHorn', ()=>{
@@ -86744,6 +86830,11 @@ function rvjTasselGeo(){ return tonyKeep('rvjTassel', ()=>{
 /* THE ARMS: a rubber hose (Tony's bend) in a royal-blue kurta sleeve with a gold zari cuff, and his hand (a size up: a
    cartoon hand): 'point' (the index finger out), 'open' (palm open, fingers together, thumb out), 'comb' (a fist round a
    black pocket comb that carries on past the fingers, its teeth down along the hand's -z) */
+// the hands (toonHand, a size up): the point and the comb with the thumb on -x, the open hand with it on +x, as they were
+const RVJ_HAND={ s:1.3, y:0.6-0.62*1.3, point:{ pose:'point', sx:-1, long:1.15 }, open:{ pose:'open', sx:1 }, comb:{ pose:'fist', sx:-1 } };
+function rvjHandO(hand){ return Object.assign({ size:RVJ_HAND.s }, RVJ_HAND[hand]); }
+let RVJ_TIPL=null;   // how far up the hand the pointing fingertip's end is (hose radii): the finger on the aviators' bridge
+function rvjTipL(){ if(RVJ_TIPL==null){ const h=toonHand(rvjHandO('point')); RVJ_TIPL=h.tip.index.y+RVJ_HAND.y; for(const [g] of h.parts) g.dispose(); } return RVJ_TIPL; }
 function rvjArmGeo(hand){ return tonyKeep('rvjArm-'+hand, ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], silk=dbLin('#2348a8'), gold=dbLin('#ffc935'), skin=dbLin('#c98654'), comb=dbLin('#1a1424');
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -86751,20 +86842,9 @@ function rvjArmGeo(hand){ return tonyKeep('rvjArm-'+hand, ()=>{
   add(tube, null, silk, i=>ty[i]);
   const cuff=new T.CylinderGeometry(1.32,1.12,0.8,14,1,true); cuff.translate(0,0.05,0); add(cuff, null, gold, 1);
   const rim=new T.TorusGeometry(1.3,0.16,6,16); rim.rotateX(Math.PI/2); rim.translate(0,0.45,0); add(rim, null, gold, 1);
-  const hs=1.25, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m), ball=new T.SphereGeometry(1,12,9), E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, HM(new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r))), c, 1); };
-  if(hand==='point'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.1), new T.Quaternion(), V(1.6,1.45,1.4))), skin, 1);
-    for(const x of [-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.75), new T.Quaternion(), V(0.5,0.55,0.6))), skin, 1);
-    E(skin, [-0.75,2.6,0.3], [-0.85,5.3,0.35], 0.48);
-    E(skin, [-1.25,1.6,0.9], [-0.6,2.55,1.5], 0.42); }
-  else if(hand==='open'){
-    add(ball, HM(new T.Matrix4().compose(V(0,1.8,0), new T.Quaternion(), V(1.45,1.5,0.62))), skin, 1);
-    for(const [x,l] of [[-0.78,1.9],[-0.26,2.3],[0.26,2.3],[0.78,1.95]]) E(skin, [x,2.9,0], [x*1.08,2.9+l,0], 0.42);
-    E(skin, [1.1,1.3,0.15], [2.4,2.3,0.25], 0.44); }
-  else {
-    add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.05), new T.Quaternion(), V(1.55,1.45,1.35))), skin, 1);
-    for(const x of [-0.75,-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.7), new T.Quaternion(), V(0.48,0.55,0.6))), skin, 1);
-    E(skin, [-1.25,1.6,0.9], [-0.55,2.5,1.45], 0.42);
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 1);   // the wrist, in the cuff
+  toonHandAdd((g,m,c)=>add(g,m,c,1), rvjHandO(hand), skin, null, new T.Matrix4().makeTranslation(0,RVJ_HAND.y,0));   // the hand (a toon hand)
+  if(hand==='comb'){ const hs=1.25, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m);
     const sp=new T.BoxGeometry(0.42,3.6,0.3); add(sp, HM(new T.Matrix4().makeTranslation(0.1,4.4,0.0)), comb, 1);
     for(let i=0;i<11;i++){ const t=new T.BoxGeometry(0.16,0.12,0.55); add(t, HM(new T.Matrix4().makeTranslation(0.1,2.85+i*0.3,-0.4)), comb, 1); } }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
@@ -86940,7 +87020,7 @@ function rvjTick(o, R, now, dt, S, C, q){
       _rvA.copy(U.uA2.value).sub(U.uA1.value).normalize(); U.uAn.value.set(0,0,1).addScaledVector(_rvA, -_rvA.z).normalize(); }
     else if(AR.hand==='point'){   // the finger on the bridge, wherever the aviators are (the face's rig turned into this one)
       _rvB.copy(D.avi.position); _rvB.y+=0.32; rvjFromRig(_rvA, _rvB, S);
-      _rvC.set(0.25,0.92,-0.3).normalize(); _rvH.copy(_rvA).addScaledVector(_rvC, -5.3*1.25*TONY_ARM.r*0.95); _rvH.z+=0.55;
+      _rvC.set(0.25,0.92,-0.3).normalize(); _rvH.copy(_rvA).addScaledVector(_rvC, -rvjTipL()*TONY_ARM.r*0.95); _rvH.z+=0.55;
       rvjArmSet(U, AR.e, _rvH, _rvL.set(-4.6, HEAD_CY-1.6, 2.2), _rvP.set(0,0,1)); }
     else rvjDance(U, AR.e, x, D.dw, 1); }
   if(AL.e>0.02) rvjDance(AL.U, AL.e, x, D.dw, -1);
@@ -87263,15 +87343,9 @@ function ddjArmGeo(hand){ return tonyKeep('ddjArm-'+hand, ()=>{
   add(tube, null, blue, 1, i=>ty[i]*0.86);
   const cuff=new T.CylinderGeometry(1.24,1.2,1.3,14,1); add(cuff, null, white, 0, 0.9);
   const link=new T.BoxGeometry(0.55,0.55,0.3); link.translate(1.28,0,0); add(link, null, gold, 0, 0.9);
-  const hs=1.15, HM=m=>new T.Matrix4().makeScale(hs,hs,hs).multiply(m), ball=new T.SphereGeometry(1,12,9), E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, HM(new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r))), c, 0, 1); };
-  add(ball, HM(new T.Matrix4().compose(V(0,1.75,0.1), new T.Quaternion(), V(1.55,1.45,1.35))), skin, 0, 1);              // the fist
-  if(hand==='press'){
-    for(const x of [-0.1,0.55,1.15]) add(ball, HM(new T.Matrix4().compose(V(x,2.75,0.75), new T.Quaternion(), V(0.5,0.55,0.6))), skin, 0, 1);
-    E(skin, [-0.72,2.6,0.3], [-0.8,5.3,0.35], 0.47);                                                                        // the finger on the earpiece
-    E(skin, [-1.2,1.6,0.9], [-0.55,2.5,1.45], 0.42); }
-  else {
-    for(const x of [-0.95,-0.32,0.32,0.95]) add(ball, HM(new T.Matrix4().compose(V(x,2.7,0.7), new T.Quaternion(), V(0.55,0.62,0.7))), skin, 0, 1);   // the fingers round the phone
-    E(skin, [-1.3,1.5,0.8], [-1.1,2.75,1.35], 0.44); }
+  add(new T.SphereGeometry(1,12,9), new T.Matrix4().compose(V(0,0.12,0), new T.Quaternion(), V(0.98,0.8,0.9)), skin, 0, 1);   // the wrist, rounding off the hose
+  // his hand (a toon hand, the thumb on -x as it was): 'press' the forefinger out to the earpiece, 'grip' round the phone
+  toonHandAdd((g,m,c)=>add(g,m,c,0,1), hand==='press' ? { pose:'point', sx:-1, size:1.25, long:1.15 } : { pose:'grip', sx:-1, size:1.25 }, skin, null, new T.Matrix4().makeTranslation(0,0.55-0.62*1.25,0));
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); g.dispose=()=>{}; return g; }); }
 // the power tie along a curve (TONY_BEND): the knot (above the curve's start) and the blade, widening to its point
 function ddjTieGeo(){ return tonyKeep('ddjTie', ()=>{
@@ -87998,11 +88072,12 @@ function ryjArmGeo(skin){ return tonyKeep('ryjArm', ()=>{
   { const sl=new T.CylinderGeometry(1,1,1,14,6,true), p=sl.attributes.position, sy=[]; for(let i=0;i<p.count;i++){ const y=p.getY(i)+0.5, r=1.55+0.75*y*y; sy.push(0.02+0.3*y); p.setXYZ(i, p.getX(i)*r, 0, p.getZ(i)*r); }
     sl.computeVertexNormals(); add(sl, new T.Matrix4(), ind, i=>sy[i]);
     const ed=new T.TorusGeometry(2.3,0.24,6,18); ed.rotateX(Math.PI/2); add(ed, new T.Matrix4(), wht, 0.32); }
-  const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.35,0, 2.05,1.75,1.95), skin, 1);
-  for(const x of [-1.2,-0.4,0.4,1.2]) add(ball, M(x,2.5,0.7, 0.6,0.7,0.74), skin, 1);
-  add(ball, M(0.2,1.25,1.82, 1.3,0.56,0.56), skin, 1);
-  for(const x of [-0.8,0,0.8]){ const cl=new T.ConeGeometry(0.26,0.85,6); cl.rotateX(Math.PI/2); add(cl, M(x,2.55,1.55,1,1,1), ivory, 1); }
+  add(new T.SphereGeometry(1,12,9), M(0,0.12,0, 0.98,0.8,0.9), skin, 1);                           // the wrist, rounding off the hose
+  // the fist (a toon hand), its middle on the hilt as the old one's was, and a claw off the front of each of three curled fingers
+  const hy=0.3-0.62*1.45, hm=M(0,hy,0, 1,1,1), H=toonHand({ pose:'fist', size:1.45 }), bb=new T.Box3();
+  for(const [g,part] of H.parts){ add(g, hm, part==='ink' ? dbLin(DB_INK) : skin, 1);
+    if(part==='index'||part==='middle'||part==='ring'){ g.computeBoundingBox(); bb.copy(g.boundingBox);
+      const cl=new T.ConeGeometry(0.26,0.85,6); cl.rotateX(Math.PI/2); add(cl, M((bb.min.x+bb.max.x)/2, hy+(bb.min.y+bb.max.y)/2, bb.max.z+0.2, 1,1,1), ivory, 1); } }
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); return g; }); }
 // the slash: a crescent drawn through the air by the cut, white past white (LUX blooms it); uv.x along it, the leading end at 1
 function ryjSlashGeo(){ return tonyKeep('ryjSlash', ()=>{
@@ -88313,17 +88388,11 @@ function kshArmGeo(skin, kind){ return tonyKeep('kshArm1-'+kind, ()=>{
   add(ball, M(0,0.2,0, 2.0,1.7,2.0), red, 0);                                                     // the sleeve, puffed at the shoulder
   { const band=new T.TorusGeometry(1.32,0.34,6,16); band.rotateX(Math.PI/2); add(band, new T.Matrix4(), gold, 0.17); }
   { const cuff=new T.TorusGeometry(1.3,0.62,8,16); cuff.rotateX(Math.PI/2); add(cuff, M(0,0.15,0), glove, 1); }   // the glove's rolled cuff
-  if(kind==='fist'){
-    add(ball, M(0,1.75,0, 2.15,1.85,2.0), glove, 1);
-    for(const x of [-1.25,-0.42,0.42,1.25]) add(ball, M(x,2.95,0.7, 0.64,0.74,0.8), glove, 1);    // four knuckles
-    add(ball, M(0.25,1.6,1.9, 1.4,0.6,0.6), glove, 1);                                             // the thumb, wrapped across
-    for(const x of [-0.8,0,0.8]) add(new T.BoxGeometry(0.2,1.25,0.3), M(x,1.9,-1.92+0.12*Math.abs(x)), dart, 1);
-  } else {
-    add(ball, M(0,1.9,0, 2.05,1.95,0.95), glove, 1);                                               // the palm, flat
-    for(const x of [-1.3,0,1.3]) add(ball, M(x*1.08,4.15-0.25*Math.abs(x),0, 0.68,1.6,0.64,-x*0.13), glove, 1);   // three fingers, fanned
-    add(ball, M(2.25,2.0,0.2, 0.62,1.35,0.6,-0.95), glove, 1);                                    // the thumb, out to the side
-    for(const x of [-0.8,0,0.8]) add(new T.BoxGeometry(0.2,1.3,0.3), M(x,1.9,-0.86+0.05*Math.abs(x)), dart, 1);
-  }
+  // the glove (a toon hand, three fingers and a thumb): the fist, or the open hand with its fingers a little fanned; the darts
+  // on the back of the hand, across the palm's back
+  const hs=1.45, hy=0.6-0.62*hs;
+  toonHandAdd((g,m,c)=>add(g,m,c,1), kind==='fist' ? { pose:'fist', fingers:3, size:hs } : { pose:'spread', fingers:3, size:hs*0.94, long:0.72, curl:[0.05,0.04,0.05,0.06] }, glove, null, M(0,hy,0));
+  for(const x of [-0.7,0,0.7]) add(new T.BoxGeometry(0.2,1.25,0.3), M(x,hy+1.55*hs,-0.66*hs-0.08+0.1*Math.abs(x)), dart, 1);
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,KSH.H*0.7,0), 16); return g; }); }
 function kshPost(g){
   const ud=g.userData, S=ud.neo, F=ud.flow, D=S&&S.dkj;
@@ -89203,6 +89272,9 @@ void main(){ if(vA<0.01) discard; vec3 n=normalize(vNv); if(!gl_FrontFacing) n=-
    finger-gun: three fingers curled, the index finger out (the barrel, along the hand's y), the thumb up (the hammer, along
    its x; aTh marks it, and uTh drops it). The hand is placed by a frame of its own (uHX, uHY, uHZ) at the wrist, so it can
    aim, recoil and twirl whatever the hose is doing. */
+// (the hand: its index finger, the barrel, a little in from the palm's edge toward the wrist's line as the old barrel was;
+//  the thumb's root on the hammer's pivot, (0.85, 2.05))
+const RMJ_HAND={ o:{ pose:'gun', long:1.2, thumbPath:{ base:[1.15,2.05,0.3], d1:[1,0.1,0.1], d2:[1,-0.05,0.1], L:[0.4,0.38] } }, at:[-0.3,0,0] };
 function rmjArmGeo(skin){ return tonyKeep('rmjArm', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], aTh=[], glove=dbLin('#f8f5ec'), lea=dbLin('#9a6232'), leaD=dbLin('#5e3a1c');
   const add=(geo,m,c,t,th)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++){ aT.push(typeof t==='function'?t(i):t); aTh.push(th||0); } };
@@ -89217,11 +89289,11 @@ function rmjArmGeo(skin){ return tonyKeep('rmjArm', ()=>{
   for(let i=0;i<7;i++){ const a=Math.PI*(0.75+0.5*i/6), fr=new T.CylinderGeometry(0.09,0.04,0.95,4), o=V(Math.sin(a),0,Math.cos(a)), y=-0.45+0.95*i/6;
     add(fr, new T.Matrix4().compose(V(Math.sin(a)*(1.5-0.05*i),y,Math.cos(a)*(1.5-0.05*i)), new T.Quaternion().setFromUnitVectors(V(0,1,0), o.clone().multiplyScalar(0.8).add(V(0,-0.6,0)).normalize()), V(1,1,1)), leaD, 1); }
   { const cr=new T.TorusGeometry(1.02,0.28,6,16); cr.rotateX(Math.PI/2); add(cr, rmjM4(0,0.95,0), glove, 1); }                       // the glove's rolled cuff
-  add(ball, new T.Matrix4().compose(V(0,2.0,0), new T.Quaternion(), V(1.15,1.2,1.05)), glove, 1);                              // the fist
-  for(const [y,s] of [[2.5,0.42],[2.05,0.44],[1.6,0.4]]) add(ball, new T.Matrix4().compose(V(-0.72,y,0.42), new T.Quaternion(), V(0.5,s,0.5)), glove, 1);   // three fingers curled under (the palm side)
-  for(const x of [-0.36,0,0.36]) add(ball, new T.Matrix4().compose(V(x,1.75,-0.98), new T.Quaternion(), V(0.065,0.42,0.065)), dbLin('#1a0f0a'), 1);   // the stitching on its back
-  E(glove, [0.25,2.5,0.15], [0.3,5.25,0.15], 0.4);                                                                             // the barrel: the index finger, long and straight
-  E(glove, [0.85,2.1,0.3], [1.6,1.95,0.3], 0.36, 1);                                                                           // the hammer: the thumb, short, cocked back
+  // the glove (a toon hand): the finger-gun, the three fingers curled into the palm, the index finger long and straight (the
+  // barrel), the thumb short and out along x from the shader's pivot (the hammer: aTh marks it); the stitching on its back
+  const H=toonHand(RMJ_HAND.o), hm=rmjM4(RMJ_HAND.at[0],RMJ_HAND.at[1],RMJ_HAND.at[2]);
+  for(const [g,part] of H.parts) add(g, hm, part==='ink' ? dbLin(DB_INK) : glove, 1, part==='thumb' ? 1 : 0);
+  for(const x of [-0.36,0,0.36]) add(ball, new T.Matrix4().compose(V(x+RMJ_HAND.at[0]+0.1,1.75,-0.74), new T.Quaternion(), V(0.065,0.42,0.065)), dbLin('#1a0f0a'), 1);
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aTh', new T.Float32BufferAttribute(aTh,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const RMJ_ARM_VS=`
 attribute float aT, aTh; uniform vec3 uA0, uA1, uA2, uAn, uHX, uHY, uHZ; uniform float uAr, uTh, uHs;
@@ -89810,28 +89882,24 @@ function kjArmGeo(skin){ return tonyKeep('kjArm', ()=>{
   { const bead=new T.SphereGeometry(0.24,6,5), C=['#141414','#c8202e','#13803a','#f4f0e8'].map(dbLin);
     for(let r=0;r<3;r++) for(let i=0;i<13;i++){ const a=(i+0.5*r)/13*Math.PI*2; add(bead, M(Math.cos(a)*1.02, -0.05+0.4*r, Math.sin(a)*1.02, 1,1,1), C[(i+r)%4], 1); } }
   { const cr=new T.TorusGeometry(1.0,0.26,6,16); cr.rotateX(Math.PI/2); add(cr, M(0,1.0,0,1,1,1), glove, 1); }                               // the glove's rolled cuff
-  // 0: the open hand. A palm, three fat fingers and a thumb; three stitches down its back
-  add(ball, M(0,1.95,0, 1.2,1.15,0.6), glove, 1, 0);
-  for(const [x,l] of [[-0.62,1.25],[0,1.45],[0.62,1.3]]) E(glove, [x,2.6,0.05], [x*1.18,2.6+l,0.1], 0.36, 0);
-  E(glove, [1.0,1.6,0.25], [1.95,2.45,0.45], 0.36, 0);
-  for(const x of [-0.42,0,0.42]) add(ball, M(x,1.95,-0.58, 0.06,0.45,0.06), ink, 1, 0);
+  // the hands are the shared cartoon hand (toonHand), in the glove's white with the ink's creases; three stitches down the back
+  const hand=(o, v, xf)=>{ const h=toonHand(Object.assign({ size:KJ_HSZ, fingers:3 }, o)); for(const [g,part] of h.parts){ if(xf) g.applyMatrix4(xf); add(g, null, part==='ink' ? dbLin(DB_INK) : glove, 1, v); } return h; };
+  const stitch=(v)=>{ for(const x of [-0.42,0,0.42]) add(ball, M(x*KJ_HSZ,1.95*KJ_HSZ,-0.62*KJ_HSZ, 0.06,0.4*KJ_HSZ,0.06), ink, 1, v); };
+  // 0: the open hand, the fingers a little apart and the thumb out (a classic three-fingered glove)
+  hand({ pose:'wave' }, 0); stitch(0);
   // 1: the point. A fist, the index finger out along y, the thumb across
-  add(ball, M(0,1.85,0, 1.15,1.1,0.95), glove, 1, 1);
-  for(const [y,s] of [[2.35,0.4],[1.95,0.42],[1.55,0.38]]) add(ball, M(-0.55,y,0.62, 0.48,s,0.48), glove, 1, 1);
-  E(glove, [0.38,2.55,0.25], [0.42,4.1,0.25], 0.36, 1);
-  E(glove, [0.95,1.6,0.55], [0.25,2.15,0.95], 0.3, 1);
-  for(const x of [-0.42,0,0.42]) add(ball, M(x,1.8,-0.93, 0.06,0.42,0.06), ink, 1, 1);
+  hand({ pose:'point' }, 1); stitch(1);
   // 2: the airbrush can, gripped: the can stands up out of the fist (a magenta body, a cyan band, a white cap), the nozzle
-  //    turned out of the palm side
-  add(ball, M(0,1.75,0.1, 1.15,1.05,1.0), glove, 1, 2);
-  { const can=new T.CylinderGeometry(0.72,0.72,3.0,14,1); add(can, M(0,3.0,0.95,1,1,1), dbLin('#e8268f'), 1, 2);
-    const bd=new T.CylinderGeometry(0.74,0.74,0.5,14,1); add(bd, M(0,3.3,0.95,1,1,1), dbLin('#21c8e6'), 1, 2);
-    const cap=new T.SphereGeometry(0.66,12,6,0,Math.PI*2,0,Math.PI/2); add(cap, M(0,4.5,0.95,1,0.7,1), dbLin('#f4f2ee'), 1, 2);
-    add(new T.CylinderGeometry(0.14,0.14,0.5,8,1).rotateX(Math.PI/2), M(0,4.62,1.45,1,1,1), dbLin('#1a1a22'), 1, 2); }
-  for(const [y,s] of [[2.5,0.42],[2.05,0.44],[1.6,0.4]]) add(ball, M(-0.2,y,1.5, 0.75,s,0.45), glove, 1, 2);   // the fingers round the can's front
-  add(ball, M(0.85,2.3,1.35, 0.4,0.62,0.4), glove, 1, 2);                                                        // the thumb up its side
+  //    turned out of the palm side; the hand turned on its side so the curled fingers wrap round the can's front
+  add(new T.CylinderGeometry(0.72,0.72,3.0,14,1), M(0,3.0,0.95,1,1,1), dbLin('#e8268f'), 1, 2);
+  add(new T.CylinderGeometry(0.74,0.74,0.5,14,1), M(0,3.3,0.95,1,1,1), dbLin('#21c8e6'), 1, 2);
+  add(new T.SphereGeometry(0.66,12,6,0,Math.PI*2,0,Math.PI/2), M(0,4.5,0.95,1,0.7,1), dbLin('#f4f2ee'), 1, 2);
+  add(new T.CylinderGeometry(0.14,0.14,0.5,8,1).rotateX(Math.PI/2), M(0,4.62,1.45,1,1,1), dbLin('#1a1a22'), 1, 2);
+  hand({ pose:'grip', sx:-1 }, 2, new T.Matrix4().makeRotationZ(Math.PI/2).premultiply(new T.Matrix4().makeTranslation(2.75,2.3,0)));
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aV', new T.Float32BufferAttribute(aV,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,-2), 16); return g; }); }
-const KJ_NOZ=[0,4.62,1.75], KJ_TIP=4.45;   // the can's nozzle and the pointing finger's tip, in the hand's units
+const KJ_HSZ=0.92, KJ_PALM=1.65*KJ_HSZ, KJ_NOZ=[0,4.62,1.75];   // the hand's size (toonHand), the middle of its palm up y, the can's nozzle, in the hand's units
+// the pointing finger's tip (a little past its round end), in the hand's units: along y, and its offset to the thumb's side
+const KJ_TIP=(()=>{ const t=toonHand({ pose:'point', size:KJ_HSZ, fingers:3, creases:false }).tip.index; return [t.x, t.y+0.42*KJ_HSZ]; })();
 const KJ_ARM_VS=`
 attribute float aT, aV; uniform vec3 uA0, uA1, uA2, uAn, uHX, uHY, uHZ; uniform float uAr, uHs, uHv;
 varying vec3 vNv, vV, vC; varying vec2 vU;
@@ -90021,11 +90089,11 @@ function kjTick(o, R, now, dt, S, C, q){
     if(sb<0.62 && !onF){   // wound up before each slap: the hand up and out over the flank (high before the first, a hop before the second)
       const lift=sb<0 ? kjSm((sb+0.75)/0.55) : 0.5;
       const palm=fp.clone().addScaledVector(fn, 0.55+1.9*lift).add(_kjD.set(0, 1.6*lift, 0.4*lift));
-      wr=palm.addScaledVector(hy,-1.95*hs).toArray(); ay=hy.clone().addScaledVector(fn,0.6*lift).normalize().toArray(); ax=hx.toArray();
+      wr=palm.addScaledVector(hy,-KJ_PALM*hs).toArray(); ay=hy.clone().addScaledVector(fn,0.6*lift).normalize().toArray(); ax=hx.toArray();
       el=[A0[0]-1.6, A0[1]+2.0, A0[2]-2.4]; }
     else if(onF){   // on the flank: the palm flat on the paint
       const palm=fp.clone().addScaledVector(fn, 0.42);
-      wr=palm.addScaledVector(hy,-1.95*hs).toArray(); ay=hy.toArray(); ax=hx.toArray(); el=[A0[0]-1.8, A0[1]+1.4, A0[2]-2.3]; sharp=true; }
+      wr=palm.addScaledVector(hy,-KJ_PALM*hs).toArray(); ay=hy.toArray(); ax=hx.toArray(); el=[A0[0]-1.8, A0[1]+1.4, A0[2]-2.3]; sharp=true; }
     else {   // TWENDE! the driver waved on: the arm up and forward, an open hand (palm forward) waggling on the half beats
       const wv=Math.sin(2*Math.PI*(sb-0.62)), ff=kjSm((sb-0.62)/0.4);
       wr=[A0[0]-1.3+0.25*wv, A0[1]+1.4+2.0*ff, A0[2]+0.4+1.1*ff]; el=[A0[0]-2.6, A0[1]+0.6, A0[2]+0.2];
@@ -90037,7 +90105,7 @@ function kjTick(o, R, now, dt, S, C, q){
     const tip=_kjA.set(p[0], HEAD_CY+p[1]-0.15, p[2]).applyMatrix4(D.sh.matrix).applyMatrix4(D.r2b);
     const dir=_kjB.set(-0.25,1,0.2).normalize();
     const hz=_kjC.set(1,0,0.15).addScaledVector(dir,-(0.15*dir.z+dir.x)).normalize(), hx=dir.clone().cross(hz);
-    wr=tip.clone().addScaledVector(dir, -KJ_TIP*hs).toArray(); ay=dir.toArray(); ax=hx.toArray();
+    wr=tip.clone().addScaledVector(dir, -KJ_TIP[1]*hs).addScaledVector(hx, -KJ_TIP[0]*hs).toArray(); ay=dir.toArray(); ax=hx.toArray();
     el=[A0[0]-1.9, A0[1]-1.9, A0[2]+1.4]; sharp=pu>-0.3 && pu<0.2; }
   else if(spraying && su>-0.7 && su<3.6){
     // the airbrush: the can's nozzle a hand off the flank, sweeping back along it a step a beat, aimed at the paint
@@ -90056,7 +90124,7 @@ function kjTick(o, R, now, dt, S, C, q){
     want=P || celeb || lu<3.4; hv=0;
     const c=D.cups[1], hz=c.ax.clone().negate(), hy=_kjC.set(0,1,0).addScaledVector(hz,-hz.y).normalize().clone(), hx=hy.clone().cross(hz);
     const palm=c.p.clone().addScaledVector(c.ax, 0.62);
-    wr=palm.addScaledVector(hy,-1.95*hs).toArray(); ay=hy.toArray(); ax=hx.toArray(); el=[A0[0]-2.4, A0[1]-1.6, A0[2]+0.6]; }
+    wr=palm.addScaledVector(hy,-KJ_PALM*hs).toArray(); ay=hy.toArray(); ax=hx.toArray(); el=[A0[0]-2.4, A0[1]-1.6, A0[2]+0.6]; }
   kitArmSpring(D, want, dt, P);
   if(wr){ _kjA.set(wr[0]-A0[0], wr[1]-A0[1], wr[2]-A0[2]); _kjB.set(el[0]-A0[0], el[1]-A0[1], el[2]-A0[2]); _kjC.set(...ay).normalize(); _kjD.set(...ax).normalize();
     if(P || !D.handOn){ D.hp.copy(_kjA); D.ep.copy(_kjB); D.ay.copy(_kjC); D.ax.copy(_kjD); D.hpV.set(0,0,0); D.epV.set(0,0,0); D.ayV.set(0,0,0); D.axV.set(0,0,0); }
@@ -90398,7 +90466,7 @@ function spjArmPose(U, e, a0, hand, elbow){ const e1=Math.min(1,e);
    that can make a fist, fan its fingers out (index and ring, aF 1: uFg.x; middle and little, aF 3: uFg.y: so they waggle two
    by two; the thumb, aF 4: uFg.z) and hold a red plectrum (aF 2: uFg.w). The hand is placed by its own frame at the wrist
    (uHX, uHY the way the fingers point, uHZ the palm's), so it can aim whatever the hose is doing. They are out only for a gag. */
-function spjArmGeo(skin){ return tonyKeep('spjArm2', ()=>{
+function spjArmGeo(skin, sx){ return tonyKeep(sx<0 ? 'spjArm2L' : 'spjArm2', ()=>{   // (sx -1: his left hand, the thumb on -x)
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], aF=[], aFb=[], lea=dbLin('#1c1a22'), silver=dbLin('#e2e6ec'), pick=dbLin('#e8262a');
   const add=(geo,m,c,t,f,fb)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++){ aT.push(typeof t==='function'?t(i):t); aF.push(f||0); aFb.push(...(fb||[0,0,0])); } };
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
@@ -90408,15 +90476,16 @@ function spjArmGeo(skin){ return tonyKeep('spjArm2', ()=>{
   add(new T.CylinderGeometry(1.32,1.32,1.0,16,1,true), spjM4(0,0.25,0), lea, 1);
   for(const y of [-0.25,0.75]){ const rg=new T.TorusGeometry(1.32,0.12,5,18); rg.rotateX(Math.PI/2); add(rg, spjM4(0,y,0), lea, 1); }
   for(let i=0;i<8;i++){ const a=i/8*Math.PI*2; add(new T.SphereGeometry(0.2,8,6), spjM4(Math.sin(a)*1.36,0.25,Math.cos(a)*1.36), silver, 1); }
-  // the hand: a fist, the knuckles, and the fingers that come out of it
-  add(ball, new T.Matrix4().compose(V(0,1.95,0), new T.Quaternion(), V(1.18,1.2,1.0)), skin, 1);
-  for(const x of [-0.78,-0.27,0.27,0.78]) add(ball, new T.Matrix4().compose(V(x,2.85,0.32), new T.Quaternion(), V(0.4,0.42,0.48)), skin, 1);
-  E(skin, [0.62,2.7,0.05], [1.5,4.7,0.0], 0.37, 1);                // the fingers, fanned: index,
-  E(skin, [0.2,2.8,0.05], [0.52,5.2,0.0], 0.38, 3);                 // middle,
-  E(skin, [-0.24,2.75,0.05], [-0.55,5.0,0.0], 0.37, 1);             // ring
-  E(skin, [-0.66,2.6,0.05], [-1.45,4.45,0.0], 0.34, 3);             // and little
-  E(skin, [1.0,1.75,0.4], [2.45,2.05,0.5], 0.36, 4);                // the thumb, out wide
-  { const pk=new T.ConeGeometry(0.62,0.9,3); pk.rotateZ(Math.PI); pk.scale(1,1,0.18); add(pk, new T.Matrix4().compose(V(0.95,2.55,0.95), new T.Quaternion().setFromEuler(new T.Euler(0.3,0,-0.5)), V(1,1,1)), pick, 1, 2, [0.6,2.2,0.6]); }   // the plectrum, pinched between thumb and finger
+  // the hand: the shared cartoon hand (toonHand). The fingers fanned out (index and ring aF 1, middle and little aF 3, the thumb
+  // aF 4, each grown from its own knuckle), and the fist they make when they are in: the curled fingers and the thumb across
+  // (aF 5, 6, 7: each shrinks into its knuckle as its pair comes out)
+  { const put=(h, flags, palm)=>{ let f=0, fb=null; for(const [g,part] of h.parts){
+      if(part==='palm'){ if(palm) add(g, null, skin, 1); continue; }
+      if(part!=='ink'){ f=flags[part]; fb=h.base[part].toArray(); }
+      add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1, f, fb); } };
+    put(toonHand(Object.assign({ sx:sx||1 }, SPJ_HAND.fan)), { index:1, ring:1, middle:3, pinky:3, thumb:4 }, true);
+    put(toonHand(Object.assign({ sx:sx||1 }, SPJ_HAND.fist)), { index:5, ring:5, middle:6, pinky:6, thumb:7 }, false); }
+  if(!(sx<0)){ const pk=new T.ConeGeometry(0.62,0.9,3); pk.rotateZ(Math.PI); pk.scale(1,1,0.18); add(pk, new T.Matrix4().compose(V(1.25,2.35,1.55), new T.Quaternion().setFromEuler(new T.Euler(0.3,0,-0.5)), V(1,1,1)), pick, 1, 2, [0.9,2.0,1.2]); }   // the plectrum, pinched between thumb and finger (out in front of the curled forefinger)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aF', new T.Float32BufferAttribute(aF,1)); g.setAttribute('aFb', new T.Float32BufferAttribute(aFb,3));
   g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const SPJ_ARM_VS=`
@@ -90426,21 +90495,24 @@ varying vec3 vNv, vV, vC; varying vec2 vU;
 void main(){
   vec3 p, n;
   if(aT>0.99){ vec3 q=position, m=normal;
-    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : uFg.z; s=clamp(s,0.0,1.2);
-      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0)
+    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : aF<4.5 ? uFg.z : 1.0-1.6*(aF<5.5 ? uFg.x : aF<6.5 ? uFg.y : uFg.z); s=clamp(s,0.0,1.2);
+      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0); the fist's own curled fingers (aF 5..7) the other way
     p=uA2+(uHX*q.x+uHY*q.y+uHZ*q.z)*uAr*uHs; n=uHX*m.x+uHY*m.y+uHZ*m.z; }
   else { float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
     p=c+(n1*position.x+tg*position.y+n2*position.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
   vC=color; vU=vec2(0.0); vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-const SPJ_FINGER=5.0;   // the fingertips along the hand's y, in hose radii
+// the hand's two shapes (toonHand): fanned out, and the fist (the thumb across, the plectrum pinched against the forefinger).
+// The thumb out is laid nearly flat to the side, so the snook can put its tip in his nose
+const SPJ_HAND={ fan:{ pose:'spread', thumbPath:{ d1:[0.86,0.42,0.2], d2:[0.97,0.2,0.1] } }, fist:{ pose:'fist' } };
+const SPJ_FINGER=(()=>{ const h=toonHand(Object.assign({ creases:false }, SPJ_HAND.fan)); return h.tip.middle.y+0.4; })();   // the fingertips along the hand's y, in hose radii
 const SPJ_A0=[TONY_ARM.a0, [-TONY_ARM.a0[0], TONY_ARM.a0[1], TONY_ARM.a0[2]]];   // the shoulders: his right, his left
 const _spA=new T.Vector3(), _spB=new T.Vector3(), _spC=new T.Vector3(), _spD=new T.Vector3(), _spQ=new T.Quaternion(), _spE=new T.Euler(), _spUp=new T.Vector3(0,1,0), _spM=new T.Matrix4(), _spM2=new T.Matrix4();
 function spjArm(D, side, skin, rigB){
   const AU=Object.assign(kitArmUniforms(), { uHX:{value:new T.Vector3(1,0,0)}, uHY:{value:new T.Vector3(0,1,0)}, uHZ:{value:new T.Vector3(0,0,1)}, uHs:{value:1.3}, uFg:{value:new T.Vector4()} });
   AU.uA0.value.set(...SPJ_A0[side]); AU.uA1.value.set(...SPJ_A0[side]); AU.uA2.value.set(...SPJ_A0[side]);
-  const m=new T.Mesh(spjArmGeo(skin), dbShader(SPJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
+  const m=new T.Mesh(spjArmGeo(skin, side ? -1 : 1), dbShader(SPJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
   m.name=side?'spj-arm-left':'spj-arm-right'; m.frustumCulled=false; m.visible=false; rigB.add(m);
   const hand=new T.Object3D(); rigB.add(hand);
   return { m, AU, hand, side, e:0, eV:0, on:false, hp:new T.Vector3(), hpV:new T.Vector3(), ep:new T.Vector3(), epV:new T.Vector3(), ay:new T.Vector3(0,1,0), ayV:new T.Vector3(), ax:new T.Vector3(1,0,0), axV:new T.Vector3(), fg:new T.Vector4(), fgV:new T.Vector4() };
@@ -90487,7 +90559,7 @@ function spjSpr(a, v, i, tgt, w, zt, dt){ const n=Math.max(1,Math.ceil(dt*60-1e-
 // the record: which part of Two Chords and a Grudge is playing (for the player, with his own record on), else null
 function spjSection(R){ if(!R || !R.you || typeof producedStations==='undefined' || typeof musicOn==='undefined' || !musicOn) return null;
   const h=producedStations.grudge; return h && h.running && typeof actx!=='undefined' && h.ctx===actx ? h.sectionId : null; }
-const SPJ_MY=DB_MOUTH.y+0.22, SPJ_NOSE=-0.7, SPJ_THUMB=[2.67,2.09,0.52];   // (the snook: where his nose would be on the face, the thumb's tip in the hand's frame)
+const SPJ_MY=DB_MOUTH.y+0.22, SPJ_NOSE=-0.7, SPJ_THUMB=(()=>{ const h=toonHand(Object.assign({ creases:false }, SPJ_HAND.fan)), d=new T.Vector3(...SPJ_HAND.fan.thumbPath.d2).normalize(); return h.tip.thumb.clone().addScaledVector(d, 0.36).toArray(); })();   // (the snook: where his nose would be on the face, the thumb's tip in the hand's frame)
 const _spSn=0;   // (his mouth sits a little higher on the face than Dash's, so a frown's corners stay in sight)
 function spjTick(o, R, now, dt, S, C, q){
   const D=S.spj; if(!D) return;
@@ -91074,10 +91146,8 @@ function skjArmGeo(skin){ return tonyKeep('skjArm', ()=>{
   { const an=new T.RingGeometry(0.95,1.75,18,1); an.rotateX(Math.PI/2); add(an, M(0,-0.75,0,1,1,1), leaD, 1); }
   { const rg=new T.TorusGeometry(1.75,0.16,5,20); rg.rotateX(Math.PI/2); add(rg, M(0,-0.74,0,1,1,1), leaD, 1); }
   { const gb=new T.TorusGeometry(1.5,0.2,5,20); gb.rotateX(Math.PI/2); add(gb, M(0,0.0,0,1,1,1), gold, 1); }        // the gold-stitched band
-  add(ball, M(0,1.95,0.05, 1.3,1.15,1.15), lea, 1);                                                               // the fist
-  for(const x of [-0.62,-0.2,0.22,0.62]) add(ball, M(x,2.55,0.62, 0.36,0.38,0.4), lea, 1);                           // the knuckles
-  add(ball, M(1.05,2.05,0.5, 0.42,0.62,0.42), lea, 1);                                                             // the thumb
-  for(const x of [-0.4,0,0.4]) add(ball, M(x,1.55,-1.08, 0.06,0.4,0.06), leaD, 1);                                  // stitching on its back
+  for(const [g,part] of toonHand(SKJ_HAND).parts) add(g, null, part==='ink' ? dbLin(DB_INK) : lea, 1);               // the fist (toonHand), gloved
+  for(const x of [-0.4,0,0.4]) add(ball, M(x*SKJ_HAND.size,1.65*SKJ_HAND.size,-0.68*SKJ_HAND.size, 0.06,0.4,0.06), leaD, 1);   // stitching on its back
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const SKJ_ARM_VS=`
 attribute float aT; uniform vec3 uA0, uA1, uA2, uAn, uHX, uHY, uHZ; uniform float uAr, uHs;
@@ -91091,7 +91161,9 @@ void main(){
   vC=color; vU=uv; vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-const SKJ_FIST=2.75;   // the top of the fist along the hand's y, in hose radii (where the falcon's feet go)
+const SKJ_HAND={ pose:'fist', size:1.06, fat:1.08 };   // the gloved fist (toonHand): a little big and thick, for the leather
+// the top of the fist along the hand's y, in hose radii (where the falcon's feet go: a little into the curled fingers' tops)
+const SKJ_FIST=(()=>{ let y=0; for(const [g,part] of toonHand(Object.assign({ creases:false }, SKJ_HAND)).parts) if(part!=='thumb'){ g.computeBoundingBox(); y=Math.max(y, g.boundingBox.max.y); } return y-0.3; })();
 const SKJ_A0=[-3.0, HEAD_CY-0.75, -1.9];   // his right shoulder, under the shemagh's side
 // the arm's poses, in the body rig: [wrist, elbow's pull, the hand's y, the knuckles' way]
 const SKJ_ARM={ glove:[[-5.3,HEAD_CY+2.0,1.0],[-4.9,HEAD_CY-1.2,-0.4],[-0.12,1,0.1],[0,0,1]], low:[[-4.6,HEAD_CY+0.5,-2.6],[-4.6,HEAD_CY-1.4,-1.0],[-0.2,1,0],[0,0,1]],
@@ -91679,7 +91751,7 @@ void main(){ if(vA<0.01) discard; vec3 n=normalize(vNv); if(!gl_FrontFacing) n=-
    cuff, and his weathered hands: a fist, or the four fingers out flat together (aF 1: uFg.x) for the salute and the
    squeeze-box, the thumb (aF 4: uFg.z). The hand is placed by its own frame at the wrist (uHX; uHY the way the fingers
    point; uHZ the back of the hand), so it can aim whatever the hose is doing. Out only for a gag. */
-function sjArmGeo(skin){ return tonyKeep('sjArm', ()=>{
+function sjArmGeo(skin, sx){ return tonyKeep(sx<0 ? 'sjArmL' : 'sjArm', ()=>{   // (sx -1: his left hand)
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], aF=[], aFb=[], navy=dbLin('#26345f'), gold=dbLin('#f2c64a');
   const add=(geo,m,c,t,f,fb)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++){ aT.push(typeof t==='function'?t(i):t); aF.push(f||0); aFb.push(...(fb||[0,0,0])); } };
   const tube=new T.CylinderGeometry(1,1,1,10,12,true), ty=Array.from(tube.attributes.position.array.filter((v,i)=>i%3===1), v=>v+0.5); for(let i=0;i<tube.attributes.position.count;i++) tube.attributes.position.setY(i,0);
@@ -91688,11 +91760,16 @@ function sjArmGeo(skin){ return tonyKeep('sjArm', ()=>{
   // the cuff: navy, turned back, two rings of gold braid
   add(new T.CylinderGeometry(1.3,1.22,0.9,16,1,true), sjM4(0,0.2,0), navy, 1);
   for(const y of [-0.05,0.4]){ const rg=new T.TorusGeometry(1.3,0.11,5,18); rg.rotateX(Math.PI/2); add(rg, sjM4(0,y,0), gold, 1); }
-  // the hand: a palm (a fist when the fingers are in), the knuckles, four fingers together and a thumb
-  add(ball, new T.Matrix4().compose(V(0,1.85,0), new T.Quaternion(), V(1.15,1.2,0.82)), skin, 1);
-  for(const x of [-0.72,-0.24,0.24,0.72]) add(ball, new T.Matrix4().compose(V(x,2.75,0.25), new T.Quaternion(), V(0.38,0.4,0.44)), skin, 1);
-  for(const [x,l] of [[0.66,1.8],[0.22,2.1],[-0.22,2.0],[-0.66,1.65]]) E(skin, [x,2.6,0.0], [x*1.05,2.6+l,0.0], 0.33, 1);
-  E(skin, [1.0,1.6,0.3], [2.1,2.55,0.42], 0.34, 4);
+  // the hand: the shared cartoon hand (toonHand), its back to +z (turned round: the gags lay the back of the hand on uHZ). The
+  // four fingers out flat together (aF 1) and the thumb (aF 4), each grown from its own knuckle; and the fist they make when
+  // they are in, the curled fingers (aF 5) and the thumb across (aF 7), which his arm shader shrinks as their fingers come out
+  { const turn=new T.Matrix4().makeRotationY(Math.PI);
+    const put=(h, flags, palm)=>{ let f=0, fb=null; for(const [g,part] of h.parts){ g.applyMatrix4(turn);
+      if(part==='palm'){ if(palm) add(g, null, skin, 1); continue; }
+      if(part!=='ink'){ f=flags[part]; fb=h.base[part].clone().applyMatrix4(turn).toArray(); }
+      add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1, f, fb); } };
+    put(toonHand(Object.assign({ sx:sx||1 }, SJ_HAND.flat)), { index:1, middle:1, ring:1, pinky:1, thumb:4 }, true);
+    put(toonHand(Object.assign({ sx:sx||1 }, SJ_HAND.fist)), { index:5, middle:5, ring:5, pinky:5, thumb:7 }, false); }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aF', new T.Float32BufferAttribute(aF,1)); g.setAttribute('aFb', new T.Float32BufferAttribute(aFb,3));
   g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 const SJ_ARM_VS=`
@@ -91702,15 +91779,17 @@ varying vec3 vNv, vV, vC; varying vec2 vU;
 void main(){
   vec3 p, n;
   if(aT>0.99){ vec3 q=position, m=normal;
-    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : uFg.z; s=clamp(s,0.0,1.2);
-      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0)
+    if(aF>0.5){ float s=aF<1.5 ? uFg.x : aF<2.5 ? uFg.w : aF<3.5 ? uFg.y : aF<4.5 ? uFg.z : 1.0-1.6*(aF<5.5 ? uFg.x : aF<6.5 ? uFg.y : uFg.z); s=clamp(s,0.0,1.2);
+      q=aFb+(q-aFb)*vec3(mix(0.2,1.0,min(s,1.0)), s, mix(0.2,1.0,min(s,1.0))); }   // a finger out of the fist (curled away inside it at 0); the fist's own curled fingers (aF 5..7) the other way
     p=uA2+(uHX*q.x+uHY*q.y+uHZ*q.z)*uAr*uHs; n=uHX*m.x+uHY*m.y+uHZ*m.z; }
   else { float t=aT, u=1.0-t; vec3 c=u*u*uA0+2.0*u*t*uA1+t*t*uA2, tg=normalize(2.0*u*(uA1-uA0)+2.0*t*(uA2-uA1)+vec3(0.0,1e-4,0.0)), n2=normalize(cross(uAn,tg)), n1=cross(tg,n2);
     p=c+(n1*position.x+tg*position.y+n2*position.z)*uAr; n=n1*normal.x+tg*normal.y+n2*normal.z; }
   vC=color; vU=vec2(0.0); vNv=normalize(normalMatrix*n); vec4 mvPosition=modelViewMatrix*vec4(p,1.0); vV=-mvPosition.xyz; gl_Position=projectionMatrix*mvPosition;
   #include <fog_vertex>
 }`;
-const SJ_FINGER=4.4;   // the fingertips along the hand's y, in hose radii
+// the hand's two shapes (toonHand): the four fingers out flat together, the thumb out; and the fist, the thumb across
+const SJ_HAND={ flat:{ pose:'flat', thumb:'out' }, fist:{ pose:'fist' } };
+const SJ_FINGER=(()=>{ const h=toonHand(Object.assign({ creases:false }, SJ_HAND.flat)); return h.tip.middle.y+0.35; })();   // the fingertips along the hand's y, in hose radii
 const SJ_A0=[TONY_ARM.a0, [-TONY_ARM.a0[0], TONY_ARM.a0[1], TONY_ARM.a0[2]]];   // the shoulders: his right, his left
 const _sjA=new T.Vector3(), _sjB=new T.Vector3(), _sjC=new T.Vector3(), _sjD=new T.Vector3(), _sjQ=new T.Quaternion(), _sjE=new T.Euler(), _sjUp=new T.Vector3(0,1,0), _sjM=new T.Matrix4(), _sjT=new T.Vector3(), _sjQ2=new T.Quaternion();
 function sjSpringV(D, k, kv, tgt, w, z, dt){ const p=D[k], v=D[kv], n=Math.max(1,Math.ceil(dt*60-1e-6)), h=dt/n;
@@ -91722,7 +91801,7 @@ function sjArmPose(U, e, a0, hand, elbow){ const e1=Math.min(1,e);
 function sjArm(side, skin, rigB){
   const AU=Object.assign(kitArmUniforms(), { uHX:{value:new T.Vector3(1,0,0)}, uHY:{value:new T.Vector3(0,1,0)}, uHZ:{value:new T.Vector3(0,0,1)}, uHs:{value:1.3}, uFg:{value:new T.Vector4()} });
   AU.uA0.value.set(...SJ_A0[side]); AU.uA1.value.set(...SJ_A0[side]); AU.uA2.value.set(...SJ_A0[side]);
-  const m=new T.Mesh(sjArmGeo(skin), dbShader(SJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
+  const m=new T.Mesh(sjArmGeo(skin, side ? -1 : 1), dbShader(SJ_ARM_VS, TONY_PROP_FS, Object.assign({ uInk:{value:dbLin(DB_INK)}, uGl:{value:0} }, AU), { vertexColors:true, defines:{TONY_BEND:''} }));
   m.name=side?'sj-arm-left':'sj-arm-right'; m.frustumCulled=false; m.visible=false; rigB.add(m);
   const hand=new T.Object3D(); rigB.add(hand);
   return { m, AU, hand, side, e:0, eV:0, on:false, hp:new T.Vector3(), hpV:new T.Vector3(), ep:new T.Vector3(), epV:new T.Vector3(), ay:new T.Vector3(0,1,0), ayV:new T.Vector3(), ax:new T.Vector3(1,0,0), axV:new T.Vector3(), fg:new T.Vector4(), fgV:new T.Vector4() };
@@ -92296,13 +92375,12 @@ function ktjArmGeo(skin, point){ return tonyKeep(point?'ktjArmP':'ktjArmF', ()=>
   { const sl=new T.CylinderGeometry(1,1,1,14,6,true), p=sl.attributes.position, sy=[]; for(let i=0;i<p.count;i++){ const y=p.getY(i)+0.5, r=1.55+0.75*y*y; sy.push(0.02+0.3*y); p.setXYZ(i, p.getX(i)*r, 0, p.getZ(i)*r); }
     sl.computeVertexNormals(); add(sl, new T.Matrix4(), nav, i=>sy[i]);
     const ed=new T.TorusGeometry(2.3,0.24,6,18); ed.rotateX(Math.PI/2); add(ed, new T.Matrix4(), wht, 0.32); }
-  const ball=new T.SphereGeometry(1,12,9);
-  add(ball, M(0,1.35,0, 1.95,1.7,1.85), skin, 1);
-  for(const x of point ? [-0.38,0.38,1.15] : [-1.15,-0.38,0.38,1.15]) add(ball, M(x,2.45,0.62, 0.58,0.66,0.7), skin, 1);
-  add(ball, M(1.55,1.45,0.95, 0.55,0.95,0.55), skin, 1);
-  if(point) add(ball, M(-1.05,3.5,0.35, 0.5,1.5,0.52), skin, 1);
+  // the hand: the shared cartoon hand (toonHand), big (a samurai's fist), set down into the cuff so the fist sits where it did
+  const H=KTJ_HAND, xf=M(0,H.dy,0, 1,1,1);
+  for(const [g,part] of toonHand({ pose:point ? 'point' : 'fist', size:H.size, sx:H.sx }).parts) add(g, xf, part==='ink' ? dbLin(DB_INK) : skin, 1);
   const g=kitMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 14); return g; }); }
 const KTJ_A0=[2.9, HEAD_CY-0.35, -1.2];   // his left shoulder
+const KTJ_HAND={ size:1.4, dy:-0.9, sx:-1 };   // his hand (toonHand): its size, set down the hose's way, his left (the thumb on -x)
 function ktjArmPose(U, e, hand, elbow){ const a0=KTJ_A0, e1=Math.min(1,e);
   U.uA2.value.set(a0[0]+hand[0]*e1, a0[1]+hand[1]*e1, a0[2]+hand[2]*e1); U.uA1.value.set(a0[0]+elbow[0]*e1, a0[1]+elbow[1]*e1, a0[2]+elbow[2]*e1);
   U.uAr.value=TONY_ARM.r*(0.25+0.75*Math.min(1.15,e));
@@ -92955,25 +93033,23 @@ function pxjArmGeo(){ return tonyKeep('pxjArm', ()=>{
   const E=(c,a,b,r,v)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r)), c, 1, v); };
   add(new T.CylinderGeometry(0.86,0.8,0.85,14,1), M(0,0.32,0,1,1,1), cuff, 1);                     // the French cuff
   add(new T.BoxGeometry(0.26,0.3,0.3), M(0.86,0.36,0.1,1,1,1), silver, 1);                          // its link
-  const pinch=v=>{   // the pinch: the palm, the three fingers curled, the forefinger and the thumb meeting in front of it
-    add(ball, M(0,1.6,0, 1.0,0.95,0.62), glove, 1, v);
-    for(const [x,y,z,s] of [[-0.05,2.35,0.5,0.36],[-0.45,2.28,0.45,0.34],[-0.8,2.08,0.35,0.3]]) add(ball, M(x,y,z, s,s*1.1,s*1.1), glove, 1, v);
-    E(glove, [0.45,2.35,0.15], [0.42,3.6,0.85], 0.3, v);
-    E(glove, [0.95,1.55,0.45], [0.55,3.42,1.05], 0.31, v);
-    for(const x of [-0.42,0,0.42]) add(ball, M(x,1.65,-0.58, 0.06,0.42,0.06), ink, 1, v); };
-  pinch(0);
+  // the hands are the shared cartoon hand (toonHand) in the glove's white with the ink's creases; three stitches down the back
+  const hand=(o, v)=>{ const z=o.size||1; for(const [g,part] of toonHand(o).parts) add(g, null, part==='ink' ? dbLin(DB_INK) : glove, 1, v); for(const x of [-0.42,0,0.42]) add(ball, M(x*z,1.75*z,-0.66*z, 0.06,0.42*z,0.06), ink, 1, v); };
+  hand(PXJ_HAND.pinch, 0);                                                                       // 0: the pinch, thumb to forefinger
   // 1: the fist round the comb, its teeth out of the palm side
-  add(ball, M(0,1.65,0.05, 1.05,0.98,0.9), glove, 1, 1);
-  for(const x of [-0.72,-0.24,0.24,0.72]) add(ball, M(x,2.35,0.5, 0.36,0.4,0.42), glove, 1, 1);
-  E(glove, [0.95,1.5,0.55], [0.35,2.15,1.0], 0.3, 1);
+  hand(PXJ_HAND.comb, 1);
   add(new T.BoxGeometry(3.0,0.34,0.22), M(0.1,2.05,1.15,1,1,1), black, 1, 1);
   for(let i=0;i<11;i++) add(new T.BoxGeometry(0.1,0.26,0.62), M(-1.3+i*0.28,2.05,1.55,1,1,1), black, 1, 1);
-  for(const x of [-0.42,0,0.42]) add(ball, M(x,1.7,-0.85, 0.06,0.42,0.06), ink, 1, 1);
-  // 2: the pinch with a business card held up between thumb and forefinger
-  pinch(2);
-  { const cm=new T.Matrix4().compose(V(0.5,4.05,0.95), new T.Quaternion(), V(1.25,1.25,1.25)); for(const [cg,,cc] of pxjCardItems()) add(cg, cm, cc, 1, 2); }
+  // 2: the pinch with a business card held up, its lower edge between thumb and forefinger
+  hand(PXJ_HAND.pinch, 2);
+  { const cm=new T.Matrix4().compose(V(PXJ_PIN[0],PXJ_PIN[1]+0.52,PXJ_PIN[2]), new T.Quaternion(), V(1.25,1.25,1.25)); for(const [cg,,cc] of pxjCardItems()) add(cg, cm, cc, 1, 2); }
   const g=kitMerge(items.map(([geo,m,c])=>[geo,m,c,0])); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.setAttribute('aV', new T.Float32BufferAttribute(aV,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
-const PXJ_PIN=[0.48,3.55,1.0], PXJ_COMB=[0.1,2.05,1.86], PXJ_HS=1.3;   // the pinch and the comb's teeth, in the hand's units; the hand's size
+// the hand's shapes (toonHand): the pinch held up (the forefinger up, bent over at its tip to meet the thumb, which rises in
+// front of it; the other three curled), and the fist round the comb
+const PXJ_HAND={ pinch:{ pose:'pinch', size:0.92, joints:[[0.15,0.2,0.3],[1,1,1],[1,1,1],[1,1,1]], thumbPath:{ base:[0.95,1.5,0.5], d1:[0.05,0.75,0.65], d2:[-0.08,0.9,0.1], L:[1.0,1.35] } },
+  comb:{ pose:'grip' } };
+// the pinch (where the thumb's tip meets the forefinger's) and the comb's teeth, in the hand's units; the hand's size
+const PXJ_PIN=(()=>{ const t=toonHand(Object.assign({ creases:false }, PXJ_HAND.pinch)).tip; return t.index.clone().add(t.thumb).multiplyScalar(0.5).toArray(); })(), PXJ_COMB=[0.1,2.05,1.86], PXJ_HS=1.3;
 
 const _pxjA=new T.Vector3(), _pxjB=new T.Vector3(), _pxjC=new T.Vector3(), _pxjD=new T.Vector3(), _pxjQ=new T.Quaternion(), _pxjE=new T.Euler(), _pxjM=new T.Matrix4();
 // the gags, in beats from their start (b0: the beat they land on): n their length, and the face each wears
@@ -93419,10 +93495,9 @@ function wljArmGeo(skin){ return tonyKeep('wljArm', ()=>{
   const ring=new T.TorusGeometry(1.14,0.36,6,14); ring.rotateX(Math.PI/2); add(ring, new T.Matrix4(), cuffC, 0.82);
   const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  add(ball, new T.Matrix4().compose(V(0,1.45,0), new T.Quaternion(), V(1.65,1.6,0.85)), skin, 1);          // the palm, open
-  for(const [x,l] of [[-1.05,1.3],[-0.36,1.65],[0.34,1.75],[1.02,1.5]]) E(skin, [x,2.6,0.1], [x*1.12,2.6+l,0.15], 0.42);
-  E(skin, [1.3,1.3,0.2], [2.5,2.2,0.3], 0.44);
+  for(const [g,part] of toonHand(WLJ_HAND).parts) add(g, new T.Matrix4().makeRotationY(Math.PI), part==='ink' ? dbLin(DB_INK) : skin, 1);   // the hand, open (toonHand), turned so the palm faces out
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 12); return g; }); }
+const WLJ_HAND={ pose:'wave', size:1.1 };   // his open palm (toonHand), a big one as it was
 const WLJ_ARM={ up:[-2.5,4.9,2.5], el:[-3.3,1.7,0.5] };
 
 // ---- his own phrases for THE NEO ACTOR: the tai chi shift (a slow sway, the weight passing from one side to the other every
@@ -93985,12 +94060,14 @@ function rbjArmGeo(skin){ return tonyKeep('rbjArm', ()=>{
   const ball=new T.SphereGeometry(1,12,9), M=(x,y,z,sx,sy,sz)=>new T.Matrix4().compose(V(x,y,z), new T.Quaternion(), V(sx,sy,sz));
   const E=(c,a,b,r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize()); add(ball, new T.Matrix4().compose(mid,q,V(r,L/2+r*0.6,r)), c, 1); };
   { const br=new T.TorusGeometry(0.98,0.22,6,18); br.rotateX(Math.PI/2); add(br, M(0,0.4,0,1,1,1), sil, 1); }   // the silver cuff bracelet
-  add(ball, M(0,1.75,0, 1.15,1.15,0.62), skin, 1);                                   // the palm
-  add(ball, M(0.02,3.38,0.08, 0.6,1.02,0.36), skin, 1);                              // the index and middle fingers out, pressed together as one (never a V)
-  for(const [x,y] of [[-0.86,2.3],[-0.95,1.8]]) add(ball, M(x,y,0.5, 0.36,0.42,0.42), skin, 1);   // the ring and little fingers, curled in
-  E(skin, [0.95,1.4,0.35], [0.2,2.1,0.8], 0.33);                                     // the thumb, tucked across
+  // the hand (toonHand): the index and middle fingers out, pressed together (never a V), the ring and little fingers curled
+  // in, the thumb tucked across them
+  for(const [g,part] of toonHand(RBJ_HAND).parts) add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1);
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
-const RBJ_TIP=4.4;   // the fingertips, along the hand's y, in its own units
+const RBJ_HAND={ pose:'peace', spread:[-0.06,0.06,0,0], size:0.9 };
+// the two fingertips, along the hand's y (a little past their round ends) and their offset to the thumb's side, in its own units
+const RBJ_TIP=(()=>{ const t=toonHand(Object.assign({ creases:false }, RBJ_HAND)).tip; return Math.max(t.index.y, t.middle.y)+0.4; })(),
+  RBJ_TIPX=(()=>{ const t=toonHand(Object.assign({ creases:false }, RBJ_HAND)).tip; return (t.index.x+t.middle.x)/2; })();
 const RBJ_ARM_VS=`
 attribute float aT; uniform vec3 uA0, uA1, uA2, uAn, uHX, uHY, uHZ; uniform float uAr, uHs;
 varying vec3 vNv, vV, vC; varying vec2 vU;
@@ -94317,6 +94394,8 @@ function rbjTick(o, R, now, dt, S, C, q){
     else { const k=rbSm((du-2.0)/0.22); upAt(_rbA.set(-4.2+0.6*k, HEAD_CY+5.6-2.3*k, 2.0+5.2*k).clone(), _rbB.set(0.1,1-0.85*k,0.1+1.2*k).clone()); sharp=true; devOn=du<2.75; } }
   else if(ovOn && ou>3.3 && ou<4.7){ want=ou<4.45; atShades(); sharp=ou>3.85 && ou<4.15; }
   kitArmSpring(D, want, dt, P);
+  if(wr){ const yy=_rbC.set(...ay).normalize(), xx=_rbD.set(...ax); xx.addScaledVector(yy, -xx.dot(yy));   // (the two fingers sit to the thumb's side of the wrist's line)
+    if(xx.lengthSq()>1e-6){ xx.normalize(); wr=[wr[0]-xx.x*RBJ_TIPX*hs, wr[1]-xx.y*RBJ_TIPX*hs, wr[2]-xx.z*RBJ_TIPX*hs]; } }
   if(wr){ _rbA.set(wr[0]-A0[0], wr[1]-A0[1], wr[2]-A0[2]); _rbB.set(el[0]-A0[0], el[1]-A0[1], el[2]-A0[2]); _rbC.set(...ay).normalize(); _rbD.set(...ax).normalize();
     if(P || !D.handOn){ D.hp.copy(_rbA); D.ep.copy(_rbB); D.ay.copy(_rbC); D.ax.copy(_rbD); D.hpV.set(0,0,0); D.epV.set(0,0,0); D.ayV.set(0,0,0); D.axV.set(0,0,0); }
     else { rbjSpringV(D,'hp','hpV',_rbA,sharp?32:20,sharp?0.55:0.72,dt); rbjSpringV(D,'ep','epV',_rbB,sharp?22:15,0.72,dt); rbjSpringV(D,'ay','ayV',_rbC,sharp?28:18,0.65,dt); rbjSpringV(D,'ax','axV',_rbD,18,0.75,dt); }
@@ -94723,13 +94802,12 @@ function ntjArmGeo(skin, sx){ return tonyKeep(sx<0?'ntjArmR':'ntjArmL', ()=>{
   { const fa=new T.CylinderGeometry(0.74,0.74,1,10,6,true), p=fa.attributes.position, ts=[]; for(let i=0;i<p.count;i++){ ts.push(0.6+0.39*(p.getY(i)+0.5)); p.setY(i,0); } add(fa, null, skin, i=>ts[i]); }   // the forearm, out of it to the wrist
   const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  add(ball, new T.Matrix4().compose(V(0,1.45,0), new T.Quaternion(), V(1.65,1.6,0.85)), skin, 1);                          // the palm, open
-  for(const [x,l] of [[-1.05,1.3],[-0.36,1.65],[0.34,1.75],[1.02,1.5]]) E(skin, [x,2.6,0.1], [x*1.12,2.6+l,0.15], 0.42);
-  E(skin, [-sx*1.3,1.3,0.2], [-sx*2.5,2.2,0.3], 0.44);                                                                    // the thumb
+  for(const [g,part] of toonHand(Object.assign({ sx:-sx }, NTJ_HAND)).parts) add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1);   // the hand, open (toonHand)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 // the shoulders (where each arm comes out from under the robe, his right first), and the hand and the elbow's pull from there
 // for each pose, his right side (x mirrored for the left)
 const NTJ_A0=[[-2.5, HEAD_CY-0.6, -2.75],[2.5, HEAD_CY-0.6, -2.75]];
+const NTJ_HAND={ pose:'wave', size:1.1 };   // the open hand (toonHand), a big one as it was
 const NTJ_POSE={ low:[[-1.3,-1.7,2.0],[-1.7,-0.7,0.9]], top:[[-2.0,4.9,-1.2],[-3.2,1.6,0.6]], wide:[[-4.6,2.5,1.0],[-2.8,0.3,0.7]],
   high:[[-1.6,6.0,0.8],[-3.0,2.3,0.5]], pump:[[-3.3,2.2,1.6],[-2.5,0.2,0.7]] };
 // the arm's shader: Tony's bend (TONY_PROP_VS's, for a hose), and the sleeve's bell hanging: below the forearm it falls away
@@ -95417,6 +95495,7 @@ void main(){
    bead line at each end, a green leaf on it, as the old cuffs have) and a brown open hand. sx: -1 his right, 1 his left.
    aG: what a point gives off when the beadwork is lit (0 nothing, else a neon by its kind); aFr: a thong of the fringe (how
    far down it, a number of its own), -1 elsewhere. */
+const MGZ_HAND={ pose:'wave', size:1.1 };   // the open hand (toonHand), a big one as it was, each thumb on its own side
 function mgzArmGeo(skin, sx){ return tonyKeep(sx<0?'mgzArmR':'mgzArmL', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], aG=[], aFr=[], buck=dbLin('#e6c88e'), cuff=dbLin('#f6f1e6'), red=dbLin('#e2332b'), grn=dbLin('#28a548'), frg=dbLin('#f1dbae');
   const add=(geo,m,c,t,gl)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++){ aT.push(typeof t==='function'?t(i):t); aG.push(gl||0); aFr.push(-1,0); } };
@@ -95429,9 +95508,7 @@ function mgzArmGeo(skin, sx){ return tonyKeep(sx<0?'mgzArmR':'mgzArmL', ()=>{
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
   for(const sz of [-1,1]){ add(ball, new T.Matrix4().compose(V(0.12,0.05,sz*1.44), new T.Quaternion().setFromEuler(new T.Euler(0,0,0.5)), V(0.5,0.3,0.13)), grn, 0.81, 3);   // the leaf, on the back of the cuff and on its palm side
     add(ball, new T.Matrix4().compose(V(-0.5,-0.02,sz*1.36), new T.Quaternion(), V(0.2,0.2,0.1)), red, 0.81, 1); }
-  add(ball, new T.Matrix4().compose(V(0,1.45,0), new T.Quaternion(), V(1.65,1.6,0.85)), skin, 1);                          // the palm, open
-  for(const [x,l] of [[-1.05,1.3],[-0.36,1.65],[0.34,1.75],[1.02,1.5]]) E(skin, [x,2.6,0.1], [x*1.12,2.6+l,0.15], 0.42);
-  E(skin, [-sx*1.3,1.3,0.2], [-sx*2.5,2.2,0.3], 0.44);                                                                    // the thumb
+  for(const [g,part] of toonHand(Object.assign({ sx:-sx }, MGZ_HAND)).parts) add(g, null, part==='ink' ? dbLin(DB_INK) : skin, 1);   // the hand, open (toonHand)
   const g=kingMerge(items), P=Array.from(g.attributes.position.array), N=Array.from(g.attributes.normal.array), C=Array.from(g.attributes.color.array), I=Array.from(g.index.array);
   // the fringe: a row of thongs under the sleeve (placed by the shader: down from the hose, wherever the arm points)
   for(let k=0;k<11;k++){ const t=0.12+0.054*k, v0=P.length/3, sd=(k*0.618)%1, ln=0.8+0.45*((k*0.37)%1);
@@ -96080,6 +96157,7 @@ void main(){
 
 /* ---- THE ARMS: a rubber hose (Tony's bend) in his skin, a gold-and-blue armband and wristband, a flat open hand with the
    fingers together (it turns on its wrist: KIT_WRIST). sx: -1 his right, 1 his left. */
+const PHA_HAND={ pose:'flat', thumb:'out', size:1.05 };   // the flat hand (toonHand)
 function phaArmGeo(skin, sx){ return tonyKeep(sx<0?'phaArmR':'phaArmL', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], gold=dbLin('#f4b82e'), lap=dbLin('#1b3fb4');
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -96089,9 +96167,9 @@ function phaArmGeo(skin, sx){ return tonyKeep(sx<0?'phaArmR':'phaArmL', ()=>{
   const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
   add(ball, new T.Matrix4().compose(V(0,0.5,0), new T.Quaternion(), V(1.02,0.9,1.02)), skin, 1);                           // the wrist
-  add(ball, new T.Matrix4().compose(V(1.5,0.75,0), new T.Quaternion(), V(1.6,0.72,1.45)), skin, 1);                        // the palm, bent flat at the wrist
-  for(const [zf,l] of [[-0.93,1.4],[-0.31,1.75],[0.31,1.7],[0.93,1.3]]) E(skin, [2.5,0.78,zf], [2.5+l,0.8,zf*1.02], 0.38);  // the fingers, together
-  E(skin, [1.1,0.8,-1.2], [2.1,1.0,-2.1], 0.4);                                                                             // the thumb
+  // the hand (toonHand), bent flat at the wrist: its fingers along +x, together, the thumb out to -z (his right), the palm down
+  { const m=new T.Matrix4().makeBasis(V(0,0,-1), V(1,0,0), V(0,-1,0)).setPosition(0,0.75,0);
+    for(const [g,part] of toonHand(Object.assign({ sx:-sx }, PHA_HAND)).parts) add(g, m, part==='ink' ? dbLin(DB_INK) : skin, 1); }   // (his left a left hand: its thumb to +z)
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 /* ---- THE PROPS, each from its grip (y up it). THE ANKH hangs from the hand by its loop. THE CROOK: a banded staff with a
    hooked head. THE FLAIL: a banded staff, three strings of beads from its head. */
@@ -96848,6 +96926,7 @@ void main(){
 
 /* ---- THE ARMS: a rubber hose (Tony's bend) in his skin, bare; a leather bracer bound in bronze on the forearm; a fist
    (it turns on its wrist: KIT_WRIST). sx: -1 his right, 1 his left. */
+const SPA_HAND={ pose:'fist', size:1.15 };   // the fist (toonHand): a soldier's, a touch big
 function spaArmGeo(skin, sx){ return tonyKeep(sx<0?'spaArmR':'spaArmL', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], bro=dbLin('#c08a3a'), lea=dbLin('#7a4722'), lead=dbLin('#4f2c14');
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -96855,9 +96934,9 @@ function spaArmGeo(skin, sx){ return tonyKeep(sx<0?'spaArmR':'spaArmL', ()=>{
   for(const [t,c,r,h] of [[0.6,bro,1.3,0.36],[0.66,lea,1.2,1.1],[0.74,lead,1.22,0.5],[0.82,lea,1.2,1.1],[0.9,bro,1.3,0.36]]){ const b=new T.CylinderGeometry(r,r,h,14,1,true); add(b, null, c, t); }
   const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  add(ball, new T.Matrix4().compose(V(0,1.25,0), new T.Quaternion(), V(1.5,1.4,1.35)), skin, 1);                 // the fist
-  for(const zf of [-0.75,-0.25,0.25,0.75]) add(ball, new T.Matrix4().compose(V(1.05,1.75,zf), new T.Quaternion(), V(0.6,0.62,0.36)), skin, 1);   // its knuckles
-  E(skin, [0.4,0.9,-sx*1.2], [1.3,1.5,-sx*1.35], 0.42);                                                           // the thumb, across them
+  // the fist (toonHand), its curled fingers to +x, the thumb across them on his right hand's -z (his left hand's +z)
+  { const m=new T.Matrix4().makeBasis(V(0,0,-1), V(0,1,0), V(1,0,0)).setPosition(-0.5,-0.85,0);   // (its middle where the old fist's was: the spear's grip)
+    for(const [g,part] of toonHand(Object.assign({ sx:-sx }, SPA_HAND)).parts) add(g, m, part==='ink' ? dbLin(DB_INK) : skin, 1); }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 /* ---- THE SPEAR (the dory), from its grip, y up it: an ash shaft, a bronze leaf blade on a socket, a bronze butt spike, a
    leather binding where the hand holds it. */
@@ -97796,6 +97875,7 @@ function khnGearGeo(){ return tonyKeep('khnGear', ()=>{
 
 /* ---- THE ARMS: a rubber hose (Tony's bend) in a blue silk sleeve with a cuff of fur, and his hand: a broad mitt of a palm,
    the fingers together, the thumb out (it turns on its wrist: KIT_WRIST). sx: -1 his right, 1 his left. */
+const KHN_HAND={ pose:'rest', thumb:'out', spread:[0.02,0,-0.02,-0.06], size:1.1 };   // the broad hand (toonHand): the fingers together and a little curled, the thumb out
 function khnArmGeo(skin, sx){ return tonyKeep(sx<0?'khnArmR':'khnArmL', ()=>{
   const V=(x,y,z)=>new T.Vector3(x,y,z), items=[], aT=[], silk=dbLin('#1d4aa8'), fur=dbLin('#3a281c'), furT=dbLin('#d8c8ac'), gold=dbLin('#cf9424');
   const add=(geo,m,c,t)=>{ items.push([geo,m||new T.Matrix4(),c]); const n=geo.attributes.position.count; for(let i=0;i<n;i++) aT.push(typeof t==='function'?t(i):t); };
@@ -97805,9 +97885,9 @@ function khnArmGeo(skin, sx){ return tonyKeep(sx<0?'khnArmR':'khnArmL', ()=>{
   { const t=new T.TorusGeometry(1.42,0.26,6,16); t.rotateX(Math.PI/2); t.translate(0,0.28,0); add(t, null, furT, 0.84); }
   const ball=new T.SphereGeometry(1,12,9), E=(c, a, b, r)=>{ const A=V(...a), B=V(...b), mid=A.clone().add(B).multiplyScalar(0.5), L=A.distanceTo(B), q=new T.Quaternion().setFromUnitVectors(V(0,1,0), B.clone().sub(A).normalize());
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
-  add(ball, new T.Matrix4().compose(V(0,1.5,0), new T.Quaternion(), V(1.5,1.7,1.0)), skin, 1);                     // the palm and the fingers together
-  for(const x of [-0.75,-0.25,0.25,0.75]) add(ball, new T.Matrix4().compose(V(x,2.85,0.08), new T.Quaternion(), V(0.42,0.6,0.5)), skin, 1);
-  E(skin, [0.9,1.1,-sx*0.5], [2.0,2.1,-sx*0.8], 0.42);                                                             // the thumb
+  // the hand (toonHand): the thumb on +x, the palm to -sx z (his right hand's palm +z; his left a left hand, turned round)
+  { const m=sx<0 ? new T.Matrix4() : new T.Matrix4().makeRotationY(Math.PI);
+    for(const [g,part] of toonHand(Object.assign({ sx:sx<0 ? 1 : -1 }, KHN_HAND)).parts) add(g, m, part==='ink' ? dbLin(DB_INK) : skin, 1); }
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 
 // the shoulders (his right first), and for each gag where the hands are and the elbows' pull, in the body rig's frame,
