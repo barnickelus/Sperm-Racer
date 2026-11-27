@@ -842,6 +842,35 @@ await check('the Neo dragons (Ryū, Chad, Tony, Winston) each stand on four legs
   assert.ok(image(await call('race_sheet', { rest: true, cell: 200 })), 'a sheet');
 });
 
+await check('Victoria: two laps of the longer lap, twelve poster sets in lap order, the new road drives, and the course record follows a new set', async () => {
+  const v = json(await call('race_options')).courses.find(c => c.name === 'Victoria');
+  assert.equal(v.laps, 2, 'Victoria is raced over two laps');
+  json(await call('race_setup', { course: 'Victoria', character: 'king', difficulty: 'medium', seed: 3 })); json(await call('race_start'));
+  const f = json(await call('race_features'));
+  assert.equal(f.laps, 2);
+  assert.ok(f.lapLength > 15800 && f.lapLength < 16500, `the lap is about a quarter longer than 12,870 (${f.lapLength})`);
+  assert.deepEqual(f.sets.map(s => s.id), ['home', 'futurist', 'constructivist', 'mine', 'dawn', 'parks', 'space', 'psychedelic', 'mind', 'memphis', 'zine', 'feed'], 'the sets, in lap order');
+  assert.ok(f.sets.every((s, k) => k === 0 || s.at > f.sets[k - 1].at) && f.sets[0].at === 0, 'each begins after the last, and the line is in the home front');
+  assert.equal(f.jumps.length, 3, 'the old two jumps and the one in the feed');
+  const at = id => f.sets.find(s => s.id === id).at;
+  assert.ok(f.jumps[2].at > at('feed'), 'the third jump is in the feed');
+  assert.ok(f.boostPads.filter(u => u > at('mind')).length >= 5, 'the new road has its share of boost pads');
+  // the new road, from the public mind's curtain to the line and on into the second lap, on autopilot, on the road
+  json(await call('race_warp', { to: at('mind') }));
+  const d = json(await call('race_drive', { seconds: 34 }));
+  assert.ok(d.you.total > 1 && d.you.total < 1.2, `round the new road and over the line (${d.you.total})`);
+  assert.ok(d.you.offRoadSeconds < 1.5 && d.you.spins <= 1, `on the road: ${d.you.offRoadSeconds}s off it, ${d.you.spins} spins`);
+  // the record: its band is the set the listener is in, by id (it had none for these three)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sr-vic-'));
+  try {
+    for (const id of ['memphis', 'zine', 'feed']) {
+      json(await call('race_warp', { to: at(id) + 0.012 })); json(await call('race_drive', { seconds: 0.2 }));
+      const au = json(await call('race_audio', { seconds: 2, style: 'courseVictoria', file: path.join(dir, id + '.webm') }));
+      assert.equal(au.section, id, `in ${id} the record plays ${au.section}`);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 await check('no page errors through all of it', async () => {
   const l = json(await call('page_logs', { level: 'error' }));
   assert.deepEqual(l.entries, []);
