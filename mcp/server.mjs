@@ -484,7 +484,7 @@ tool('race_audit', {
 
 tool('race_features', {
   title: 'Where the moments are',
-  description: 'Where this course\'s set pieces sit along the lap (fractions; of a lap on a lap course): jump ramps, boost strips, item boxes, smashable clusters and hazards. Use with race_warp (`jump`/`pad`, or `to`) to set up a shot just before one.',
+  description: 'Where this course\'s set pieces sit along the lap (fractions; of a lap on a lap course): jump ramps, boost strips, item boxes, smashable clusters and hazards; the lap\'s length; and on Victoria her poster `sets` in lap order (id, where each begins, where its set change stands). Use with race_warp (`jump`/`pad`, or `to`) to set up a shot just before one.',
   inputSchema: { page: pageArg },
   annotations: { readOnlyHint: true },
 }, async ({ page }) => ok(text(await call(pick(page, 'race.features'), 'race.features'))));
