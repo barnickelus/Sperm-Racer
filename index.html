@@ -3143,10 +3143,11 @@ try{ if(localStorage.getItem('sr_soundtrack')==='racer') soundtrack='racer'; }ca
 /* WHERE THE LISTENER IS ON VICTORIA, for her course record ("Continuity", MUSIC_STYLES.courseVictoria), whose band follows
    the poster set the listener is driving through. The course writes it every frame on Victoria, for the racer the
    music is about (yours, or the one being spectated): set (the set's id), k (its index in lap order), next (the next
-   set's id), toCut (road to the next set change), speed (along the road, same units per second), lap (1-based) and
-   laps. Nothing else writes it, and it is cleared as each race starts (vicListenReset), so a stale set never leaks
-   into the next race; the record reads a missing or unknown set as the home front. */
-const VIC_LISTEN={set:null,k:-1,next:null,toCut:Infinity,speed:0,lap:0,laps:0};
+   set's id), toCut (road to the next set change), speed (along the road, same units per second), lap (1-based), laps,
+   and at (where on the lap the listener's set begins, 0..1). Nothing else writes it, and it is cleared as each race
+   starts (vicListenReset), so a stale set never leaks into the next race; the record reads a missing or unknown set as
+   the home front. */
+const VIC_LISTEN={set:null,k:-1,next:null,toCut:Infinity,speed:0,lap:0,laps:0,at:0};
 /* WHERE THE LISTENER IS ON NOVA, for its course record ("T-Minus", MUSIC_STYLES.courseNova), which follows the run in to
    the star. The course writes it on every frame of a race on Nova that moves (novaListen, NOVA KIT), for the racer the
    music is about (yours, or the one being spectated): t (performance.now() at the write), u (progress along the road,
@@ -3154,7 +3155,7 @@ const VIC_LISTEN={set:null,k:-1,next:null,toCut:Infinity,speed:0,lap:0,laps:0};
    passed) and done (that racer has finished). Nothing else writes it. The record reads anything older than 0.7 s as no
    listener at all (the menus, another course, a race held still) and plays its written form by time. */
 const NOVA_LISTEN={t:0,u:0,v:0,next:10,done:false};
-function vicListenReset(){ VIC_LISTEN.set=null; VIC_LISTEN.k=-1; VIC_LISTEN.next=null; VIC_LISTEN.toCut=Infinity; VIC_LISTEN.speed=0; VIC_LISTEN.lap=0; VIC_LISTEN.laps=0; }
+function vicListenReset(){ VIC_LISTEN.set=null; VIC_LISTEN.k=-1; VIC_LISTEN.next=null; VIC_LISTEN.toCut=Infinity; VIC_LISTEN.speed=0; VIC_LISTEN.lap=0; VIC_LISTEN.laps=0; VIC_LISTEN.at=0; }
 const MUSIC_STYLES={
   // id: melWave/bassWave = oscillator timbre, mel/bass = semitone riffs (looped),
   // hihat = fire every N steps (0 = off), beatGroup = steps per bar (3 = waltz feel),
@@ -18762,9 +18763,19 @@ SONG_ENGINE.songs.theWayIn=(function(){
      psychedelic     fuzz guitar on the theme, a combo organ, a sitar-ish tanpura drone with its wandering buzz and
                      sitar answers in the breaths, a pick bass, tambourine, and drums through a flanger
      mind            "The Public Mind": cocktail-hour muzak, swung: brushes, a walking bass, a Rhodes on lounge voicings,
-                     the theme on a flute doubled by vibraphone. It swells toward the finish line as the strings run in:
+                     the theme on a flute doubled by vibraphone. It swells toward the great hand as the strings run in:
                      strings and a jingle choir's "ooh" from a third of the way, then a muted trumpet takes the theme over
-                     a sax section's stabs, the ride and the full kit, and the mix lifts into the line.
+                     a sax section's stabs, the ride and the full kit, and the mix lifts under the hand.
+     memphis         the workout tape (1980s): a drum machine four on the floor, the gated snare and a clap on two and
+                     four, sixteenth hats, toms for fills, a sequencer's octave bass, a polysynth's brass patch stabbing
+                     the off-beats, the theme on a synth lead with a bell on every note, and the instructor's "hey!"
+     zine            the rave (1990s): a breakbeat (the kick pushed off the beat, ghosted snares, the hat let open), a
+                     sub bass, a piano stabbing the chord across the beat into the echo, the theme an octave down on a
+                     squealing bass synth that slides from note to note, a whistle on the floor
+     feed            clean modern pop: a kick on every beat and a clap, eighth hats that break into runs, a sub and a
+                     pad that breathe off the kick, a plucked arpeggio, the theme on a voice cut into notes, and a
+                     two-note notification in the tune's breaths. It lifts into the line as the public mind lifted to
+                     the hand: bells on the tune from a third of the way, a synth and held brass down the last straight.
 
    THE CUT. The course tells the record where its listener is (VIC_LISTEN: the set, the next one, the road to the cut
    and the speed). Each bar is planned a moment before it sounds (env.ahead), so the planner predicts when the cut
@@ -18775,10 +18786,11 @@ SONG_ENGINE.songs.theWayIn=(function(){
    a launch). If the prediction does not hold (a spin, a wall) the fill was only a fill; if the listener crosses
    without one (a respawn) the new band comes in on the next bar line with just the hit. The old band's notes are
    cut at the line, and a theme note that was sounding across it is picked up by the new lead, so the tune never
-   breaks. Laps change the colour (the later laps add the harmony parts); the constructivist climb and the public
-   mind's swell grow with how far the listener is through the set. */
+   breaks. Laps change the colour (the second lap adds the harmony parts); the constructivist climb, the public
+   mind's swell and the feed's lift grow with how far the listener is through the set. Nothing here counts the sets
+   or the laps: a set is its id, the order comes from the course (VIC_LISTEN.next), and the form is the tune's own. */
 SONG_ENGINE.songs.continuity=(function(){
-  const SETS=['home','futurist','constructivist','mine','dawn','parks','space','psychedelic','mind'];
+  const SETS=['home','futurist','constructivist','mine','dawn','parks','space','psychedelic','mind','memphis','zine','feed'];
   const S3=8/3;                                          // the swung off-beat (two triplet eighths after the beat), in steps
   const fin=(x)=>typeof x==='number' && isFinite(x);
   const setOf=(x,d)=>SETS.indexOf(x)>=0 ? x : (d||'home');
@@ -18914,7 +18926,7 @@ SONG_ENGINE.songs.continuity=(function(){
       tamb:SF('bandpass',8200,1.3,C.hats.in), shk:SF('bandpass',6400,1.1,C.hats.in),
       brush:SF('bandpass',3600,0.5,C.snare.in), clap:SF('bandpass',1250,1.0,C.snare.in), xs:SF('bandpass',1900,2.4,C.snare.in),
       clat:SF('bandpass',3100,2.4,C.perc.in), tick:SF('bandpass',5400,3.2,C.perc.in), clk:SF('bandpass',1250,1.6,C.perc.in),
-      thud:SF('lowpass',380,0.8,C.perc.in), felt:SF('lowpass',650,0.7,C.kick.in), fxc:SF('highpass',2600,0.6,C.fx.in)};
+      thud:SF('lowpass',380,0.8,C.perc.in), felt:SF('lowpass',650,0.7,C.kick.in), fxc:SF('highpass',2600,0.6,C.fx.in), gate:SF('highpass',420,0.6,C.snare.in)};
     // formants (Hz) of the vowels a, o, u, e, i
     const VF={a:[730,1090,2440], o:[570,840,2410], u:[300,870,2240], e:[530,1840,2480], i:[270,2290,3010]};
     const bank=(src,out,vow,fs)=>{ const VW=VF[vow]||VF.a; for(let k=0;k<(lite?2:3);k++){ const bp=F('bandpass',VW[k]*fs,[6,10,13][k]), fg=G([1.7,1.1,0.45][k]); src.connect(bp); bp.connect(fg); fg.connect(out); } };
@@ -18937,7 +18949,11 @@ SONG_ENGINE.songs.continuity=(function(){
       ther: {w:[W.ther,W.ther], det:[0,5], to:'lead', pk:0.17, atk:0.06, rel:0.3, vib:[5.7,26,0.12], port:0.1, glide:1, dip:1},
       fuzz: {w:['sawtooth','square'], det:[-7,7], to:'fuzz', pk:0.55, atk:0.008, rel:0.1, vib:[5.4,16,0.3], sc:1.5, port:0.03, dip:0.5},
       flute:{w:[W.ther,'triangle'], det:[0,4], to:'lead', pk:0.17, atk:0.06, rel:0.12, lp:[3,6,5], lpMax:6500, q:0.6, vib:[5.1,12,0.22], port:0.03, breath:[0.05,2600], dip:0.65},
-      mute: {w:['sawtooth','square'], det:[-5,5], to:'lead', pk:0.13, atk:0.02, rel:0.08, lp:[1.2,4,3], lpMax:3000, q:3, vib:[5.6,10,0.25], sc:0.4, dip:0.55}};
+      mute: {w:['sawtooth','square'], det:[-5,5], to:'lead', pk:0.13, atk:0.02, rel:0.08, lp:[1.2,4,3], lpMax:3000, q:3, vib:[5.6,10,0.25], sc:0.4, dip:0.55},
+      // the three past the public mind: a polysynth's brass patch; a bass synth's saw through a filter that squeals, sliding note to note; a voice cut into notes
+      syn:  {w:['sawtooth','square'], det:[-9,9], to:'lead', pk:0.12, atk:0.006, rel:0.11, lp:[3,9,5], lpMax:7500, q:1.4, vib:[5.8,9,0.3], dip:0.7},
+      acid: {w:['sawtooth','sawtooth'], det:[-3,3], to:'lead', pk:0.17, atk:0.004, rel:0.06, lp:[1.3,7,2.2], lpMax:4400, q:8, port:0.045, dip:0.85},
+      chop: {w:[W.glot,W.glot], det:[-5,6], to:'vox', pk:0.2, atk:0.012, rel:0.08, form:'e', fs:1.25, vib:[5.5,6,0.4], port:0.02, dip:0.5}};
     function line(t,p,sd,hz){ const S=LN[p.k], v=p.v||1, ns=p.ns; if(!S || !ns || !ns.length) return;
       const s0=ns[0][0], at=(s)=>t+(s-s0)*sd, Z=ns[ns.length-1], end=at(Z[0]+Z[2])+S.rel+0.15;
       const g=G(0), P=g.gain, src=G(1);
@@ -18991,8 +19007,11 @@ SONG_ENGINE.songs.continuity=(function(){
         o.frequency.exponentialRampToValueAtTime(k[1],t+0.045); o.frequency.exponentialRampToValueAtTime(k[2],t+k[3]*0.8);
         AD(g,t,0.003,0.95*v,k[3]); g.connect(C.kick.in);
         if(k[4]){ const b=G(0); N(t,0.035,b); AD(b,t,0.001,k[4]*v,0.025); b.connect(FX.felt); } },
-      // snare: march (crisp), rock, hard (the machine shop), brush, rim (cross-stick), clap; ph = through the flanger
+      // snare: march (crisp), rock, hard (the machine shop), brush, rim (cross-stick), clap, gate (the eighties': a big room's worth of
+      // noise held at full and then shut off, as a gate shuts a reverb); ph = through the flanger
       sn(t,p){ const v=p.v||1, k=p.k||'march';
+        if(k==='gate'){ const g=G(0), P=g.gain; N(t,0.3,g); P.setValueAtTime(0.0001,t); P.exponentialRampToValueAtTime(0.62*v,t+0.002); P.exponentialRampToValueAtTime(0.4*v,t+0.15); P.linearRampToValueAtTime(0,t+0.172); g.connect(FX.gate);
+          const b=G(0), o=O('triangle',215,t,t+0.2,b); o.frequency.exponentialRampToValueAtTime(150,t+0.09); AD(b,t,0.001,0.7*v,0.12); b.connect(C.snare.in); sends(g,p,C.snare); return; }
         if(k==='brush'){ const g=G(0); N(t,0.2,g); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.4*v,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+0.17); g.connect(FX.brush); return; }
         if(k==='rim'){ const g=G(0); N(t,0.03,g); AD(g,t,0.0008,0.6*v,0.025); g.connect(FX.xs); const b=G(0); O('triangle',540,t,t+0.07,b); AD(b,t,0.0008,0.35*v,0.035); b.connect(C.snare.in); return; }
         if(k==='clap'){ const g=G(0), P=g.gain; N(t,0.2,g); P.setValueAtTime(0.0001,t);
@@ -19195,7 +19214,7 @@ SONG_ENGINE.songs.continuity=(function(){
     };
   }
 
-  /* ---- THE NINE BANDS. Each plays one half-bar (two beats) at a time: I.s0 is its first step (0 or 8), I.c its
+  /* ---- THE TWELVE BANDS. Each plays one half-bar (two beats) at a time: I.s0 is its first step (0 or 8), I.c its
      chord, I.mel the theme's notes that start in it, I.fill that the two beats lead into a cut (the band's fill), and
      the hold/held flags let a sustained part ride a chord across the bar. */
   const BAND={
@@ -19322,6 +19341,56 @@ SONG_ENGINE.songs.continuity=(function(){
         if(st>=2){ const SX=lounge(c,4); E(s0+S3,'horn',{k:'sax',ns:SX,l:1.2,v:0.5}); if(h) E(s0+4+S3,'horn',{k:'sax',ns:SX,l:2,v:0.6}); }
         if(I.fill){ const T=close(c,12,4); E(s0,'gliss',{ns:[...T,...T.map(x=>x+12)],r:1,v:0.9}); E(s0,'pad',{ns:close(c,14,3),l:8,atk:0.1,cut:2000,open:7000,v:1}); }
       } },
+    memphis:{ mix:{kick:1,snare:1,hats:0.9,bass:1,keys:0.8,brass:1,lead:1,vox:0.6,bell:0.8,fx:1}, room:0.6, energy:1.02, fb:0.35, echo:{lead:0.12},
+      half(I){ const {h,s0,c,E,R}=I, r=bassOf(c), P=close(c,7,3);
+        // the drum machine: four on the floor (it is a workout), the gated snare and a clap on two and four, sixteenth hats with a machine's accents
+        E(s0,'bd',{k:'kick',v:1}); E(s0+4,'bd',{k:'kick',v:0.9}); if(h && !I.fill && R()<0.5) E(14,'bd',{k:'kick',v:0.55});
+        if(I.fill) [200,200,160,160,125,125,98,98].forEach((f,i)=>E(s0+i,'tom',{f,v:0.6+i*0.05}));
+        else { E(s0+4,'sn',{k:'gate',v:1,spr:0.5}); E(s0+4,'sn',{k:'clap',v:0.6}); }
+        E(s0,'hits',{k:'hat',h:[0,1,2,3,4,5,6,7].map(i=>[s0+i,i%4===2?0.9:i%2?0.3:0.55])});
+        for(let i=0;i<4;i++) E(s0+2*i,'pbass',{n:r+(i%2?12:0),l:1.6,v:i%2?0.75:1});                  // the sequencer's octaves
+        E(s0+2,'horn',{k:'hard',ns:P,l:1.2,v:0.6}); E(s0+6,'horn',{k:'hard',ns:P,l:1.2,v:0.55});     // the brass patch on the off-beats
+        if(I.phrase && !h && !I.entry) E(0,'horn',{k:'tpt',ns:close(c,12,3),l:3,v:0.5,sfz:1});
+        if(I.mel.length){ E(I.mel[0][0],'line',{k:'syn',ns:I.mel,spr:0.15});
+          for(const x of I.mel) if(x[3]!=='tie') E(x[0],'glk',{n:x[1]+12,v:0.42}); }                 // ...and a bell on every note of the tune
+        if(I.lap>=2){ const T=close(c,19,3); E(s0,'pluck',{w:'sawtooth',h:[0,1,2,1,0,1,2,1].map((k,i)=>[s0+i,T[k],i%2?0.5:0.75]),v:0.5,throw:0.2}); }
+        if(I.gapAt(s0) && !I.entry && !I.fill) E(s0+2,'shout',{syl:'hey',v:0.55});                    // the instructor
+      } },
+    zine:{ mix:{kick:1,snare:1,hats:1,bass:1,keys:1,lead:1,pad:0.9,fx:1}, room:0.3, energy:1.03, fb:0.42, echo:{keys:0.16,lead:0.1},
+      half(I){ const {h,s0,c,E,R}=I, r=bassOf(c), P=close(c,7,3);
+        // the break: a bar's figure, the second kick pushed off the beat and the snare ghosted round the backbeat, the hat let open on the and of four
+        for(const [q,v] of (h ? [[10,1],[11,0.55]] : [[0,1],[6,0.7]])) E(q,'bd',{k:'kick',v});
+        if(I.fill){ E(s0,'roll',{k:'sn',l:6,r:0.5,v0:0.25,v1:0.8}); E(s0+6,'roll',{k:'sn',l:2,r:0.25,v0:0.7,v1:1}); }
+        else for(const [q,v] of (h ? [[12,1],[15,0.34]] : [[4,1],[7,0.3]])) E(q,'sn',{k:'rock',v});
+        E(s0,'hits',{k:'hat',h:[0,1,2,3,4,5,6,7].map(i=>[s0+i,i%2?(i%4===3?0.42:0.2):0.8])});
+        E(s0,'hits',{k:'shk',v:1.2,h:[1,3,5,7].map(i=>[s0+i,0.5])});
+        if(h && !I.fill) E(14,'cym',{k:'splash',v:0.26});
+        E(s0,'sbass',{n:r,l:5.4,v:1.1}); E(s0+6,'sbass',{n:r+(R()<0.5?12:7),l:1.6,v:0.7});            // the sub
+        const st=h ? [1,4,6] : [0,3,6], V=P.concat(P[0]+12);                                          // the piano: the chord stabbed across the beat
+        E(s0+st[0],'pno',{h:st.map((k,i)=>[s0+k,V,i?0.8:1]),d:0.2,v:1.1});
+        if(I.mel.length){ E(I.mel[0][0],'line',{k:'acid',ns:I.mel.map(oct(-12)),throw:0.12});         // the tune on the squealing bass synth, an octave down
+          if(I.lap>=2) E(I.mel[0][0],'line',{k:'syn',ns:I.mel,v:0.55}); }
+        if(I.phrase && !h && !I.entry) E(0,'pad',{ns:close(c,-5,3),l:I.hold,atk:0.02,cut:700,open:5200,v:1.5});   // the stab that opens over a phrase's first bar
+        if(I.gapAt(s0) && !I.fill && !I.entry && R()<0.6){ E(s0+2,'beep',{f:2637,l:0.7,v:0.3,throw:0.3}); E(s0+3,'beep',{f:2637,l:0.7,v:0.36,throw:0.3}); }   // a whistle on the floor
+      } },
+    feed:{ mix:{kick:1,snare:1,hats:1,bass:1,keys:1,brass:0,lead:0.9,vox:1,pad:1,bell:0.6,fx:1}, room:0.36, energy:1, fb:0.35, echo:{keys:0.2,vox:0.12,bell:0.25},
+      // it lifts into the line: 0 the pump and the voice, 1 bells on the tune and the rim, 2 (the last straight) a synth over it and held brass
+      stageMix:[{brass:0,bell:0.6},{brass:0,bell:0.95},{brass:0.9,bell:1}], stageEnergy:[0.98,1.04,1.12],
+      half(I){ const {h,s0,c,E,R}=I, st=I.stage, r=bassOf(c), P=close(c,12,4), C3=close(c,2,3);
+        E(s0,'bd',{k:'kick',v:1}); E(s0+4,'bd',{k:'kick',v:0.95});
+        if(I.fill){ E(s0,'roll',{k:'sn',l:8,r:0.5,v0:0.15,v1:0.9}); E(s0,'riser',{l:8,f0:400,f1:8000,v:0.35}); }
+        else { E(s0+4,'sn',{k:'clap',v:0.9,spr:0.25}); if(st>=1) E(s0+4,'sn',{k:'rim',v:0.5}); }
+        const hh=[0,2,4,6].map(i=>[s0+i,i%4?0.5:0.75]);                                               // hats: eighths, and now and then a run of thirty-seconds into the beat
+        if(!I.fill && R()<0.3) hh.push([s0+6.5,0.35],[s0+7,0.45],[s0+7.5,0.55]); else hh.push([s0+7,0.3]);
+        E(s0,'hits',{k:'hat',h:hh});
+        for(const q of [1,5]){ E(s0+q,'sbass',{n:r,l:2.6,v:q>1?0.9:1}); E(s0+q,'pad',{ns:C3,l:2.6,atk:0.12,cut:2600,v:1.3}); }   // the sub and the pad breathe off the kick (a side-chain's pump, written out)
+        E(s0,'pluck',{w:'triangle',h:[0,2,1,3].map((k,i)=>[s0+2*i,P[k],i%2?0.7:1]),v:0.8,throw:0.25});
+        if(I.mel.length){ E(I.mel[0][0],'line',{k:'chop',ns:I.mel,throw:0.1,spr:0.15});
+          if(st>=1) for(const x of I.mel) if(x[3]!=='tie') E(x[0],'vib',{n:x[1]+12,l:x[2],v:0.8});
+          if(st>=2) E(I.mel[0][0],'line',{k:'syn',ns:I.mel,v:0.5}); }
+        if(I.gapAt(s0) && !I.fill && !I.entry){ const n0=nearPc(CH[c][0],31); E(s0,'glk',{n:n0,v:0.5}); E(s0+1.5,'glk',{n:n0+7,v:0.6}); }   // a notification, in the tune's breaths
+        if(st>=2 && !I.held) E(s0,'horn',{k:'tpt',ns:close(c,7,3),l:I.hold-0.5,v:0.45});
+      } },
   };
   // the two beats before a cut: a gesture for the set that is coming (on the fx channel, over the old band's fill)
   const PRE={
@@ -19334,6 +19403,9 @@ SONG_ENGINE.songs.continuity=(function(){
     space:(I)=>{ for(const k of [0,2,4]) I.E(I.s0+k,'beep',{f:988,l:1,v:0.6}); I.E(I.s0+6,'beep',{f:1976,l:2,v:0.6}); I.E(I.s0,'riser',{l:8,f0:200,f1:9000,v:0.45}); },
     psychedelic:(I)=>{ I.E(I.s0,'rev',{l:8,v:0.9}); I.E(I.s0,'org',{ns:close(I.cS,4,3),l:8,rev:1,fx:1,v:0.9}); },
     mind:(I)=>{ I.E(I.s0,'swoop',{l:7.6,ns:close(I.c,-12,3),v:0.8}); I.A(I.s0,{a:'lp',from:20000,f:800,l:7.6}); },
+    memphis:(I)=>{ I.E(I.s0+2,'swoop',{l:5.6,ns:close(I.c,12,3),v:0.7}); [210,170,135,105].forEach((f,i)=>I.E(I.s0+4+i,'tom',{f,v:0.7+i*0.08})); },   // the set switched off (its whine falling), and the machine's toms
+    zine:(I)=>{ I.E(I.s0,'riser',{l:8,f0:900,f1:2600,q:7,v:0.5}); I.E(I.s0+4,'roll',{k:'clat',l:4,r:0.25,v0:0.3,v1:1}); },                      // the copier's lamp crossing the sheet
+    feed:(I)=>{ close(I.cS,19,4).forEach((n,i)=>I.E(I.s0+2*i,'glk',{n,v:0.5+i*0.1})); I.E(I.s0,'rev',{l:8,v:0.7}); },                            // notifications, faster than they can be read
   };
   // the new set's first downbeat
   const HIT={
@@ -19346,10 +19418,13 @@ SONG_ENGINE.songs.continuity=(function(){
     space:(I)=>{ I.E(I.s0,'rumble',{l:14,v:0.9}); I.E(I.s0,'cym',{k:'crash',v:0.8,fx:1,spr:0.6}); },
     psychedelic:(I)=>{ I.E(I.s0,'cym',{k:'crash',v:0.9,ph:1}); I.E(I.s0,'gong',{v:0.5}); },
     mind:(I)=>{ I.E(I.s0,'vib',{ns:lounge(I.c,9),l:8,v:1}); I.E(I.s0,'sn',{k:'brush',v:0.8}); },
+    memphis:(I)=>{ I.E(I.s0,'sn',{k:'gate',v:1.25,spr:0.6}); I.E(I.s0,'cym',{k:'crash',v:0.8,fx:1}); I.E(I.s0,'horn',{k:'hard',ns:pow(I.c,7),l:2,v:1,sfz:1}); },
+    zine:(I)=>{ I.E(I.s0,'blast',{v:0.7}); I.E(I.s0,'cym',{k:'crash',v:0.8,fx:1}); I.E(I.s0,'beep',{f:2637,l:1.5,v:0.4,throw:0.4}); },
+    feed:(I)=>{ I.E(I.s0,'curtain',{v:0.55}); I.E(I.s0,'cym',{k:'splash',v:0.5,fx:1}); I.E(I.s0,'glk',{n:31,v:0.8}); I.E(I.s0+1,'glk',{n:38,v:0.8}); },
   };
   const CHANNELS=['kick','snare','hats','perc','bass','keys','brass','lead','ctr','vox','pad','bell','fx'];
   // a set's own loudness trim on its channels (balanced so that every set sits at the same integrated loudness)
-  const TRIM={home:1.25, futurist:1.22, constructivist:1.23, mine:0.9, dawn:0.92, parks:1.23, space:0.97, psychedelic:0.82, mind:1.19};
+  const TRIM={home:1.25, futurist:1.22, constructivist:1.23, mine:0.9, dawn:0.92, parks:1.23, space:0.97, psychedelic:0.82, mind:1.19, memphis:0.9, zine:0.87, feed:0.89};
 
   /* THE PLANNER. env.vic is this station's memory: the set it is playing (arr), the one before (prev), the half-bar
      it changed on (since), whether it changed ahead of the listener (antic), a cut it has rolled a fill toward (pend),
@@ -19400,30 +19475,34 @@ SONG_ENGINE.songs.continuity=(function(){
 
     const ev=[], E=(s,v,p)=>ev.push({s,v,p:p||{}}), A=(s,p)=>ev.push({s,v:'@',p});
     const bar=barOf(loc.pos), mel=bar.mel, chN=barOf(locate(n+1).pos).ch;
-    const lap=Math.max(1,(L.lap|0)||1);
+    // the colour (the bands' harmony parts: their `lap>=2`) comes in a third of the way through the race. That was lap two of the
+    // old three. The race is two laps now and its last is the racer's own record's (the game's rule: the final lap is the
+    // player's), so a second LAP of this record is heard only by a spectator: by the third-of-the-race rule the sets from the
+    // public mind on (the last third of lap one) play in the fuller colour, and the three new ones are never heard thin.
+    const lap0=Math.max(1,(L.lap|0)||1), laps=Math.max(1,(L.laps|0)||1), lap=(lap0-1+(fin(L.at) ? L.at : 0))/laps>=1/3-1e-6 ? Math.max(2,lap0) : lap0;
     const halves=[
       {arr:a0b, entry:!!at0 && !at0.quiet, quiet:!!(at0 && at0.quiet), fill:!!at8, to:at8 ? at8.to : null},
       {arr:a1, entry:!!at8, fill:!!preN || !!(st.pend && st.pend.intro && n===0), to:preN ? preN.to : (n===0 ? a1 : null)}];
     const gapAt=(s)=>!mel.some(([s1,,l])=>s1<=s && s<s1+l);
     const progOf=(a)=>(a===cur && st.len0>0 && fin(L.toCut)) ? Math.max(0,Math.min(1,1-L.toCut/st.len0)) : (a===cur && !fin(L.toCut) ? 0.5 : 0);
     const cut8=!!at8;
-    let mindStage=-1;
+    let stageWas=-1;
     for(let h=0;h<2;h++){
       const X=halves[h], a=X.arr, B=BAND[a], s0=8*h, c=bar.ch[h], cN=h ? chN[0] : bar.ch[1];
       const same=bar.ch[0]===bar.ch[1] && !cut8;
       let hm=mel.filter(x=>x[0]>=s0 && x[0]<s0+8);
       if(h===1 && X.entry){ const held=mel.find(x=>x[0]<8 && x[0]+x[2]>9); if(held) hm=[[8,held[1],held[0]+held[2]-8,'tie'],...hm]; }   // the note sounding across the cut
       if(h===0 && cut8) hm=hm.map(x=>x[0]+x[2]>8 ? [x[0],x[1],8-x[0],x[3]] : x);
-      const prog=progOf(a), stage=a==='mind' ? (prog<0.38 ? 0 : prog<0.72 ? 1 : 2) : 0;
+      const prog=progOf(a), staged=!!B.stageMix, stage=staged ? (prog<0.38 ? 0 : prog<0.72 ? 1 : 2) : 0;
       const first=h===0 || X.entry, k0=ev.length;
-      if(first || (a==='mind' && stage!==mindStage)){ mindStage=a==='mind' ? stage : -1;
-        const m={}, trim=TRIM[a], sm=a==='mind' ? B.stageMix[stage] : null;
+      if(first || (staged && stage!==stageWas)){ stageWas=staged ? stage : -1;
+        const m={}, trim=TRIM[a], sm=staged ? B.stageMix[stage] : null;
         for(const ch of CHANNELS) m[ch]=ch==='fx' ? 1 : ((sm && sm[ch]!=null) ? sm[ch] : (B.mix[ch]||0))*trim;
         const tA=s0-0.2;
         A(tA,{a:'mix', m, tc:X.entry ? 0.012 : 0.04});
         for(const ch in (B.echo||{})) A(tA,{a:'echo', ch, v:B.echo[ch]});
         A(tA,{a:'fb', v:B.fb||0.3});
-        A(tA,{a:'energy', v:a==='mind' ? B.stageEnergy[stage] : B.energy});
+        A(tA,{a:'energy', v:staged ? B.stageEnergy[stage] : B.energy});
         if(first) A(s0-0.15,{a:'lp', f:B.lp||20000, tc:X.entry ? 0.004 : 0.02});
         E(s0,'room',{v:B.room, tc:X.entry ? 0.02 : 0.08});
         if(a!=='mine' && a!=='parks') E(s0,'drn',{id:'D', on:0}); if(a!=='psychedelic') E(s0,'drn',{id:'S', on:0});
@@ -19445,7 +19524,7 @@ SONG_ENGINE.songs.continuity=(function(){
     const info={n, cur, next:nxt, tc:fin(tc) ? +tc.toFixed(3) : null, a0:a0b, a1, at0:at0 ? at0.to : null, at8:at8 ? at8.to : null, pre:preN ? preN.to : null, quiet:!!(at0 && at0.quiet)};
     st.log.push(info); if(st.log.length>64) st.log.shift();
     const NAME={home:'Home Front', futurist:'Futurist', constructivist:'Constructivist', mine:'The Mine', dawn:'Dawn Parade',
-      parks:'National Parks', space:'Space Race', psychedelic:'Psychedelic', mind:'The Public Mind'};
+      parks:'National Parks', space:'Space Race', psychedelic:'Psychedelic', mind:'The Public Mind', memphis:'Memphis', zine:'The Zine', feed:'The Feed'};
     return {ev, label:NAME[a0b]+' · '+loc.sec.name, sec:a0b, pos:loc.pos, pass:loc.pass, vic:info};
   }
 
@@ -63925,7 +64004,7 @@ function vicListen(P, me){
   const along=((isFinite(r.x)?r.x:s.p.x)-s.p.x)*s.t.x+((isFinite(r.z)?r.z:s.p.z)-s.p.z)*s.t.z;
   let to=(P.cum[cut]-(P.cum[i]+along))%Ltot; if(to<0) to+=Ltot;
   const hd=Math.atan2(s.t.x,s.t.z), sp=(r.spd||0)*Math.cos((isFinite(r.head)?r.head:hd)-hd), laps=lapsOf();
-  const L=VIC_LISTEN; L.set=VIC_SETS[k].id; L.k=k; L.next=VIC_SETS[(k+1)%VIC_N].id; L.toCut=to; L.speed=sp; L.lap=Math.min(laps,(r.lap|0)+1); L.laps=laps; }
+  const L=VIC_LISTEN; L.set=VIC_SETS[k].id; L.k=k; L.next=VIC_SETS[(k+1)%VIC_N].id; L.toCut=to; L.speed=sp; L.lap=Math.min(laps,(r.lap|0)+1); L.laps=laps; L.at=VIC_B[k]; }
 // the whole lot, after the deck: returns the moving parts for vicTick
 function vicScenery(inS, ccx, ccz, tun){
   const t0=performance.now(), CV=vicCanvases(), texA=vicTex(CV.A), texB=vicTex(CV.B), texC=vicTex(CV.C), texD=vicTex(CV.D);
