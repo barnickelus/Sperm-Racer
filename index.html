@@ -44317,6 +44317,7 @@ function emit(x,y,z,opt){
 }
 function updateParticles(dt){
   const P=PARTS, pos=P.iPos.array, sc=P.iSc.array, col=P.iCol.array; let n=0;
+  tearsTick(dt);   // (the losers' tears ride the particles' clock)
   for(let i=pLive.length-1;i>=0;i--){
     const p=pLive[i]; p.age+=dt; const t=p.age/p.life;
     if(t>=1){ pLive.splice(i,1); pPool.push(p); continue; }
@@ -69309,7 +69310,7 @@ function updateBandido(o, r, dt){
              : r.spinT>0  ? 'surprised'
              : r.boostT>0 ? 'happy'
              : r.drift===1? 'angry'
-             : (r.finished && r.place>3) ? 'sad'
+             : (r.finished && r.place>1) ? 'sad'
              : 'neutral';
   const tgt = BND_MOODS[want], m = rig.mood;
   for(const k of BND_KEYS) m[k] = mix(m[k], tgt[k], 6.5);
@@ -69502,7 +69503,7 @@ function updateBosun(o, r, dt){
              : r.celebT>0     ? 'happy'
              : r.boostT>0     ? 'happy'
              : r.drift===1    ? 'suspicious'    // one side cocked, concentrating
-             : (r.finished && r.place>3) ? 'sad'
+             : (r.finished && r.place>1) ? 'sad'
              : 'neutral';
   rig.shape=want;
   const fn=BSN_MOUTH[want], ow=BSN_OPEN_W[want];
@@ -69725,7 +69726,7 @@ function updateSalty(o, r, dt){
              : r.celebT>0 ? ((ph>=2.6&&ph<3.8) ? 'woo' : 'happy')
              : r.boostT>0 ? 'happy'
              : r.drift===1 ? 'grit'
-             : (r.finished && r.place>3) ? 'sad'
+             : (r.finished && r.place>1) ? 'sad'
              : 'neutral';
   const tgt=SLT_MOUTH[want], m=rig.m, k=Math.min(1, 10*dt);
   for(const key of ['w','d','rise','tg','wag']) m[key]+=(tgt[key]-m[key])*k;
@@ -72953,7 +72954,7 @@ function tickViking(o, r, now){
   const hard=boost || _vkSec==='steam' || _vkSec==='tone', row=_vkSec==='oars';
   // ---- the finish (ph: seconds since the line): the rare grin, a WOO, the full Goggle Drop (once the 6 s cooldown
   // allows it), then the stoic dance, which carries on through the victory orbit
-  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you ? 9 : -1);
+  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you && R.place===1 ? 9 : -1);
   if(ph<0){ S.fin=false; S.wait=false; }
   const playing=!!(S.G && S.G.kind==='full');
   const prog=ph<0 ? null : ph<VK_FIN[0] ? 'grin' : ph<VK_FIN[1] ? 'woo' : playing ? 'drop' : (S.fin || ph>=VK_FIN[2]) ? 'dance' : 'drop';
@@ -73466,7 +73467,7 @@ function tickFighter(o, r, now){
   const racing=state==='race' && !R.finished, grid=!R.finished && (state==='count' || spd<6);
   // ---- the finish (ph: seconds since the line): a grin in his guard, the showboat as the orbit reaches his face,
   // then both gloves overhead, carried on while he is finished
-  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you ? 9 : -1);
+  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you && R.place===1 ? 9 : -1);
   const fin=ph<0 ? null : ph<0.9 ? 'guard' : ph<3.1 ? 'show' : 'up';
   if(fin || spin) S.G=null;
   // ---- triggers. The pass: the look system's smug moment (he just went by someone)
@@ -73854,7 +73855,7 @@ function tickNaija(o, r, now){
   const beat=njBeat(now), bf=beat-Math.floor(beat), pulse=Math.exp(-bf*5)*Math.sin(Math.PI*Math.min(1,bf*2.5)), alt=Math.floor(beat)&1;
   const racing=state==='race' && !R.finished, grid=!R.finished && (state==='count' || spd<6);
   // the finish (ph: seconds since the line), carried on while he is finished
-  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you ? 9 : -1), fin=ph>=0;
+  const ph=R.celebT>0 ? 6-R.celebT : (R.finished && R.you && R.place===1 ? 9 : -1), fin=ph>=0;
   if(fin || spin) S.G=null;
   // ---- triggers. The pass: the look system's smug moment (he just went by someone): the near sleeve first
   const smug=!!(L && L.g && L.g.k==='smug');
@@ -78205,7 +78206,7 @@ function tbPick(TS, r, t, dt){
     S.slow=racing && Math.abs(r.spd||0)<35 ? S.slow+dt : 0;
   }
   let want='rest';
-  if(r && r.finished) want=(r.place||9)<=3?'win':'lose';
+  if(r && r.finished) want=(r.place||9)===1?'win':'lose';
   else if(r && (r.celebT||0)>0) want='win';
   else if(S.spin) want='hit';
   else if(t<(S.angryT||0)) want='angry';
@@ -80065,7 +80066,7 @@ function tickOutlaw(o, r, now){
     S.slow = racing && Math.abs(r.spd||0)<35 ? S.slow+dt : 0;
   }
   let want='smirk';
-  if(r && r.finished) want = r.place===1 ? 'victorious' : r.place<=3 ? 'laugh' : 'tired';
+  if(r && r.finished) want = r.place===1 ? 'victorious' : 'tired';
   else if(S.spin) want='surprised';
   else if(t<(S.angryT||0)) want='angry';
   else if(t<(S.fireT||0)) want='laugh';
@@ -80367,7 +80368,7 @@ function tickKasi(o, r, now){
     S.lead = racing && r.place===1 ? S.lead+dt : 0;
   }
   let want='chill';
-  if(r && r.finished) want = r.place===1 ? 'champion' : r.place<=3 ? 'hype' : 'tired';
+  if(r && r.finished) want = r.place===1 ? 'champion' : 'tired';
   else if(S.spin) want='shook';
   else if(t<(S.annoyT||0)) want='annoyed';
   else if(t<(S.fireT||0)) want='hype';
@@ -80619,7 +80620,7 @@ function flowAct(F, r, dt){
   const dec=(A.spd-spd)/sdt; A.spd=spd;
   let T={ stiff:boost?1:0, happy:L?Math.min(1,L.sm*1.15):0, angry:L?Math.min(1,L.gr*1.15):0, fear:L?Math.min(1,L.w):0, limp:spin?1:0, brake:(dec>55 && spd>25 && !spin)?1:0, air:r.air?1:0 };
   if(!spin) T.angry=Math.max(T.angry, A.hit);
-  if(r.celebT>0 || (r.finished && r.place<=3)){ T.happy=1; T.angry=0; } else if(r.finished) T.angry=Math.max(T.angry,0.55);
+  if(r.celebT>0 || (r.finished && r.place===1)){ T.happy=1; T.angry=0; } else if(r.finished){ T.happy=0; T.angry=0; T.fear=Math.max(T.fear,0.35); }   // (only the winner is happy; a loser is not cross, they are crushed)
   if(T.happy>T.angry) T.angry*=1-T.happy; else T.happy*=1-T.angry;                               // one feeling at a time
   if(T.limp){ T.happy=0; T.angry=0; T.fear=0; }
   const ax=F.ax; if(ax) for(const k of FLOW_ACT.keys) if(ax[k]>T[k]) T[k]=ax[k];   // (a racer's own acting may ask for a feeling too: THE NEO ACTOR)
@@ -81477,7 +81478,7 @@ function tplPose(o, t, r, dt){
   // ---------------- the face: which expression, then every number springs toward it
   let want='rest';
   if(celeb){ const ph=6-r.celebT; want=ph<1.4?'win':ph<2.6?'pass':ph<3.8?'fire':'win'; }
-  else if(r.finished) want=r.place===1?'win':r.place<=3?'smug':'lose';
+  else if(r.finished) want=r.place===1?'win':'lose';
   else if(spinning) want=t-S.hitT<0.45?'hit':'dizzy';
   else if(t<S.angryT) want='angry';
   else if(wl && !wl.crack) want='boost';
@@ -82382,7 +82383,7 @@ function tickTessTpl(o, r, now){
   let want='rest';
   const cel=r && (r.celebT||0)>0;
   if(cel){ const q=6-r.celebT; want=q<1.4?'win':q<2.6?'wink':q<3.8?'woo':'win'; }
-  else if(r && r.finished) want=r.place===1?'win':r.place<=3?'fire':'lose';
+  else if(r && r.finished) want=r.place===1?'win':'lose';
   else if(spinning) want=t-S.spin0<0.45?'hit':'dizzy';
   else if(t<S.angryT) want='angry';
   else if(t<S.fireT) want='fire';
@@ -83128,7 +83129,7 @@ function dbTick(o, r, now){
     E.alone=E.isAlone && racing ? E.alone+dt : 0;
   }
   let want='rest';
-  if(fin || (celeb && !racing)) want=(R.place===1||!racing&&!fin) ? 'win' : R.place<=3 ? 'pass' : 'lose';
+  if(fin || (celeb && !racing)) want=(R.place===1||!racing&&!fin) ? 'win' : 'lose';
   else if(spin) want=now-E.takeT<0.38 ? 'take' : 'hit';
   else if(now<E.angryT) want='angry';
   else if(now<E.fireT) want='fire';
@@ -83194,7 +83195,7 @@ function dbTick(o, r, now){
   S.lkBig=Math.max(0,S.lkBig-dt*1.6);
   dbSpring(S,'lookY','lookYV',S.lkT,14+5*S.lkBig,1-0.42*S.lkBig,dt); dbSpring(S,'lookP','lookPV',lk?lk.pitch*0.8:0,14,1,dt); dbSpring(S,'lookR','lookRV',lk?(lk.tilt+lk.rl):0,14,1,dt);
   const ar=S.amp/DB_WAVE.gain, sp=Math.PI*S.sig+DB_WAVE.dAt(S.tc);
-  const dance=(fin||celeb)&&S.cur!=='lose'?1:0, lose=fin&&S.cur==='lose'?1:0;
+  const dance=((fin&&R.place===1)||celeb)&&S.cur!=='lose'?1:0, lose=fin&&R.place!==1?1:0;
   S.dance+=(dance-S.dance)*Math.min(1,dt*4); S.lose+=(lose-S.lose)*Math.min(1,dt*3);
   const db=Math.cos(Math.PI*B), dh2=Math.cos(Math.PI*B/2);
   S.psiH=0.24*ldClamp(S.turnF*14,-1,1) - 0.55*ar*DB_ENV(0)*Math.cos(sp) + 0.12*db*S.dance;   // into the turn; answering the stroke; the dance
@@ -83717,7 +83718,7 @@ function naTick(o, R, now, dt, S, C, x){
   // ---- the finish: the racer's own win (or lose) phrases, one after another under the dance
   const fin=x.fin || (x.celeb && !x.racing);
   if(fin){ if(A.finAt==null) A.finAt=now+0.6;
-    if(!A.cur && !A.q && now>=A.finAt){ const win=!x.fin || R.place<=3, list=P.on[win?'win':'lose'];
+    if(!A.cur && !A.q && now>=A.finAt){ const win=!x.fin || R.place===1, list=P.on[win?'win':'lose'];
       if(list && list.length){ naQueue(S, list[A.seq++%list.length], { kind:win?'win':'lose' }); A.finAt=now+(win?0.4:2.5)/rate*4; } } }
   else A.finAt=null;
   // ---- fidgets: idling (the grid, the home window, the select stage), and now and then alone on the road
@@ -83869,7 +83870,7 @@ function neoTick(o, r, now){
   }
   S.pSpin=spin;
   let want='rest';
-  if(fin || (celeb && !racing)) want=(R.place===1||!racing&&!fin) ? 'win' : R.place<=3 ? 'pass' : 'lose';
+  if(fin || (celeb && !racing)) want=(R.place===1||!racing&&!fin) ? 'win' : 'lose';
   else if(spin) want=now-E.takeT<0.38 ? 'take' : 'hit';
   else if(now<E.angryT) want='angry';
   else if(now<E.fireT) want='fire';
@@ -83903,7 +83904,7 @@ function neoTick(o, r, now){
   // ---- the bob: squash on the downbeat, stretch on the off-beat, volume kept, beat 1 harder (the laugh at double time)
   dbSpring(S,'lf','lfV',S.cur==='fire'||S.cur==='haha'?1:0,9,1,dt);
   const bob=Math.cos(2*Math.PI*(C.phase-(S.P.bobPh||0)))*(1-S.lf)+Math.cos(4*Math.PI*B)*S.lf, abx=((C.bar-(S.P.accentBar||0))%4+4)%4, bd=Math.min(abx,4-abx), accent=Math.exp(-(bd*bd)/0.1);   // (bobPh: a kit that squashes on the off-beat; accentBar: one whose accent is not beat 1)
-  const dance=(fin||celeb)&&S.cur!=='lose'?1:0, lose=fin&&S.cur==='lose'?1:0;
+  const dance=((fin&&R.place===1)||celeb)&&S.cur!=='lose'?1:0, lose=fin&&R.place!==1?1:0;
   // (every switch here eases on a spring: the grid's bigger bounce, the take's freeze, the dance and the sway)
   dbSpring(S,'dance','danceV',dance,6,1,dt); dbSpring(S,'lose','loseV',lose,5,1,dt); dbSpring(S,'idl','idlV',idle?1:0,7,1,dt);
   dbSpring(S,'tk0','tk0V',spin && now-E.takeT<0.22?0:1,40,1,dt); dbSpring(S,'tk','tkV',S.tk0,32,1,dt);   // (two springs in a row: the freeze comes on hard, but without a corner)
@@ -83969,7 +83970,9 @@ function neoTick(o, r, now){
     const fx=S.P.flexK==null?1:S.P.flexK;
     S.HU.uFlex.value.set(S.ty*fx, S.tp*fx, (0.05+0.08*S.sp)*fx, S.tw); }
   dbFace(S, C, now, dt, E, lk, portrait);
-  if(S.P.tick) S.P.tick(o, R, now, dt, S, C, { portrait, idle, fin, celeb, spin, racing, spd, sq, accent, lk, act:AC });
+  // (a kit's `fin` is the winner's finish: it is what starts every kit's party piece, and only first place has one. The face
+  //  takes a beat to reach 'lose', and a kit that began its dance in that beat used to keep itself dancing)
+  if(S.P.tick) S.P.tick(o, R, now, dt, S, C, { portrait, idle, fin:fin && R.place===1, lost:fin && R.place!==1, celeb, spin, racing, spd, sq, accent, lk, act:AC });
   // ---- the probes race_motion reads
   const P=S.pr, drf=100*((now-(S.t0==null?(S.t0=now):S.t0))%1000);
   P.beat.position.set(C.phase*2,0,0); P.bob.position.set(0,sq*10,0); P.vb.position.set(0,sq*10+drf,0); P.vs.position.set(S.sig+drf,0,0);
@@ -99595,6 +99598,8 @@ function makeItemBox(u){
   return {mesh:m, halo, core, base:m.position.clone(), live:true, respawn:0};
 }
 function buildRacers(){
+  for(const r of racers) if(r._cloud){ scene.remove(r._cloud); r._cloud=null; }   // (last race's rain cloud)
+  TEARS.live.length=0;
   for(const r of racers){ if(r.obj){scene.remove(r.obj);disposeObject(r.obj);} if(r._drings){scene.remove(r._drings);disposeObject(r._drings);} }
   for(const it of items){ scene.remove(it.mesh); disposeObject(it.mesh); }
   for(const h of hazards){ scene.remove(h.mesh); disposeObject(h.mesh); }
@@ -99993,9 +99998,16 @@ function updateRacer(r,dt){
     if(r.megaT>0) r.megaT=Math.max(0,r.megaT-dt); if(r.glueT>0) r.glueT=Math.max(0,r.glueT-dt);
     if(r.shieldT>0) r.shieldT=Math.max(0,r.shieldT-dt); if(r._roll>0) r._roll-=dt;
     if(MAZE){ mzCoast(r,dt); return; }   // (in the maze: a lazy orbit round the egg)
-    r.spd*=Math.pow(0.1,dt);           // the player used to keep driving, which meant the
+    // each rolls on to its own place to stop (finishPark) and eases to rest there; with no slot, the old coast
+    const pk=r._pk;
+    if(pk){ pk.s+=Math.abs(r.spd)*dt; const rem=pk.dist-pk.s, tgt=rem>0.4 ? Math.min(150, Math.max(5, rem*1.9)) : 0;
+      r.spd = r.spd>tgt ? Math.max(tgt, r.spd-340*dt) : Math.min(tgt, Math.max(r.spd, Math.min(r.spd+110*dt, 46))); }
+    else r.spd*=Math.pow(0.1,dt);      // the player used to keep driving, which meant the
     r.x+=Math.sin(r.head)*r.spd*dt;    // victory camera was chasing a moving target and
     r.z+=Math.cos(r.head)*r.spd*dt;    // never actually got around to the face
+    // finished karts keep a body apart (each moves its own half)
+    for(const o of racers){ if(o===r || !o.finished || o.spectator) continue; const dx=r.x-o.x, dz=r.z-o.z, d=Math.hypot(dx,dz);
+      if(d<FIN_PARK.gap && d>1e-3){ const k=(FIN_PARK.gap-d)*0.5*Math.min(1,7*dt)/d; r.x+=dx*k; r.z+=dz*k; } }
     // ...but it also returned before the road-following code, so the winner kept whatever
     // height it crossed the line at while sliding on. On any course that climbs or drops
     // past the finish that means sinking through the road during the entire celebration.
@@ -100004,10 +100016,11 @@ function updateRacer(r,dt){
     // camera instead of sailing off on a frozen heading over an extrapolated banked plane.
     // (Only runs after r.finished, so finishing order and times are untouched.)
     { r.idx=nearest(r.x,r.z,r.y);
-      const lk=SAMP[trackLoop ? (r.idx+16)%STEPS : Math.min(r.idx+16, STEPS-1)];
-      const dF=angDiff(Math.atan2(lk.p.x-r.x, lk.p.z-r.z), r.head);
-      r.head+=Math.max(-1,Math.min(1,dF*1.8))*TURN*dt*Math.min(1,r.spd/60);
-      const s0=SAMP[r.idx], lt=(r.x-s0.p.x)*s0.n.x + (r.z-s0.p.z)*s0.n.z;
+      const la=pk ? 9 : 16, lk=SAMP[trackLoop ? (r.idx+la)%STEPS : Math.min(r.idx+la, STEPS-1)], pl=pk ? pk.lat : 0;   // (its own lane, and into it early)
+      const dF=angDiff(Math.atan2(lk.p.x+lk.n.x*pl-r.x, lk.p.z+lk.n.z*pl-r.z), r.head);
+      r.head+=Math.max(-1,Math.min(1,dF*(pk?2.6:1.8)))*TURN*dt*Math.min(1,r.spd/(pk?26:60));
+      const s0=SAMP[r.idx]; let lt=(r.x-s0.p.x)*s0.n.x + (r.z-s0.p.z)*s0.n.z;
+      if(pk){ const e=(pk.lat-lt)*Math.min(1,1.6*dt); r.x+=s0.n.x*e; r.z+=s0.n.z*e; lt+=e; }   // (and eased the last of the way into its lane, where steering has too little speed left to do it)
       const inS=innerSign, lim=(lt*inS>0)?HW*2.2:HW*1.28;
       if(Math.abs(lt)>lim){ const ex=lt-Math.sign(lt)*lim; r.x-=s0.n.x*ex; r.z-=s0.n.z*ex; } }
     const sF=SAMP[r.idx];
@@ -100386,28 +100399,98 @@ function placeOnTrack(r,dt){
   if(!r.finished && done) placeFinish(r);
 }
 // the finish itself, shared by every course (the maze reaches it from mzPlace)
+/* HOW EACH RACER TAKES THE FINISH. Only the winner is happy. Whoever crosses first (you or a rival) gets the celebration
+   (celebT: the grin, wink and WOO, the bounce, every kit's own party piece); everyone after them gets loseT, which
+   counts up from the line and is what the losing face, the sob and the tears answer to (finLoser). finP is the place
+   they finished in, fixed at the line. Each also gets a place of their own to stop (finishPark), so the field lines up
+   down the road behind the winner and nobody ends up inside anybody else. */
 function placeFinish(r){
   {
     r.finished=true; r.finishT=raceTime;
+    const fp=1+racers.filter(o=>o!==r && o.finished && !o.spectator).length; r.finP=fp; r.place=fp;
+    if(fp===1) r.celebT=6; else r.loseT=0.001;
+    finishPark(r);
     if(r.you){                                   // finish flourish for the player — THE climax of the race
+      const won=fp===1;
       hitStopT=0.12;                             // freeze-frame beat before everything else lands
       finishPunchT=1.2;                          // camera zoom-punch, bigger than a boost kick
-      r.celebT=6;                                // celebration pose: grin, bounce, spinning star eyes
-      showBanner(trackLoop ? ord(r.place)+'!' : ((TRACKS[selTrack].finish||{}).done||'Fertilized!')); kickShake(1.3); SFX.finish(); stopEngine(); buzz(HAPTIC.finish);
+      showBanner(trackLoop ? ord(r.place)+'!' : ((TRACKS[selTrack].finish||{}).done||'Fertilized!')); kickShake(won?1.3:0.7); stopEngine(); buzz(HAPTIC.finish);
       if(!r.spectator && !courseFinale()) switchSong(homeStyleOf(r));   // the hero shot is yours: so is the song (see WHOSE SONG; a course record with its own finale plays it out, see courseFinale)
-      flashFx(0.6,'#ffffff');                    // big white flash at the peak of the impact
+      flashFx(won?0.6:0.3,'#ffffff');            // big white flash at the peak of the impact
       noiseBurst(0.35,0.3,300);                   // low boom under the arpeggio for extra impact
-      playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
-      const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
-      for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
-      // six staggered confetti waves — the finish used to be one instant pop, this keeps
-      // particles raining right through the victory-orbit shot so the moment reads as a climax
-      for(let wave=1;wave<=6;wave++) setTimeout(()=>{
-        for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 12, 60+wave*15, 0.9, 5);
-      }, wave*240);
+      if(won){
+        SFX.finish();
+        playVictoryFanfare(effectiveStyleId(chosenType&&chosenType.id));  // rising run through the finisher's own musical style (or their tuned alt station)
+        const confettiColors=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
+        for(const c of confettiColors) burst(r.x, r.y+5, r.z, c, 24, 80, 1.2, 6);
+        // six staggered confetti waves — the finish used to be one instant pop, this keeps
+        // particles raining right through the victory-orbit shot so the moment reads as a climax
+        for(let wave=1;wave<=6;wave++) setTimeout(()=>{
+          for(const c of confettiColors) burst(r.x, r.y+5+wave*2, r.z, c, 12, 60+wave*15, 0.9, 5);
+        }, wave*240);
+      } else {
+        // not the winner: no party. Three falling notes and a long low one (the sad trombone), a breath after the line
+        [[392,0],[370,0.26],[349,0.52],[311,0.8]].forEach(([f,at],i)=>setTimeout(()=>{ beep(f, i===3?0.85:0.24, 'sawtooth', 0.13); beep(f/2, i===3?0.85:0.24, 'triangle', 0.16); }, 350+at*1000));
+      }
       if(!trackLoop) eggAnim=2.4;                 // trigger the fertilize animation on the egg
     }
   }
+}
+/* A PLACE TO STOP. Finishers used to steer for the middle of the road and coast down from much the same speed, so they
+   all came to rest on one spot. Each now has a slot by the place they finished in: the winner furthest on and in the
+   middle, then rows behind by turns of two abreast (a lane out either side) and one in the middle. A tail is some thirty long and lies where
+   its kart has been, so no slot is behind another in the same lane until well clear of it, and each kart gets into
+   its lane early and runs straight to its slot: nobody ends up with somebody else's tail across their face. On a
+   course with an end (the egg, the star) the rows are fitted into the road that is left. updateRacer rolls each one
+   to its slot and stops it there, and keeps finished karts a body apart. */
+const FIN_PARK={ slot:[[0,150],[-14,126],[14,126],[0,100],[-14,76],[14,76],[0,50],[-14,26],[14,26],[0,8]], gap:9.5 };
+function finishPark(r){
+  if(typeof MAZE!=='undefined' && MAZE){ r._pk=null; return; }
+  const S=FIN_PARK.slot, sl=S[Math.max(0,(r.finP||1)-1)%S.length]; let k=1;
+  if(!trackLoop){ let left=0; const i0=nearest(r.x,r.z,r.y); for(let i=i0;i<STEPS-1;i++) left+=Math.hypot(SAMP[i+1].p.x-SAMP[i].p.x, SAMP[i+1].p.z-SAMP[i].p.z);
+    k=Math.min(1, Math.max(6, left*0.6-8)/S[0][1]); }   // (well short of the end itself: Nova's is a star)
+  r._pk={ lat:sl[0], dist:Math.max(4, sl[1]*k), s:0 };
+}
+/* THE LOSERS' TEARS, and the rain cloud over whoever came last. Second and third well up: a drop now and then. From
+   fourth down they bawl: two arcs of tears, in sobs. The tears are solid blue drops (one instanced mesh for all of
+   them, drawn only while any are falling): the particles add light, so over a face they either vanish or flare white.
+   They leave from just in front of the face, where the eyes are on every build. The cloud is four grey puffs riding
+   over the racer, raining the same drops. */
+const TEARS={ mesh:null, live:[], m:new T.Matrix4(), max:120, puff:null };
+function tearSpawn(x,y,z,vx,vy,vz,life,size){
+  if(!TEARS.mesh){ const im=new T.InstancedMesh(new T.SphereGeometry(1,8,6), new T.MeshBasicMaterial({color:0x4fb4f5}), TEARS.max);
+    im.frustumCulled=false; im.count=0; im.visible=false; im.name='tears'; scene.add(im); TEARS.mesh=im; }
+  if(TEARS.live.length<TEARS.max) TEARS.live.push({x,y,z,vx,vy,vz,age:0,life,size});
+}
+function tearsTick(dt){
+  const im=TEARS.mesh; if(!im || (!TEARS.live.length && !im.visible)) return; const L=TEARS.live; let n=0;
+  for(let i=0;i<L.length;i++){ const q=L[i]; q.age+=dt; if(q.age>=q.life) continue;
+    q.vy-=46*dt; q.x+=q.vx*dt; q.y+=q.vy*dt; q.z+=q.vz*dt; L[n]=q;
+    const sz=q.size*(1-0.35*q.age/q.life); TEARS.m.makeScale(sz*0.78, sz*1.2, sz*0.78).setPosition(q.x,q.y,q.z); im.setMatrixAt(n, TEARS.m); n++; }
+  L.length=n; im.count=n; im.visible=n>0; im.instanceMatrix.needsUpdate=true;
+}
+function finLoser(r, dt, now){
+  const L=r.loseT, p=r.finP||r.place||9, sc=Math.max(1, r.obj.scale.x||1), hd=r.head, fx=Math.sin(hd), fz=Math.cos(hd), rx=fz, rz=-fx;
+  if(L<0.7) return;
+  const bawl=p>=4, sob=!bawl || Math.sin(now*2.6+(r.phase||0))>-0.35, P0=r.obj.position;
+  r._tearT=(r._tearT||0)-dt;
+  if(r._tearT<=0 && sob){ r._tearT=bawl ? 0.085 : 0.55+Math.random()*0.5;
+    for(const sd of [-1,1]){ if(!bawl && Math.random()<0.5) continue;
+      const v=bawl ? 8+Math.random()*5 : 1.2;
+      tearSpawn(P0.x+fx*4.9*sc+rx*sd*2.2*sc, P0.y+3.3*sc, P0.z+fz*4.9*sc+rz*sd*2.2*sc,
+        rx*sd*v+fx*(bawl?3:1.5), bawl ? 10+Math.random()*5 : 0, rz*sd*v+fz*(bawl?3:1.5), bawl?0.75:0.9, (bawl?0.27:0.25)*sc); } }
+  // the cloud: over whoever came last (in a field of three or more), once the place has sunk in
+  const last=p>=Math.max(3, racers.filter(o=>!o.spectator).length);
+  if(last && L>1.3){
+    if(!r._cloud){ if(!TEARS.puff) TEARS.puff=[new T.SphereGeometry(1,10,8), new T.MeshBasicMaterial({color:0x8d97ab}), new T.MeshBasicMaterial({color:0x6c7689})];
+      const g=new T.Group(); g.name='rain-cloud';
+      for(const [x,y,z,s,m] of [[-2.3,0,0,1.9,2],[0,0.5,0.2,2.5,1],[2.3,0,-0.1,2.0,2],[0.6,-0.5,0.5,1.9,2],[-0.9,-0.4,-0.6,1.7,2]]){ const q=new T.Mesh(TEARS.puff[0], TEARS.puff[m]); q.position.set(x,y,z); q.scale.set(s,s*0.72,s*0.9); g.add(q); }
+      scene.add(g); r._cloud=g; }
+    const g=r._cloud, k=Math.min(1,(L-1.3)/0.5), e=k*k*(3-2*k);
+    g.visible=true; g.scale.setScalar(Math.max(0.001, e*sc)); g.position.set(P0.x+Math.sin(now*0.9)*0.5, P0.y+(11.4+Math.sin(now*1.7)*0.35)*sc, P0.z);
+    r._cloudT=(r._cloudT||0)-dt;
+    if(r._cloudT<=0 && e>0.9){ r._cloudT=0.05; const a=Math.random()*6.283, w=Math.random()*3.6*sc;
+      tearSpawn(g.position.x+Math.cos(a)*w, g.position.y-1.2*sc, g.position.z+Math.sin(a)*w*0.6, 0, -9, 0, 0.4, 0.17*sc); } }
 }
 
 const WHIP_TAUNTS=['WHIPPED!','SMACKED!','TAIL-SLAP!','SENT HIM!','CRACKED!'];
@@ -101767,6 +101850,7 @@ function syncObjects(dt,now){
         else if(ph<3.8){ fx=0.8; fy=big?2.2:1.4; }  // mouth pops open — "WOO!"
         else { fx=1.9; fy=big?1.8:1.3; }            // back to the grin
       }
+      else if(r.loseT>0.5){ fx=0.85; fy=-0.75; }    // not the winner: the smile turned over
       else if(r.spinT>0){ fx=0.55; fy=1.6; }        // shocked "O"
       else if(boosting){ fx=1.5; fy=1.4; }          // wide excited grin
       else if(r.drift===1){ fx=1.25; fy=0.55; }     // gritted teeth
@@ -101825,6 +101909,14 @@ function syncObjects(dt,now){
       r.obj.position.y += Math.abs(Math.sin(now*7))*2.2;
       r.obj.rotation.y += Math.sin(now*4.5)*0.35;
       r.obj.rotation.z += Math.sin(now*4.5+1)*0.15;
+    }
+    // a kart that finished some other way (a remote human's, over the network) takes the line as the rest do
+    if(r.finished && !r.spectator && r.finP==null && state==='race'){ r.finP=r.place; if(r.place===1){ if(!(r.celebT>0)) r.celebT=6; } else r.loseT=0.001; }
+    // the losers: sunk a little, a slow sorry sway, the shudder of a sob, and the tears (finLoser)
+    if(r.loseT>0){ r.loseT+=dt; const k=Math.min(1,r.loseT/0.9), bawl=(r.finP||9)>=4, sob=Math.max(0, Math.sin(now*2.6+(r.phase||0))+0.35);
+      r.obj.position.y -= (0.55 + (bawl ? Math.abs(Math.sin(now*13))*0.32*sob : 0))*k;
+      r.obj.rotation.z += Math.sin(now*1.3+(r.phase||0))*0.05*k;
+      if(state==='race') finLoser(r, dt, now); else if(r._cloud && state!=='done') r._cloud.visible=false;
     }
     // the luck dragons' bodies trail the head's path (after the celebration bounce has
     // moved the head, so the neck stays joined); Tony's nostrils smoke
@@ -102104,6 +102196,9 @@ function camHold(me){
   }
   return k;
 }
+const CD_INTRO={ pre:1.7, swoop:0.95, hold:1.5, lit:false, tok:0 };   // the grid's camera: seconds on the crane before the lights (solo); the swoop to the face; when the swing out begins
+const FIN_CAM={ wrap:7.6, cutaway:2.2 };   // the finish scene: seconds from the line to the results; how long a loser's finish stays on the winner
+function finWrap(){ return (TRACKS[selTrack]||{}).nova ? 4.5 : FIN_CAM.wrap; }   // (Nova's finish is the star going white: its own finale, kept as short as it was)
 function updateCameraCore(dt){
   const me=racers.find(r=>r.you); if(!me)return;
   // a spectator's kart is marked finished (it is never scored) and rides someone else's: it gets the chase view,
@@ -102130,32 +102225,33 @@ function updateCameraCore(dt){
   // direction of this game, so the grid is the one moment that should be a portrait.
   if(state==='count'){
     me._cdT=(me._cdT||0)+dt;
-    // Two moves inside the three seconds: hold a portrait while the grid sizes each other
-    // up, widen so the rivals they are looking AT are in frame, then settle into the
-    // driving position before the lights go out.
-    const HOLD=1.25, WIDEN=0.95;
-    const k=Math.min(1, Math.max(0, (me._cdT-HOLD)/WIDEN));
-    const ease=k*k*(3-2*k);
-    const k2=Math.min(1, Math.max(0, (me._cdT-(HOLD+WIDEN))/0.8));
-    const settle=k2*k2*(3-2*k2);
-    // sweep a shallow arc ACROSS the face rather than around the body: dead-ahead is
-    // me.head + PI, and +-30deg from there keeps both eyes and the mouth framed throughout
-    // +-17deg, not +-30. At 17 units out a 30deg swing throws the lens 8.5 units sideways,
-    // which is wider than the 7.5 grid lane spacing AND far enough out to bury it in the
-    // kerb tufts when the racer starts near the road edge.
-    const faceA=me.head + Math.PI + Math.sin(me._cdT*0.9)*0.30;
-    // 12.5 put the lens inside the sombrero. The head alone is ~7 across and the models
-    // are 10 deep before the tail, so a portrait wants ~17 out and a little above the eyeline.
-    const dist=T.MathUtils.lerp(17, 27, ease);
-    // BELOW the eyeline, looking slightly up. Several characters wear wide brims (and
-    // Salty a cap); a lens level with the hat gets the face blocked by its own headwear.
-    const high=T.MathUtils.lerp(4.6, 9.5, ease);
-    const want=new T.Vector3(
-      me.x - Math.sin(faceA)*dist, me.y + high, me.z - Math.cos(faceA)*dist);
-    // ease toward the chase position as the pull-back completes, so 'GO!' hands over
-    // to the driving camera without a cut
-    if(settle>0) want.lerp(new T.Vector3(me.x,me.y,me.z)
-      .add(fwd.clone().multiplyScalar(-36)).add(new T.Vector3(0,19,0)), settle*0.9);   // the held-back GO view, see camHold
+    /* THE GRID, IN THREE MOVES. Before the lights (CD_INTRO.pre seconds on your own; however long the others take to
+       load, online) the lens is up ahead of the grid on a crane, looking back at the whole field and sinking across
+       its front. When the lights start it swoops down onto your racer's face for the portrait (the characters carry
+       the game: this is the one moment that is theirs), holds there a beat, then swings out round the side of the
+       grid, over your rivals' heads, to land behind you in the driving view as the lights go out. */
+    if(CD_INTRO.lit && me._cdL==null) me._cdL=me._cdT;
+    const sm=x=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
+    const tb=me._cdL==null ? -1 : me._cdT-me._cdL;           // seconds since the lights started (they run 2.85)
+    const i0c=((me.idx|0)%SAMP.length+SAMP.length)%SAMP.length, sC=SAMP[i0c];
+    // which way round: the side of you the road (and the grid) is on
+    const sideV=(sC.p.x-me.x)*Math.cos(camHead)-(sC.p.z-me.z)*Math.sin(camHead), dir=sideV>=0 ? 1 : -1;
+    // the crane: ahead of the middle of the grid
+    let gx=0, gz=0, gy=0, gn=0; for(const o of racers){ if(o.spectator) continue; gx+=o.x; gz+=o.z; gy+=o.y; gn++; } gx/=gn||1; gz/=gn||1; gy/=gn||1;
+    const a=sm(me._cdT/Math.max(0.6, me._cdL!=null ? me._cdL : CD_INTRO.pre))*0.82+sm((me._cdT-0.2)/9)*0.18;
+    const rgt=new T.Vector3(Math.cos(camHead),0,-Math.sin(camHead)).multiplyScalar(dir);   // toward the grid's far side
+    const crane=new T.Vector3(gx,gy,gz).add(fwd.clone().multiplyScalar(66-26*a)).add(rgt.clone().multiplyScalar(20-30*a)).add(new T.Vector3(0,27-15*a,0));
+    // the portrait: 17 out, a little BELOW the eyeline looking up (wide brims and caps block a level lens), and a
+    // shallow arc across the face
+    const pAz=camHead+dir*(0.3-0.1*Math.max(0,tb)), port=new T.Vector3(me.x+Math.sin(pAz)*17, me.y+4.6, me.z+Math.cos(pAz)*17);
+    // the swing: from the portrait round the grid's side, up over the rivals, to the held-back GO view (see camHold)
+    const e=sm((tb-CD_INTRO.hold)/(2.85-CD_INTRO.hold-0.05));
+    const sAz=pAz+dir*(Math.PI-(0.3-0.1*Math.max(0,tb)))*e, sR=17+19*e, sH=4.6+14.4*e+6.5*Math.sin(Math.PI*e);
+    const swing=new T.Vector3(me.x+Math.sin(sAz)*sR, me.y+sH, me.z+Math.cos(sAz)*sR);
+    const dn=tb<0 ? 0 : sm(tb/CD_INTRO.swoop);              // the swoop down from the crane
+    const want=tb<CD_INTRO.hold ? crane.lerp(port, dn) : swing;
+    const aimP=new T.Vector3(gx,gy+3,gz).lerp(new T.Vector3(me.x, me.y+T.MathUtils.lerp(4.6,3.4,e), me.z), dn);
+    const ease=e, settle=e, fovW=tb<0 ? 54 : T.MathUtils.lerp(T.MathUtils.lerp(54,46,dn), 62, e);
     // The player always starts in the far-left slot, 3 units from the road edge, and the lens
     // sits 17 out at the same offset: over the kerb, only 4.6 above the kart, so on a banked
     // or verged road the surface ends up ABOVE it and the frame fills with slab. Where the
@@ -102178,54 +102274,68 @@ function updateCameraCore(dt){
     // snap the first frame outright: lerping in from wherever the menu camera sat drags
     // the lens straight through the grid
     if(me._cdT<=dt*1.5) camera.position.copy(want);
-    else camera.position.lerp(want, Math.min(1, 4*dt));
-    camAim(me.x, me.y + T.MathUtils.lerp(4.6, 3.4, settle), me.z);  // level with the face
-    camera.fov += (T.MathUtils.lerp(46, 62, ease)-camera.fov)*Math.min(1,4*dt);
+    else camera.position.lerp(want, Math.min(1, 8*dt));
+    camAim(aimP.x, aimP.y, aimP.z);  // the grid, then level with the face
+    camera.fov += (fovW-camera.fov)*Math.min(1,4*dt);
     camera.updateProjectionMatrix();
     return;
   }
-  // victory orbit after you finish: the camera circles the whole character — starting
-  // dead-ahead on the FACE (grin/wink/woo gestures play there), sweeping around and
-  // back to front over the celebration. Waits for the finish FOV punch to play out.
+  /* THE FINISH SCENE, after the line's punch has played out. It is a short film in three shots, and which film depends on
+     how you did (FIN_CAM.wrap seconds from the line to the results in all).
+       You won: low under your grin as the lens swings across it and closes in; then a crane up and back that shows the
+         field you beat pulling up behind you in tears; then back down and across for the close-up.
+       You did not: it opens on the winner's party (a cut: their name, their grin, a slow arc), then cuts back to find
+         you from above and pushes slowly in on the long face.
+     The lens flies round its subject in polar coordinates (bearing the short way, radius and height eased, never
+     inside the model) and a change of subject is a cut. */
   if(state==='race' && me.finished && !me.spectator && finishPunchT<=0){
     if(me._orbT===undefined) me._orbT=0; me._orbT+=dt;
-    // sweep an arc ACROSS the face — never behind the head: the camera pans from
-    // front-left to front-right and back (±60deg around dead-ahead), face always framed
-    // Slower, narrower and much closer than it was. The celebration gestures — grin,
-    // wink, the open-mouthed WOO, and on rigged characters the mood table — all play on
-    // the face, so the sweep is +-43deg instead of +-60 and settles at 13 units rather
-    // than 18: at the old framing the gestures were happening off in the middle distance.
-    const heroA=me.head + Math.PI + Math.sin(me._orbT*0.52)*0.62;
-    const dist=19 - Math.min(6, me._orbT*1.4);                    // gentle dolly-in as it pans
-    // Rise through the celebration rather than holding one height — and never let the lens
-    // drop through the road. The orbit swings well outside the tarmac, so on a banked or
-    // climbing section a fixed me.y+4 put the camera underneath the surface and the shot
-    // filled up with ground.
-    const floorY=(me.surfY!==undefined?me.surfY:me.y)+3.2;
-    const camY=Math.max(floorY, me.y + 4.0 + Math.min(3.2, me._orbT*0.9) + Math.sin(me._orbT*1.1)*0.9);
-    // Fly there in polar coordinates round the racer, not in a straight line: the chase cam
-    // leaves the lens 30 BEHIND, and a straight lerp to a point in front of the face passes
-    // through the head and hat (and a dragon's horns and body) on the way. Bearing goes the
-    // short way round, radius and height ease, and the radius never drops below the model.
-    const tgtAz=heroA+Math.PI, tgtR=dist*Math.max(1,me.obj.scale.x||1), ok=Math.min(1,5*dt);
-    if(!me._orbP){ const dx=camera.position.x-me.x, dz=camera.position.z-me.z;
-      me._orbP={az:Math.atan2(dx,dz), r:Math.hypot(dx,dz), h:camera.position.y-me.y}; }
+    const t=me._orbT, won=(me.finP||me.place)===1, sm=x=>{ x=Math.max(0,Math.min(1,x)); return x*x*(3-2*x); };
+    let sub=me;
+    if(!won && t<FIN_CAM.cutaway){ const w=racers.find(o=>o!==me && o.finished && !o.spectator && (o.finP||o.place)===1 && o.obj); if(w) sub=w; }
+    const first=me._orbSub===undefined, cut=me._orbSub!==sub && !(first && sub===me);
+    if(me._orbSub!==sub){ me._orbSub=sub; if(sub!==me){ me._orbCut=true; sub.celebT=Math.max(sub.celebT||0, FIN_CAM.cutaway+0.8); showToast(sub.name+' wins!','t-gold'); } }
+    // the shot: where round the subject (off: radians from dead ahead of the face), how far, how high, the lens
+    let off, dist, high, fov, aimY=4.4, aimBack=0, lowOK=false;   // (aimBack: the aim moved that far back down the road, onto the field behind)
+    if(sub!==me){ off=0.5-0.32*t; dist=17; high=4.4+0.4*t; fov=46; aimY=5.2; }
+    else if(won){
+      if(t<2.3){ off=Math.sin(t*0.95)*0.52; dist=19-Math.min(3.5, t*1.8); high=2.6+t*0.55; fov=46; aimY=5.6; }
+      else if(t<4.5){ const u=sm((t-2.3)/1.25); off=0.42+0.42*u; dist=15.5+22*u; high=3.9+15*u; fov=46+10*u; aimY=5.6-2*u; aimBack=20*u; }
+      else { const u=sm((t-4.5)/1.15); off=0.84-1.26*u+Math.sin(Math.max(0,t-5.8)*0.5)*0.22; dist=37.5-21*u; high=18.9-13.4*u; fov=56-11*u; aimY=3.6+1.8*u; aimBack=20*(1-u); }
+    } else {
+      const tc=t-(me._orbCut ? FIN_CAM.cutaway : 0), u=sm(tc/3.0);
+      // (whoever beat you has pulled up in front of you: the lens stands off to the side the kart ahead is not on. And a
+      //  hung head: it comes down under it)
+      if(me._orbSd==null){ let best=-1; for(const sd of [1,-1]){ const cx=me.x+Math.sin(me.head+sd*0.85)*18, cz=me.z+Math.cos(me.head+sd*0.85)*18; let near=1e9;
+          for(const o of racers){ if(o===me || o.spectator) continue; for(let q=0;q<=24;q+=6){ const d=Math.hypot(o.x-Math.sin(o.head)*q-cx, o.z-Math.cos(o.head)*q-cz); if(d<near) near=d; } }
+          if(near>best){ best=near; me._orbSd=sd; } } }
+      const sd=me._orbSd;
+      off=sd*(0.95-0.45*u+Math.sin(tc*0.55)*0.08); dist=28-6.5*u; high=10.5-7.8*u; fov=48-5*u; aimY=4.2-1.7*u; aimBack=-1.5*u; lowOK=true;
+    }
+    // ...and never through the road: the orbit swings well outside the tarmac, so on a banked or climbing section a
+    // fixed height put the camera underneath the surface and the shot filled up with ground
+    const sc=Math.max(1,sub.obj.scale.x||1), floorY=(sub.surfY!==undefined?sub.surfY:sub.y)+(lowOK ? 1.7 : 3.2);
+    const tgtAz=sub.head+off, tgtR=dist*sc, ok=Math.min(1,5*dt);
+    if(!me._orbP || cut){ const dx=camera.position.x-sub.x, dz=camera.position.z-sub.z;
+      me._orbP = cut ? {az:tgtAz, r:tgtR, h:high} : {az:Math.atan2(dx,dz), r:Math.hypot(dx,dz), h:camera.position.y-sub.y};
+      if(cut) camera.fov=fov; }
     const P=me._orbP;
     let da=(tgtAz-P.az)%(Math.PI*2); if(da>Math.PI) da-=Math.PI*2; else if(da<-Math.PI) da+=Math.PI*2;
-    P.az+=da*ok; P.r+=(tgtR-P.r)*ok; P.h+=(camY-me.y-P.h)*ok;
-    P.r=Math.max(P.r, 12*Math.max(1,me.obj.scale.x||1));
-    camera.position.set(me.x+Math.sin(P.az)*P.r, Math.max(floorY, me.y+P.h), me.z+Math.cos(P.az)*P.r);
-    camAim(me.x, me.y+4.4, me.z);   // slightly up, so a wide brim doesn't mask the face
-    camera.fov += (43-camera.fov)*Math.min(1,3*dt);               // tighter, portrait-ish
+    P.az+=da*ok; P.r+=(tgtR-P.r)*ok; P.h+=(high-P.h)*ok;
+    P.r=Math.max(P.r, 12*sc);
+    camera.position.set(sub.x+Math.sin(P.az)*P.r, Math.max(floorY, sub.y+P.h), sub.z+Math.cos(P.az)*P.r);
+    me._orbAB=(me._orbAB||0)+(aimBack-(me._orbAB||0))*ok;
+    camAim(sub.x-Math.sin(sub.head)*me._orbAB, sub.y+aimY, sub.z-Math.cos(sub.head)*me._orbAB);   // slightly up, so a wide brim doesn't mask the face
+    camera.fov += (fov-camera.fov)*Math.min(1,3*dt);
     // keep the party going instead of one pop at the line: ribbons off the winner, timed
-    // to the orbit so they read as thrown rather than sprayed
+    // to the orbit so they read as thrown rather than sprayed (nobody throws ribbons for a loser)
     me._orbFx=(me._orbFx||0)-dt;
-    if(me._orbFx<=0){
+    if(me._orbFx<=0 && (sub!==me || won)){
       me._orbFx=0.22;
       const PAL=[0xffd27a,0x6df2d0,0xff7ac0,0xffffff,0xffb44a,0x9dffe0];
-      const c=PAL[(me._orbT*4|0)%PAL.length];
-      const a=me._orbT*2.3, rr=5+Math.sin(me._orbT*3)*2;
-      emit(me.x+Math.cos(a)*rr, me.y+7.5, me.z+Math.sin(a)*rr,
+      const c=PAL[(t*4|0)%PAL.length];
+      const a=t*2.3, rr=5+Math.sin(t*3)*2;
+      emit(sub.x+Math.cos(a)*rr, sub.y+7.5, sub.z+Math.sin(a)*rr,
         {color:c, life:1.5, vx:Math.cos(a)*13, vy:20+Math.random()*12, vz:Math.sin(a)*13,
          s0:4.5, s1:0, grav:34, op:0.95});
     }
@@ -103215,11 +103325,12 @@ function raceStep(dt){
   // In multiplayer the wrap-up timer would cut the race short for everyone the moment the
   // local player crossed the line, so remote humans get to actually finish.
   const waitForHumans = NET.on && racers.some(r=>r.remote && !r.finished);
-  if(racers.every(r=>r.finished)) endRace();
+  // (everyone home: the race is called once your own finish has had its moment too, or the last kart in would get none)
+  if(racers.every(r=>r.finished)){ if(!meF || meF.spectator || meF.finP==null) endRace(); else { meF._wrapT=(meF._wrapT===undefined?finWrap():meF._wrapT)-dt; if(meF._wrapT<=0) endRace(); } }
   else if(gpActive && raceTime>CUP_CAP) cupForceEnd();   // a cup always reaches its table, even if a kart never finishes
   else if(waitForHumans){ /* hold: a human is still driving */ }
   else if(meF && meF.finished){
-    meF._wrapT=(meF._wrapT===undefined?4.5:meF._wrapT)-dt;   // long enough for the hero shot to land
+    meF._wrapT=(meF._wrapT===undefined?finWrap():meF._wrapT)-dt;   // long enough for the whole finish scene (FIN_CAM)
     if(meF._wrapT<=0){
       // project the stragglers from their remaining distance at the pace you just ran (order preserved);
       // a course that keeps the default race length keeps the old flat 12 s per lap
@@ -105508,8 +105619,12 @@ countdown = function(){
     }
   };
   // networked, the lights wait for the other humans' builds (netHoldStart); solo they go now; a spectator skips them (the race is on)
-  const begin=()=>{ NET._go=null; if(NET.spectate){ n=0; tick(); return; } cd.textContent='3'; pulse(); SFX.count(false); setTimeout(tick,750); };
-  if(netHoldStart(begin)) cd.textContent='…'; else begin();
+  const begin=()=>{ NET._go=null; CD_INTRO.lit=true; if(NET.spectate){ n=0; tick(); return; } cd.textContent='3'; pulse(); SFX.count(false); setTimeout(tick,750); };
+  // (on your own the lights wait a beat for the crane shot of the grid: see THE GRID, IN THREE MOVES. A tool-driven race does not)
+  CD_INTRO.lit=false; const tok=++CD_INTRO.tok;
+  if(netHoldStart(begin)) cd.textContent='…';
+  else if(SIM.manual || NET.spectate) begin();
+  else { cd.textContent=''; setTimeout(()=>{ if(state==='count' && tok===CD_INTRO.tok) begin(); }, CD_INTRO.pre*1000); }
 };
 
 /* Fold a group's still parts into one mesh per material: a model built from thirty little meshes is thirty draw calls
