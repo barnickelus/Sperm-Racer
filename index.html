@@ -96235,7 +96235,11 @@ function phaArmGeo(skin, sx){ return tonyKeep(sx<0?'phaArmR':'phaArmL', ()=>{
     add(ball, new T.Matrix4().compose(mid, q, V(r, L/2+r*0.6, r)), c, 1); };
   // the hand (toonHand), bent flat at the wrist: its fingers along +x, together, the thumb out to -z (his right), the palm down
   { const m=new T.Matrix4().makeBasis(V(0,0,-1), V(1,0,0), V(0,-1,0)).setPosition(0,0.75,0);
-    for(const [g,part] of toonHand(Object.assign({ sx:-sx, wristXf:m }, PHA_HAND)).parts) add(g, m, part==='ink' ? dbLin(DB_INK) : skin, 1); }   // (his left a left hand: its thumb to +z)
+    for(const [g,part] of toonHand(Object.assign({ sx:-sx, wrist:false }, PHA_HAND)).parts) add(g, m, part==='ink' ? dbLin(DB_INK) : skin, 1); }   // (his left a left hand: its thumb to +z)
+  // the wrist: his hand is turned flat across the end of his arm, as in a painting, so the wrist is a bend. One tube out of
+  // the hose (round its axis there, so the hand can turn on it), over, and into the heel of the palm, narrowing to it:
+  // the outline runs from the arm round into the hand and never closes across between them
+  add(thSweep([V(0,-1.0,0), V(0,-0.25,0), V(0.1,0.42,0), V(0.62,0.76,0), V(1.5,0.76,0)], t=>0.95-0.36*t*t, 22, 14), null, skin, 1);
   const g=kingMerge(items); g.setAttribute('aT', new T.Float32BufferAttribute(aT,1)); g.boundingSphere=new T.Sphere(new T.Vector3(0,HEAD_CY,0), 16); return g; }); }
 /* ---- THE PROPS, each from its grip (y up it). THE ANKH hangs from the hand by its loop. THE CROOK: a banded staff with a
    hooked head. THE FLAIL: a banded staff, three strings of beads from its head. */
@@ -96260,7 +96264,17 @@ function phaPropGeo(kind){ return tonyKeep('phaProp'+kind, ()=>{
 // written for his right side (x mirrored for the left)
 const PHA_A0=[[-2.3, HEAD_CY-0.3, -3.8],[2.3, HEAD_CY-0.3, -3.8]];
 const PHA_POSE={ up:[[-4.6,3.4,1.6],[-5.6,-0.9,1.2]], down:[[-4.6,-3.0,1.6],[-5.6,0.9,1.2]], flick:[[-5.2,0.9,3.2],[-3.4,-1.4,1.4]], fix:[[-1.9,1.9,3.6],[-4.6,-0.2,2.6]],
-  cross:[[-0.9,3.5,0.5],[-4.4,0.9,0.2]] };
+  cross:[[-0.9,3.5,0.5],[-4.4,0.9,0.2]],
+  // the ka (both arms up, the forearms upright: the sign for the soul, and raising the roof), the wings (out wide, as
+  // Isis spreads hers), and onward (one arm thrust down the road)
+  ka:[[-4.4,5.3,0.9],[-6.0,0.5,0.7]], wing:[[-7.3,0.9,0.5],[-4.2,1.8,-0.1]], fore:[[-2.7,4.7,6.1],[-4.8,0.6,2.6]] };   // (up as well as on, so it shows over his head from behind)
+/* WHAT HIS ARMS DO. It used to be one move: the sideways pose of a painting, his right arm up, on every boost, and the
+   same two-beat swap through the whole of a win. Now a boost takes the next of five in turn (PHA_GILD: the painting
+   pose, the ka, the painting pose the other way round, onward, the wings), the win's dance changes its step every two
+   beats (the swap, the wave running through his wings, the ka pumped on the beat), and on the grid the walk takes
+   turns with a slow spread of the wings. */
+const PHA_WR={ ka:0, wing:0, fore:0 };   // (how the hand is turned on the wrist in each)
+const PHA_GILD=[ [['egy',1],['egy',0]], [['ka'],['ka']], [['egy',0],['egy',1]], [['fore'],['egy',0]], [['wing',0],['wing',0]] ];
 const _phV=new T.Vector3(), _phW=new T.Vector3(), _phU=new T.Vector3(), _phQ=new T.Quaternion(), _phE=new T.Euler(), _phC=new T.Color(), _phY=new T.Vector3(0,1,0);
 const phMix=(A,B,t)=>[A[0]+(B[0]-A[0])*t, A[1]+(B[1]-A[1])*t, A[2]+(B[2]-A[2])*t];
 function phaArmPose(U, a0, e, hand, elbow){ const e1=Math.min(1,e);
@@ -96368,11 +96382,11 @@ function phaTick(o, R, now, dt, S, C, q){
   if(!P && ku<-8){ const tu=(now-D.thT)*Math.max(1.8,rate); if(tu>=0 && tu<1.6) ku=tu-0.4; }
   const flicking=ku>=-0.7 && ku<1.5 && !fixing;
   // ---- a boost: for a beat, the flat sideways pose of a painting, as the gold lights
-  if(boost && !D.pBoost){ D.boostT=now; D.epB=Math.ceil(x+0.2)+1; if(real) phaBurst(D, o, R, 0.6); }
+  if(boost && !D.pBoost){ D.boostT=now; D.epB=Math.ceil(x+0.2)+1; D.gk=(D.gk==null ? 0 : D.gk+1); if(real) phaBurst(D, o, R, 0.6); }
   D.pBoost=boost;
   const gild=P ? poseDrop : boost && !askew && !looking && now-D.boostT<1.4 && (x<D.epB || now-D.boostT<0.55);
   // ---- the grid and the select stage: one bar in four, four steps of the walk, with a straight face
-  if(!P && idle && gb===2 && b4<0.3 && D.wkB!==bar && !looking && !askew && !flicking){ D.wkB=bar; D.wkT=now; if(ud.act) ud.act.play('phWalk'); }
+  if(!P && idle && gb===2 && b4<0.3 && D.wkB!==bar && !looking && !askew && !flicking){ D.wkB=bar; D.wkT=now; D.wkN=(D.wkN==null ? 0 : D.wkN+1); if(ud.act) ud.act.play('phWalk'); }
   const wu=P ? (poseWalk ? 0.5 : -9) : (D.wkB===bar && idle && now-D.wkT<4.6/rate+1.5 && !askew ? b4 : -9), walking=wu>=0 && wu<3.9;
   if(!P && walking && wu<3.6 && !ud.expr.forced) ud.expr.set('deadpan', Math.max(0.2,(3.7-wu)/rate));
   // ---- the win: the crook and flail crossed above his head for two beats, eyes closed; then the dance. Eight beats a cycle
@@ -96455,18 +96469,26 @@ function phaTick(o, R, now, dt, S, C, q){
   D.rig.updateMatrix(); D.rigB.updateMatrix();
   const arm=[null,null]; let hold=null;
   const side=P ? 1 : (Math.floor(x)&1) ? -1 : 1, stp=P ? 1 : phSm(0,0.22,bf);   // (which arm is up, and how far into the change)
-  if(gild){ arm[0]=['egy',1]; arm[1]=['egy',0]; }
-  if(walking || dancing || poseDance){ const up=P ? 1 : side>0 ? stp : 1-stp; arm[0]=['egy',up]; arm[1]=['egy',1-up]; }
+  const wave=P ? 0 : Math.sin(Math.PI*x);   // (a slow one, a beat up and a beat down)
+  if(gild){ const G=P ? PHA_GILD[0] : PHA_GILD[(D.gk||0)%PHA_GILD.length]; arm[0]=G[0]; arm[1]=G[1]; }
+  if(walking || dancing || poseDance){ const up=P ? 1 : side>0 ? stp : 1-stp, step=P ? 0 : dancing ? Math.floor((cu-2.2)/2)%3 : ((D.wkN||0)&1 ? 1 : 0);
+    if(step===1){ arm[0]=['wing', wave]; arm[1]=['wing', -wave]; }          // the wave through his wings
+    else if(step===2){ arm[0]=['ka']; arm[1]=['ka']; }                    // the ka, pumped on the beat
+    else { arm[0]=['egy',up]; arm[1]=['egy',1-up]; } }                    // the swap
   if(royal){ arm[0]=['cross']; arm[1]=['cross']; hold='royal'; }
   if(flicking){ arm[0]=['flick']; hold='ankh'; }
   if(fixing || poseFix){ arm[0]=['fix']; arm[1]=['fix']; hold=null; }
   if(looking && !royal && !dancing){ arm[0]=arm[1]=null; hold=null; }
+  if(D.force){ arm[0]=D.force[0]; arm[1]=D.force[1]; hold=null; }   // (a tool holds a pose to look at it)
   for(let i=0;i<2;i++){ const A=D.arms[i], a=arm[i]; let wr=0;
     kitArmSpring(A, !!a, dt, P);
     if(a){ let h, el;
       if(a[0]==='egy'){ h=phMix(PHA_POSE.down[0], PHA_POSE.up[0], a[1]); el=phMix(PHA_POSE.down[1], PHA_POSE.up[1], a[1]); h[1]+=0.35*kick; wr=Math.PI/2; }
       else if(a[0]==='flick'){ const f=NA_P((ku+0.05)/0.7), g2=phSm(-0.7,-0.1,ku); h=PHA_POSE.flick[0].slice(); el=PHA_POSE.flick[1].slice(); h[0]-=1.3*f; h[1]+=1.9*f-1.2*(1-g2); h[2]+=0.5*f; wr=1.2-2.2*f; }
       else if(a[0]==='fix'){ const pr=phSm(-0.25,0.1,fu)*(1-phSm(0.25,0.6,fu)); h=PHA_POSE.fix[0].slice(); el=PHA_POSE.fix[1].slice(); h[0]+=0.5*pr; h[1]+=0.3*pr; wr=Math.PI/2; }
+      else if(a[0]==='ka'){ h=PHA_POSE.ka[0].slice(); el=PHA_POSE.ka[1].slice(); h[1]+=1.0*kick; el[1]+=0.5*kick; wr=PHA_WR.ka; }
+      else if(a[0]==='wing'){ const w=a[1]||0; h=PHA_POSE.wing[0].slice(); el=PHA_POSE.wing[1].slice(); h[1]+=1.9*w+0.3*kick; el[1]-=0.9*w; wr=PHA_WR.wing; }
+      else if(a[0]==='fore'){ h=PHA_POSE.fore[0].slice(); el=PHA_POSE.fore[1].slice(); h[2]+=0.7*kick; wr=PHA_WR.fore; }
       else { h=PHA_POSE.cross[0].slice(); el=PHA_POSE.cross[1].slice(); h[1]+=0.25*kick; wr=Math.PI/2; }
       h=[h[0]*-A.sx, h[1], h[2]]; el=[el[0]*-A.sx, el[1], el[2]];
       if(P || !A.on){ A.hp=h; A.ep=el; } else { const k=1-Math.exp(-dt*22); A.hp=phMix(A.hp, h, k); A.ep=phMix(A.ep, el, k); }
