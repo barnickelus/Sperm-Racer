@@ -104365,7 +104365,7 @@ function frameStep(now, dt, tsec, _f0, sim, draw){
  * second-order deltas and y / heading as first-order ones, each a zigzag varint, the bytes
  * base64url ('r' + text), or run through CompressionStream('deflate') first when the browser
  * has it ('z' + text; typically a third smaller). Your best run per course lives in
- * localStorage as sr_ghost_<course>, replaced only by a faster finish.
+ * localStorage as sr_ghost_<course> (the course's record name: courseRec), replaced only by a faster finish.
  *
  * Playback is a translucent racer (makeCell, every material cloned at opacity 0.45, no
  * shadow) that is NOT a racer: it is not in `racers`, so physics, items, AI, ranking and the
@@ -104421,7 +104421,16 @@ async function ghostDecode(text){
   if(text[0]==='z'){ b=await ghostUnzip(b); if(!b) return null; } else if(text[0]!=='r') return null;
   const s=ghostUnpack(b); return s.length>1 ? s : null;
 }
-const ghostKey=t=>'sr_ghost_'+t.name;
+/* A COURSE'S REVISION. A record is a time over a course as it was: a best, a ghost, a run in a challenge link. When a course's road
+   or its race length changes (Victoria: a lap a quarter longer, two laps for three) a record from before is not one for the course
+   as it is, and must not be offered against it. Such a course carries `rev` (a number; none: the course as it first shipped).
+   courseRec(t) is the name its records are kept under: the course's own name, and the revision when it has one. So an old best
+   or ghost is simply not found (it stays in storage, under the old name; no other course's key changes), and a challenge
+   link's ghost and scorecard lines say which revision they were run on (cr; absent = 0) and are dropped when it is not the
+   course's: the challenge itself still opens, on the course as it is. */
+function courseRev(t){ return (t && t.rev)|0; }
+function courseRec(t){ const r=courseRev(t); return t.name+(r ? '~r'+r : ''); }
+const ghostKey=t=>'sr_ghost_'+courseRec(t);
 function ghostBestOf(t){ try{ const g=JSON.parse(localStorage.getItem(ghostKey(t))||'null'); return g&&g.d&&isFinite(g.t)?g:null; }catch(_){ return null; } }
 // the recorder, armed at every race start (countdown); a sample each 1/GH_HZ s of race time while you drive
 function ghostArm(){ GH.rec=(MAZE||!racers.some(r=>r.you&&!r.spectator)) ? null : {s:[], n:0, track:selTrack}; }
@@ -104429,7 +104438,7 @@ function ghostArm(){ GH.rec=(MAZE||!racers.some(r=>r.you&&!r.spectator)) ? null 
 function ghostFinish(me){
   const rec=GH.rec; GH.rec=null;
   if(!rec || !me || me.spectator || !me.finished || !isFinite(me.finishT) || rec.s.length<2 || rec.track!==selTrack) return;
-  const t=TRACKS[selTrack], g={v:1, n:(NET.name||(document.getElementById('mpname')||{}).value||'').trim()||'You', ty:me.id, c:t.name, t:+me.finishT.toFixed(2), hz:GH_HZ, at:Date.now()};
+  const t=TRACKS[selTrack], g={v:1, n:(NET.name||(document.getElementById('mpname')||{}).value||'').trim()||'You', ty:me.id, c:t.name, cr:courseRev(t), t:+me.finishT.toFixed(2), hz:GH_HZ, at:Date.now()};
   GH.last={meta:g, samples:rec.s, d:null, bytes:0};
   ghostEncode(rec.s).then(d=>{ if(GH.last && GH.last.meta===g){ GH.last.d=d; GH.last.bytes=d.length;
       const best=ghostBestOf(t); if(!best || g.t<best.t){ try{ localStorage.setItem(ghostKey(t), JSON.stringify(Object.assign({d}, g))); }catch(_){} } } });
@@ -105589,14 +105598,17 @@ function chalMetaEnc(m){ return b64uEnc(new TextEncoder().encode(JSON.stringify(
 function chalMetaDec(s){ try{ return JSON.parse(new TextDecoder().decode(b64uDec(s))); }catch(e){ return null; } }
 function chalName(s){ return String(s==null?'':s).replace(/[<>&"'`\\]/g,'').replace(/\s+/g,' ').trim().slice(0,12); }
 // the part that travels (link META, the host's roster and start): never the ghost samples
-function chalMeta(ch){ const m={v:1, n:ch.n, f:ch.f, t:ch.t, d:ch.d, ai:ch.ai?1:0, at:ch.at}; if(ch.g) m.g=ch.g; if(ch.s&&ch.s.length) m.s=ch.s.map(e=>[e.n,e.c,e.t]); return m; }
+function chalMeta(ch){ const m={v:1, n:ch.n, f:ch.f, t:ch.t, d:ch.d, ai:ch.ai?1:0, at:ch.at}; if(ch.g) m.g=ch.g; if(ch.s&&ch.s.length) m.s=ch.s.map(e=>e.cr ? [e.n,e.c,e.t,e.cr] : [e.n,e.c,e.t]); return m; }
 function chalFromMeta(m){
   if(!m || typeof m!=='object' || !CHAL_FMT[m.f]) return null;
   const t=(Array.isArray(m.t)?m.t:[m.t]).map(String).filter(n=>TRACKS.some(x=>x.name===n)).slice(0,5);
   if(!t.length) return null;
   const ch={v:1, n:chalName(m.n)||'A friend', f:m.f, t, d:DIFF[m.d]!=null?m.d:'medium', ai:!(m.ai===0||m.ai===false), at:+m.at||0, g:null, gtext:null, s:[]};
-  if(m.g && typeof m.g==='object') ch.g={n:chalName(m.g.n)||ch.n, ty:SPERM_TYPES.some(x=>x.id===m.g.ty)?m.g.ty:'guido', c:TRACKS.some(x=>x.name===m.g.c)?String(m.g.c):t[0], t:+m.g.t||0, hz:+m.g.hz||GH_HZ};
-  if(Array.isArray(m.s)) ch.s=m.s.slice(0,40).map(e=>Array.isArray(e)?{n:chalName(e[0]), c:String(e[1]), t:+e[2]}:null).filter(e=>e&&e.n&&TRACKS.some(x=>x.name===e.c)&&isFinite(e.t)&&e.t>0);
+  // (a ghost, or a scorecard line, run on another revision of its course is not carried: see courseRev)
+  const revOk=(c,cr)=>TRACKS.some(x=>x.name===c && courseRev(x)===(cr|0));
+  if(m.g && typeof m.g==='object'){ const gc=TRACKS.some(x=>x.name===m.g.c)?String(m.g.c):t[0];
+    if(revOk(gc,m.g.cr)){ ch.g={n:chalName(m.g.n)||ch.n, ty:SPERM_TYPES.some(x=>x.id===m.g.ty)?m.g.ty:'guido', c:gc, t:+m.g.t||0, hz:+m.g.hz||GH_HZ}; if(m.g.cr|0) ch.g.cr=m.g.cr|0; } }
+  if(Array.isArray(m.s)) ch.s=m.s.slice(0,40).map(e=>Array.isArray(e)?{n:chalName(e[0]), c:String(e[1]), t:+e[2], cr:e[3]|0}:null).filter(e=>e&&e.n&&revOk(e.c,e.cr)&&isFinite(e.t)&&e.t>0);
   return ch;
 }
 function chalParse(q){
@@ -105698,9 +105710,10 @@ async function chalReply(){
   const name=chalName((document.getElementById('mpname')||{}).value)||last.meta.n||'A friend';
   const s=ch.s.map(e=>Object.assign({},e));
   const put=e=>{ const i=s.findIndex(x=>x.n===e.n && x.c===e.c); if(i<0) s.push(e); else if(e.t<s[i].t) s[i]=e; };
-  if(ch.g) put({n:ch.g.n, c:ch.g.c, t:ch.g.t});
-  put({n:name, c:last.meta.c, t:last.meta.t});
+  if(ch.g) put({n:ch.g.n, c:ch.g.c, t:ch.g.t, cr:ch.g.cr|0});
+  put({n:name, c:last.meta.c, t:last.meta.t, cr:last.meta.cr|0});
   const r={code:ch.code, n:ch.n, f:ch.f, t:ch.t, d:ch.d, ai:ch.ai, at:ch.at, g:{n:name, ty:last.meta.ty, c:last.meta.c, t:last.meta.t, hz:GH_HZ}, gtext:last.d, s:s.slice(-40)};
+  if(last.meta.cr|0) r.g.cr=last.meta.cr|0;
   const url=chalLink(r), prev=ch.g;
   const text=name+' raced your ghost on '+last.meta.c+': '+fmt(last.meta.t)+(prev?' vs your '+fmt(prev.t):'')+' — race theirs back in Race Wars. Tap to play.';
   let sent=false;
@@ -105980,7 +105993,7 @@ function endRace(){
     // best-time tracking (per track, persists across sessions) — every race counts for something
     const bt=$('besttime');
     if(me.finished && isFinite(me.finishT)){
-      const key='sr_best_'+TRACKS[selTrack].name;
+      const key='sr_best_'+courseRec(TRACKS[selTrack]);
       const prev=parseFloat(localStorage.getItem(key));
       if(!prev || me.finishT<prev){
         localStorage.setItem(key, me.finishT); bt.classList.add('nb');
@@ -106767,7 +106780,7 @@ function courseFacts(t){
   if(t.loop===false) return {vibe, card:'egg run', chips:['run to the egg',courseLenWord(t)]};
   const n=t.laps||LAPS; return {vibe, card:n+' laps', chips:[n+' laps',courseLenWord(t)]};
 }
-function bestOf(t){ let v=0; try{ v=parseFloat(localStorage.getItem('sr_best_'+t.name))||0; }catch(_){} return v; }
+function bestOf(t){ let v=0; try{ v=parseFloat(localStorage.getItem('sr_best_'+courseRec(t)))||0; }catch(_){} return v; }
 function bestFmt(s){ return Math.floor(s/60)+':'+(s%60).toFixed(1).padStart(4,'0'); }
 function bestShort(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }   // a card has room for m:ss
 // ---- launch deck: course carousel, racer tile, pick summary, settings sheet ----
