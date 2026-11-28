@@ -747,6 +747,22 @@
   button.tile{margin:0!important;min-height:56px;padding:8px 12px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:none;border-radius:14px;line-height:1.25;border-width:1.5px;}
   .tile:disabled{opacity:.45;}
 
+  .acct{margin:0 0 12px;padding:10px 12px;border:1px solid rgba(109,242,208,.28);border-radius:14px;background:rgba(0,0,0,.18);}
+  .acct-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .acct-lbl{flex:1 1 140px;min-width:0;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);}
+  .acct form{display:flex;flex:2 1 240px;gap:6px;min-width:0;}
+  .acct input{flex:1;min-width:0;height:40px;margin:0;padding:0 12px;border:1.5px solid var(--dim);border-radius:12px;background:rgba(255,255,255,.05);color:#fff;font:600 14px/1.2 inherit;letter-spacing:0;text-transform:none;outline:none;-webkit-user-select:text;user-select:text;}
+  .acct input:focus{border-color:var(--signal,#6df2d0);}
+  .acct .go{margin:0;min-height:40px;padding:8px 14px;font-size:12px;border-radius:12px;}
+  .acct-msg{flex:1 1 100%;margin:0;font-size:12px;line-height:1.4;color:var(--ink);}
+  .acct-msg:empty{display:none;}
+  body.hz .acct{border-color:rgba(255,201,74,.35);background:rgba(0,0,0,.28);}
+  body.hz .acct-lbl,body.hz .acct-msg,body.hz .acct input{font-family:var(--hz-mono);}
+  body.hz .acct-lbl{color:var(--hz-grey);}
+  body.hz .acct-msg{color:var(--hz-ink);}
+  body.hz .acct input{border-color:var(--hz-rule);background:rgba(255,240,200,.04);color:var(--hz-ink);}
+  body.hz .acct input:focus{border-color:var(--hz-gold);}
+
   /* wide screens (iPad portrait, desktop): the chips can say their state in words */
   @media (min-width:600px) and (min-height:520px){
     .chip{--h-chip:64px;} .chip .cv{display:block;}
@@ -2373,6 +2389,20 @@
     <div class="sheet-back" id="sheetback"></div>
     <div class="sheet-card">
       <div class="sheet-top"><span class="tag">more settings</span><button class="go alt" id="sheetdone">Done</button></div>
+      <div class="acct" id="acct">
+        <div class="acct-row" id="acctguest">
+          <span class="acct-lbl">Save progress</span>
+          <form id="acctform" autocomplete="on">
+            <input id="acctemail" class="nojoy" type="email" inputmode="email" maxlength="254" placeholder="email" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Email for saving progress">
+            <button type="submit" class="go alt nojoy" id="acctsend">Sign in</button>
+          </form>
+          <p class="acct-msg" id="acctmsg" aria-live="polite"></p>
+        </div>
+        <div class="acct-row hidden" id="acctin">
+          <span class="acct-lbl">Saved to <b id="acctwho"></b></span>
+          <button type="button" class="go alt nojoy" id="acctout">Sign out</button>
+        </div>
+      </div>
       <div class="sheet-grid">
         <button class="go alt tile on" id="sndbtn">Soundtrack: Course songs</button>
         <button class="go alt tile on" id="mazeradarbtn">Maze radar: Whole maze</button>
@@ -108846,6 +108876,203 @@ if(new URLSearchParams(location.search).get('dev')==='1') window.srDev={
     return true;
   },
 };
+/* ============== SAVE PROGRESS (optional account) ==============
+   Guest play is this browser's localStorage, exactly as before. Sign-in is an email link from the
+   relay (the same Worker as multiplayer). The session token is kept in sr_session and sent as
+   Authorization: Bearer. A cookie would not be stored for a page on another origin. While signed
+   in, the progress keys are pushed after they change. Loading while signed in sends the local copy,
+   the Worker merges it with the account (union of unlocks and cups, faster time and its ghost),
+   and the page keeps the result. Sign out drops the token and leaves the local copy. */
+const ACCT={ session:'', email:'', quiet:false, syncing:false, gen:0, timer:0, dirty:new Set() };
+function acctBase(){ try{ return netOpenBase(); }catch(e){ return ''; } }
+function acctWatched(k){
+  return k==='sr_unlocks'||k==='sr_podiums'||k==='sr_cups'||k==='sr_cup_runs'||k==='sr_racer'||k==='sr_track'||k==='sr_diff'||k.indexOf('sr_best_')===0||k.indexOf('sr_ghost_')===0;
+}
+function acctSnapshot(){
+  const bests={}, ghosts={};
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i); if(!k) continue;
+      if(k.indexOf('sr_best_')===0){ const n=parseFloat(localStorage.getItem(k)); if(isFinite(n)) bests[k.slice(8)]=n; }
+      else if(k.indexOf('sr_ghost_')===0){ try{ const g=JSON.parse(localStorage.getItem(k)||'null'); if(g&&typeof g.d==='string') ghosts[k.slice(9)]=g; }catch(e){} }
+    }
+  }catch(e){}
+  let unlocks=[], podiums=0, cups={}, runs={};
+  try{ const a=JSON.parse(localStorage.getItem('sr_unlocks')||'[]'); if(Array.isArray(a)) unlocks=a; }catch(e){}
+  try{ podiums=parseInt(localStorage.getItem('sr_podiums')||'0',10)||0; }catch(e){}
+  try{ const c=JSON.parse(localStorage.getItem('sr_cups')||'{}'); if(c&&typeof c==='object') cups=c; }catch(e){}
+  try{ const c=JSON.parse(localStorage.getItem('sr_cup_runs')||'{}'); if(c&&typeof c==='object') runs=c; }catch(e){}
+  return { unlocks, podiums, cups, runs, bests, ghosts, racer:localStorage.getItem('sr_racer')||'', track:localStorage.getItem('sr_track')||'', diff:localStorage.getItem('sr_diff')||'' };
+}
+function acctGhostsFor(local, remoteBests, only){
+  const out={};
+  const keys=only? [...only] : Object.keys(local.ghosts);
+  for(const k of keys){
+    const g=local.ghosts[k]; if(!g||typeof g.d!=='string'||g.d.length>500000||g.d.length<2) continue;
+    const mine=local.bests[k]!=null?+local.bests[k]:(isFinite(+g.t)?+g.t:null);
+    if(mine==null||!isFinite(+g.t)||Math.abs(+g.t-mine)>=0.02) continue;
+    const rt=remoteBests?remoteBests[k]:null;
+    if(rt==null||mine<=+rt+1e-6) out[k]=g;
+  }
+  return out;
+}
+function acctPack(snap, ghosts){
+  const g=Object.assign({}, ghosts);
+  let text=JSON.stringify(Object.assign({}, snap, {ghosts:g}));
+  if(text.length<=1200000) return text;
+  for(const k of Object.keys(g).sort((a,b)=>((g[b].d||'').length)-((g[a].d||'').length))){
+    delete g[k]; text=JSON.stringify(Object.assign({}, snap, {ghosts:g})); if(text.length<=1200000) break;
+  }
+  return text;
+}
+function acctSay(msg){ const n=$('acctmsg'); if(n) n.textContent=msg||''; }
+function acctErr(e){ const m=e&&e.message||''; if(!m||m==='Failed to fetch'||m==='Load failed'||m==='NetworkError when attempting to fetch resource.') return 'Could not reach saved progress.'; return m; }
+function acctPaint(){
+  const guest=$('acctguest'), inn=$('acctin'), who=$('acctwho'); if(!guest||!inn) return;
+  const on=!!ACCT.session;
+  guest.classList.toggle('hidden', on); inn.classList.toggle('hidden', !on);
+  if(who) who.textContent=ACCT.email||'your account';
+}
+function acctClearSession(){ ACCT.session=''; ACCT.email=''; try{ localStorage.removeItem('sr_session'); }catch(e){} acctPaint(); }
+async function acctFetch(path, opts){
+  const base=acctBase(); if(!base) throw new Error('Sign-in needs the relay.');
+  const res=await fetch(base+path, opts);
+  let body=null; try{ body=await res.json(); }catch(e){}
+  if(res.status===401){ acctClearSession(); throw new Error('Sign in again.'); }
+  if(!res.ok) throw new Error((body&&body.error)||'Could not reach saved progress.');
+  return body;
+}
+function acctApply(p){
+  if(!p) return;
+  ACCT.quiet=true;
+  try{
+    const set=(k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} };
+    const del=k=>{ try{ localStorage.removeItem(k); }catch(e){} };
+    set('sr_unlocks', JSON.stringify(p.unlocks||[]));
+    set('sr_podiums', String(p.podiums|0));
+    set('sr_cups', JSON.stringify(p.cups||{}));
+    set('sr_cup_runs', JSON.stringify(p.runs||{}));
+    const bests=p.bests||{}, drop=[];
+    try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.indexOf('sr_best_')===0 && bests[k.slice(8)]==null) drop.push(k); } }catch(e){}
+    for(const k of drop) del(k);
+    for(const k in bests) set('sr_best_'+k, String(bests[k]));
+    if(p.racer) set('sr_racer', p.racer);
+    if(p.track!=null && p.track!=='') set('sr_track', String(p.track));
+    if(p.diff) set('sr_diff', p.diff);
+  }finally{ ACCT.quiet=false; }
+  if(typeof state!=='undefined' && state!=='race' && state!=='count'){
+    try{
+      const rid=localStorage.getItem('sr_racer');
+      const rt=SPERM_TYPES.find(t=>t.id===rid && !t.hidden && !isLocked(t));
+      if(rt) chosenType=rt;
+      const tr=parseInt(localStorage.getItem('sr_track'),10);
+      if(tr>=0 && tr<TRACKS.length) selTrack=tr;
+      const df=localStorage.getItem('sr_diff');
+      if(df==='easy'||df==='medium'||df==='hard'){
+        difficulty=df;
+        const wrap=$('diffpick'); if(wrap) wrap.querySelectorAll('.trk').forEach(b=>b.classList.toggle('on', b.textContent===df));
+      }
+      if(typeof paintRacer==='function') paintRacer();
+      if(typeof trackRecentre==='function') trackRecentre();
+      if(typeof setupSelect==='function') setupSelect(true);
+      if(typeof cupMark==='function') cupMark();
+      if(typeof paintSummary==='function') paintSummary();
+    }catch(e){}
+  }
+}
+async function acctPullGhosts(merged){
+  const have=acctSnapshot().ghosts, want=[];
+  for(const k in (merged.ghosts||{})){
+    const g=have[k];
+    if(!g||!isFinite(+g.t)||merged.bests[k]==null||Math.abs(+g.t-merged.bests[k])>=0.02) want.push(k);
+  }
+  for(const k of want){
+    try{
+      const one=await acctFetch('/progress/ghost?course='+encodeURIComponent(k), {headers:{authorization:'Bearer '+ACCT.session}});
+      if(one&&one.ghost){ ACCT.quiet=true; try{ localStorage.setItem('sr_ghost_'+k, JSON.stringify(one.ghost)); }catch(e){} ACCT.quiet=false; }
+    }catch(e){}
+  }
+}
+async function acctSync(){
+  if(!ACCT.session||ACCT.syncing) return;
+  ACCT.syncing=true; const gen=ACCT.gen;
+  try{
+    const got=await acctFetch('/progress', {headers:{authorization:'Bearer '+ACCT.session}});
+    if(got&&got.email) ACCT.email=got.email;
+    const remote=(got&&got.progress)||{};
+    const local=acctSnapshot();
+    const put=await acctFetch('/progress', {method:'PUT', headers:{authorization:'Bearer '+ACCT.session, 'content-type':'application/json'}, body:acctPack(local, acctGhostsFor(local, remote.bests||{}))});
+    const merged=put&&put.progress;
+    if(merged&&ACCT.gen===gen){ acctApply(merged); await acctPullGhosts(merged); }
+    acctPaint();
+  }catch(e){ acctSay(acctErr(e)); }
+  finally{ ACCT.syncing=false; if(ACCT.session&&ACCT.gen!==gen) acctSchedule(); }
+}
+function acctSchedule(){
+  if(!ACCT.session||ACCT.quiet) return;
+  ACCT.gen++;
+  if(ACCT.syncing) return;
+  clearTimeout(ACCT.timer); ACCT.timer=setTimeout(acctPush, 700);
+}
+async function acctPush(){
+  if(!ACCT.session) return;
+  if(ACCT.syncing){ acctSchedule(); return; }
+  ACCT.syncing=true; const gen=ACCT.gen; const courses=ACCT.dirty; ACCT.dirty=new Set();
+  try{
+    const local=acctSnapshot();
+    const put=await acctFetch('/progress', {method:'PUT', headers:{authorization:'Bearer '+ACCT.session, 'content-type':'application/json'}, body:acctPack(local, acctGhostsFor(local, null, courses))});
+    if(put&&put.progress&&ACCT.gen===gen){ acctApply(put.progress); await acctPullGhosts(put.progress); }
+  }catch(e){ for(const k of courses) ACCT.dirty.add(k); acctSay(acctErr(e)); }
+  finally{ ACCT.syncing=false; if(ACCT.session&&ACCT.gen!==gen) acctSchedule(); }
+}
+function acctHook(){
+  try{
+    const set=localStorage.setItem.bind(localStorage), del=localStorage.removeItem.bind(localStorage);
+    localStorage.setItem=function(k,v){
+      set(k,v);
+      if(ACCT.quiet||!ACCT.session||!acctWatched(k)) return;
+      if(k.indexOf('sr_best_')===0||k.indexOf('sr_ghost_')===0) ACCT.dirty.add(k.replace(/^sr_(?:best|ghost)_/,''));
+      acctSchedule();
+    };
+    localStorage.removeItem=function(k){ del(k); if(!ACCT.quiet&&ACCT.session&&acctWatched(k)) acctSchedule(); };
+  }catch(e){}
+}
+function acctTakeHash(){
+  let h; try{ h=new URLSearchParams(String(location.hash||'').replace(/^#/,'')); }catch(e){ return; }
+  const s=h.get('session');
+  if(!s||!/^[A-Za-z0-9_-]{20,128}$/.test(s)) return;
+  try{ localStorage.setItem('sr_session', s); }catch(e){}
+  ACCT.session=s; h.delete('session');
+  const rest=h.toString();
+  try{ history.replaceState(null,'', location.pathname+location.search+(rest?'#'+rest:'')); }catch(e){}
+}
+async function acctRequest(ev){
+  if(ev&&ev.preventDefault) ev.preventDefault();
+  const email=(($('acctemail')||{}).value||'').trim();
+  if(!email){ acctSay('Enter your email.'); return; }
+  const btn=$('acctsend'); if(btn) btn.disabled=true;
+  acctSay('Sending a sign-in link…');
+  try{
+    const base=acctBase(); if(!base) throw new Error('Sign-in needs the relay.');
+    const res=await fetch(base+'/auth/request', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({email:email, next:location.origin+location.pathname})});
+    let body=null; try{ body=await res.json(); }catch(e){}
+    if(!res.ok) throw new Error((body&&body.error)||'Could not send the link.');
+    acctSay('Check your email for a sign-in link. It expires in 15 minutes.');
+  }catch(e){ acctSay(acctErr(e)); }
+  finally{ if(btn) btn.disabled=false; }
+}
+function acctBoot(){
+  try{ ACCT.session=localStorage.getItem('sr_session')||''; }catch(e){ ACCT.session=''; }
+  acctTakeHash(); acctHook();
+  const form=$('acctform'); if(form) form.addEventListener('submit', acctRequest);
+  const out=$('acctout'); if(out) out.addEventListener('click', ()=>{
+    const s=ACCT.session; acctClearSession();
+    const base=acctBase(); if(s&&base) fetch(base+'/auth/logout', {method:'POST', headers:{authorization:'Bearer '+s}}).catch(()=>{});
+  });
+  acctPaint();
+  if(ACCT.session) acctSync();
+}
+acctBoot();
 /* ============== MCP PLAYTEST HOOK ==============
    Only on ?mcp (never on a plain load): connects this page to the MCP server in mcp/ so an agent
    can PLAYTEST it — pick a course and racer, start a race, drive it, read the standings, take a

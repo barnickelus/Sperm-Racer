@@ -17,9 +17,13 @@
  * The registry is advisory: the room itself is still only an echo room, and a joiner that finds
  * it empty or already racing asks /open again. openRegistry() below is the whole behaviour and
  * is the same function, line for line, in the Node stand-in (scratchpad/mp_relay_srv.js).
+ *
+ * Accounts (optional): /auth and /progress. A magic link signs a player in and their
+ * progress syncs. See account.js. Rooms are unchanged and still store nothing.
  */
+import { CORS, handleAccount } from './account.js';
+
 const OPEN_TTL=45000, OPEN_FULL=6, CODE_ALPHABET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // the game's netRoomCode alphabet: no I/O/0/1
-const CORS={'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'};
 
 // open: {CODE:{humans,at}} (mutated); method GET with no code lists, POST with a code refreshes.
 // Returns the JSON to answer with, or null for anything else (404).
@@ -43,6 +47,8 @@ function openRegistry(open, now, method, code, body){
 export default {
   async fetch(req, env){
     const url=new URL(req.url);
+    const account=await handleAccount(req, env);
+    if(account) return account;
     if(/^\/open(\/|$)/.test(url.pathname)){
       if(req.method==='OPTIONS') return new Response(null, {status:204, headers:CORS});
       return env.LOBBY.get(env.LOBBY.idFromName('open')).fetch(req);   // one registry for the whole relay

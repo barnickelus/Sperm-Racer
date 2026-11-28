@@ -3,7 +3,9 @@
 A WebSocket fan-out for the game's `relay` transport: whatever JSON text a client sends to
 `/room/<CODE>` is echoed to every other client in that room — plus the open-room registry
 behind **Quick Race** (`GET /open`). One Cloudflare Worker, two Durable Object classes (a
-`Room` per code, one `Lobby` for the registry), no accounts. It fits in the free plan.
+`Room` per code, one `Lobby` for the registry). Rooms still have no accounts. Optional
+progress accounts (magic-link sign-in, saved on this same Worker) are below. It fits the
+free plan until the database is added, which is also on the free D1 allowance for a small game.
 
 ## Already deployed? Deploy again (one command)
 
@@ -99,10 +101,38 @@ immediate redirect (meta refresh or a script) to the game's URL with the same `?
 sheet would then share `https://<relay>/c/…` instead of the page URL. Nothing else changes: the
 game already accepts the query, and the relay still stores nothing.
 
+## Accounts (optional)
+
+Players can keep playing as guests. Nothing about a race room changes. Sign-in is an email
+link, and the saved progress (unlocks, cups, best times, ghosts, and the last racer, course,
+and difficulty) is stored in D1 on this Worker. The game page and the Worker are different
+origins, so the session is a bearer token the page stores, not a cookie.
+
+Ghosts are one D1 row per course, capped at 500 KB. A D1 row is limited to about 2 MB, and a
+ghost is the only large value, so it does not share a row with the rest of the progress. That
+is enough for the handful of course ghosts a player actually has. R2 is not required.
+
+What you do once, before sign-in works:
+
+1. Create a Resend account. Until a domain is verified, leave `FROM_EMAIL` as
+   `Race Wars <onboarding@resend.dev>`. That test sender only delivers to the email address
+   on the Resend account. After the domain is verified, change `FROM_EMAIL` in
+   `wrangler.toml` to an address on that domain.
+2. `cd relay`
+3. `npx wrangler d1 create race-wars-progress` and paste the printed database id over
+   `REPLACE_AFTER_CREATE` in `wrangler.toml`.
+4. `npx wrangler d1 execute race-wars-progress --remote --file=schema.sql`
+5. `npx wrangler secret put RESEND_API_KEY` and paste the Resend API key when asked.
+6. `npx wrangler deploy`
+
+If the API key or the database is missing, the game still loads and guest play is unchanged.
+Sign-in then says that saving is not set up yet. `GAME_URL` in `wrangler.toml` is where the
+link sends the player; change it if the game is not served from the GitHub Pages URL.
+
 ## Limits
 
-- No authentication: anyone with the code can join. The game's host is the authority over
-  the race, not the relay.
+- No authentication on a room: anyone with the code can join. The game's host is the authority
+  over the race, not the relay. Progress accounts are separate and never gate a room.
 - The Durable Object runs in one Cloudflare location per room; players far from it see the
   relay's round-trip on top of their own. For friends on the same continent that is tens of
   milliseconds.
